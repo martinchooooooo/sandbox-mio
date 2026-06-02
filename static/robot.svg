@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 140" width="200" height="280">
+  <!-- Antenna -->
+  <line x1="50" y1="10" x2="50" y2="20" stroke="#555" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="50" cy="7" r="4" fill="#ff4444"/>
+
+  <!-- Head -->
+  <rect id="robot-head" x="25" y="20" width="50" height="40" rx="8" fill="#4a9eff"/>
+  <!-- Eyes -->
+  <circle id="eye-left" cx="38" cy="37" r="7" fill="white"/>
+  <circle id="eye-right" cx="62" cy="37" r="7" fill="white"/>
+  <circle cx="38" cy="37" r="4" fill="#1a1a2e"/>
+  <circle cx="62" cy="37" r="4" fill="#1a1a2e"/>
+  <!-- Mouth -->
+  <rect x="35" y="50" width="30" height="5" rx="2" fill="#1a1a2e"/>
+
+  <!-- Neck -->
+  <rect x="44" y="60" width="12" height="8" fill="#3a8eef"/>
+
+  <!-- Body -->
+  <rect id="robot-body" x="18" y="68" width="64" height="50" rx="6" fill="#4a9eff"/>
+  <!-- Chest panel -->
+  <rect x="30" y="76" width="40" height="28" rx="4" fill="#1a1a2e"/>
+  <circle cx="40" cy="86" r="5" fill="#00ff88"/>
+  <circle cx="60" cy="86" r="5" fill="#ff4444"/>
+  <rect x="33" y="96" width="34" height="4" rx="2" fill="#4a9eff"/>
+
+  <!-- Left Arm -->
+  <rect id="arm-left" x="2" y="68" width="14" height="40" rx="6" fill="#4a9eff"/>
+  <circle cx="9" cy="112" r="7" fill="#3a8eef"/>
+
+  <!-- Right Arm -->
+  <rect id="arm-right" x="84" y="68" width="14" height="40" rx="6" fill="#4a9eff"/>
+  <circle cx="91" cy="112" r="7" fill="#3a8eef"/>
+
+  <!-- Left Leg -->
+  <rect x="28" y="118" width="16" height="16" rx="4" fill="#3a8eef"/>
+  <rect x="24" y="130" width="20" height="10" rx="4" fill="#2a7edf"/>
+
+  <!-- Right Leg -->
+  <rect x="56" y="118" width="16" height="16" rx="4" fill="#3a8eef"/>
+  <rect x="56" y="130" width="20" height="10" rx="4" fill="#2a7edf"/>
+</svg>
