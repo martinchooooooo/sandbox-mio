@@ -8,3 +8,8 @@ node_modules
 !.env.example
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Setting up project
+build.exe
+build.pdb
+tools/msedgedriver.exe

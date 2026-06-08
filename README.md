@@ -2,6 +2,11 @@
 
 An app to help non-technical users learn how to use AI agents inside of a sandbox environment, hopefully safer than running programs on their machine.
 
+## Prerequisites
+
+- [Rust](https://rustup.rs)
+- [pnpm](https://pnpm.io/installation)
+
 ## Development
 
 ### install
@@ -9,6 +14,31 @@ An app to help non-technical users learn how to use AI agents inside of a sandbo
 `pnpm install`
 
 During development `pnpm run tauri dev`, launches the app and then supports hot reloading.    
+
+## E2E Tests
+
+Tests use [WebdriverIO](https://webdriver.io/) via `tauri-driver`. For more info, read [here](https://v2.tauri.app/develop/tests/webdriver/example/webdriverio/)
+
+### First-time setup
+
+```sh
+rustc build.rs && ./build
+```
+
+On Windows:
+
+```powershell
+rustc build.rs; .\build.exe
+```
+
+### Running
+
+```sh
+cd e2e
+pnpm test
+```
+
+The test suite builds the debug binary automatically before launching the app.
 
 ## UI
 

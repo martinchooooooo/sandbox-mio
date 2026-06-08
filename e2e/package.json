@@ -1,0 +1,17 @@
+{
+  "name": "e2e",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "wdio run wdio.conf.js"
+  },
+  "dependencies": {
+    "@wdio/cli": "9.27.2"
+  },
+  "devDependencies": {
+    "@wdio/local-runner": "9.27.2",
+    "@wdio/mocha-framework": "9.27.2",
+    "@wdio/spec-reporter": "9.27.2"
+  }
+}
