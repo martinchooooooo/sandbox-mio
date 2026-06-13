@@ -7,18 +7,28 @@ use tauri::ipc::Channel;
 
 use crate::{Sandbox};
 
+/// Primary interface for sandbox lifecycle management. Tauri state holds an
+/// `Arc<dyn SandboxBackend>` — inject that to call any of these methods.
 #[async_trait::async_trait]
 pub trait SandboxBackend: Send + Sync {
+    /// Pull the base image if absent, then create a stopped container.
     async fn create(&self, name: &str) -> Result<Sandbox, String>;
+    /// Return all containers (running and stopped).
     async fn list(&self) -> Result<Vec<Sandbox>, String>;
+    /// Start a stopped container.
     async fn start(&self, name: &str) -> Result<(), String>;
+    /// Stop a running container.
     async fn stop(&self, name: &str) -> Result<(), String>;
+    /// Stream container events to the frontend channel until the connection drops.
     async fn listen_events(&self, on_event: Channel<serde_json::Value>) -> Result<(), String>;
 }
 
 // region: Podman Traits
 
+/// Internal helper trait shared by both Podman backends. Not part of the public API.
 trait PodmanBackend {
+    /// Returns the Windows named-pipe path for the Podman socket.
+    /// Override entirely by setting `PODMAN_PIPE`; otherwise derived from `podman_machine()`.
     fn podman_pipe(&self) -> String {
         if let Ok(pipe) = std::env::var("PODMAN_PIPE") {
             return pipe;
@@ -31,13 +41,17 @@ trait PodmanBackend {
         format!("//./pipe/{}", machine)
     }
 
+    /// Returns the Podman machine name, defaulting to `podman-machine-default`.
+    /// Override by setting `PODMAN_MACHINE` (the E2E harness sets this to `mio-tests`).
     fn podman_machine(&self) -> String {
         let machine = std::env::var("PODMAN_MACHINE")
             .unwrap_or_else(|_| "podman-machine-default".to_string());
         return machine
     }
 
+    /// Base image used when creating sandboxes. Override in a subtype to change the image.
     fn base_image() -> &'static str { "alpine" }
+    /// Tag for `base_image`. Override in a subtype to pin a specific version.
     fn base_image_version() -> &'static str { "latest" }
 }
 
@@ -45,6 +59,8 @@ trait PodmanBackend {
 
 // region: PodmanBollard
 
+/// Talks to Podman via the Docker-compatible API over a Windows named pipe.
+/// A new connection is opened on each call — there is no persistent client.
 pub struct PodmanBollardBackend;
 
 impl PodmanBackend for PodmanBollardBackend {}
@@ -167,6 +183,8 @@ impl SandboxBackend for PodmanBollardBackend {
 
 // region: PodmanShell
 
+/// Drives Podman by SSHing into the Podman machine and running CLI commands.
+/// Use this when the named pipe is not accessible. Each operation spawns a subprocess.
 pub struct PodmanShellBackend;
 
 impl PodmanBackend for PodmanShellBackend {}
