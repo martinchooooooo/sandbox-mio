@@ -21,7 +21,7 @@
 
     async function loadProjects() {
         try {
-            projects = await invoke<Project[]>("list_projects");
+            projects = await invoke<Project[]>("list_sandboxes");
         } catch (e) {
             error = String(e);
         }
@@ -30,7 +30,7 @@
     async function createProject() {
         if (!projectName.trim()) return;
         try {
-            await invoke("create_project", { name: projectName });
+            await invoke("create_sandbox", { name: projectName });
             projectName = "";
             await loadProjects();
         } catch (e) {
@@ -40,7 +40,7 @@
 
     async function start(project: Project) {
         try {
-            await invoke("start_project", { name: project.name });
+            await invoke("start_sandbox", { name: project.name });
         } catch (e) {
             error = String(e);
         }
@@ -48,7 +48,7 @@
 
     async function stop(project: Project) {
         try {
-            await invoke("stop_project", { name: project.name });
+            await invoke("stop_sandbox", { name: project.name });
         } catch (e) {
             error = String(e);
         }

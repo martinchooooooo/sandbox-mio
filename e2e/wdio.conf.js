@@ -91,7 +91,7 @@ export const config = {
       ["--native-driver", "../tools/msedgedriver.exe"],
       {
         stdio: [null, process.stdout, process.stderr],
-        env: { ...process.env, PODMAN_MACHINE: `podman-${TEST_MACHINE}` },
+        env: { ...process.env, PODMAN_MACHINE: TEST_MACHINE },
       }
     );
     tauriDriver.on("error", (error) => {
