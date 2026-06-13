@@ -1,20 +1,11 @@
 mod backends;
-use backends::{PodmanBollardBackend, SandboxBackend};
 
 use std::sync::Arc;
 
-use serde::Serialize;
 use tauri::{ipc::Channel, State};
 
-use crate::backends::PodmanShellBackend;
-
-#[derive(Debug, Serialize, Clone)]
-pub struct Sandbox {
-    pub id: String,
-    pub name: String,
-    pub status: String,
-}
-
+use crate::backends::types::{Sandbox, SandboxBackend};
+use crate::backends::{PodmanBollardBackend, PodmanShellBackend};
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -55,7 +46,7 @@ pub fn run() {
     let devtools = tauri_plugin_devtools::Builder::default().init();
 
     let mut backend: Arc<dyn SandboxBackend> = Arc::new(PodmanBollardBackend);
-    if true {
+    if false {
         backend = Arc::new(PodmanShellBackend);
     }
 

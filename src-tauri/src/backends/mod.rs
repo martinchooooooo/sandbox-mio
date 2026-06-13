@@ -1,3 +1,6 @@
+pub mod types;
+mod internals;
+
 use bollard::container::{Config, CreateContainerOptions, ListContainersOptions, StartContainerOptions, StopContainerOptions};
 use bollard::image::CreateImageOptions;
 use bollard::system::EventsOptions;
@@ -5,57 +8,8 @@ use bollard::{Docker, API_DEFAULT_VERSION};
 use futures_util::StreamExt;
 use tauri::ipc::Channel;
 
-use crate::{Sandbox};
-
-/// Primary interface for sandbox lifecycle management. Tauri state holds an
-/// `Arc<dyn SandboxBackend>` — inject that to call any of these methods.
-#[async_trait::async_trait]
-pub trait SandboxBackend: Send + Sync {
-    /// Pull the base image if absent, then create a stopped container.
-    async fn create(&self, name: &str) -> Result<Sandbox, String>;
-    /// Return all containers (running and stopped).
-    async fn list(&self) -> Result<Vec<Sandbox>, String>;
-    /// Start a stopped container.
-    async fn start(&self, name: &str) -> Result<(), String>;
-    /// Stop a running container.
-    async fn stop(&self, name: &str) -> Result<(), String>;
-    /// Stream container events to the frontend channel until the connection drops.
-    async fn listen_events(&self, on_event: Channel<serde_json::Value>) -> Result<(), String>;
-}
-
-// region: Podman Traits
-
-/// Internal helper trait shared by both Podman backends. Not part of the public API.
-trait PodmanBackend {
-    /// Returns the Windows named-pipe path for the Podman socket.
-    /// Override entirely by setting `PODMAN_PIPE`; otherwise derived from `podman_machine()`.
-    fn podman_pipe(&self) -> String {
-        if let Ok(pipe) = std::env::var("PODMAN_PIPE") {
-            return pipe;
-        }
-        let mut machine = self.podman_machine();
-        // Only podman-machine-default seems to carry the extra prefix
-        if !machine.starts_with("podman-") {
-            machine = format!("podman-{machine}")
-        }
-        format!("//./pipe/{}", machine)
-    }
-
-    /// Returns the Podman machine name, defaulting to `podman-machine-default`.
-    /// Override by setting `PODMAN_MACHINE` (the E2E harness sets this to `mio-tests`).
-    fn podman_machine(&self) -> String {
-        let machine = std::env::var("PODMAN_MACHINE")
-            .unwrap_or_else(|_| "podman-machine-default".to_string());
-        return machine
-    }
-
-    /// Base image used when creating sandboxes. Override in a subtype to change the image.
-    fn base_image() -> &'static str { "alpine" }
-    /// Tag for `base_image`. Override in a subtype to pin a specific version.
-    fn base_image_version() -> &'static str { "latest" }
-}
-
-// endregion
+use internals::PodmanBackend;
+use types::{Sandbox, SandboxBackend};
 
 // region: PodmanBollard
 
