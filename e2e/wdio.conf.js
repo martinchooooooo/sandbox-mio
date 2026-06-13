@@ -37,6 +37,20 @@ function ensurePodmanMachine(machineName) {
     spawnSync("podman", ["machine", "start", machineName], { stdio: "inherit", shell: true });
   }
 
+  console.log(`Activating rootless Podman socket on "${machineName}"...`);
+  spawnSync(
+    "podman",
+    [
+      "machine", "ssh", machineName,
+      "test -S /run/user/1000/podman/podman.sock || (mkdir -p /run/user/1000/podman && XDG_RUNTIME_DIR=/run/user/1000 nohup podman system service --time=0 > /tmp/podman-svc.log 2>&1 < /dev/null &)",
+    ],
+    { stdio: "inherit", shell: true }
+  );
+  spawnSync("podman", ["machine", "ssh", machineName, "timeout 10 sh -c 'until test -S /run/user/1000/podman/podman.sock; do sleep 0.5; done'"], {
+    stdio: "inherit",
+    shell: true,
+  });
+
   console.log(`Ensuring alpine:latest is available on "${machineName}"...`);
   spawnSync("podman", ["machine", "ssh", machineName, "podman pull docker.io/library/alpine:latest"], {
     stdio: "inherit",
