@@ -9,33 +9,44 @@ An app to help non-technical users learn how to use AI agents inside of a sandbo
 
 ## Development
 
-### install
-
-`pnpm install`
-
-During development `pnpm run tauri dev`, launches the app and then supports hot reloading.    
-
-## E2E Tests
-
-Tests use [WebdriverIO](https://webdriver.io/) via `tauri-driver`. For more info, read [here](https://v2.tauri.app/develop/tests/webdriver/example/webdriverio/)
-
-### First-time setup
+First, compile the build tool:
 
 ```sh
-rustc build.rs && ./build
+rustc build.rs
 ```
 
 On Windows:
 
 ```powershell
-rustc build.rs; .\build.exe
+rustc build.rs
 ```
+
+Then use `./build` (or `.\build.exe` on Windows) with the commands below.
+
+```sh
+./build dev --setup
+```
+
+### Run the app
+
+```sh
+./build dev
+```
+
+Launches the app with hot reloading.
+
+## E2E Tests
+
+```sh
+./build e2e --setup
+```
+
+Tests use [WebdriverIO](https://webdriver.io/) via `tauri-driver`. For more info, read [here](https://v2.tauri.app/develop/tests/webdriver/example/webdriverio/)
 
 ### Running
 
 ```sh
-cd e2e
-pnpm test
+./build e2e
 ```
 
 The test suite builds the debug binary automatically before launching the app.
