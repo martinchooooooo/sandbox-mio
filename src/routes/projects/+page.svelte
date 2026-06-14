@@ -59,6 +59,7 @@
         unpause: "running",
         stop: "exited",
         die: "exited",
+        died: "exited",
         kill: "exited",
         pause: "paused",
         create: "created",
@@ -71,9 +72,9 @@
         const channel = new Channel<Record<string, unknown>>();
         channel.onmessage = async (ev) => {
             const type = String((ev.Type ?? ev.type) ?? "");
-            const action = String((ev.Action ?? ev.action) ?? "");
+            const action = String((ev.Action ?? ev.action ?? ev.Status ?? ev.status) ?? "");
             const attrs = (ev.Actor as any)?.Attributes ?? (ev.actor as any)?.attributes ?? {};
-            const name = String(attrs.name ?? ev.id ?? "");
+            const name = String(attrs.name ?? (ev.Name as any) ?? (ev.name as any) ?? ev.id ?? "");
             const time = new Date().toLocaleTimeString();
             events.push(`[${time}] ${type} ${action}${name ? ` — ${name}` : ""}`);
 

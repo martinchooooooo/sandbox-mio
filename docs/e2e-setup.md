@@ -8,31 +8,30 @@ E2E tests use WebdriverIO with `tauri-driver` and `msedgedriver`. The test suite
 
 E2E tests run against a dedicated Podman machine (`mio-tests`) separate from the development machine (`podman-machine-default`). Separate machines prevent test containers from appearing in the developer's working environment.
 
-The `mio-tests` machine is initialised and started automatically in `ensurePodmanMachine` inside `e2e/wdio.conf.js`. The `mio-tests` machine must be **rootful** — rootless mode has an incomplete Docker-compat API that causes event streaming and container lifecycle commands to fail.
-
-To convert an existing machine to rootful: `podman machine set --rootful <name>`
+The `mio-tests` machine is initialised and started automatically in `ensurePodmanMachine` inside `e2e/wdio.conf.js`. Rootless mode is sufficient — the app talks to Podman's native API through the `podman` CLI (not the Docker-compat API), so the previous rootful requirement no longer applies.
 
 ## Connecting the App to the Test Machine
 
-The Tauri app connects to Podman via a Windows named pipe. The named pipe path is derived from the `PODMAN_MACHINE` environment variable in `podman_pipe()` (`src-tauri/src/lib.rs`). The path format is `//./pipe/<PODMAN_MACHINE>`.
+The Tauri app drives Podman by invoking `podman --connection <name>`, where `<name>` is a Podman **system connection**. The connection is selected by the `PODMAN_CONNECTION` environment variable (`src-tauri/src/backends/`), defaulting to `podman-machine-default`. Podman performs the SSH transport to the connection's socket, so the same code path serves the local machine and any remote host.
 
-`e2e/wdio.conf.js` passes `PODMAN_MACHINE=podman-mio-tests` when spawning `tauri-driver` in `beforeSession`. `tauri-driver` propagates `PODMAN_MACHINE` to the Tauri app process. The named pipe for a machine named `mio-tests` is `podman-mio-tests` — note the `podman-` prefix, which differs from the default machine whose pipe is `podman-machine-default`.
+`e2e/wdio.conf.js` passes `PODMAN_CONNECTION=mio-tests` when spawning `tauri-driver` in `beforeSession`. `tauri-driver` propagates the variable to the Tauri app process. `podman machine init mio-tests` creates a connection named `mio-tests` automatically.
 
-To discover active Podman pipe names on the running system: `Get-ChildItem \\.\pipe\ | Where-Object { $_.Name -like "*podman*" }`
+To list available connections and their SSH URIs: `podman system connection list`
 
 ## Image Availability
 
-Container images must be pre-pulled onto the `mio-tests` machine before tests run. Use `podman machine ssh` to pull images rather than setting `DOCKER_HOST` — `podman pull` does not reliably respect `DOCKER_HOST` on Windows. Image pre-pulling is handled in `ensurePodmanMachine` (`e2e/wdio.conf.js`) and is idempotent.
+Container images must be pre-pulled onto the `mio-tests` machine before tests run. Use `podman machine ssh` to pull images rather than setting `DOCKER_HOST` — `podman pull` does not reliably respect `DOCKER_HOST` on Windows. Image pre-pulling is handled in `ensurePodmanMachine` (`e2e/wdio.conf.js`) and is idempotent. The backend also passes `--pull=missing` on create as a fallback.
 
 ## Container Stop Behaviour
 
-`bollard::stop_container` with default options sends SIGTERM then waits up to 10 seconds before sending SIGKILL. Shell containers running Alpine `/bin/sh` ignore SIGTERM, so container stops always take the full 10-second grace period. The `waitForExist` reverse check in `e2e/test/specs/project-start-stop.spec.js` uses a 20-second timeout to account for the 10-second grace period plus Docker event delivery time.
+`podman stop` sends SIGTERM then waits up to 10 seconds before sending SIGKILL. Shell containers running Alpine `/bin/sh` ignore SIGTERM, so container stops always take the full 10-second grace period. The `waitForExist` reverse check in `e2e/test/specs/project-start-stop.spec.js` uses a 20-second timeout to account for the 10-second grace period plus event delivery time.
+
 
 ## WebdriverIO Selector Notes
 
 Sub-element queries must be scoped off a parent element reference using `parentEl.$()`. Mixing selector strategies (e.g. partial text `*=` and button text `=`) in a single `$()` string is not supported by WebdriverIO. See `e2e/test/specs/project-start-stop.spec.js` for the scoped selector pattern.
 
-UI status indicator changes are driven by the Docker event stream (`listen_events` in `src-tauri/src/lib.rs`), not by the Tauri IPC command response. Assertions on UI state changes after container operations must use `waitForExist` or `waitForDisplayed` with explicit timeouts rather than synchronous assertions.
+UI status indicator changes are driven by the Podman event stream (`listen_events`, which tails `podman events --format json`), not by the Tauri IPC command response. Assertions on UI state changes after container operations must use `waitForExist` or `waitForDisplayed` with explicit timeouts rather than synchronous assertions.
 
 ---
 
@@ -40,10 +39,11 @@ UI status indicator changes are driven by the Docker event stream (`listen_event
 
 | Gotcha | Cause | Fix |
 |---|---|---|
-| `error launching hyper legacy client` | Named pipe path is wrong; Tauri app cannot open the pipe | Check active pipe names with `Get-ChildItem \\.\pipe\`. Verify `PODMAN_MACHINE` in `wdio.conf.js` matches the real pipe suffix |
-| `SendRequest` error from bollard | Pipe opens but HTTP request fails; usually caused by rootless mode | Convert the Podman machine to rootful: `podman machine set --rootful <name>` |
-| `404 no such image` on container create | Container image not present on the test machine | Pull image via `podman machine ssh <name> podman pull <image>` inside `ensurePodmanMachine` in `wdio.conf.js` |
+| `Error: unable to find connection named ...` | `PODMAN_CONNECTION` names a connection that does not exist | Run `podman system connection list`; ensure the machine was created (`podman machine init mio-tests` registers the `mio-tests` connection) |
+| Commands hang or time out | The connection's Podman socket is not listening on the target | Confirm the machine is running (`podman machine start <name>`). Verify the socket: `podman machine ssh <name> "test -S /run/user/1000/podman/podman.sock && echo OK || echo MISSING"`. If missing, the `podman system service` background job was killed on SSH teardown — the `bash -c '... & disown'` pattern in `ensurePodmanMachine` handles this. |
+| `404 no such image` on container create | Container image not present on the test machine | Pull image via `podman machine ssh <name> podman pull <image>` inside `ensurePodmanMachine` in `wdio.conf.js`; the backend also passes `--pull=missing` |
 | Element not found after create | `invoke` is async; UI has not updated before WebdriverIO selector runs | Use `waitForDisplayed` with an explicit timeout on the target element rather than `toBeDisplayed` |
 | Compound selector not found | WebdriverIO rejects mixed selector strategies in a single `$()` string | Get the row element with `$()`, then query children with `row.$()` |
-| Green dot never disappears after stop | Alpine `/bin/sh` containers ignore SIGTERM; `stop_container` takes the full 10-second grace period | Set `waitForExist` reverse timeout to at least 20 seconds |
+| Container exits immediately after start | Shell containers need a TTY to stay alive; without `--tty` `/bin/sh` exits as soon as it has no terminal | The backend passes `--tty` on create; verify with `podman inspect <name> --format '{{.Config.Tty}}'` |
+| Green dot never disappears after stop | Alpine `/bin/sh` containers ignore SIGTERM; `podman stop` takes the full 10-second grace period | Set `waitForExist` reverse timeout to at least 20 seconds |
 | Pull goes to wrong Podman machine via `DOCKER_HOST` | `podman pull` does not reliably honour `DOCKER_HOST` on Windows | Pull images using `podman machine ssh <name> podman pull <image>` instead |

@@ -15,7 +15,13 @@ pub struct Sandbox {
 /// Tauri state holds an `Arc<dyn SandboxBackend>` — commands receive it via [`tauri::State`]
 /// and delegate directly to these methods.
 ///
-/// To swap backends at startup, change `default_backend()` in `backends/mod.rs`.
+/// The only implementation is [`PodmanCliBackend`], which drives the `podman` CLI over a
+/// named **system connection**. The same code path serves the local Podman machine and any
+/// remote host: both are just connections, and `podman` itself performs the SSH transport.
+///
+/// To change the active connection at startup, set `PODMAN_CONNECTION` (see
+/// [`PodmanCliBackend`]). To swap the whole backend, change `default_backend()` in
+/// `backends/mod.rs`.
 #[async_trait::async_trait]
 pub trait SandboxBackend: Send + Sync {
     /// Pull the base image if absent, then create a stopped container named `name`.
@@ -28,49 +34,53 @@ pub trait SandboxBackend: Send + Sync {
     async fn stop(&self, name: &str) -> Result<(), String>;
     /// Stream container events to the frontend channel until the connection drops.
     async fn listen_events(&self, on_event: Channel<serde_json::Value>) -> Result<(), String>;
+
+    // --- Host (connection) management ---------------------------------------
+    // These operate on the Podman system-connection registry, independent of which
+    // connection the backend is currently bound to.
+
+    /// Return the names of all registered Podman system connections (local + remote).
+    async fn list_hosts(&self) -> Result<Vec<String>, String>;
+    /// Register an existing remote host as a Podman system connection.
+    ///
+    /// `ssh_url` is the full `ssh://user@host[:port]/run/user/<uid>/podman/podman.sock`.
+    /// `identity` is an optional path to the SSH private key.
+    async fn add_host(
+        &self,
+        name: &str,
+        ssh_url: &str,
+        identity: Option<&str>,
+    ) -> Result<(), String>;
+    /// Enable the rootless `podman.socket` and user lingering on an already-reachable host
+    /// over SSH. Exposed standalone (to prepare a host whose key is already authorized) and
+    /// reused as a step of [`SandboxBackend::provision_host`].
+    async fn prepare_host(&self, ssh_url: &str, identity_path: &str) -> Result<(), String>;
+    /// Guided "prepare + connect" flow for an external Linux server. Generates an SSH
+    /// key if absent, enables the remote `podman.socket` + user lingering, registers the
+    /// connection, and verifies it. Progress for each step is streamed to `on_progress`.
+    ///
+    /// Prerequisite: the public key must already be authorized on the remote
+    /// (`ssh-copy-id` is a one-time manual step — `ssh` reads passwords from the TTY,
+    /// not stdin, so it cannot be driven from here).
+    async fn provision_host(
+        &self,
+        name: &str,
+        ssh_url: &str,
+        identity_path: &str,
+        on_progress: Channel<serde_json::Value>,
+    ) -> Result<(), String>;
 }
 
-/// Internal helper trait shared by Podman backends. Not part of the public API.
+/// Drives Podman by invoking the `podman` CLI against a named **system connection**.
 ///
-/// New Podman backends should implement this too.
+/// Every lifecycle call runs `podman --connection <connection> <subcommand>`; `podman`
+/// performs the SSH transport, so the local machine and remote hosts are handled
+/// identically. JSON output is parsed with `--format json`.
 ///
-/// Env vars that control behaviour:
-/// - `PODMAN_MACHINE` — Podman machine name (default: `podman-machine-default`; E2E tests set this to `mio-tests`)
-/// - `PODMAN_PIPE` — overrides the full named-pipe path; skips `podman_pipe()` derivation entirely
-pub(crate) trait PodmanBackend {
-    /// Returns the Windows named-pipe path for the Podman socket.
-    /// Override entirely by setting `PODMAN_PIPE`; otherwise derived from `podman_machine()`.
-    fn podman_pipe(&self) -> String {
-        if let Ok(pipe) = std::env::var("PODMAN_PIPE") {
-            return pipe;
-        }
-        let mut machine = self.podman_machine();
-        // Only podman-machine-default seems to carry the extra prefix
-        if !machine.starts_with("podman-") {
-            machine = format!("podman-{machine}")
-        }
-        format!("//./pipe/{}", machine)
-    }
-
-    /// Returns the Podman machine name, defaulting to `podman-machine-default`.
-    /// Override by setting `PODMAN_MACHINE` (the E2E harness sets this to `mio-tests`).
-    fn podman_machine(&self) -> String {
-        std::env::var("PODMAN_MACHINE")
-            .unwrap_or_else(|_| "podman-machine-default".to_string())
-    }
-
-    /// Base image used when creating sandboxes. Override in a subtype to change the image.
-    fn base_image() -> &'static str { "alpine" }
-    /// Tag for `base_image`. Override in a subtype to pin a specific version.
-    fn base_image_version() -> &'static str { "latest" }
+/// `connection` is the Podman system-connection name. It defaults to
+/// `podman-machine-default` (the connection `podman machine init` creates for the local
+/// machine) and is overridden by the `PODMAN_CONNECTION` environment variable in
+/// `default_backend()`.
+pub(super) struct PodmanCliBackend {
+    pub connection: String,
 }
-
-/// Talks to Podman via the Docker-compatible API over a Windows named pipe.
-pub(super) struct PodmanBollardBackend;
-
-/// Drives Podman by SSHing into the Podman machine and running CLI commands.
-/// Use this when the named pipe is not accessible. Each operation spawns a subprocess.
-pub(super) struct PodmanShellBackend;
-
-impl PodmanBackend for PodmanBollardBackend {}
-impl PodmanBackend for PodmanShellBackend {}
