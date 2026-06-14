@@ -43,6 +43,7 @@ impl SandboxBackend for PodmanBollardBackend {
             result.map_err(|e| e.to_string())?;
         }
 
+        let image = format!("{}:{}", Self::base_image(), Self::base_image_version());
         let response = docker
             .create_container(
                 Some(CreateContainerOptions {
@@ -50,7 +51,7 @@ impl SandboxBackend for PodmanBollardBackend {
                     platform: None,
                 }),
                 Config {
-                    image: Some("alpine:latest"),
+                    image: Some(image.as_str()),
                     cmd: Some(vec!["/bin/sh"]),
                     tty: Some(true),
                     open_stdin: Some(true),
