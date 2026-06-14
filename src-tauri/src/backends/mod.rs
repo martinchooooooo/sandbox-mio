@@ -1,5 +1,4 @@
 pub mod types;
-mod internals;
 
 use bollard::container::{Config, CreateContainerOptions, ListContainersOptions, StartContainerOptions, StopContainerOptions};
 use bollard::image::CreateImageOptions;
@@ -8,16 +7,11 @@ use bollard::{Docker, API_DEFAULT_VERSION};
 use futures_util::StreamExt;
 use tauri::ipc::Channel;
 
-use internals::PodmanBackend;
-use types::{Sandbox, SandboxBackend};
+use types::{PodmanBackend, PodmanBollardBackend, PodmanShellBackend, Sandbox, SandboxBackend};
 
-// region: PodmanBollard
-
-/// Talks to Podman via the Docker-compatible API over a Windows named pipe.
-/// A new connection is opened on each call — there is no persistent client.
-pub struct PodmanBollardBackend;
-
-impl PodmanBackend for PodmanBollardBackend {}
+pub fn default_backend() -> std::sync::Arc<dyn SandboxBackend> {
+    std::sync::Arc::new(PodmanBollardBackend)
+}
 
 impl PodmanBollardBackend {
     fn client(&self) -> Result<Docker, String> {
@@ -133,15 +127,6 @@ impl SandboxBackend for PodmanBollardBackend {
     }
 }
 
-// endregion
-
-// region: PodmanShell
-
-/// Drives Podman by SSHing into the Podman machine and running CLI commands.
-/// Use this when the named pipe is not accessible. Each operation spawns a subprocess.
-pub struct PodmanShellBackend;
-
-impl PodmanBackend for PodmanShellBackend {}
 
 impl PodmanShellBackend {
     async fn ssh(&self, cmd: &str) -> Result<std::process::Output, String> {
@@ -224,5 +209,3 @@ impl SandboxBackend for PodmanShellBackend {
         Ok(())
     }
 }
-
-// endregion

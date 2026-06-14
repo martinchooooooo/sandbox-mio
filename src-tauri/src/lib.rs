@@ -5,7 +5,6 @@ use std::sync::Arc;
 use tauri::{ipc::Channel, State};
 
 use crate::backends::types::{Sandbox, SandboxBackend};
-use crate::backends::{PodmanBollardBackend, PodmanShellBackend};
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -45,10 +44,7 @@ pub fn run() {
     #[cfg(debug_assertions)]
     let devtools = tauri_plugin_devtools::Builder::default().init();
 
-    let mut backend: Arc<dyn SandboxBackend> = Arc::new(PodmanBollardBackend);
-    if false {
-        backend = Arc::new(PodmanShellBackend);
-    }
+    let backend = backends::default_backend();
 
     let mut builder = tauri::Builder::default();
 
