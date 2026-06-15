@@ -1,7 +1,7 @@
 <script lang="ts">
     import Robot from "$lib/Robot.svelte";
     import Button from "$lib/components/ui/button/button.svelte";
-    let robot: Robot;
+    let robot = $state<Robot>();
 </script>
 
 <main>

@@ -19,7 +19,7 @@
     let events = $state<string[]>([]);
     let showLog = $state(false);
     let listening = $state(false);
-    let logEl: HTMLDivElement;
+    let logEl = $state<HTMLDivElement>();
 
     async function loadProjects() {
         try {
