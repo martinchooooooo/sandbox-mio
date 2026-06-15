@@ -31,18 +31,47 @@ function sleepSync(ms) {
 }
 
 // Poll `podman --connection <name> info` until it succeeds — the tutorial's `podman --remote
-// info` verification step, and the same check the app makes in verify_host.
-function waitForConnection(connectionName, timeoutMs = 15000) {
+// info` verification step, and the same check the app makes in verify_host. Returns true on
+// success, false on timeout so the caller can re-launch the service and retry.
+function waitForConnection(connectionName, timeoutMs = 20000) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     if (spawnSync("podman", ["--connection", connectionName, "info"], { shell: true }).status === 0) {
-      return;
+      return true;
     }
     if (Date.now() >= deadline) {
-      throw new Error(`Podman connection "${connectionName}" did not become ready within ${timeoutMs}ms`);
+      return false;
     }
     sleepSync(500);
   }
+}
+
+// Launch the rootless Podman API service inside the machine. Idempotent: skips if the socket
+// already exists, so it is safe to call once per retry attempt.
+//
+// This podman machine is a minimal WSL image whose per-user systemd manager (user@1000.service)
+// fails to start, so the tutorial's `systemctl --user enable --now podman.socket` has no
+// session bus to reach. The rootless service is launched directly instead — the same socket,
+// without systemd. `setsid` is the crucial part: it runs the service in a new session so it
+// survives the SIGHUP that SSH sends when the channel closes (plain `& disown` is killed by
+// that SIGHUP here, leaving no socket). `podman machine ssh` allocates a pty and so blocks
+// until the timeout even after the service is backgrounded; the timeout then SIGTERMs the SSH
+// client, which closes the connection cleanly and leaves the detached service running. SIGKILL
+// must NOT be used here — it tears the pty down abruptly and takes the service with it.
+//
+// `shell` is intentionally false: with `shell: true` on Windows the command is routed through
+// cmd.exe, which treats `||`, `&`, `>`, `(` and `$(...)` as its own metacharacters and shreds
+// the script before it reaches SSH. Spawning `podman` directly passes the command as one argv
+// element straight to the remote shell, which is the bash that must interpret it.
+function startPodmanSocket(machineName) {
+  spawnSync(
+    "podman",
+    [
+      "machine", "ssh", machineName,
+      `test -S ${PODMAN_SOCKET} || { mkdir -p $(dirname ${PODMAN_SOCKET}) && setsid env XDG_RUNTIME_DIR=/run/user/1000 podman system service --time=0 </dev/null >/tmp/podman-svc.log 2>&1 & }`,
+    ],
+    { stdio: "inherit", shell: false, timeout: 7000, killSignal: "SIGTERM" }
+  );
 }
 
 function ensurePodmanMachine(machineName) {
@@ -70,33 +99,25 @@ function ensurePodmanMachine(machineName) {
     spawnSync("podman", ["machine", "start", machineName], { stdio: "inherit", shell: true });
   }
 
-  // Make the rootless Podman API socket available. This mirrors the tutorial's server-side
-  // setup for connecting to an external Linux host:
-  //   https://github.com/podman-container-tools/podman/blob/main/docs/tutorials/mac_win_client.md#creating-the-first-connection-to-an-external-linux-server
-  // On a normal host that is:
-  //   systemctl --user enable --now podman.socket   # start the API socket
-  //   sudo loginctl enable-linger $USER             # keep it up without a login session
-  // This podman machine is a minimal WSL image whose per-user systemd manager
-  // (user@1000.service) fails to start, so `systemctl --user` has no session bus to reach.
-  // We launch the rootless service directly instead — the same socket, without systemd.
+  // Make the rootless Podman API socket available. Mirrors the tutorial's server-side setup
+  // (https://github.com/podman-container-tools/podman/blob/main/docs/tutorials/mac_win_client.md#creating-the-first-connection-to-an-external-linux-server),
+  // which on a normal host is `systemctl --user enable --now podman.socket` plus
+  // `loginctl enable-linger`. The WSL machine has no working per-user systemd to supervise
+  // the service, so it sometimes fails to bind the socket on the first try; launch-and-poll
+  // is retried before giving up. Re-launching is a no-op once the socket exists.
   console.log(`Activating rootless Podman socket on "${machineName}"...`);
-  // `nohup ... &` is insufficient on WSL: the background process is still in the SSH
-  // session's process group and is killed when the connection closes. Wrapping in
-  // `bash -c '... & disown'` removes the job from the shell's job table so it survives
-  // the SSH teardown. The trailing `sleep 2` keeps the session open long enough for the
-  // service to create the socket before waitForConnection starts polling.
-  spawnSync(
-    "podman",
-    [
-      "machine", "ssh", machineName,
-      `bash -c 'test -S ${PODMAN_SOCKET} || { mkdir -p $(dirname ${PODMAN_SOCKET}) && XDG_RUNTIME_DIR=/run/user/1000 podman system service --time=0 &>/tmp/podman-svc.log & disown; sleep 2; }'`,
-    ],
-    { stdio: "inherit", shell: true }
-  );
-
-  // Verify the connection responds (tutorial: `podman --remote info`).
-  console.log(`Waiting for the "${machineName}" connection to respond...`);
-  waitForConnection(machineName);
+  const SOCKET_ATTEMPTS = 4;
+  let ready = false;
+  for (let attempt = 1; attempt <= SOCKET_ATTEMPTS && !ready; attempt++) {
+    startPodmanSocket(machineName);
+    ready = waitForConnection(machineName);
+    if (!ready) {
+      console.log(`  "${machineName}" not ready (attempt ${attempt}/${SOCKET_ATTEMPTS}), retrying...`);
+    }
+  }
+  if (!ready) {
+    throw new Error(`Podman connection "${machineName}" did not become ready after ${SOCKET_ATTEMPTS} attempts`);
+  }
 
   console.log(`Ensuring alpine:latest is available on "${machineName}"...`);
   spawnSync("podman", ["machine", "ssh", machineName, "podman pull docker.io/library/alpine:latest"], {
