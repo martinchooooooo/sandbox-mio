@@ -13,3 +13,7 @@ vite.config.ts.timestamp-*
 build.exe
 build.pdb
 tools/msedgedriver.exe
+
+# Stray Windows NUL device-files created by accidental `> NUL` redirects
+NUL
+**/NUL
