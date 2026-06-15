@@ -8,6 +8,9 @@ pub struct Sandbox {
     pub id: String,
     pub name: String,
     pub status: String,
+    /// Host directory bind-mounted into the container at `/root/work`. Derived from the
+    /// sandbox name, so it is set even for sandboxes listed (not created) this session.
+    pub workspace_path: String,
 }
 
 /// Primary interface for sandbox lifecycle management.
@@ -25,6 +28,11 @@ pub struct Sandbox {
 #[async_trait::async_trait]
 pub trait SandboxBackend: Send + Sync {
     /// Pull the base image if absent, then create a stopped container named `name`.
+    ///
+    /// Also ensures the sandbox's host workspace directory exists and bind-mounts it at
+    /// `/root/work`. The directory is `<Documents>/sandbox-mio/<name>` (override the root
+    /// with `SANDBOX_WORKSPACE_ROOT`). Phase 1 is local-only: the workspace lives on the
+    /// laptop and `podman` translates the Windows path into the machine VM.
     async fn create(&self, name: &str) -> Result<Sandbox, String>;
     /// Return all containers (running and stopped).
     async fn list(&self) -> Result<Vec<Sandbox>, String>;

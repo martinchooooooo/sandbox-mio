@@ -14,6 +14,46 @@ const BASE_IMAGE_VERSION: &str = "latest";
 /// The connection `podman machine init` creates for the local machine.
 const DEFAULT_CONNECTION: &str = "podman-machine-default";
 
+/// The container user's `~/work`, used as both the workspace bind-mount target and the
+/// `--workdir`. Spelled literally because `podman -v` rejects a bare `~` and does not expand
+/// `$HOME`, which is `/root` for the Alpine root user.
+const WORKSPACE_MOUNT: &str = "/root/work";
+
+/// Root holding every sandbox's workspace directory: `SANDBOX_WORKSPACE_ROOT` if set,
+/// else `<Documents>/sandbox-mio`. Documents is resolved at runtime because Windows may
+/// redirect it (e.g. under OneDrive).
+fn workspace_root() -> Result<std::path::PathBuf, String> {
+    if let Ok(root) = std::env::var("SANDBOX_WORKSPACE_ROOT") {
+        return Ok(std::path::PathBuf::from(root));
+    }
+    let documents = dirs::document_dir()
+        .ok_or_else(|| "could not resolve the Documents directory".to_string())?;
+    Ok(documents.join("sandbox-mio"))
+}
+
+/// Rejects names Podman would refuse. Also the path-safety gate for `workspace_path`: the
+/// name becomes a path segment, so barring `/` and `..` keeps the workspace inside its root.
+fn validate_name(name: &str) -> Result<(), String> {
+    let valid = name
+        .chars()
+        .enumerate()
+        .all(|(i, c)| c.is_ascii_alphanumeric() || (i > 0 && matches!(c, '_' | '.' | '-')));
+    if name.is_empty() || !valid {
+        return Err(format!(
+            "invalid sandbox name {name:?}: use letters, digits, '_', '.' or '-', starting with a letter or digit"
+        ));
+    }
+    Ok(())
+}
+
+/// The workspace directory for `name`, forward-slashed so `podman -v` accepts it as a Windows
+/// path and translates it into the machine VM. Local-only for now; the seam remote support
+/// will swap behind to return a remote path.
+fn workspace_path(name: &str) -> Result<String, String> {
+    let path = workspace_root()?.join(name);
+    Ok(path.to_string_lossy().replace('\\', "/"))
+}
+
 pub fn default_backend() -> std::sync::Arc<dyn SandboxBackend> {
     let connection =
         std::env::var("PODMAN_CONNECTION").unwrap_or_else(|_| DEFAULT_CONNECTION.to_string());
@@ -103,16 +143,27 @@ fn progress(channel: &Channel<serde_json::Value>, step: &str, status: &str, mess
 #[async_trait::async_trait]
 impl SandboxBackend for PodmanCliBackend {
     async fn create(&self, name: &str) -> Result<Sandbox, String> {
+        validate_name(name)?;
         let image = Self::image();
+        let workspace = workspace_path(name)?;
+        // Pre-created locally so an unwritable path fails here, not silently via podman's
+        // auto-creation of the mount source.
+        std::fs::create_dir_all(&workspace)
+            .map_err(|e| format!("failed to create workspace {workspace}: {e}"))?;
+        let volume = format!("{workspace}:{WORKSPACE_MOUNT}");
         // `--pull=missing` satisfies the trait's "pull if absent, then create" contract.
         let out = self
-            .podman(&["create", "--pull=missing", "--tty", "--name", name, &image, "/bin/sh"])
+            .podman(&[
+                "create", "--pull=missing", "--tty", "--volume", &volume, "--workdir",
+                WORKSPACE_MOUNT, "--name", name, &image, "/bin/sh",
+            ])
             .await?;
         let id = check(out)?.trim().to_string();
         Ok(Sandbox {
             id,
             name: name.to_string(),
             status: "created".to_string(),
+            workspace_path: workspace,
         })
     }
 
@@ -123,16 +174,23 @@ impl SandboxBackend for PodmanCliBackend {
             serde_json::from_str(&stdout).map_err(|e| e.to_string())?;
         Ok(containers
             .into_iter()
-            .map(|c| Sandbox {
-                id: c["Id"].as_str().unwrap_or_default().to_string(),
-                name: c["Names"]
+            .map(|c| {
+                let name = c["Names"]
                     .as_array()
                     .and_then(|a| a.first())
                     .and_then(|v| v.as_str())
                     .unwrap_or_default()
                     .trim_start_matches('/')
-                    .to_string(),
-                status: c["State"].as_str().unwrap_or_default().to_string(),
+                    .to_string();
+                // Derived from the name, not the container's mount JSON, so it is set even
+                // for sandboxes created outside this app.
+                let workspace_path = workspace_path(&name).unwrap_or_default();
+                Sandbox {
+                    id: c["Id"].as_str().unwrap_or_default().to_string(),
+                    status: c["State"].as_str().unwrap_or_default().to_string(),
+                    name,
+                    workspace_path,
+                }
             })
             .collect())
     }

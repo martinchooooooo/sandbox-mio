@@ -3,12 +3,14 @@
     import * as Field from "$lib/components/ui/field";
     import { Input } from "$lib/components/ui/input";
     import { Channel, invoke } from "@tauri-apps/api/core";
+    import { revealItemInDir } from "@tauri-apps/plugin-opener";
     import { onMount, tick } from "svelte";
 
     interface Project {
         id: string;
         name: string;
         status: string;
+        workspace_path: string;
     }
 
     let projectName = $state("");
@@ -28,10 +30,12 @@
     }
 
     async function createProject() {
-        if (!projectName.trim()) return;
+        const name = projectName.trim();
+        if (!name) return;
         try {
-            await invoke("create_sandbox", { name: projectName });
+            await invoke("create_sandbox", { name });
             projectName = "";
+            error = "";
             await loadProjects();
         } catch (e) {
             error = String(e);
@@ -49,6 +53,14 @@
     async function stop(project: Project) {
         try {
             await invoke("stop_sandbox", { name: project.name });
+        } catch (e) {
+            error = String(e);
+        }
+    }
+
+    async function openWorkspace(project: Project) {
+        try {
+            await revealItemInDir(project.workspace_path);
         } catch (e) {
             error = String(e);
         }
@@ -141,6 +153,7 @@
                             {project.name}
                         </span>
                         <span class="text-muted-foreground text-xs">{project.status}</span>
+                        <button onclick={() => openWorkspace(project)} title={project.workspace_path}>folder</button>
                         {#if project.status === "running"}
                             <button onclick={() => stop(project)}>stop</button>
                         {:else}

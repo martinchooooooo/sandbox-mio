@@ -3289,6 +3289,7 @@ name = "sandbox-mio"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "dirs",
  "serde",
  "serde_json",
  "tauri",

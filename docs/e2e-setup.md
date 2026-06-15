@@ -22,6 +22,12 @@ To list available connections and their SSH URIs: `podman system connection list
 
 Container images must be pre-pulled onto the `mio-tests` machine before tests run. Use `podman machine ssh` to pull images rather than setting `DOCKER_HOST` — `podman pull` does not reliably respect `DOCKER_HOST` on Windows. Image pre-pulling is handled in `ensurePodmanMachine` (`e2e/wdio.conf.js`) and is idempotent. The backend also passes `--pull=missing` on create as a fallback.
 
+## Workspace Directory Isolation
+
+Each sandbox gets a host directory bind-mounted into the container at `/root/work`. The root is selected by `SANDBOX_WORKSPACE_ROOT` (`src-tauri/src/backends/`), defaulting to `<Documents>/sandbox-mio`. `e2e/wdio.conf.js` sets `SANDBOX_WORKSPACE_ROOT` to `~/.sandbox-mio-e2e` so tests do not write into the developer's real Documents folder, and cleans that directory in `onPrepare` and `onComplete`. The root is kept under `$HOME` because the podman machine only auto-mounts the user profile into its VM, which the bind mount requires.
+
+`e2e/test/specs/workspace-mount.spec.js` asserts three layers: the host directory exists after create, the container reports a mount at `/root/work` (`podman inspect`), and a file written on the host is readable inside the running container (`podman exec`). The spec reads `SANDBOX_WORKSPACE_ROOT` from its own environment, which the WebdriverIO worker inherits from the launcher process.
+
 ## Container Stop Behaviour
 
 `podman stop` sends SIGTERM then waits up to 10 seconds before sending SIGKILL. Shell containers running Alpine `/bin/sh` ignore SIGTERM, so container stops always take the full 10-second grace period. The `waitForExist` reverse check in `e2e/test/specs/project-start-stop.spec.js` uses a 20-second timeout to account for the 10-second grace period plus event delivery time.
@@ -47,3 +53,5 @@ UI status indicator changes are driven by the Podman event stream (`listen_event
 | Container exits immediately after start | Shell containers need a TTY to stay alive; without `--tty` `/bin/sh` exits as soon as it has no terminal | The backend passes `--tty` on create; verify with `podman inspect <name> --format '{{.Config.Tty}}'` |
 | Green dot never disappears after stop | Alpine `/bin/sh` containers ignore SIGTERM; `podman stop` takes the full 10-second grace period | Set `waitForExist` reverse timeout to at least 20 seconds |
 | Pull goes to wrong Podman machine via `DOCKER_HOST` | `podman pull` does not reliably honour `DOCKER_HOST` on Windows | Pull images using `podman machine ssh <name> podman pull <image>` instead |
+| Workspace dir missing or mount round-trip fails | `SANDBOX_WORKSPACE_ROOT` points outside `$HOME`, so the podman machine does not mount it into the VM | Keep the root under the user profile; `wdio.conf.js` uses `~/.sandbox-mio-e2e` |
+| `SANDBOX_WORKSPACE_ROOT` undefined in the spec | Worker process did not inherit the launcher env | The variable is set at module scope in `wdio.conf.js` so forked workers inherit it; do not set it inside a hook only |

@@ -1,3 +1,4 @@
+import fs from "fs";
 import os from "os";
 import path from "path";
 import { spawn, spawnSync } from "child_process";
@@ -6,6 +7,14 @@ import { fileURLToPath } from "url";
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
 const TEST_MACHINE = "mio-tests";
+
+// Isolated workspace root for the app's per-sandbox directories. Set so specs know where the
+// app writes them and the developer's real Documents folder is left untouched. Kept under
+// $HOME because the podman machine only auto-mounts the user profile into its VM, which the
+// bind mount needs. Passed to the app process via SANDBOX_WORKSPACE_ROOT (read in
+// src-tauri/src/backends/) and read back by the workspace spec.
+const WORKSPACE_ROOT = path.join(os.homedir(), ".sandbox-mio-e2e");
+process.env.SANDBOX_WORKSPACE_ROOT = WORKSPACE_ROOT;
 
 let tauriDriver;
 let exit = false;
@@ -116,6 +125,7 @@ export const config = {
     timeout: 60000,
   },
   onPrepare: () => {
+    fs.rmSync(WORKSPACE_ROOT, { recursive: true, force: true });
     ensurePodmanMachine(TEST_MACHINE);
     spawnSync("pnpm", ["tauri", "build", "--debug", "--no-bundle"], {
       cwd: path.resolve(__dirname, ".."),
@@ -145,6 +155,9 @@ export const config = {
   },
   afterSession: () => {
     closeTauriDriver();
+  },
+  onComplete: () => {
+    fs.rmSync(WORKSPACE_ROOT, { recursive: true, force: true });
   },
 };
 
