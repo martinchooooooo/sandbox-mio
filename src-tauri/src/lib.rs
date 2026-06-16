@@ -1,4 +1,5 @@
 mod backends;
+mod sync;
 
 use std::sync::Arc;
 
@@ -9,6 +10,12 @@ use crate::backends::types::{Sandbox, SandboxBackend};
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
+}
+
+/// Smoke test for the bundled Mutagen sidecar: returns its version string.
+#[tauri::command]
+async fn mutagen_version(app: tauri::AppHandle) -> Result<String, String> {
+    sync::version(&app).await
 }
 
 #[tauri::command]
@@ -92,9 +99,11 @@ pub fn run() {
 
     builder
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_shell::init())
         .manage(backend)
         .invoke_handler(tauri::generate_handler![
             greet,
+            mutagen_version,
             create_sandbox,
             list_sandboxes,
             start_sandbox,

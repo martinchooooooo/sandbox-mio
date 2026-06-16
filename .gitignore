@@ -13,6 +13,10 @@ vite.config.ts.timestamp-*
 build.exe
 build.pdb
 tools/msedgedriver.exe
+tools/mutagen.exe
+tools/mutagen-agents.tar.gz
+
+/src-tauri/binaries/
 
 # Stray Windows NUL device-files created by accidental `> NUL` redirects
 NUL
