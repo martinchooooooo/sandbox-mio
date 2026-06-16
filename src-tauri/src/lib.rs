@@ -1,11 +1,13 @@
 mod backends;
+mod ssh;
 mod sync;
 
 use std::sync::Arc;
 
-use tauri::{ipc::Channel, State};
+use tauri::{ipc::Channel, Manager, State};
 
 use crate::backends::types::{Sandbox, SandboxBackend};
+use crate::sync::types::{SyncEngine, SyncStatus};
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -39,6 +41,11 @@ async fn start_sandbox(name: String, store: State<'_, Arc<dyn SandboxBackend>>) 
 #[tauri::command]
 async fn stop_sandbox(name: String, store: State<'_, Arc<dyn SandboxBackend>>) -> Result<(), String> {
     store.stop(&name).await
+}
+
+#[tauri::command]
+async fn destroy_sandbox(name: String, store: State<'_, Arc<dyn SandboxBackend>>) -> Result<(), String> {
+    store.destroy(&name).await
 }
 
 #[tauri::command]
@@ -83,6 +90,27 @@ async fn provision_sandbox_host(
         .await
 }
 
+/// Report the collapsed sync status for a sandbox's session. Backs the frontend status dot.
+#[tauri::command]
+async fn sync_status(
+    name: String,
+    engine: State<'_, Arc<dyn SyncEngine>>,
+) -> Result<SyncStatus, String> {
+    engine.status(&name).await
+}
+
+/// Turn syncing on for a sandbox — resumes the paused session, preserving conflict state.
+#[tauri::command]
+async fn enable_sync(name: String, engine: State<'_, Arc<dyn SyncEngine>>) -> Result<(), String> {
+    engine.resume(&name).await
+}
+
+/// Turn syncing off for a sandbox — pauses the session rather than tearing it down.
+#[tauri::command]
+async fn disable_sync(name: String, engine: State<'_, Arc<dyn SyncEngine>>) -> Result<(), String> {
+    engine.pause(&name).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[cfg(debug_assertions)]
@@ -97,10 +125,16 @@ pub fn run() {
         builder = builder.plugin(devtools);
     }
 
-    builder
+    let app = builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .manage(backend)
+        .setup(|app| {
+            // Constructed in setup because the sync engine needs the AppHandle to resolve the
+            // bundled Mutagen sidecar.
+            app.manage(sync::default_sync_engine(app.handle().clone()));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             greet,
             mutagen_version,
@@ -108,12 +142,25 @@ pub fn run() {
             list_sandboxes,
             start_sandbox,
             stop_sandbox,
+            destroy_sandbox,
             listen_events,
             list_sandbox_hosts,
             add_sandbox_host,
             prepare_sandbox_host,
-            provision_sandbox_host
+            provision_sandbox_host,
+            sync_status,
+            enable_sync,
+            disable_sync
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app_handle, event| {
+        // The app-private Mutagen daemon auto-starts on the first session command; stop it on
+        // exit so we never orphan it. Best-effort: a failed stop must not block shutdown.
+        if let tauri::RunEvent::Exit = event {
+            let engine = app_handle.state::<Arc<dyn SyncEngine>>();
+            tauri::async_runtime::block_on(engine.shutdown());
+        }
+    });
 }

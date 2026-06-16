@@ -8,9 +8,45 @@ pub struct Sandbox {
     pub id: String,
     pub name: String,
     pub status: String,
-    /// Host directory bind-mounted into the container at `/root/work`. Derived from the
-    /// sandbox name, so it is set even for sandboxes listed (not created) this session.
+    /// Laptop directory the user edits, and the sync engine's local end for a remote sandbox (for
+    /// a local one it is also the bind-mount source; see [`WorkspacePlan`]). Derived from the name,
+    /// so it is set even for sandboxes only listed this session.
     pub workspace_path: String,
+    /// True when the sandbox runs on a remote connection, so the frontend shows sync controls.
+    /// Live sync state is read separately via the `sync_status` command, keeping the backend
+    /// independent of the sync engine.
+    pub is_remote: bool,
+}
+
+/// Where a sandbox's workspace lives and how it reaches the laptop. Returned by `resolve_workspace`
+/// and consumed by `create`, keeping remote handling out of `create`'s body.
+pub(super) struct WorkspacePlan {
+    /// Path bind-mounted at `/root/work` on the host running the container. Equals `laptop_dir`
+    /// for a local sandbox; a remote-filesystem path for a remote one.
+    pub bind_mount_source: String,
+    /// Laptop directory the user edits, and the sync engine's local (alpha) endpoint.
+    pub laptop_dir: String,
+    pub strategy: SyncStrategy,
+}
+
+/// How a sandbox's bind-mount source is reconciled with its laptop directory.
+pub(super) enum SyncStrategy {
+    /// Local connection: the two paths are the same directory, so there is nothing to sync.
+    Local,
+    /// Remote connection: the bind-mount source is on the remote host and must be mirrored to the
+    /// laptop directory by the sync engine over the given SSH connection.
+    Remote(ConnectionInfo),
+}
+
+/// Live SSH endpoint of a Podman connection, read fresh from `podman system connection list`:
+/// a machine's port is assigned at boot, so a cached one goes stale after a restart.
+#[derive(Debug, Clone)]
+pub(super) struct ConnectionInfo {
+    pub host: String,
+    pub port: String,
+    pub user: String,
+    /// Private key Podman registered for the connection; reused for the remote `mkdir` and sync.
+    pub identity: String,
 }
 
 /// Primary interface for sandbox lifecycle management.
@@ -40,6 +76,9 @@ pub trait SandboxBackend: Send + Sync {
     async fn start(&self, name: &str) -> Result<(), String>;
     /// Stop a running container.
     async fn stop(&self, name: &str) -> Result<(), String>;
+    /// Remove the container, stopping it first if running. The sandbox's workspace directory is
+    /// never deleted: for a remote sandbox it may hold the only copy of unsynced work.
+    async fn destroy(&self, name: &str) -> Result<(), String>;
     /// Stream container events to the frontend channel until the connection drops.
     async fn listen_events(&self, on_event: Channel<serde_json::Value>) -> Result<(), String>;
 
