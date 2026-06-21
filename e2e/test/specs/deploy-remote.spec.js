@@ -2,6 +2,8 @@ import fs from "fs";
 import path from "path";
 import { spawnSync } from "child_process";
 
+import ProjectsPage from "../pageobjects/projects.page.js";
+
 const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
 const SOURCE_CONNECTION = "mio-tests";
 const REMOTE_CONNECTION = "mio-tests-remote";
@@ -35,29 +37,9 @@ function podmanOk(connection, args) {
   );
 }
 
-// Poll the deployment status text in the project row until it equals the target value.
-// The status span sits inside the row next to the host label: both share text-muted-foreground
-// and text-xs, but the status span does not have shrink-0.
-async function waitForSyncStatus(projectName, targetStatus, timeoutMs = 60000) {
-  await browser.waitUntil(
-    async () => {
-      const row = await $(`li*=${projectName}`);
-      const spans = await row.$$("span.text-muted-foreground.text-xs");
-      for (const span of spans) {
-        if ((await span.getText()) === targetStatus) return true;
-      }
-      return false;
-    },
-    {
-      timeout: timeoutMs,
-      interval: 2000,
-      timeoutMsg: `sync status did not reach "${targetStatus}" within ${timeoutMs}ms`,
-    }
-  );
-}
-
 describe("Deploy sandbox to remote machine", () => {
   const projectName = `e2e-deploy-${Date.now()}`;
+  const row = ProjectsPage.row(projectName);
   let workspaceDir;
 
   before(() => {
@@ -80,17 +62,8 @@ describe("Deploy sandbox to remote machine", () => {
   });
 
   it("creates a local project and writes a marker file to its workspace", async () => {
-    const projectsBtn = await $("a[href='/projects']");
-    await projectsBtn.waitForDisplayed({ timeout: 10000 });
-    await projectsBtn.click();
-
-    const nameInput = await $("input[placeholder='my-project']");
-    await nameInput.setValue(projectName);
-    const createBtn = await $("button=Create");
-    await createBtn.click();
-
-    const row = await $(`li*=${projectName}`);
-    await row.waitForDisplayed({ timeout: 10000 });
+    await ProjectsPage.open();
+    await ProjectsPage.createProject(projectName);
 
     fs.writeFileSync(path.join(workspaceDir, "marker.txt"), "laptop-marker");
     assert(
@@ -102,22 +75,7 @@ describe("Deploy sandbox to remote machine", () => {
   });
 
   it("deploys to mio-tests-remote and the remote container starts", async () => {
-    const row = await $(`li*=${projectName}`);
-
-    const deployBtn = await row.$("button=deploy");
-    await deployBtn.scrollIntoView();
-    await deployBtn.click();
-
-    const hostSelect = await row.$("select");
-    await hostSelect.waitForDisplayed({ timeout: 5000 });
-    await hostSelect.selectByVisibleText(REMOTE_CONNECTION);
-
-    const confirmBtn = await row.$("button=Deploy");
-    await confirmBtn.scrollIntoView();
-    await confirmBtn.click();
-
-    const undeployBtn = await row.$("button=undeploy");
-    await undeployBtn.waitForDisplayed({ timeout: 120000 });
+    await row.deployTo(REMOTE_CONNECTION);
 
     const state = podman(REMOTE_CONNECTION, [
       "inspect",
@@ -132,14 +90,14 @@ describe("Deploy sandbox to remote machine", () => {
     );
 
     assert(
-      await row.$(`span*=${REMOTE_CONNECTION}`).isDisplayed(),
+      await row.isHostShown(REMOTE_CONNECTION),
       `Deployed host label "${REMOTE_CONNECTION}" not visible in the project row. ` +
         "This can happen when sandbox_deployments did not return the session, or the frontend did not re-poll after deploy."
     );
   });
 
   it("marker file written on the laptop appears inside the remote container", async () => {
-    await waitForSyncStatus(projectName, "up-to-date");
+    await row.waitForSyncStatus("up-to-date");
 
     const content = podman(REMOTE_CONNECTION, [
       "exec",
@@ -185,29 +143,17 @@ describe("Deploy sandbox to remote machine", () => {
   });
 
   it("sync toggle off and on leaves the session alive", async () => {
-    const row = await $(`li*=${projectName}`);
-    const syncSwitch = await row.$("button[role='switch']");
-    await syncSwitch.scrollIntoView();
-
-    await syncSwitch.click(); // pause
-    await browser.pause(500);
-    await syncSwitch.click(); // resume
+    await row.toggleSyncOffOn();
 
     assert(
-      await row.$("button=undeploy").isDisplayed(),
+      await row.isDeployed(),
       "Undeploy button disappeared after toggling sync off then on. " +
         "This can happen when pause or resume returned an error and the frontend erroneously dropped the deployment state."
     );
   });
 
   it("undeploy removes the remote container and restarts the local one", async () => {
-    const row = await $(`li*=${projectName}`);
-    const undeployBtn = await row.$("button=undeploy");
-    await undeployBtn.scrollIntoView();
-    await undeployBtn.click();
-
-    const deployBtn = await row.$("button=deploy");
-    await deployBtn.waitForDisplayed({ timeout: 30000 });
+    await row.undeploy();
 
     assert(
       !podmanOk(REMOTE_CONNECTION, ["inspect", projectName]),
@@ -229,12 +175,7 @@ describe("Deploy sandbox to remote machine", () => {
   });
 
   it("destroy removes the local container but leaves the workspace directory", async () => {
-    const row = await $(`li*=${projectName}`);
-    const destroyBtn = await row.$("button=destroy");
-    await destroyBtn.scrollIntoView();
-    await destroyBtn.click();
-
-    await row.waitForExist({ timeout: 15000, reverse: true });
+    await row.destroy();
 
     assert(
       !podmanOk(SOURCE_CONNECTION, ["inspect", projectName]),

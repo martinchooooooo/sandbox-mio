@@ -2,6 +2,8 @@ import fs from "fs";
 import path from "path";
 import { spawnSync } from "child_process";
 
+import ProjectsPage from "../pageobjects/projects.page.js";
+
 // Mirrors the env wdio.conf.js passes to the app, so this spec resolves the same per-sandbox
 // directory the backend writes.
 const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
@@ -27,17 +29,8 @@ describe("Sandbox workspace directory", () => {
     const projectName = `e2e-ws-${Date.now()}`;
     const workspaceDir = path.join(WORKSPACE_ROOT, projectName);
 
-    const projectsBtn = await $("a[href='/projects']");
-    await projectsBtn.waitForDisplayed({ timeout: 10000 });
-    await projectsBtn.click();
-
-    const nameInput = await $("input[placeholder='my-project']");
-    await nameInput.setValue(projectName);
-    const createBtn = await $("button=Create");
-    await createBtn.click();
-
-    const row = await $(`li*=${projectName}`);
-    await row.waitForDisplayed({ timeout: 10000 });
+    await ProjectsPage.open();
+    const row = await ProjectsPage.createProject(projectName);
 
     // 1. The host workspace directory exists on the laptop.
     expect(fs.existsSync(workspaceDir)).toBe(true);
@@ -52,18 +45,14 @@ describe("Sandbox workspace directory", () => {
     const marker = "shared-from-host";
     fs.writeFileSync(path.join(workspaceDir, "marker.txt"), marker);
 
-    const startBtn = await row.$("button=start");
-    await startBtn.click();
-    const greenDot = await row.$("span.bg-green-500");
-    await greenDot.waitForExist({ timeout: 10000 });
+    await row.start();
+    await row.waitForRunning();
 
     const seenInContainer = podman(["exec", projectName, "cat", "/root/work/marker.txt"]);
     expect(seenInContainer).toContain(marker);
 
     // Leave the machine clean for the next spec (10s SIGTERM grace + event delivery).
-    const stopBtn = await row.$("button=stop");
-    await stopBtn.scrollIntoView();
-    await stopBtn.click();
-    await greenDot.waitForExist({ timeout: 20000, reverse: true });
+    await row.stop();
+    await row.waitForStopped();
   });
 });
