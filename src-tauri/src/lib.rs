@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tauri::{ipc::Channel, Manager, State};
 
 use crate::backends::types::{Sandbox, SandboxBackend};
-use crate::sync::types::{SyncEngine, SyncStatus};
+use crate::sync::types::{SessionInfo, SyncEngine, SyncStatus};
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -43,9 +43,88 @@ async fn stop_sandbox(name: String, store: State<'_, Arc<dyn SandboxBackend>>) -
     store.stop(&name).await
 }
 
+/// Deploy a local sandbox to `host` (a registered Podman connection): the backend migrates the
+/// container and returns the sync endpoints, then the engine seeds and starts the named session.
 #[tauri::command]
-async fn destroy_sandbox(name: String, store: State<'_, Arc<dyn SandboxBackend>>) -> Result<(), String> {
+async fn deploy_sandbox(
+    name: String,
+    host: String,
+    store: State<'_, Arc<dyn SandboxBackend>>,
+    engine: State<'_, Arc<dyn SyncEngine>>,
+) -> Result<(), String> {
+    let deployment = store.deploy(&name, &host).await?;
+    engine
+        .create(&name, &deployment.alpha, &deployment.beta)
+        .await
+}
+
+/// Reverse a deploy: flush remote edits back to the laptop, tear down the session and remote
+/// container, and restart the kept-stopped local container so the laptop bind-mount resumes.
+#[tauri::command]
+async fn undeploy_sandbox(
+    name: String,
+    store: State<'_, Arc<dyn SandboxBackend>>,
+    engine: State<'_, Arc<dyn SyncEngine>>,
+) -> Result<(), String> {
+    let session = engine
+        .sessions()
+        .await?
+        .into_iter()
+        .find(|s| s.name == name)
+        .ok_or_else(|| format!("sandbox {name:?} is not deployed"))?;
+    // Flush before removing so any pending remote writes land locally first.
+    // Remove the container before terminating the Mutagen session: terminating closes
+    // Mutagen's SSH connections to the machine, which can briefly make it unresponsive
+    // to a subsequent `podman rm` SSH connection. Keeping the session alive until after
+    // the container is gone avoids that window.
+    engine.flush(&name).await?;
+    store.remove_remote(&name, &session.host).await?;
+    engine.terminate(&name).await?;
+    store.start(&name).await
+}
+
+/// Remove a sandbox. For a deployed sandbox (a session named after it exists) this is a guard: it
+/// settles the session, refuses to discard unsynced remote work unless `force` is set, then tears
+/// down the session and remote container before removing the local one. A purely local sandbox
+/// (no session) is removed directly. The workspace directories are never deleted.
+#[tauri::command]
+async fn destroy_sandbox(
+    name: String,
+    force: bool,
+    store: State<'_, Arc<dyn SandboxBackend>>,
+    engine: State<'_, Arc<dyn SyncEngine>>,
+) -> Result<(), String> {
+    // Absent session ⇒ purely local sandbox ⇒ no sync guard and no remote container.
+    let session = engine
+        .sessions()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .find(|s| s.name == name);
+    let Some(session) = session else {
+        return store.destroy(&name).await;
+    };
+    // Settle pending propagation, then refuse to drop unsynced remote work unless forced. The
+    // frontend surfaces this as a confirmation and retries with `force` set.
+    let _ = engine.flush(&name).await;
+    if !force && engine.status(&name).await? != SyncStatus::UpToDate {
+        return Err(format!(
+            "sandbox {name:?} has unsynced changes on {}; confirm to destroy and discard them",
+            session.host
+        ));
+    }
+    engine.terminate(&name).await?;
+    store.remove_remote(&name, &session.host).await?;
     store.destroy(&name).await
+}
+
+/// Report active sync sessions as deployment state. The frontend overlays these onto the local
+/// sandbox list to mark which sandboxes are deployed, to which host, and their live sync status.
+#[tauri::command]
+async fn sandbox_deployments(
+    engine: State<'_, Arc<dyn SyncEngine>>,
+) -> Result<Vec<SessionInfo>, String> {
+    engine.sessions().await
 }
 
 #[tauri::command]
@@ -142,7 +221,10 @@ pub fn run() {
             list_sandboxes,
             start_sandbox,
             stop_sandbox,
+            deploy_sandbox,
+            undeploy_sandbox,
             destroy_sandbox,
+            sandbox_deployments,
             listen_events,
             list_sandbox_hosts,
             add_sandbox_host,

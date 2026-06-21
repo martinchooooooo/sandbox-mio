@@ -117,8 +117,8 @@ pub fn ensure_include() -> Result<(), String> {
 }
 
 /// Write or replace the managed `Host` alias and ensure the user's config includes the managed
-/// file. Safe to call on every session create — the block is keyed by alias, so re-writing the
-/// same alias just refreshes the live port and identity.
+/// file. Safe to call on every deploy — the block is keyed by alias, so re-writing the same alias
+/// just refreshes the live port and identity.
 pub fn write_alias(alias: &SshAlias) -> Result<(), String> {
     let path = managed_config()?;
     let existing = std::fs::read_to_string(&path).unwrap_or_default();

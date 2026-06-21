@@ -8,18 +8,29 @@ pub struct Sandbox {
     pub id: String,
     pub name: String,
     pub status: String,
-    /// Laptop directory the user edits, and the sync engine's local end for a remote sandbox (for
-    /// a local one it is also the bind-mount source; see [`WorkspacePlan`]). Derived from the name,
-    /// so it is set even for sandboxes only listed this session.
+    /// Laptop directory the user edits. For a sandbox later deployed to a remote host it is also
+    /// the sync engine's local (alpha) end; until then it is the bind-mount source (see
+    /// [`WorkspacePlan`]). Derived from the name, so it is set even for sandboxes only listed this
+    /// session.
     pub workspace_path: String,
-    /// True when the sandbox runs on a remote connection, so the frontend shows sync controls.
-    /// Live sync state is read separately via the `sync_status` command, keeping the backend
-    /// independent of the sync engine.
-    pub is_remote: bool,
+}
+
+/// The Mutagen endpoints a freshly deployed sandbox needs to seed its sync session. Returned by
+/// [`SandboxBackend::deploy`] and handed straight to `SyncEngine::create` by the `deploy_sandbox`
+/// command, so the backend never reaches into the sync engine.
+pub struct RemoteDeployment {
+    /// Local (alpha) end: the laptop directory, which at deploy time holds the only copy of the
+    /// workspace files (a `podman commit` does not capture the bind-mounted volume).
+    pub alpha: String,
+    /// Remote (beta) end as a Mutagen scp-style `alias:path` URL, where `alias` is the target
+    /// connection's OpenSSH alias and `path` is the empty remote workspace the initial reconcile
+    /// seeds from `alpha`.
+    pub beta: String,
 }
 
 /// Where a sandbox's workspace lives and how it reaches the laptop. Returned by `resolve_workspace`
-/// and consumed by `create`, keeping remote handling out of `create`'s body.
+/// and consumed by the deploy flow to compute the remote bind-mount source and SSH endpoint;
+/// `create` is always local and does not use it.
 pub(super) struct WorkspacePlan {
     /// Path bind-mounted at `/root/work` on the host running the container. Equals `laptop_dir`
     /// for a local sandbox; a remote-filesystem path for a remote one.
@@ -76,9 +87,24 @@ pub trait SandboxBackend: Send + Sync {
     async fn start(&self, name: &str) -> Result<(), String>;
     /// Stop a running container.
     async fn stop(&self, name: &str) -> Result<(), String>;
-    /// Remove the container, stopping it first if running. The sandbox's workspace directory is
-    /// never deleted: for a remote sandbox it may hold the only copy of unsynced work.
+    /// Remove the **local** container, stopping it first if running. The sandbox's workspace
+    /// directory is never deleted: for a deployed sandbox it may hold the only copy of unsynced
+    /// work. The `destroy_sandbox` command tears down the sync session and remote container first.
     async fn destroy(&self, name: &str) -> Result<(), String>;
+    /// Migrate `name`'s workload to `target_connection` by snapshot-and-push: stop and `podman
+    /// commit` the local container, `podman image scp` the image to the target, create and start a
+    /// remote container bind-mounting an empty remote workspace, and register the target's OpenSSH
+    /// alias. Returns the sync endpoints; the `deploy_sandbox` command seeds the session from them.
+    /// The local container is left stopped (not removed), so deploy is reversible. Runs Podman
+    /// against `target_connection`, not the backend's pinned `connection`.
+    async fn deploy(
+        &self,
+        name: &str,
+        target_connection: &str,
+    ) -> Result<RemoteDeployment, String>;
+    /// Remove the container named `name` on `connection` (the deploy target), used when destroying
+    /// or undeploying a deployed sandbox. The remote workspace directory is left intact.
+    async fn remove_remote(&self, name: &str, connection: &str) -> Result<(), String>;
     /// Stream container events to the frontend channel until the connection drops.
     async fn listen_events(&self, on_event: Channel<serde_json::Value>) -> Result<(), String>;
 

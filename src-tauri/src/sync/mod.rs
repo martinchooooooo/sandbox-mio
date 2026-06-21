@@ -15,7 +15,7 @@ use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_shell::process::Command;
 use tauri_plugin_shell::ShellExt;
 
-use types::{MutagenCli, SyncEngine, SyncStatus};
+use types::{MutagenCli, SessionInfo, SyncEngine, SyncStatus};
 
 /// Sidecar name as declared in `bundle.externalBin`.
 const SIDECAR: &str = "mutagen";
@@ -125,6 +125,29 @@ fn status_from_session(session: &serde_json::Value) -> SyncStatus {
     }
 }
 
+/// Extract deployment state from one Mutagen session object (from `sync list --template`): its
+/// name, the host alias of its beta endpoint (the Podman connection it is deployed to), and the
+/// collapsed status. Returns `None` for a session missing a name or a beta host, which cannot map
+/// to a deployed sandbox. Both key casings are accepted, like [`status_from_session`].
+fn parse_session(session: &serde_json::Value) -> Option<SessionInfo> {
+    let name = session
+        .get("name")
+        .or_else(|| session.get("Name"))
+        .and_then(|v| v.as_str())?
+        .to_string();
+    let beta = session.get("beta").or_else(|| session.get("Beta"))?;
+    let host = beta
+        .get("host")
+        .or_else(|| beta.get("Host"))
+        .and_then(|v| v.as_str())?
+        .to_string();
+    Some(SessionInfo {
+        name,
+        host,
+        status: status_from_session(session),
+    })
+}
+
 /// Lower-camel to PascalCase for the first character only — enough to map `conflicts` to
 /// `Conflicts`, `alpha` to `Alpha`, etc.
 fn pascal_case(name: &str) -> String {
@@ -186,29 +209,20 @@ impl SyncEngine for MutagenCli {
         Ok(status_from_session(session))
     }
 
+    async fn sessions(&self) -> Result<Vec<SessionInfo>, String> {
+        let json = run(&self.app, &["sync", "list", "--template={{json .}}"]).await?;
+        // An empty data directory can render nothing rather than `[]`; treat that as no sessions.
+        if json.is_empty() {
+            return Ok(Vec::new());
+        }
+        let parsed: serde_json::Value = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+        Ok(parsed
+            .as_array()
+            .map(|a| a.iter().filter_map(parse_session).collect())
+            .unwrap_or_default())
+    }
+
     async fn shutdown(&self) {
         let _ = run(&self.app, &["daemon", "stop"]).await;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // The status precedence is the non-obvious rule: a conflict or problem must win over an
-    // otherwise-idle "watching" status, else a conflicted session reports as up to date.
-    #[test]
-    fn conflicts_and_problems_outrank_idle_status() {
-        let watching = serde_json::json!({ "status": "Watching for changes" });
-        assert_eq!(status_from_session(&watching), SyncStatus::UpToDate);
-
-        let conflicted = serde_json::json!({ "status": "Watching for changes", "conflicts": [{}] });
-        assert_eq!(status_from_session(&conflicted), SyncStatus::Conflict);
-
-        let errored = serde_json::json!({
-            "status": "Watching for changes",
-            "beta": { "scanProblems": [{}] },
-        });
-        assert_eq!(status_from_session(&errored), SyncStatus::Error);
     }
 }

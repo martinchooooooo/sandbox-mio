@@ -2,15 +2,24 @@
     import Button from "$lib/components/ui/button/button.svelte";
     import * as Field from "$lib/components/ui/field";
     import { Input } from "$lib/components/ui/input";
+    import { Switch } from "$lib/components/ui/switch";
     import { Channel, invoke } from "@tauri-apps/api/core";
     import { revealItemInDir } from "@tauri-apps/plugin-opener";
-    import { onMount, tick } from "svelte";
+    import { onMount, onDestroy, tick } from "svelte";
 
     interface Project {
         id: string;
         name: string;
         status: string;
         workspace_path: string;
+    }
+
+    type SyncStatus = "syncing" | "up-to-date" | "conflict" | "error";
+
+    interface Deployment {
+        name: string;
+        host: string;
+        status: SyncStatus;
     }
 
     let projectName = $state("");
@@ -21,10 +30,102 @@
     let listening = $state(false);
     let logEl = $state<HTMLDivElement>();
 
+    // Deployment state, overlaid onto the local sandbox list by name. A sandbox with an entry is
+    // deployed to `deployments[name].host`; one without is local-only. Polled, since sync status
+    // changes outside our event stream.
+    let hosts = $state<string[]>([]);
+    let deployments = $state<Record<string, Deployment>>({});
+    // Which sandbox's host picker is open, and the host chosen in it.
+    let deployingFor = $state<string | null>(null);
+    let chosenHost = $state("");
+    // The toggle is optimistic: Mutagen does not surface a "paused" status, so on/off is tracked
+    // locally, defaulting on for a freshly listed deployment.
+    let syncOn = $state<Record<string, boolean>>({});
+
     async function loadProjects() {
         try {
             projects = await invoke<Project[]>("list_sandboxes");
         } catch (e) {
+            error = String(e);
+        }
+    }
+
+    async function loadDeployments() {
+        try {
+            const list = await invoke<Deployment[]>("sandbox_deployments");
+            deployments = Object.fromEntries(list.map((d) => [d.name, d]));
+            for (const d of list) syncOn[d.name] ??= true;
+        } catch (e) {
+            error = String(e);
+        }
+    }
+
+    async function loadHosts() {
+        try {
+            hosts = await invoke<string[]>("list_sandbox_hosts");
+        } catch (e) {
+            error = String(e);
+        }
+    }
+
+    function openPicker(project: Project) {
+        deployingFor = project.id;
+        chosenHost = hosts[0] ?? "";
+    }
+
+    async function deploy(project: Project) {
+        if (!chosenHost) return;
+        try {
+            error = "";
+            await invoke("deploy_sandbox", { name: project.name, host: chosenHost });
+            deployingFor = null;
+            await loadDeployments();
+        } catch (e) {
+            error = String(e);
+        }
+    }
+
+    async function undeploy(project: Project) {
+        try {
+            error = "";
+            await invoke("undeploy_sandbox", { name: project.name });
+            await Promise.all([loadDeployments(), loadProjects()]);
+        } catch (e) {
+            error = String(e);
+        }
+    }
+
+    async function destroyProject(project: Project) {
+        try {
+            error = "";
+            await invoke("destroy_sandbox", { name: project.name, force: false });
+        } catch (e) {
+            // The guard refuses to discard unsynced remote work; confirm, then force.
+            const message = String(e);
+            if (deployments[project.name] && message.includes("unsynced")) {
+                if (!confirm(`${message}\n\nDestroy anyway and discard them?`)) return;
+                try {
+                    await invoke("destroy_sandbox", { name: project.name, force: true });
+                } catch (e2) {
+                    error = String(e2);
+                    return;
+                }
+            } else {
+                error = message;
+                return;
+            }
+        }
+        await Promise.all([loadDeployments(), loadProjects()]);
+    }
+
+    async function toggleSync(project: Project, on: boolean) {
+        syncOn[project.name] = on;
+        try {
+            error = "";
+            await invoke(on ? "enable_sync" : "disable_sync", { name: project.name });
+            await loadDeployments();
+        } catch (e) {
+            syncOn[project.name] = !on; // revert the optimistic flip
             error = String(e);
         }
     }
@@ -110,10 +211,26 @@
         showLog = !showLog;
     }
 
+    // Colour for a deployed sandbox's sync-status dot, mirroring the container-state dot idiom.
+    function syncColor(status: SyncStatus): string {
+        return status === "up-to-date" ? "bg-green-500" :
+               status === "syncing"    ? "bg-blue-400" :
+               status === "conflict"   ? "bg-yellow-400" :
+               "bg-red-500";
+    }
+
+    let pollId: ReturnType<typeof setInterval>;
+
     onMount(() => {
         loadProjects();
+        loadHosts();
+        loadDeployments();
         startListening();
+        // Sync status drifts outside the container event stream, so poll the deployment overlay.
+        pollId = setInterval(loadDeployments, 3000);
     });
+
+    onDestroy(() => clearInterval(pollId));
 </script>
 
 <main class="p-6 pb-52">
@@ -121,7 +238,7 @@
 
     <h1 class="text-center text-3xl mb-8">Sandpits</h1>
 
-    <div class="max-w-sm mx-auto">
+    <div class="max-w-2xl mx-auto">
         <Field.Set class="w-full">
             <Field.Group>
                 <Field.Field>
@@ -141,23 +258,58 @@
         {#if projects.length > 0}
             <ul class="mt-6 space-y-2">
                 {#each projects as project (project.id)}
-                    <li class="flex justify-between items-center rounded-lg border p-3 text-sm">
-                        <span class="flex items-center gap-2 font-medium">
-                            <span class={[
-                                "inline-block h-2 w-2 rounded-full shrink-0",
-                                project.status === "running" ? "bg-green-500" :
-                                project.status === "paused"  ? "bg-yellow-400" :
-                                project.status === "exited"  ? "bg-red-400" :
-                                "bg-muted-foreground/40"
-                            ].join(" ")}></span>
-                            {project.name}
-                        </span>
-                        <span class="text-muted-foreground text-xs">{project.status}</span>
-                        <button onclick={() => openWorkspace(project)} title={project.workspace_path}>folder</button>
-                        {#if project.status === "running"}
-                            <button onclick={() => stop(project)}>stop</button>
-                        {:else}
-                            <button onclick={() => start(project)}>start</button>
+                    {@const deployment = deployments[project.name]}
+                    <li class="flex flex-col gap-2 rounded-lg border p-3 text-sm">
+                        <div class="flex justify-between items-center gap-2">
+                            <span class="flex items-center gap-2 font-medium min-w-0">
+                                <span class={[
+                                    "inline-block h-2 w-2 rounded-full shrink-0",
+                                    deployment ? syncColor(deployment.status) :
+                                    project.status === "running" ? "bg-green-500" :
+                                    project.status === "paused"  ? "bg-yellow-400" :
+                                    project.status === "exited"  ? "bg-red-400" :
+                                    "bg-muted-foreground/40"
+                                ].join(" ")}></span>
+                                <span class="truncate">{project.name}</span>
+                                {#if deployment}
+                                    <span class="text-muted-foreground text-xs shrink-0">→ {deployment.host}</span>
+                                {/if}
+                            </span>
+                            <span class="flex items-center gap-2 shrink-0">
+                                <span class="text-muted-foreground text-xs">{deployment ? deployment.status : project.status}</span>
+                                <button onclick={() => openWorkspace(project)} title={project.workspace_path}>folder</button>
+                                {#if deployment}
+                                    <label class="flex items-center gap-1 text-xs">
+                                        <Switch checked={syncOn[project.name] ?? true} onCheckedChange={(v) => toggleSync(project, v)} />
+                                        sync
+                                    </label>
+                                    <button onclick={() => undeploy(project)}>undeploy</button>
+                                {:else}
+                                    {#if project.status === "running"}
+                                        <button onclick={() => stop(project)}>stop</button>
+                                    {:else}
+                                        <button onclick={() => start(project)}>start</button>
+                                    {/if}
+                                    <button onclick={() => openPicker(project)}>deploy</button>
+                                {/if}
+                                <button onclick={() => destroyProject(project)} class="text-destructive">destroy</button>
+                            </span>
+                        </div>
+
+                        {#if deployingFor === project.id}
+                            <div class="flex items-center gap-2">
+                                {#if hosts.length === 0}
+                                    <span class="text-muted-foreground text-xs flex-1">No registered hosts — add one first.</span>
+                                {:else}
+                                    <select bind:value={chosenHost} class="flex-1 rounded border bg-background px-2 py-1 text-xs">
+                                        {#each hosts as host}
+                                            <option value={host}>{host}</option>
+                                        {/each}
+                                    </select>
+                                    <Button size="sm" onclick={() => deploy(project)}>Deploy</Button>
+                                {/if}
+                                <Button size="sm" variant="outline" onclick={() => (deployingFor = null)}>Cancel</Button>
+                            </div>
                         {/if}
                     </li>
                 {/each}

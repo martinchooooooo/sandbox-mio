@@ -12,7 +12,7 @@ Start here. `src-tauri/src/backends/types.rs` declares everything other files de
 
 ### 2. `src-tauri/src/lib.rs` — Tauri command handlers and backend wiring
 
-Read second. `src-tauri/src/lib.rs` is the crate entry point. `src-tauri/src/lib.rs` registers all Tauri commands (sandbox lifecycle plus host/connection management: `list_sandbox_hosts`, `add_sandbox_host`, `prepare_sandbox_host`, `provision_sandbox_host`) and wires the chosen `SandboxBackend` implementation into Tauri state as `Arc<dyn SandboxBackend>`. The `default_backend()` function in `src-tauri/src/backends/mod.rs` reads `PODMAN_CONNECTION` and constructs the backend at startup.
+Read second. `src-tauri/src/lib.rs` is the crate entry point. `src-tauri/src/lib.rs` registers all Tauri commands and wires the chosen `SandboxBackend` implementation into Tauri state as `Arc<dyn SandboxBackend>`, plus the `SyncEngine` (`Arc<dyn SyncEngine>`, see `src-tauri/src/sync/`) as separate state. Command groups: sandbox lifecycle (`create_sandbox`, `list_sandboxes`, `start_sandbox`, `stop_sandbox`, `destroy_sandbox`); host/connection management (`list_sandbox_hosts`, `add_sandbox_host`, `prepare_sandbox_host`, `provision_sandbox_host`); and remote deploy + sync (`deploy_sandbox`, `undeploy_sandbox`, `sandbox_deployments`, `sync_status`, `enable_sync`, `disable_sync`). Deploy-related commands hold both states and orchestrate across the backend (Podman) and the sync engine (Mutagen) so neither subsystem depends on the other. The `default_backend()` function in `src-tauri/src/backends/mod.rs` reads `PODMAN_CONNECTION` and constructs the backend at startup.
 
 ### 3. `src-tauri/src/backends/mod.rs` — Backend implementation
 

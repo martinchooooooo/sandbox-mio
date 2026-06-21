@@ -3,11 +3,12 @@ pub mod types;
 use std::process::{Output, Stdio};
 
 use tauri::ipc::Channel;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
 use types::{
-    ConnectionInfo, PodmanCliBackend, Sandbox, SandboxBackend, SyncStrategy, WorkspacePlan,
+    ConnectionInfo, PodmanCliBackend, RemoteDeployment, Sandbox, SandboxBackend, SyncStrategy,
+    WorkspacePlan,
 };
 
 const BASE_IMAGE: &str = "alpine";
@@ -91,20 +92,21 @@ fn ssh_target(ssh_url: &str) -> Result<(String, Option<String>), String> {
     Ok((authority.to_string(), None))
 }
 
-/// Pure core of [`PodmanCliBackend::remote_connection_info`]: `None` for a local machine entry,
-/// else its parsed SSH endpoint. Split out to test without shelling to `podman`.
+/// Pure core of [`PodmanCliBackend::remote_connection_info`]: the connection's parsed SSH
+/// endpoint, or `None` for a connection that is not reachable over SSH (e.g. a local unix-socket
+/// connection) and so cannot be a sync target. A Podman machine counts as a valid SSH endpoint:
+/// deploying to a machine other than the source is a supported scenario, since the container's
+/// workspace then lives in that machine's filesystem, distinct from the laptop directory. Split
+/// out to test without shelling to `podman`.
 fn parse_connection_entry(entry: &serde_json::Value) -> Result<Option<ConnectionInfo>, String> {
-    if entry["IsMachine"].as_bool().unwrap_or(false) {
-        return Ok(None);
-    }
     let uri = entry["URI"]
         .as_str()
         .ok_or_else(|| "connection entry has no URI".to_string())?;
     let identity = entry["Identity"].as_str().unwrap_or_default().to_string();
-    let authority = uri
-        .strip_prefix("ssh://")
-        .and_then(|r| r.split('/').next())
-        .ok_or_else(|| format!("connection URI is not an ssh:// URL: {uri}"))?;
+    let Some(authority) = uri.strip_prefix("ssh://").and_then(|r| r.split('/').next()) else {
+        // Not an ssh:// connection (e.g. a local unix socket): nothing for Mutagen to sync over.
+        return Ok(None);
+    };
     let (user, hostport) = authority
         .split_once('@')
         .ok_or_else(|| format!("connection URI has no user: {uri}"))?;
@@ -147,6 +149,14 @@ impl PodmanCliBackend {
             .map_err(|e| e.to_string())
     }
 
+    /// Runs `podman --connection <connection> <args>` against an arbitrary connection. Used by
+    /// deploy, whose target connection differs from the backend's pinned `self.connection`.
+    async fn podman_on(connection: &str, args: &[&str]) -> Result<Output, String> {
+        let mut full = vec!["--connection", connection];
+        full.extend_from_slice(args);
+        Self::podman_global(&full).await
+    }
+
     fn ensure_key(identity_path: &str) -> Result<(), String> {
         if std::path::Path::new(identity_path).exists() {
             return Ok(());
@@ -163,14 +173,9 @@ impl PodmanCliBackend {
         check(out).map(|_| ())
     }
 
-    /// Live SSH endpoint for connection `name`, or `None` for a local Podman machine, which
-    /// auto-mounts the profile and so needs no sync. Read fresh every call: a machine's SSH port
-    /// changes on each boot.
+    /// Live SSH endpoint for connection `name`, or `None` for a connection not reachable over SSH.
+    /// Read fresh every call: a machine's SSH port changes on each boot.
     async fn remote_connection_info(name: &str) -> Result<Option<ConnectionInfo>, String> {
-        // The default connection is always the local machine; skip the lookup.
-        if name == DEFAULT_CONNECTION {
-            return Ok(None);
-        }
         let out = Self::podman_global(&["system", "connection", "list", "--format", "json"]).await?;
         let entries: Vec<serde_json::Value> =
             serde_json::from_str(&check(out)?).map_err(|e| e.to_string())?;
@@ -188,6 +193,8 @@ impl PodmanCliBackend {
         let out = Command::new("ssh")
             .arg("-o")
             .arg("BatchMode=yes")
+            .arg("-o")
+            .arg("StrictHostKeyChecking=accept-new")
             .arg("-i")
             .arg(&info.identity)
             .arg("-p")
@@ -200,12 +207,13 @@ impl PodmanCliBackend {
         check(out).map(|_| ())
     }
 
-    /// Resolve where `name`'s workspace lives and how it reaches the laptop. The local
-    /// connection returns equal paths and a no-op strategy, preserving Phase 1 behaviour; a
-    /// remote connection returns a remote bind-mount source and the live SSH endpoint.
-    async fn resolve_workspace(&self, name: &str) -> Result<WorkspacePlan, String> {
+    /// Resolve where `name`'s workspace lives on `connection` and how it reaches the laptop. A
+    /// local connection returns equal paths and a no-op strategy; a remote connection returns a
+    /// remote bind-mount source and the live SSH endpoint. Called by `deploy` against the chosen
+    /// target connection to compute the remote endpoint; `create` is always local.
+    async fn resolve_workspace(name: &str, connection: &str) -> Result<WorkspacePlan, String> {
         let laptop_dir = workspace_path(name)?;
-        let Some(info) = Self::remote_connection_info(&self.connection).await? else {
+        let Some(info) = Self::remote_connection_info(connection).await? else {
             // Local machine: bind-mount source and laptop directory are the same, no sync.
             return Ok(WorkspacePlan {
                 bind_mount_source: laptop_dir.clone(),
@@ -241,28 +249,13 @@ impl SandboxBackend for PodmanCliBackend {
     async fn create(&self, name: &str) -> Result<Sandbox, String> {
         validate_name(name)?;
         let image = Self::image();
-        let plan = self.resolve_workspace(name).await?;
-        // Pre-created so an unwritable path fails here, not silently via podman's auto-creation
-        // of the mount source. Local creates on the laptop; remote creates over the connection,
-        // since the bind-mount source lives in the remote filesystem.
-        match &plan.strategy {
-            SyncStrategy::Local => std::fs::create_dir_all(&plan.bind_mount_source).map_err(|e| {
-                format!("failed to create workspace {}: {e}", plan.bind_mount_source)
-            })?,
-            SyncStrategy::Remote(info) => {
-                Self::remote_mkdir(info, &plan.bind_mount_source).await?;
-                // Register the host's OpenSSH alias so Mutagen can later reach it. Keyed to the
-                // connection, not the sandbox: sandboxes on one host share an alias.
-                crate::ssh::write_alias(&crate::ssh::types::SshAlias {
-                    alias: self.connection.clone(),
-                    host: info.host.clone(),
-                    port: info.port.clone(),
-                    user: info.user.clone(),
-                    identity: info.identity.clone(),
-                })?;
-            }
-        }
-        let volume = format!("{}:{WORKSPACE_MOUNT}", plan.bind_mount_source);
+        // Every sandbox is created locally; remoteness is a later deploy action, so the workspace
+        // is always a laptop directory bind-mounted directly. Pre-created so an unwritable path
+        // fails here, not silently via podman's auto-creation of the mount source.
+        let workspace = workspace_path(name)?;
+        std::fs::create_dir_all(&workspace)
+            .map_err(|e| format!("failed to create workspace {workspace}: {e}"))?;
+        let volume = format!("{workspace}:{WORKSPACE_MOUNT}");
         // `--pull=missing` satisfies the trait's "pull if absent, then create" contract.
         let out = self
             .podman(&[
@@ -275,8 +268,7 @@ impl SandboxBackend for PodmanCliBackend {
             id,
             name: name.to_string(),
             status: "created".to_string(),
-            workspace_path: plan.laptop_dir,
-            is_remote: matches!(plan.strategy, SyncStrategy::Remote(_)),
+            workspace_path: workspace,
         })
     }
 
@@ -285,8 +277,8 @@ impl SandboxBackend for PodmanCliBackend {
         let stdout = check(out)?;
         let containers: Vec<serde_json::Value> =
             serde_json::from_str(&stdout).map_err(|e| e.to_string())?;
-        // Remoteness is a property of the connection, shared by every container on it.
-        let is_remote = Self::remote_connection_info(&self.connection).await?.is_some();
+        // Deployment state is not derived here: a deployed sandbox is identified by its Mutagen
+        // session (see the deploy flow), keeping `list` independent of the sync engine.
         Ok(containers
             .into_iter()
             .map(|c| {
@@ -305,7 +297,6 @@ impl SandboxBackend for PodmanCliBackend {
                     status: c["State"].as_str().unwrap_or_default().to_string(),
                     name,
                     workspace_path,
-                    is_remote,
                 }
             })
             .collect())
@@ -322,6 +313,104 @@ impl SandboxBackend for PodmanCliBackend {
     async fn destroy(&self, name: &str) -> Result<(), String> {
         // `--force` stops a running container first. The workspace directory is left intact.
         check(self.podman(&["rm", "--force", name]).await?).map(|_| ())
+    }
+
+    async fn deploy(
+        &self,
+        name: &str,
+        target_connection: &str,
+    ) -> Result<RemoteDeployment, String> {
+        validate_name(name)?;
+        // Deploying onto the source connection would name-collide with the kept-stopped local
+        // container and is pointless; any other connection (including a different local machine)
+        // is a valid target.
+        if target_connection == self.connection {
+            return Err(format!(
+                "cannot deploy {name:?} onto its own connection {target_connection:?}; the local container already runs there"
+            ));
+        }
+        // Resolve the remote endpoint first, so an unreachable target fails before any mutation of
+        // the local container.
+        let plan = Self::resolve_workspace(name, target_connection).await?;
+        let SyncStrategy::Remote(info) = plan.strategy else {
+            return Err(format!(
+                "deploy target {target_connection:?} has no SSH endpoint to sync over"
+            ));
+        };
+
+        // Stop the local container so its filesystem is quiescent before the commit.
+        check(self.podman(&["stop", name]).await?)?;
+        // A commit captures installed packages and container state but not the bind-mounted
+        // workspace, so the remote workspace is seeded later by the sync session, not this image.
+        let image = format!("sandbox-mio/{name}:deployed");
+        check(self.podman(&["commit", name, &image]).await?)?;
+        // Transfer the image between the two connections. `podman image scp conn1::img conn2::`
+        // fails on Windows when both endpoints are Podman machine connections (it resolves the
+        // connection name as a DNS hostname). Piping save→load avoids the dual-remote form entirely.
+        let save_out = Command::new("podman")
+            .arg("--connection")
+            .arg(&self.connection)
+            .args(["save", &image])
+            .output()
+            .await
+            .map_err(|e| e.to_string())?;
+        if !save_out.status.success() {
+            return Err(format!(
+                "podman save: {}",
+                String::from_utf8_lossy(&save_out.stderr).trim()
+            ));
+        }
+        let mut load_child = Command::new("podman")
+            .arg("--connection")
+            .arg(target_connection)
+            .arg("load")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        if let Some(mut stdin) = load_child.stdin.take() {
+            stdin
+                .write_all(&save_out.stdout)
+                .await
+                .map_err(|e| e.to_string())?;
+            // Dropping stdin closes the pipe so `podman load` sees EOF.
+        }
+        check(load_child.wait_with_output().await.map_err(|e| e.to_string())?)?;
+
+        // Create the remote workspace empty (the commit carries no workspace files) and register
+        // the target host's OpenSSH alias so Mutagen can reach it over the right port and key.
+        Self::remote_mkdir(&info, &plan.bind_mount_source).await?;
+        crate::ssh::write_alias(&crate::ssh::types::SshAlias {
+            alias: target_connection.to_string(),
+            host: info.host.clone(),
+            port: info.port.clone(),
+            user: info.user.clone(),
+            identity: info.identity.clone(),
+        })?;
+
+        // Create and start the remote container on the target connection, not self.connection.
+        let volume = format!("{}:{WORKSPACE_MOUNT}", plan.bind_mount_source);
+        check(
+            Self::podman_on(
+                target_connection,
+                &[
+                    "create", "--tty", "--volume", &volume, "--workdir", WORKSPACE_MOUNT,
+                    "--name", name, &image, "/bin/sh",
+                ],
+            )
+            .await?,
+        )?;
+        check(Self::podman_on(target_connection, &["start", name]).await?)?;
+
+        Ok(RemoteDeployment {
+            alpha: plan.laptop_dir,
+            beta: format!("{target_connection}:{}", plan.bind_mount_source),
+        })
+    }
+
+    async fn remove_remote(&self, name: &str, connection: &str) -> Result<(), String> {
+        check(Self::podman_on(connection, &["rm", "--force", name]).await?).map(|_| ())
     }
 
     async fn listen_events(&self, on_event: Channel<serde_json::Value>) -> Result<(), String> {

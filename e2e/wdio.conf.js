@@ -4,11 +4,17 @@ import path from "path";
 import { spawn, spawnSync } from "child_process";
 import { fileURLToPath } from "url";
 
-import { provisionMachine } from "./lib/podman-machine.js";
+import { provisionMachine, stopMachine, removeMachine } from "./lib/podman-machine.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
 const TEST_MACHINE = "mio-tests";
+const REMOTE_MACHINE = "mio-tests-remote";
+
+// MIO_REMOTE_KEEP=1  — leave remote machine running after the suite (fast iteration)
+// MIO_REMOTE_REMOVE=1 — delete the remote machine's disk image entirely
+const MIO_REMOTE_KEEP = process.env.MIO_REMOTE_KEEP === "1";
+const MIO_REMOTE_REMOVE = process.env.MIO_REMOTE_REMOVE === "1";
 
 // Isolated workspace root for the app's per-sandbox directories. Set so specs know where the
 // app writes them and the developer's real Documents folder is left untouched. Kept under
@@ -40,11 +46,15 @@ export const config = {
   framework: "mocha",
   mochaOpts: {
     ui: "bdd",
-    timeout: 60000,
+    // 3 min: deploy involves an image save/load + Mutagen session startup, which can run long.
+    timeout: 180000,
   },
   onPrepare: () => {
     fs.rmSync(WORKSPACE_ROOT, { recursive: true, force: true });
     provisionMachine(TEST_MACHINE);
+    // The remote machine is used as a deploy target by deploy-remote.spec.js. Provisioned here
+    // so the spec can assume it is up; cleaned up in onComplete.
+    provisionMachine(REMOTE_MACHINE);
     spawnSync("pnpm", ["tauri", "build", "--debug", "--no-bundle"], {
       cwd: path.resolve(__dirname, ".."),
       stdio: "inherit",
@@ -76,6 +86,27 @@ export const config = {
   },
   onComplete: () => {
     fs.rmSync(WORKSPACE_ROOT, { recursive: true, force: true });
+
+    // Remove the SSH alias block the app's deploy flow wrote under ~/.ssh/sandbox-mio/config
+    // and strip the one-time Include line from ~/.ssh/config so the user's file is left clean.
+    const sshDir = path.join(os.homedir(), ".ssh");
+    const managedConfig = path.join(sshDir, "sandbox-mio", "config");
+    fs.rmSync(managedConfig, { force: true });
+    const userConfig = path.join(sshDir, "config");
+    if (fs.existsSync(userConfig)) {
+      const cleaned = fs
+        .readFileSync(userConfig, "utf8")
+        .split(/\r?\n/)
+        .filter((l) => l.trim() !== "Include sandbox-mio/config")
+        .join("\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trimEnd();
+      fs.writeFileSync(userConfig, cleaned ? `${cleaned}\n` : "", "ascii");
+    }
+
+    // Tear down the remote machine unless the caller wants to keep it.
+    if (MIO_REMOTE_REMOVE) removeMachine(REMOTE_MACHINE);
+    else if (!MIO_REMOTE_KEEP) stopMachine(REMOTE_MACHINE);
   },
 };
 

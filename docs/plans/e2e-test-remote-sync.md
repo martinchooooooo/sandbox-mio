@@ -1,0 +1,90 @@
+# E2E Test Plan: Remote Sync Deploy Flow
+
+This document is the build plan for an end-to-end test of the **deploy-to-remote** feature described in `docs/plans/remote-sync.md`. It also records a de-risking spike run on 2026-06-20 that found a blocker in the deploy feature itself. Read `docs/plans/remote-sync.md` first for the deploy model; this file covers only how to test it and what the spike uncovered.
+
+## Goal
+
+Prove the real deploy/destroy/undeploy lifecycle works through the actual application — the `deploy_sandbox`, `undeploy_sandbox`, `destroy_sandbox`, and `sandbox_deployments` Tauri commands over the **bundled** Mutagen sidecar — not through a side-channel Mutagen. The earlier POC in `e2e/test/remote-workspace-sync.test.js` ran a separately vendored Mutagen (`tools/mutagen.exe`) directly and therefore exercised none of the application's deploy code, only the sync transport in isolation.
+
+## Two Existing E2E Styles
+
+The repository already has two distinct end-to-end styles, and the new test belongs to the first:
+
+- **App-driven WebdriverIO specs** (`e2e/test/specs/*.spec.js`) drive the real Tauri application through `tauri-driver`, invoking the actual Tauri commands. The harness `e2e/wdio.conf.js` provisions one machine `mio-tests` and pins it through `PODMAN_CONNECTION`. Assertions read state back through the Podman CLI against the test connection (see `workspace-mount.spec.js`) plus filesystem checks on the laptop workspace directory.
+- **Standalone Mutagen POC** (`e2e/test/remote-workspace-sync.test.js`) ran a vendored Mutagen against a second machine `mio-tests-remote`. It proved the sync transport but tests no application code.
+
+## Chosen Approach
+
+Add a new app-driven WebdriverIO spec `e2e/test/specs/deploy-remote.spec.js` that uses a **second local Podman machine** (`mio-tests-remote`) as the deploy target — the "second local machine, no external host" path the deploy plan's Testing Strategy already calls out. The application registers the target automatically: `list_sandbox_hosts` returns every Podman system connection, so a second registered machine appears in the host picker with no extra wiring.
+
+### Harness Changes (`e2e/wdio.conf.js`)
+
+- `onPrepare`: also call `provisionMachine("mio-tests-remote")`. The helper in `e2e/lib/podman-machine.js` already accepts an arbitrary machine name, activates the rootless socket, and pre-pulls Alpine.
+- `onComplete`: stop or remove the remote machine, honouring `MIO_REMOTE_KEEP` / `MIO_REMOTE_REMOVE` the way the POC did, and clean the application-written `~/.ssh/sandbox-mio/config` plus the one-time `Include` line in `~/.ssh/config`.
+- **Stage the sidecar before building**: the e2e build is `pnpm tauri build --debug --no-bundle`, which does not fetch the Mutagen sidecar. Add a `fetch_mutagen` / `build dev --setup` step in `onPrepare` so `src-tauri/binaries/mutagen-<triple>` exists next to the debug executable; otherwise `deploy_sandbox` fails at `engine.create`.
+
+### Spec Scenario
+
+Mirror the structure of `e2e/test/specs/workspace-mount.spec.js` — drive the UI for actions, assert through `podman --connection` and `fs`:
+
+1. Create a local project on `mio-tests`; write a marker file into its laptop workspace directory.
+2. Click **deploy**, pick `mio-tests-remote` in the host select, triggering `deploy_sandbox`.
+3. Assert: a container named after the sandbox runs on `mio-tests-remote`; the marker file appears in the remote workspace (seeded by the initial Mutagen reconcile); the row renders the deployed host and a sync-status dot.
+4. Write a file inside the remote container; assert it lands in the laptop directory once `sandbox_deployments` polling reports up-to-date.
+5. Toggle **sync with remote** off and on (`disable_sync` / `enable_sync`); assert the session survives.
+6. **undeploy**; assert the remote container is gone, the local container is restarted, and remote edits were flushed to the laptop.
+7. **destroy**; assert both remote and local containers are removed and the workspace directories are left intact.
+
+### POC Disposition
+
+Keep `e2e/test/remote-workspace-sync.test.js` as a fast, application-independent sync-transport smoke test, but mark it clearly as a transport-level POC. The new spec is the real lifecycle coverage.
+
+## De-Risking Spike Results (2026-06-20)
+
+The application's exact deploy command sequence was run by hand against the two already-existing machines (`mio-tests` running, `mio-tests-remote` started for the spike). Three risks cleared; **one hard blocker found.** No SSH config or Mutagen state was mutated — the run failed before those steps — and the spike container, committed image, and temp directories were cleaned up.
+
+### Cleared
+
+- **Bundled Mutagen sidecar runs.** `src-tauri/binaries/mutagen-x86_64-pc-windows-msvc.exe version` reports `0.18.1`. This is the runtime smoke test that `docs/plans/remote-sync.md` records as never yet performed; it now passes.
+- **`podman image scp` subcommand exists** in the installed Podman (client v5.8.2).
+- **Rootless socket activation on the target** reproduces the `startPodmanSocket` logic in `e2e/lib/podman-machine.js`: a freshly started `mio-tests-remote` answers no Podman commands until the `setsid … podman system service` socket launcher runs, after which `podman --connection mio-tests-remote info` succeeds.
+
+### Blocker: machine-to-machine `image scp` fails
+
+The deploy feature's image-transfer step in `deploy` (`src-tauri/src/backends/mod.rs`, the `podman image scp <source>::<image> <target>::` call) fails when both endpoints are Podman-machine connections on Windows. Run verbatim, the connection-qualified transfer returns:
+
+```
+Error: failed to connect: dial tcp: lookup mio-tests: Temporary failure in name resolution  (exit 125)
+```
+
+Podman resolves the connection name `mio-tests` as a DNS hostname rather than as a registered connection, and the image never lands on the remote (`podman --connection mio-tests-remote images` shows it absent afterwards). This is the deploy feature's core transfer, and it does not work with the exact two-local-machine topology the test plan depends on. It matches the `NOTES.md` note that deploy "may not be entirely as expected."
+
+This is a **feature fix, not a test concern**, and must be resolved before the E2E spec is worth writing — a spec would simply go red at this step. The fix needs an implementation decision among at least: finding the correct dual-remote `image scp` invocation, switching the transport to a client-side `podman save | podman load` pipe between the two connections, or moving the image through a registry. The `image scp` help text documents only `podman image scp [options] IMAGE [HOST::]`, so the dual-connection form the application uses may be unsupported for two remote machines.
+
+### Secondary Risk: host-key on first deploy to a freshly-booted target
+
+`remote_mkdir` (`src-tauri/src/backends/mod.rs`) runs `ssh -o BatchMode=yes …` with no `accept-new`, and runs **before** `write_alias` (`src-tauri/src/ssh/mod.rs`), which is the call that sets `StrictHostKeyChecking accept-new`. `BatchMode=yes` fails closed on an unknown host key. A Podman machine's SSH port is assigned dynamically at boot, so after a restart the cached `known_hosts` entry can point at the wrong port and the host key looks unknown. In the spike the port happened to stay `58307` across a restart, so the failure did not fire — which makes this an **intermittent** failure: green on most runs, red whenever the port moves. The fix is to add `-o StrictHostKeyChecking=accept-new` to the `remote_mkdir` ssh invocation.
+
+## Revised Sequencing
+
+The spike inverted the original ordering. Implement in this order:
+
+1. **Fix the `image scp` transport.** Without it the deploy feature is non-functional and untestable. Investigate the correct invocation and a `save | load` fallback before anything else.
+2. **Fix the `remote_mkdir` host-key flag** (`-o StrictHostKeyChecking=accept-new`). Cheap, and it removes a source of test flakiness.
+3. **Build the spec and harness changes** above. By then the happy path is proven by hand, so the spec mainly guards against regression.
+
+## Environment Notes for the Next Session
+
+- Both machines already exist: `mio-tests` (source, `PODMAN_CONNECTION`) and `mio-tests-remote` (deploy target), each registered as a Podman system connection.
+- The bundled sidecar is already staged at `src-tauri/binaries/mutagen-x86_64-pc-windows-msvc.exe`; the debug app is built at `src-tauri/target/debug/sandbox-mio.exe`.
+- `mio-tests-remote` is left started after the spike but its rootless socket must be re-activated after any restart before `podman --connection mio-tests-remote …` works.
+
+## Common Gotchas
+
+| Gotcha | Cause | Fix |
+|---|---|---|
+| `podman image scp <conn>::<image> <conn>::` fails with "lookup &lt;name&gt;: Temporary failure in name resolution" | Podman treats a connection name as a DNS hostname in the dual-remote transfer; the two-Podman-machine form appears unsupported | Resolve the transport first: find the correct invocation, or pipe `podman save` to `podman load` between the two connections, or use a registry. Blocks the whole deploy feature |
+| Deploy fails at `remote_mkdir` intermittently on a freshly-booted target | `remote_mkdir`'s `ssh -o BatchMode=yes` lacks `accept-new` and runs before `write_alias`; a machine's dynamic SSH port can move on restart, making the host key look unknown | Add `-o StrictHostKeyChecking=accept-new` to the `remote_mkdir` ssh call in `src-tauri/src/backends/mod.rs` |
+| `deploy_sandbox` fails at `engine.create` in the e2e build | `pnpm tauri build --debug --no-bundle` does not fetch the Mutagen sidecar | Stage the sidecar in `onPrepare` (`fetch_mutagen` / `build dev --setup`) before building |
+| `podman --connection mio-tests-remote …` errors right after the machine starts | The rootless `podman system service` socket is not auto-started on the WSL image | Run the `startPodmanSocket` launcher from `e2e/lib/podman-machine.js` (via `provisionMachine`) before using the connection |
+| New spec races the deploy POC or pollutes the user's SSH config | Both write managed blocks to `~/.ssh/config` / `~/.ssh/sandbox-mio/config` | Clean the application-written alias and `Include` line in `onComplete`; keep the spec self-contained (`maxInstances: 1` already serialises specs) |
