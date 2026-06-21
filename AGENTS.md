@@ -11,6 +11,7 @@ Currently available components:
 - `input`
 - `label`
 - `separator`
+- `switch`
 
 ## Adding new components
 
