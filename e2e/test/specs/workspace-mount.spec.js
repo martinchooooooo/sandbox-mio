@@ -62,6 +62,7 @@ describe("Sandbox workspace directory", () => {
 
     // Leave the machine clean for the next spec (10s SIGTERM grace + event delivery).
     const stopBtn = await row.$("button=stop");
+    await stopBtn.scrollIntoView();
     await stopBtn.click();
     await greenDot.waitForExist({ timeout: 20000, reverse: true });
   });

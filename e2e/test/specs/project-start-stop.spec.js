@@ -16,8 +16,8 @@ describe("Project start and stop", () => {
     const row = await $(`li*=${projectName}`);
     await row.waitForDisplayed({ timeout: 10000 });
 
-    // Start the project
     const startBtn = await row.$("button=start");
+    await startBtn.scrollIntoView();
     await startBtn.click();
 
     // Wait for the green indicator (status update arrives via Docker event stream)
@@ -27,8 +27,8 @@ describe("Project start and stop", () => {
     const statusText = await row.$(".text-muted-foreground");
     await expect(statusText).toHaveText(/running/);
 
-    // Stop the project
     const stopBtn = await row.$("button=stop");
+    await stopBtn.scrollIntoView();
     await stopBtn.click();
 
     // Wait for indicator to leave green (allow up to 20s for 10s graceful stop + event delivery)
