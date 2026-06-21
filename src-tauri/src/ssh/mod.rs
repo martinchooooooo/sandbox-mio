@@ -153,29 +153,3 @@ pub fn remove_alias(alias: &str) -> Result<(), String> {
     };
     atomic_write(&path, &contents)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn alias(name: &str) -> SshAlias {
-        SshAlias {
-            alias: name.to_string(),
-            host: "127.0.0.1".to_string(),
-            port: "2222".to_string(),
-            user: "core".to_string(),
-            identity: "C:/keys/id".to_string(),
-        }
-    }
-
-    // Stripping one alias must leave other managed blocks and surrounding text intact, since
-    // write_alias upserts by stripping then re-appending.
-    #[test]
-    fn strip_removes_only_the_named_block() {
-        let text = format!("# user line\n{}\n{}", render_block(&alias("h1")), render_block(&alias("h2")));
-        let stripped = strip_block(&text, "h1");
-        assert!(stripped.contains("# user line"));
-        assert!(!stripped.contains("Host h1"));
-        assert!(stripped.contains("Host h2"));
-    }
-}

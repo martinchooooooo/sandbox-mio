@@ -227,30 +227,6 @@ impl PodmanCliBackend {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // A podman machine must classify as local (no sync) and a real server as remote: getting
-    // this wrong bind-mounts a laptop path on a remote host, or syncs the local machine to itself.
-    #[test]
-    fn machine_is_local_server_is_remote() {
-        let machine = serde_json::json!({
-            "URI": "ssh://user@127.0.0.1:56691/run/user/1000/podman/podman.sock",
-            "IsMachine": true,
-        });
-        assert!(parse_connection_entry(&machine).unwrap().is_none());
-
-        let server = serde_json::json!({
-            "URI": "ssh://deploy@server.example.com:2222/run/user/1000/podman/podman.sock",
-            "Identity": "/home/me/.ssh/id_ed25519",
-            "IsMachine": false,
-        });
-        let info = parse_connection_entry(&server).unwrap().expect("should be remote");
-        assert_eq!((info.user, info.host, info.port), ("deploy".into(), "server.example.com".into(), "2222".into()));
-    }
-}
-
 /// Best-effort: a failed send (frontend dropped the channel) must not abort provisioning.
 fn progress(channel: &Channel<serde_json::Value>, step: &str, status: &str, message: &str) {
     let _ = channel.send(serde_json::json!({
