@@ -29,11 +29,11 @@ Not acceptable: a code block showing the function body.
 **No demonstratives or vague pronouns.** Replace "this", "that", "the above", "it", "the pull",
 "the machine", "the setting" with the explicit noun the reader needs to search for.
 
-❌ "When the problem mentioned above occurs, delete the data."
-✅ "When data integrity errors occur, delete the data."
+DONT: "When the problem mentioned above occurs, delete the data."
+INSTEAD: "When data integrity errors occur, delete the data."
 
-❌ "The pull is done in `ensurePodmanMachine` and is idempotent."
-✅ "Image pre-pulling is handled in `ensurePodmanMachine` (`e2e/wdio.conf.js`) and is idempotent."
+DON'T: "The pull is done in `ensurePodmanMachine` and is idempotent."
+INSTEAD "Image pre-pulling is handled in `ensurePodmanMachine` (`e2e/wdio.conf.js`) and is idempotent."
 
 **Be concise.** One sentence per idea. No filler phrases. No restating what was just said.
 
