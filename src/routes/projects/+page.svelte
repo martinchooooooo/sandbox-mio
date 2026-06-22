@@ -7,6 +7,7 @@
     import { revealItemInDir } from "@tauri-apps/plugin-opener";
     import { onMount, onDestroy, tick } from "svelte";
     import { parseError } from "$lib/errors";
+    import { m } from "$lib/paraglide/messages.js";
 
     interface Project {
         id: string;
@@ -212,6 +213,21 @@
         showLog = !showLog;
     }
 
+    function translateStatus(status: string): string {
+        const map: Record<string, () => string> = {
+            running:     m.status_running,
+            paused:      m.status_paused,
+            exited:      m.status_exited,
+            created:     m.status_created,
+            removed:     m.status_removed,
+            syncing:     m.status_syncing,
+            "up-to-date": m.status_up_to_date,
+            conflict:    m.status_conflict,
+            error:       m.status_error,
+        };
+        return map[status]?.() ?? status;
+    }
+
     // Colour for a deployed sandbox's sync-status dot, mirroring the container-state dot idiom.
     function syncColor(status: SyncStatus): string {
         return status === "up-to-date" ? "bg-green-500" :
@@ -235,18 +251,18 @@
 </script>
 
 <main class="p-6 pb-52">
-    <Button href="/" variant="outline" class="mb-6">← Back</Button>
+    <Button href="/" variant="outline" class="mb-6">{m.back()}</Button>
 
-    <h1 class="text-center text-3xl mb-8">Sandpits</h1>
+    <h1 class="text-center text-3xl mb-8">{m.projects_title()}</h1>
 
     <div class="max-w-2xl mx-auto">
         <Field.Set class="w-full">
             <Field.Group>
                 <Field.Field>
-                    <Field.Label>Project name</Field.Label>
+                    <Field.Label>{m.projects_name_label()}</Field.Label>
                     <div class="flex w-full gap-2">
-                        <Input placeholder="my-project" bind:value={projectName} />
-                        <Button onclick={createProject}>Create</Button>
+                        <Input placeholder={m.projects_name_placeholder()} bind:value={projectName} />
+                        <Button onclick={createProject}>{m.projects_create()}</Button>
                     </div>
                 </Field.Field>
             </Field.Group>
@@ -277,39 +293,39 @@
                                 {/if}
                             </span>
                             <span class="flex items-center gap-2 shrink-0">
-                                <span class="text-muted-foreground text-xs">{deployment ? deployment.status : project.status}</span>
-                                <button onclick={() => openWorkspace(project)} title={project.workspace_path}>folder</button>
+                                <span class="text-muted-foreground text-xs">{translateStatus(deployment ? deployment.status : project.status)}</span>
+                                <button onclick={() => openWorkspace(project)} title={project.workspace_path}>{m.projects_folder()}</button>
                                 {#if deployment}
                                     <label class="flex items-center gap-1 text-xs">
                                         <Switch checked={syncOn[project.name] ?? true} onCheckedChange={(v) => toggleSync(project, v)} />
-                                        sync
+                                        {m.projects_sync()}
                                     </label>
-                                    <button onclick={() => undeploy(project)}>undeploy</button>
+                                    <button onclick={() => undeploy(project)}>{m.projects_undeploy()}</button>
                                 {:else}
                                     {#if project.status === "running"}
-                                        <button onclick={() => stop(project)}>stop</button>
+                                        <button onclick={() => stop(project)}>{m.projects_stop()}</button>
                                     {:else}
-                                        <button onclick={() => start(project)}>start</button>
+                                        <button onclick={() => start(project)}>{m.projects_start()}</button>
                                     {/if}
-                                    <button onclick={() => openPicker(project)}>deploy</button>
+                                    <button onclick={() => openPicker(project)}>{m.projects_deploy()}</button>
                                 {/if}
-                                <button onclick={() => destroyProject(project)} class="text-destructive">destroy</button>
+                                <button onclick={() => destroyProject(project)} class="text-destructive">{m.projects_destroy()}</button>
                             </span>
                         </div>
 
                         {#if deployingFor === project.id}
                             <div class="flex items-center gap-2">
                                 {#if hosts.length === 0}
-                                    <span class="text-muted-foreground text-xs flex-1">No registered hosts — add one first.</span>
+                                    <span class="text-muted-foreground text-xs flex-1">{m.projects_no_hosts()}</span>
                                 {:else}
                                     <select bind:value={chosenHost} class="flex-1 rounded border bg-background px-2 py-1 text-xs">
                                         {#each hosts as host}
                                             <option value={host}>{host}</option>
                                         {/each}
                                     </select>
-                                    <Button size="sm" onclick={() => deploy(project)}>Deploy</Button>
+                                    <Button size="sm" onclick={() => deploy(project)}>{m.projects_deploy_confirm()}</Button>
                                 {/if}
-                                <Button size="sm" variant="outline" onclick={() => (deployingFor = null)}>Cancel</Button>
+                                <Button size="sm" variant="outline" onclick={() => (deployingFor = null)}>{m.projects_cancel()}</Button>
                             </div>
                         {/if}
                     </li>
@@ -324,16 +340,16 @@
         <div class="h-44 bg-background border-t flex flex-col">
             <div class="flex items-center justify-between px-4 py-1.5 border-b text-xs text-muted-foreground shrink-0">
                 <span class="font-medium">
-                    Event Log
+                    {m.event_log()}
                     <span class={listening ? "text-green-500" : "text-muted-foreground"}>
-                        {listening ? "● live" : "○ stopped"}
+                        {listening ? m.event_log_live() : m.event_log_stopped()}
                     </span>
                 </span>
                 <button onclick={() => (showLog = false)} class="hover:text-foreground leading-none">✕</button>
             </div>
             <div bind:this={logEl} class="flex-1 overflow-y-auto px-4 py-2 font-mono text-xs space-y-0.5">
                 {#if events.length === 0}
-                    <p class="text-muted-foreground">Waiting for events…</p>
+                    <p class="text-muted-foreground">{m.event_log_waiting()}</p>
                 {:else}
                     {#each events as line}
                         <div>{line}</div>
@@ -345,7 +361,7 @@
 
     <div class="flex justify-end px-4 py-2 bg-background border-t">
         <Button variant="outline" size="sm" onclick={toggleLog}>
-            {showLog ? "Hide" : "Event Log"}
+            {showLog ? m.event_log_hide() : m.event_log()}
         </Button>
     </div>
 </div>

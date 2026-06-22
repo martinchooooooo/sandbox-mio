@@ -2,6 +2,7 @@
     import Button from "$lib/components/ui/button/button.svelte";
     import * as Field from "$lib/components/ui/field";
     import { Input } from "$lib/components/ui/input";
+    import { m } from "$lib/paraglide/messages.js";
 
     import { invoke } from "@tauri-apps/api/core";
 
@@ -16,25 +17,25 @@
 </script>
 
 <main class="m-0 pt-[10vh] flex flex-col items-center justify-center text-center">
-    <h1 class="text-3xl">Welcome to Sandbox-mio</h1>
+    <h1 class="text-3xl">{m.home_title()}</h1>
 
     <nav class="flex gap-3 mt-4">
-        <Button href="/intro" variant="outline">Intro</Button>
-        <Button href="/projects" variant="outline">Projects</Button>
+        <Button href="/intro" variant="outline">{m.nav_intro()}</Button>
+        <Button href="/projects" variant="outline">{m.nav_projects()}</Button>
     </nav>
 
     <form class="flex flex-col items-center w-full mt-8" onsubmit={greet}>
         <Field.Set class="w-full max-w-sm">
             <Field.Group>
                 <Field.Field>
-                    <Field.Label>Enter a name</Field.Label>
+                    <Field.Label>{m.greet_label()}</Field.Label>
                     <div class="flex w-full gap-2">
                         <Input
                             id="greet-input"
-                            placeholder="Enter a name..."
+                            placeholder={m.greet_placeholder()}
                             bind:value={name}
                         />
-                        <Button type="submit">Greet</Button>
+                        <Button type="submit">{m.greet_button()}</Button>
                     </div>
                 </Field.Field>
             </Field.Group>

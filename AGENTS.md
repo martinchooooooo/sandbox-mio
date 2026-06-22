@@ -21,6 +21,18 @@ If a shadcn-svelte component would be a good fit but isn't in `src/lib/component
 pnpm dlx shadcn-svelte@latest add <component-name>
 ```
 
+# Translations (i18n)
+
+The app uses [Paraglide JS](https://paraglidejs.com/sveltekit) for internationalisation. Translation strings live in `messages/` as JSON files named by locale (e.g. `messages/en.json`, `messages/de.json`, `messages/ru.json`). 
+
+## Adding or editing a translation key
+
+Add the new key to `messages/en.json` first, then mirror the key in every other locale file (`messages/de.json`, `messages/ru.json`, etc.). Import the generated `m` object from `$lib/paraglide/messages.js` and call the key as a function (e.g. `m.my_key()`).
+
+## Translating dynamic status strings
+
+Container and sync status strings returned by the Rust backend are mapped to translation keys inside `translateStatus()` in `src/routes/projects/+page.svelte`. When the backend introduces a new status value, add a corresponding `status_<value>` key to all locale files and add an entry to the `map` object inside `translateStatus()`.
+
 # Error Handling
 
 ## Rust (backend)
