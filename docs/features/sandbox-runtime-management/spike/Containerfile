@@ -1,0 +1,20 @@
+FROM docker.io/library/alpine:3.24
+
+# Nix substrate + git (flox manages .flox/ with git internally)
+RUN apk add --no-cache nix git
+
+# Nix config: flakes, no build-sandbox (rootless container cannot nest userns),
+# and the flox binary cache with the CORRECT public key.
+RUN printf '%s\n' \
+  'experimental-features = nix-command flakes' \
+  'sandbox = false' \
+  'substituters = https://cache.flox.dev https://cache.nixos.org' \
+  'trusted-public-keys = flox-cache-public-1:7F4OyH7ZCnFhcze3fJdfyXYLQw/aV7GEed86nQ7IsOs= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=' \
+  > /etc/nix/nix.conf
+
+# Bake the flox CLI into /nix/store so `create` pays no download.
+RUN nix profile add github:flox/flox \
+ && ln -sf /root/.nix-profile/bin/flox /usr/local/bin/flox
+
+ENV FLOX_DISABLE_METRICS=true
+CMD ["/bin/sh"]
