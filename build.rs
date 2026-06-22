@@ -1,9 +1,20 @@
-use std::{env, fs, path::PathBuf, process::Command};
+use std::{env, fs, path::PathBuf, process::Command, sync::atomic::{AtomicU32, Ordering}};
 
 /// Mutagen release staged as the Tauri sidecar. Pinned to match the e2e suite's Mutagen.
 const MUTAGEN_VERSION: &str = "v0.18.1";
 
+static CHILD_PID: AtomicU32 = AtomicU32::new(0);
+
+fn e2e_dir() -> PathBuf { PathBuf::from(env::current_dir().unwrap()).join("e2e") }
+fn tools_dir() -> PathBuf { PathBuf::from(env::current_dir().unwrap()).join("tools") }
+fn binaries_dir() -> PathBuf { root_dir().join("src-tauri").join("binaries") }
+fn root_dir() -> PathBuf { env::current_dir().unwrap() }
+
+
 fn main() {
+    #[cfg(windows)]
+    setup_ctrl_handler();
+
     let args: Vec<String> = env::args().collect();
 
     match args.get(1).map(String::as_str) {
@@ -103,14 +114,37 @@ fn run(dir: PathBuf, cmd: &str, args: &[&str]) {
         c.args(args);
         c
     };
-    let status = command
+    let mut child = command
         .current_dir(dir)
-        .status()
+        .spawn()
         .unwrap_or_else(|e| panic!("failed to run `{}`: {}", cmd, e));
+    CHILD_PID.store(child.id(), Ordering::Relaxed);
+    let status = child
+        .wait()
+        .unwrap_or_else(|e| panic!("failed to wait for `{}`: {}", cmd, e));
+    CHILD_PID.store(0, Ordering::Relaxed);
     assert!(status.success(), "`{}` exited with {}", cmd, status);
 }
 
-fn e2e_dir() -> PathBuf { PathBuf::from(env::current_dir().unwrap()).join("e2e") }
-fn tools_dir() -> PathBuf { PathBuf::from(env::current_dir().unwrap()).join("tools") }
-fn binaries_dir() -> PathBuf { root_dir().join("src-tauri").join("binaries") }
-fn root_dir() -> PathBuf { env::current_dir().unwrap() }
+#[cfg(windows)]
+fn setup_ctrl_handler() {
+    extern "system" {
+        fn SetConsoleCtrlHandler(
+            handler: Option<unsafe extern "system" fn(u32) -> i32>,
+            add: i32,
+        ) -> i32;
+    }
+    unsafe extern "system" fn handler(_ctrl_type: u32) -> i32 {
+        let pid = CHILD_PID.load(Ordering::Relaxed);
+        if pid != 0 {
+            Command::new("taskkill")
+                .args(["/F", "/T", "/PID", &pid.to_string()])
+                .status()
+                .ok();
+        }
+        0 // pass to default handler so build.exe also exits
+    }
+    unsafe {
+        SetConsoleCtrlHandler(Some(handler), 1);
+    }
+}
