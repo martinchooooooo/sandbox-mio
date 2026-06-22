@@ -4,16 +4,37 @@ import { spawnSync } from "child_process";
 // remote stand-in run rootless, so the socket path is the same on each.
 export const PODMAN_SOCKET = "/run/user/1000/podman/podman.sock";
 
+// Transport details for a system connection, parsed from `podman system connection list`.
+export interface ConnectionInfo {
+  user: string;
+  host: string;
+  port: string;
+  identity: string;
+}
+
+// Shape of the entries returned by `podman machine list --format json` (only the fields used).
+interface MachineListEntry {
+  Name: string;
+  Running?: boolean;
+}
+
+// Shape of the entries returned by `podman system connection list --format json`.
+interface SystemConnectionEntry {
+  Name: string;
+  URI: string;
+  Identity: string;
+}
+
 // Synchronous sleep — provisioning runs before WebdriverIO spins up its event loop and the
 // node:test setup runs serially, so the steps below are all synchronous (spawnSync).
-export function sleepSync(ms) {
+export function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 // Poll `podman --connection <name> info` until it succeeds — the same readiness check the app
 // makes in verify_host. Returns true on success, false on timeout so the caller can re-launch
 // the service and retry.
-export function waitForConnection(connectionName, timeoutMs = 20000) {
+export function waitForConnection(connectionName: string, timeoutMs = 20000): boolean {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     if (spawnSync("podman", ["--connection", connectionName, "info"], { shell: true }).status === 0) {
@@ -43,7 +64,7 @@ export function waitForConnection(connectionName, timeoutMs = 20000) {
 // cmd.exe, which treats `||`, `&`, `>`, `(` and `$(...)` as its own metacharacters and shreds
 // the script before it reaches SSH. Spawning `podman` directly passes the command as one argv
 // element straight to the remote shell, which is the bash that must interpret it.
-export function startPodmanSocket(machineName) {
+export function startPodmanSocket(machineName: string): void {
   spawnSync(
     "podman",
     [
@@ -57,13 +78,16 @@ export function startPodmanSocket(machineName) {
 // Bring a podman machine up and ready: init if missing, start if stopped, activate the rootless
 // API socket (launch-and-poll, retried because the socket sometimes fails to bind first try on
 // the WSL image), then pre-pull the requested images. Idempotent — safe to call every run.
-export function provisionMachine(machineName, { pullImages = ["docker.io/library/alpine:latest"] } = {}) {
+export function provisionMachine(
+  machineName: string,
+  { pullImages = ["docker.io/library/alpine:latest"] }: { pullImages?: string[] } = {}
+): void {
   const listResult = spawnSync("podman", ["machine", "list", "--format", "json"], {
     encoding: "utf8",
     shell: true,
   });
 
-  let machines = [];
+  let machines: MachineListEntry[] = [];
   try {
     machines = JSON.parse(listResult.stdout || "[]");
   } catch {
@@ -106,19 +130,19 @@ export function provisionMachine(machineName, { pullImages = ["docker.io/library
 }
 
 // Stop a machine without deleting it — leaves the WSL image on disk so the next run skips init.
-export function stopMachine(machineName) {
+export function stopMachine(machineName: string): void {
   spawnSync("podman", ["machine", "stop", machineName], { stdio: "inherit", shell: true });
 }
 
 // Delete a machine and its disk image (contrast stopMachine, which keeps the image).
-export function removeMachine(machineName) {
+export function removeMachine(machineName: string): void {
   spawnSync("podman", ["machine", "rm", "-f", machineName], { stdio: "inherit", shell: true });
 }
 
 // Parse the SSH transport details for a system connection from `podman system connection list`.
 // The port is assigned dynamically at machine boot, so this must be read fresh each run rather
 // than cached. Returns { user, host, port, identity }.
-export function connectionInfo(connectionName) {
+export function connectionInfo(connectionName: string): ConnectionInfo {
   const out = spawnSync("podman", ["system", "connection", "list", "--format", "json"], {
     encoding: "utf8",
     shell: true,
@@ -126,7 +150,7 @@ export function connectionInfo(connectionName) {
   if (out.status !== 0) {
     throw new Error(`podman system connection list failed: ${out.stderr}`);
   }
-  const entries = JSON.parse(out.stdout || "[]");
+  const entries: SystemConnectionEntry[] = JSON.parse(out.stdout || "[]");
   const entry = entries.find((e) => e.Name === connectionName);
   if (!entry) {
     throw new Error(`no system connection named "${connectionName}"`);

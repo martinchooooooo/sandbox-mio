@@ -1,7 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { spawnSync } from "child_process";
+import { spawnSync, type SpawnSyncReturns } from "child_process";
 import { fileURLToPath } from "url";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
@@ -14,7 +14,7 @@ const MUTAGEN_BIN = path.join(TOOLS_DIR, "mutagen.exe");
 
 // Download and unpack the pinned Mutagen if it is not already vendored. Windows-only: the suite
 // targets a Windows laptop driving Podman machines.
-export function ensureMutagen() {
+export function ensureMutagen(): string {
   if (fs.existsSync(MUTAGEN_BIN)) {
     return MUTAGEN_BIN;
   }
@@ -41,7 +41,7 @@ export function ensureMutagen() {
   return MUTAGEN_BIN;
 }
 
-function mutagen(args) {
+function mutagen(args: string[]): SpawnSyncReturns<string> {
   const out = spawnSync(MUTAGEN_BIN, args, { encoding: "utf8", shell: false });
   return out;
 }
@@ -49,7 +49,7 @@ function mutagen(args) {
 // Create a two-way-resolved sync session between a local directory (alpha) and an
 // `alias:path` remote (beta). Terminates any prior session of the same name first so the call
 // is idempotent across runs.
-export function syncCreate(name, alpha, beta) {
+export function syncCreate(name: string, alpha: string, beta: string): void {
   mutagen(["sync", "terminate", name]); // ignore "no such session"
   const out = mutagen(["sync", "create", `--name=${name}`, "--sync-mode=two-way-resolved", alpha, beta]);
   if (out.status !== 0) {
@@ -59,14 +59,14 @@ export function syncCreate(name, alpha, beta) {
 
 // Force a synchronous reconcile and wait for it to finish, so assertions do not race the
 // filesystem watcher's debounce.
-export function syncFlush(name) {
+export function syncFlush(name: string): void {
   const out = mutagen(["sync", "flush", name]);
   if (out.status !== 0) {
     throw new Error(`mutagen sync flush failed: ${out.stderr || out.stdout}`);
   }
 }
 
-export function syncTerminate(name) {
+export function syncTerminate(name: string): void {
   mutagen(["sync", "terminate", name]);
 }
 
@@ -80,14 +80,22 @@ export function syncTerminate(name) {
 
 const SSH_CONFIG = path.join(os.homedir(), ".ssh", "config");
 
-function markers(alias) {
+// The SSH endpoint a managed Host alias points at.
+export interface SshEndpoint {
+  host: string;
+  port: string | number;
+  user: string;
+  identity: string;
+}
+
+function markers(alias: string): [string, string] {
   return [`# >>> mio-e2e ${alias} >>>`, `# <<< mio-e2e ${alias} <<<`];
 }
 
-function stripBlock(text, alias) {
+function stripBlock(text: string, alias: string): string {
   const [begin, end] = markers(alias);
   const lines = text.split(/\r?\n/);
-  const out = [];
+  const out: string[] = [];
   let inside = false;
   for (const line of lines) {
     if (line.trim() === begin) { inside = true; continue; }
@@ -98,7 +106,7 @@ function stripBlock(text, alias) {
 }
 
 // Write (or replace) a managed Host alias pointing at the given SSH endpoint and identity.
-export function writeSshAlias(alias, { host, port, user, identity }) {
+export function writeSshAlias(alias: string, { host, port, user, identity }: SshEndpoint): void {
   fs.mkdirSync(path.dirname(SSH_CONFIG), { recursive: true });
   const existing = fs.existsSync(SSH_CONFIG) ? fs.readFileSync(SSH_CONFIG, "utf8") : "";
   const [begin, end] = markers(alias);
@@ -117,7 +125,7 @@ export function writeSshAlias(alias, { host, port, user, identity }) {
   fs.writeFileSync(SSH_CONFIG, `${base}\n${block}\n`, "ascii");
 }
 
-export function removeSshAlias(alias) {
+export function removeSshAlias(alias: string): void {
   if (!fs.existsSync(SSH_CONFIG)) return;
   const stripped = stripBlock(fs.readFileSync(SSH_CONFIG, "utf8"), alias).replace(/\s+$/, "");
   fs.writeFileSync(SSH_CONFIG, stripped ? `${stripped}\n` : "", "ascii");

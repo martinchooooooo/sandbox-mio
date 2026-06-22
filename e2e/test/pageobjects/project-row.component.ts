@@ -1,3 +1,5 @@
+import { type Element } from "./app.page.js";
+
 /**
  * A single project's row in the projects list. Component object: it wraps one `<li>` and
  * exposes every control inside it (start/stop, deploy/undeploy, destroy, the sync switch,
@@ -8,90 +10,92 @@
  * working after the frontend re-renders the row in place.
  */
 export default class ProjectRow {
-  constructor(projectName) {
+  readonly projectName: string;
+
+  constructor(projectName: string) {
     this.projectName = projectName;
   }
 
-  get root() {
+  get root(): Element {
     return $(`li*=${this.projectName}`);
   }
 
-  get startButton() {
+  get startButton(): Element {
     return this.root.$("button=start");
   }
 
-  get stopButton() {
+  get stopButton(): Element {
     return this.root.$("button=stop");
   }
 
-  get deployButton() {
+  get deployButton(): Element {
     return this.root.$("button=deploy");
   }
 
-  get undeployButton() {
+  get undeployButton(): Element {
     return this.root.$("button=undeploy");
   }
 
-  get destroyButton() {
+  get destroyButton(): Element {
     return this.root.$("button=destroy");
   }
 
-  get hostSelect() {
+  get hostSelect(): Element {
     return this.root.$("select");
   }
 
-  get syncSwitch() {
+  get syncSwitch(): Element {
     return this.root.$("button[role='switch']");
   }
 
   // The green dot shown while the container is running.
-  get runningIndicator() {
+  get runningIndicator(): Element {
     return this.root.$("span.bg-green-500");
   }
 
   // The muted status text (e.g. "running") next to the project.
-  get statusText() {
+  get statusText(): Element {
     return this.root.$(".text-muted-foreground");
   }
 
   // The label naming the host a project is deployed to.
-  deployedHostLabel(host) {
+  deployedHostLabel(host: string): Element {
     return this.root.$(`span*=${host}`);
   }
 
-  async waitForDisplayed(timeout = 10000) {
+  async waitForDisplayed(timeout = 10000): Promise<void> {
     await (await this.root).waitForDisplayed({ timeout });
   }
 
-  async waitForGone(timeout = 15000) {
+  async waitForGone(timeout = 15000): Promise<void> {
     await (await this.root).waitForExist({ timeout, reverse: true });
   }
 
   // Click a button after scrolling it into view — the row's later controls can sit off-screen.
-  async #clickButton(button) {
+  async #clickButton(button: Element): Promise<void> {
     const el = await button;
     await el.scrollIntoView();
     await el.click();
   }
 
-  async start() {
+  async start(): Promise<void> {
     await this.#clickButton(this.startButton);
   }
 
-  async stop() {
+  async stop(): Promise<void> {
     await this.#clickButton(this.stopButton);
   }
 
-  async waitForRunning(timeout = 10000) {
+  async waitForRunning(timeout = 10000): Promise<void> {
     await (await this.runningIndicator).waitForExist({ timeout });
   }
 
-  async waitForStopped(timeout = 20000) {
+  async waitForStopped(timeout = 20000): Promise<void> {
     await (await this.runningIndicator).waitForExist({ timeout, reverse: true });
   }
 
   // Deploys to the named host and resolves once the deployment is live (undeploy button shown).
-  async deployTo(host, { timeout = 120000 } = {}) {
+  async deployTo(host: string, { timeout = 120000 }: { timeout?: number } = {}): Promise<void> {
     await this.#clickButton(this.deployButton);
 
     const select = await this.hostSelect;
@@ -102,17 +106,17 @@ export default class ProjectRow {
     await (await this.undeployButton).waitForDisplayed({ timeout });
   }
 
-  async undeploy(timeout = 30000) {
+  async undeploy(timeout = 30000): Promise<void> {
     await this.#clickButton(this.undeployButton);
     await (await this.deployButton).waitForDisplayed({ timeout });
   }
 
-  async destroy() {
+  async destroy(): Promise<void> {
     await this.#clickButton(this.destroyButton);
     await this.waitForGone();
   }
 
-  async toggleSyncOffOn(pauseMs = 500) {
+  async toggleSyncOffOn(pauseMs = 500): Promise<void> {
     const sw = await this.syncSwitch;
     await sw.scrollIntoView();
     await sw.click();
@@ -120,11 +124,11 @@ export default class ProjectRow {
     await sw.click();
   }
 
-  async isDeployed() {
+  async isDeployed(): Promise<boolean> {
     return (await this.undeployButton).isDisplayed();
   }
 
-  async isHostShown(host) {
+  async isHostShown(host: string): Promise<boolean> {
     return (await this.deployedHostLabel(host)).isDisplayed();
   }
 
@@ -133,7 +137,7 @@ export default class ProjectRow {
    * host label both carry text-muted-foreground + text-xs, so this checks every match rather
    * than assuming a single one.
    */
-  async waitForSyncStatus(targetStatus, timeoutMs = 60000) {
+  async waitForSyncStatus(targetStatus: string, timeoutMs = 60000): Promise<void> {
     await browser.waitUntil(
       async () => {
         const spans = await this.root.$$("span.text-muted-foreground.text-xs");

@@ -1,26 +1,25 @@
+import assert from "node:assert";
 import fs from "fs";
 import path from "path";
 
 import ProjectsPage from "../pageobjects/projects.page.js";
+import ProjectRow from "../pageobjects/project-row.component.js";
 import { podman, podmanOk, LOCAL_CONNECTION, REMOTE_CONNECTION } from "../../lib/podman-connection.js";
 
 const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
 
-// Throws with a diagnostic message when condition is false. Used instead of expect().toBe(true)
-// because withMessage() is only supported on async element matchers in expect-webdriverio, not
-// on plain JS value assertions.
-function assert(condition, message) {
-  if (!condition) throw new Error(message);
-}
+// node:assert is used instead of expect().toBe(true) because expect-webdriverio's withMessage()
+// is only supported on async element matchers, not on plain JS value assertions — node:assert's
+// second argument carries the diagnostic message for free.
 
 describe("Deploy sandbox to remote machine", () => {
   const projectName = `e2e-deploy-${Date.now()}`;
-  const row = ProjectsPage.row(projectName);
-  let workspaceDir;
+  const row: ProjectRow = ProjectsPage.row(projectName);
+  let workspaceDir: string;
 
   before(() => {
     expect(WORKSPACE_ROOT).toBeTruthy();
-    workspaceDir = path.join(WORKSPACE_ROOT, projectName);
+    workspaceDir = path.join(WORKSPACE_ROOT!, projectName);
   });
 
   after(() => {

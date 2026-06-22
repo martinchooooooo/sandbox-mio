@@ -1,11 +1,11 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { spawn, spawnSync } from "child_process";
+import { spawn, spawnSync, type ChildProcess } from "child_process";
 import { fileURLToPath } from "url";
 
 import { provisionMachine, stopMachine, removeMachine } from "./lib/podman-machine.js";
-import { LOCAL_CONNECTION,REMOTE_CONNECTION } from "./lib/podman-connection.js";
+import { LOCAL_CONNECTION, REMOTE_CONNECTION } from "./lib/podman-connection.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
@@ -22,15 +22,15 @@ const MIO_REMOTE_REMOVE = process.env.MIO_REMOTE_REMOVE === "1";
 const WORKSPACE_ROOT = path.join(os.homedir(), ".sandbox-mio-e2e");
 process.env.SANDBOX_WORKSPACE_ROOT = WORKSPACE_ROOT;
 
-let tauriDriver;
+let tauriDriver: ChildProcess | undefined;
 let exit = false;
 
 const ext = process.platform === "win32" ? ".exe" : "";
 
-export const config = {
+export const config: WebdriverIO.Config = {
   hostname: "127.0.0.1",
   port: 4444,
-  specs: ["./test/specs/**/*.js"],
+  specs: ["./test/specs/**/*.ts"],
   maxInstances: 1,
   capabilities: [
     {
@@ -38,7 +38,7 @@ export const config = {
       "tauri:options": {
         application: path.resolve(__dirname, `../src-tauri/target/debug/sandbox-mio${ext}`),
       },
-    },
+    } as WebdriverIO.Capabilities,
   ],
   reporters: ["spec"],
   framework: "mocha",
@@ -50,7 +50,7 @@ export const config = {
   onPrepare: () => {
     fs.rmSync(WORKSPACE_ROOT, { recursive: true, force: true });
     provisionMachine(LOCAL_CONNECTION);
-    // The remote machine is used as a deploy target by deploy-remote.spec.js. Provisioned here
+    // The remote machine is used as a deploy target by deploy-remote.spec.ts. Provisioned here
     // so the spec can assume it is up; cleaned up in onComplete.
     provisionMachine(REMOTE_CONNECTION);
     spawnSync("pnpm", ["tauri", "build", "--debug", "--no-bundle"], {
@@ -108,12 +108,12 @@ export const config = {
   },
 };
 
-function closeTauriDriver() {
+function closeTauriDriver(): void {
   exit = true;
   tauriDriver?.kill();
 }
 
-function onShutdown(fn) {
+function onShutdown(fn: () => void): void {
   const cleanup = () => {
     try {
       fn();

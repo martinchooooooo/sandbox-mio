@@ -7,7 +7,11 @@ export const REMOTE_CONNECTION = "mio-tests-remote";
 // Run `podman --connection <connection> <...args>` and return trimmed stdout. Throws a diagnostic
 // error naming the connection and args when check is true and the command exits non-zero; pass
 // { check: false } for best-effort commands (e.g. cleanup) whose failure should be ignored.
-export function podman(connection, args, { check = true } = {}) {
+export function podman(
+  connection: string,
+  args: string[],
+  { check = true }: { check?: boolean } = {}
+): string {
   const out = spawnSync("podman", ["--connection", connection, ...args], {
     encoding: "utf8",
     shell: false,
@@ -21,7 +25,7 @@ export function podman(connection, args, { check = true } = {}) {
 }
 
 // Returns true when the command exits 0 (e.g. the container/image exists), false otherwise.
-export function podmanOk(connection, args) {
+export function podmanOk(connection: string, args: string[]): boolean {
   return (
     spawnSync("podman", ["--connection", connection, ...args], { shell: false }).status === 0
   );
