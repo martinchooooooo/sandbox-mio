@@ -27,7 +27,7 @@ export function waitForConnection(connectionName, timeoutMs = 20000) {
 }
 
 // Launch the rootless Podman API service inside the machine. Idempotent: skips if the socket
-// already exists, so it is safe to call once per retry attempt.
+// already exists.
 //
 // This podman machine is a minimal WSL image whose per-user systemd manager (user@1000.service)
 // fails to start, so the tutorial's `systemctl --user enable --now podman.socket` has no
@@ -110,7 +110,7 @@ export function stopMachine(machineName) {
   spawnSync("podman", ["machine", "stop", machineName], { stdio: "inherit", shell: true });
 }
 
-// Delete a machine and its disk image. Used when a run wants a machine torn down completely.
+// Delete a machine and its disk image (contrast stopMachine, which keeps the image).
 export function removeMachine(machineName) {
   spawnSync("podman", ["machine", "rm", "-f", machineName], { stdio: "inherit", shell: true });
 }

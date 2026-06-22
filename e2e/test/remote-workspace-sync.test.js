@@ -19,11 +19,12 @@ import {
   syncTerminate,
   writeSshAlias,
 } from "../lib/mutagen.js";
+import { REMOTE_CONNECTION as REMOTE_MACHINE } from "../lib/podman-connection.js";
 
 // The remote stand-in. Dedicated and ephemeral: brought up for this suite and stopped (or
 // removed) afterwards, so it never collides with the dev machine or the app's mio-tests machine.
-const REMOTE_MACHINE = "mio-tests-remote";
-const SSH_ALIAS = "mio-tests-remote";
+// The SSH config alias the deploy flow writes; chosen to match the connection/machine name.
+const SSH_ALIAS = REMOTE_MACHINE;
 const SESSION = "mio-e2e-remote-sync";
 const CONTAINER = "mio-e2e-remote-sync";
 

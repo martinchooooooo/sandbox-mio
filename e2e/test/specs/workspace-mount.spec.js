@@ -1,25 +1,12 @@
 import fs from "fs";
 import path from "path";
-import { spawnSync } from "child_process";
 
 import ProjectsPage from "../pageobjects/projects.page.js";
+import { podman, LOCAL_CONNECTION } from "../../lib/podman-connection.js";
 
 // Mirrors the env wdio.conf.js passes to the app, so this spec resolves the same per-sandbox
 // directory the backend writes.
 const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
-const CONNECTION = "mio-tests";
-
-// Run a podman CLI command against the test machine and return trimmed stdout.
-function podman(args) {
-  const out = spawnSync("podman", ["--connection", CONNECTION, ...args], {
-    encoding: "utf8",
-    shell: true,
-  });
-  if (out.status !== 0) {
-    throw new Error(`podman ${args.join(" ")} failed: ${out.stderr}`);
-  }
-  return out.stdout.trim();
-}
 
 describe("Sandbox workspace directory", () => {
   it("creates a host workspace dir bind-mounted at /root/work and shared with the container", async () => {
@@ -36,7 +23,9 @@ describe("Sandbox workspace directory", () => {
     expect(fs.existsSync(workspaceDir)).toBe(true);
 
     // 2. The container is wired with a bind mount at /root/work (inspectable before start).
-    const mounts = JSON.parse(podman(["inspect", projectName, "--format", "json"]))[0].Mounts;
+    const mounts = JSON.parse(
+      podman(LOCAL_CONNECTION, ["inspect", projectName, "--format", "json"])
+    )[0].Mounts;
     // The container should have a mount at /root/work.
     const workMount = mounts.find((m) => m.Destination === "/root/work");
     expect(workMount).toBeDefined();
@@ -48,7 +37,12 @@ describe("Sandbox workspace directory", () => {
     await row.start();
     await row.waitForRunning();
 
-    const seenInContainer = podman(["exec", projectName, "cat", "/root/work/marker.txt"]);
+    const seenInContainer = podman(LOCAL_CONNECTION, [
+      "exec",
+      projectName,
+      "cat",
+      "/root/work/marker.txt",
+    ]);
     expect(seenInContainer).toContain(marker);
 
     // Leave the machine clean for the next spec (10s SIGTERM grace + event delivery).

@@ -1,40 +1,16 @@
 import fs from "fs";
 import path from "path";
-import { spawnSync } from "child_process";
 
 import ProjectsPage from "../pageobjects/projects.page.js";
+import { podman, podmanOk, LOCAL_CONNECTION, REMOTE_CONNECTION } from "../../lib/podman-connection.js";
 
 const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
-const SOURCE_CONNECTION = "mio-tests";
-const REMOTE_CONNECTION = "mio-tests-remote";
 
 // Throws with a diagnostic message when condition is false. Used instead of expect().toBe(true)
 // because withMessage() is only supported on async element matchers in expect-webdriverio, not
 // on plain JS value assertions.
 function assert(condition, message) {
   if (!condition) throw new Error(message);
-}
-
-// Run a podman command against a named connection. shell:false is critical: commands carry shell
-// metacharacters in their remote-shell arguments and routing through cmd.exe would eat them.
-function podman(connection, args, { check = true } = {}) {
-  const out = spawnSync("podman", ["--connection", connection, ...args], {
-    encoding: "utf8",
-    shell: false,
-  });
-  if (check && out.status !== 0) {
-    throw new Error(
-      `podman --connection ${connection} ${args.join(" ")} failed: ${out.stderr}`
-    );
-  }
-  return out.stdout?.trim() ?? "";
-}
-
-// Returns true if the command exits 0 (container/image exists), false otherwise.
-function podmanOk(connection, args) {
-  return (
-    spawnSync("podman", ["--connection", connection, ...args], { shell: false }).status === 0
-  );
 }
 
 describe("Deploy sandbox to remote machine", () => {
@@ -49,16 +25,8 @@ describe("Deploy sandbox to remote machine", () => {
 
   after(() => {
     // Best-effort cleanup so a failed run does not leave containers behind.
-    spawnSync(
-      "podman",
-      ["--connection", SOURCE_CONNECTION, "rm", "-f", projectName],
-      { shell: false }
-    );
-    spawnSync(
-      "podman",
-      ["--connection", REMOTE_CONNECTION, "rm", "-f", projectName],
-      { shell: false }
-    );
+    podman(LOCAL_CONNECTION, ["rm", "-f", projectName], { check: false });
+    podman(REMOTE_CONNECTION, ["rm", "-f", projectName], { check: false });
   });
 
   it("creates a local project and writes a marker file to its workspace", async () => {
@@ -161,7 +129,7 @@ describe("Deploy sandbox to remote machine", () => {
         "This can happen when remove_remote failed silently or the wrong connection name was used."
     );
 
-    const localState = podman(SOURCE_CONNECTION, [
+    const localState = podman(LOCAL_CONNECTION, [
       "inspect",
       projectName,
       "--format",
@@ -178,8 +146,8 @@ describe("Deploy sandbox to remote machine", () => {
     await row.destroy();
 
     assert(
-      !podmanOk(SOURCE_CONNECTION, ["inspect", projectName]),
-      `Local container "${projectName}" still exists on ${SOURCE_CONNECTION} after destroy. ` +
+      !podmanOk(LOCAL_CONNECTION, ["inspect", projectName]),
+      `Local container "${projectName}" still exists on ${LOCAL_CONNECTION} after destroy. ` +
         "This can happen when destroy_sandbox returned an error that the frontend swallowed, or when the wrong container name was targeted."
     );
 

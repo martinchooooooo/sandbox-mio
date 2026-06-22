@@ -5,11 +5,9 @@ import { spawn, spawnSync } from "child_process";
 import { fileURLToPath } from "url";
 
 import { provisionMachine, stopMachine, removeMachine } from "./lib/podman-machine.js";
+import { LOCAL_CONNECTION,REMOTE_CONNECTION } from "./lib/podman-connection.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
-
-const TEST_MACHINE = "mio-tests";
-const REMOTE_MACHINE = "mio-tests-remote";
 
 // MIO_REMOTE_KEEP=1  — leave remote machine running after the suite (fast iteration)
 // MIO_REMOTE_REMOVE=1 — delete the remote machine's disk image entirely
@@ -51,10 +49,10 @@ export const config = {
   },
   onPrepare: () => {
     fs.rmSync(WORKSPACE_ROOT, { recursive: true, force: true });
-    provisionMachine(TEST_MACHINE);
+    provisionMachine(LOCAL_CONNECTION);
     // The remote machine is used as a deploy target by deploy-remote.spec.js. Provisioned here
     // so the spec can assume it is up; cleaned up in onComplete.
-    provisionMachine(REMOTE_MACHINE);
+    provisionMachine(REMOTE_CONNECTION);
     spawnSync("pnpm", ["tauri", "build", "--debug", "--no-bundle"], {
       cwd: path.resolve(__dirname, ".."),
       stdio: "inherit",
@@ -67,7 +65,7 @@ export const config = {
       ["--native-driver", "../tools/msedgedriver.exe"],
       {
         stdio: [null, process.stdout, process.stderr],
-        env: { ...process.env, PODMAN_CONNECTION: TEST_MACHINE },
+        env: { ...process.env, PODMAN_CONNECTION: LOCAL_CONNECTION },
       }
     );
     tauriDriver.on("error", (error) => {
@@ -105,8 +103,8 @@ export const config = {
     }
 
     // Tear down the remote machine unless the caller wants to keep it.
-    if (MIO_REMOTE_REMOVE) removeMachine(REMOTE_MACHINE);
-    else if (!MIO_REMOTE_KEEP) stopMachine(REMOTE_MACHINE);
+    if (MIO_REMOTE_REMOVE) removeMachine(REMOTE_CONNECTION);
+    else if (!MIO_REMOTE_KEEP) stopMachine(REMOTE_CONNECTION);
   },
 };
 
