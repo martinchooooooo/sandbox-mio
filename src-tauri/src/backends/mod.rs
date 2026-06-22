@@ -7,8 +7,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
 use types::{
-    ConnectionInfo, PodmanCliBackend, RemoteDeployment, Sandbox, SandboxBackend, SyncStrategy,
-    WorkspacePlan,
+    BackendError, ConnectionInfo, PodmanCliBackend, RemoteDeployment, Sandbox, SandboxBackend,
+    SyncStrategy, WorkspacePlan,
 };
 
 const BASE_IMAGE: &str = "alpine";
@@ -25,26 +25,23 @@ const WORKSPACE_MOUNT: &str = "/root/work";
 /// Root holding every sandbox's workspace directory: `SANDBOX_WORKSPACE_ROOT` if set,
 /// else `<Documents>/sandbox-mio`. Documents is resolved at runtime because Windows may
 /// redirect it (e.g. under OneDrive).
-fn workspace_root() -> Result<std::path::PathBuf, String> {
+fn workspace_root() -> Result<std::path::PathBuf, BackendError> {
     if let Ok(root) = std::env::var("SANDBOX_WORKSPACE_ROOT") {
         return Ok(std::path::PathBuf::from(root));
     }
-    let documents = dirs::document_dir()
-        .ok_or_else(|| "could not resolve the Documents directory".to_string())?;
+    let documents = dirs::document_dir().ok_or(BackendError::DocumentsDirNotFound)?;
     Ok(documents.join("sandbox-mio"))
 }
 
 /// Rejects names Podman would refuse. Also the path-safety gate for `workspace_path`: the
 /// name becomes a path segment, so barring `/` and `..` keeps the workspace inside its root.
-fn validate_name(name: &str) -> Result<(), String> {
+fn validate_name(name: &str) -> Result<(), BackendError> {
     let valid = name
         .chars()
         .enumerate()
         .all(|(i, c)| c.is_ascii_alphanumeric() || (i > 0 && matches!(c, '_' | '.' | '-')));
     if name.is_empty() || !valid {
-        return Err(format!(
-            "invalid sandbox name {name:?}: use letters, digits, '_', '.' or '-', starting with a letter or digit"
-        ));
+        return Err(BackendError::InvalidName { name: name.to_string() });
     }
     Ok(())
 }
@@ -52,7 +49,7 @@ fn validate_name(name: &str) -> Result<(), String> {
 /// The workspace directory for `name`, forward-slashed so `podman -v` accepts it as a Windows
 /// path and translates it into the machine VM. Local-only for now; the seam remote support
 /// will swap behind to return a remote path.
-fn workspace_path(name: &str) -> Result<String, String> {
+fn workspace_path(name: &str) -> Result<String, BackendError> {
     let path = workspace_root()?.join(name);
     Ok(path.to_string_lossy().replace('\\', "/"))
 }
@@ -65,24 +62,26 @@ pub fn default_backend() -> std::sync::Arc<dyn SandboxBackend> {
 
 /// Returns stdout on success, or the captured stderr as `Err` on a non-zero exit.
 /// Podman writes lifecycle errors (no such image, no such container, ...) to stderr.
-fn check(out: Output) -> Result<String, String> {
+fn check(out: Output) -> Result<String, BackendError> {
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).to_string())
     } else {
-        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+        Err(BackendError::CommandFailed(
+            String::from_utf8_lossy(&out.stderr).trim().to_string(),
+        ))
     }
 }
 
 /// Splits an `ssh://user@host[:port]/path` URL into its `user@host` target and optional
 /// port. The socket path is dropped: it is meaningful to `podman` but not to a bare `ssh`
 /// invocation, which is all `prepare_host` needs. IPv6 literals are not handled.
-fn ssh_target(ssh_url: &str) -> Result<(String, Option<String>), String> {
+fn ssh_target(ssh_url: &str) -> Result<(String, Option<String>), BackendError> {
     let rest = ssh_url
         .strip_prefix("ssh://")
-        .ok_or_else(|| format!("expected an ssh:// URL, got: {ssh_url}"))?;
+        .ok_or_else(|| BackendError::ParseError(format!("expected an ssh:// URL, got: {ssh_url}")))?;
     let authority = rest.split('/').next().unwrap_or(rest);
     if authority.is_empty() {
-        return Err(format!("ssh URL is missing a host: {ssh_url}"));
+        return Err(BackendError::ParseError(format!("ssh URL is missing a host: {ssh_url}")));
     }
     if let Some((host, port)) = authority.rsplit_once(':') {
         if port.chars().all(|c| c.is_ascii_digit()) && !port.is_empty() {
@@ -98,10 +97,10 @@ fn ssh_target(ssh_url: &str) -> Result<(String, Option<String>), String> {
 /// deploying to a machine other than the source is a supported scenario, since the container's
 /// workspace then lives in that machine's filesystem, distinct from the laptop directory. Split
 /// out to test without shelling to `podman`.
-fn parse_connection_entry(entry: &serde_json::Value) -> Result<Option<ConnectionInfo>, String> {
+fn parse_connection_entry(entry: &serde_json::Value) -> Result<Option<ConnectionInfo>, BackendError> {
     let uri = entry["URI"]
         .as_str()
-        .ok_or_else(|| "connection entry has no URI".to_string())?;
+        .ok_or_else(|| BackendError::ParseError("connection entry has no URI".to_string()))?;
     let identity = entry["Identity"].as_str().unwrap_or_default().to_string();
     let Some(authority) = uri.strip_prefix("ssh://").and_then(|r| r.split('/').next()) else {
         // Not an ssh:// connection (e.g. a local unix socket): nothing for Mutagen to sync over.
@@ -109,7 +108,7 @@ fn parse_connection_entry(entry: &serde_json::Value) -> Result<Option<Connection
     };
     let (user, hostport) = authority
         .split_once('@')
-        .ok_or_else(|| format!("connection URI has no user: {uri}"))?;
+        .ok_or_else(|| BackendError::ParseError(format!("connection URI has no user: {uri}")))?;
     let (host, port) = match hostport.rsplit_once(':') {
         Some((h, p)) if !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()) => {
             (h.to_string(), p.to_string())
@@ -129,67 +128,67 @@ impl PodmanCliBackend {
         format!("{BASE_IMAGE}:{BASE_IMAGE_VERSION}")
     }
 
-    async fn podman(&self, args: &[&str]) -> Result<Output, String> {
+    async fn podman(&self, args: &[&str]) -> Result<Output, BackendError> {
         Command::new("podman")
             .arg("--connection")
             .arg(&self.connection)
             .args(args)
             .output()
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| BackendError::CommandFailed(e.to_string()))
     }
 
     /// Runs `podman` without `--connection`, for system-connection registry operations
     /// that are not bound to the backend's active connection.
-    async fn podman_global(args: &[&str]) -> Result<Output, String> {
+    async fn podman_global(args: &[&str]) -> Result<Output, BackendError> {
         Command::new("podman")
             .args(args)
             .output()
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| BackendError::CommandFailed(e.to_string()))
     }
 
     /// Runs `podman --connection <connection> <args>` against an arbitrary connection. Used by
     /// deploy, whose target connection differs from the backend's pinned `self.connection`.
-    async fn podman_on(connection: &str, args: &[&str]) -> Result<Output, String> {
+    async fn podman_on(connection: &str, args: &[&str]) -> Result<Output, BackendError> {
         let mut full = vec!["--connection", connection];
         full.extend_from_slice(args);
         Self::podman_global(&full).await
     }
 
-    fn ensure_key(identity_path: &str) -> Result<(), String> {
+    fn ensure_key(identity_path: &str) -> Result<(), BackendError> {
         if std::path::Path::new(identity_path).exists() {
             return Ok(());
         }
         let out = std::process::Command::new("ssh-keygen")
             .args(["-t", "ed25519", "-f", identity_path, "-N", ""])
             .output()
-            .map_err(|e| format!("failed to run ssh-keygen: {e}"))?;
+            .map_err(|e| BackendError::CommandFailed(format!("failed to run ssh-keygen: {e}")))?;
         check(out).map(|_| ())
     }
 
-    async fn verify_host(name: &str) -> Result<(), String> {
+    async fn verify_host(name: &str) -> Result<(), BackendError> {
         let out = Self::podman_global(&["--connection", name, "info", "--format", "json"]).await?;
         check(out).map(|_| ())
     }
 
     /// Live SSH endpoint for connection `name`, or `None` for a connection not reachable over SSH.
     /// Read fresh every call: a machine's SSH port changes on each boot.
-    async fn remote_connection_info(name: &str) -> Result<Option<ConnectionInfo>, String> {
+    async fn remote_connection_info(name: &str) -> Result<Option<ConnectionInfo>, BackendError> {
         let out = Self::podman_global(&["system", "connection", "list", "--format", "json"]).await?;
         let entries: Vec<serde_json::Value> =
-            serde_json::from_str(&check(out)?).map_err(|e| e.to_string())?;
+            serde_json::from_str(&check(out)?).map_err(|e| BackendError::ParseError(e.to_string()))?;
         let entry = entries
             .iter()
             .find(|e| e["Name"].as_str() == Some(name))
-            .ok_or_else(|| format!("no podman connection named {name:?}"))?;
+            .ok_or_else(|| BackendError::ParseError(format!("no podman connection named {name:?}")))?;
         parse_connection_entry(entry)
     }
 
     /// Create `dir` on the remote host over the connection's SSH identity. Used instead of the
     /// laptop-side `std::fs::create_dir_all` because a remote bind-mount source lives in the
     /// remote filesystem.
-    async fn remote_mkdir(info: &ConnectionInfo, dir: &str) -> Result<(), String> {
+    async fn remote_mkdir(info: &ConnectionInfo, dir: &str) -> Result<(), BackendError> {
         let out = Command::new("ssh")
             .arg("-o")
             .arg("BatchMode=yes")
@@ -203,7 +202,7 @@ impl PodmanCliBackend {
             .arg(format!("mkdir -p '{dir}'"))
             .output()
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| BackendError::CommandFailed(e.to_string()))?;
         check(out).map(|_| ())
     }
 
@@ -211,7 +210,7 @@ impl PodmanCliBackend {
     /// local connection returns equal paths and a no-op strategy; a remote connection returns a
     /// remote bind-mount source and the live SSH endpoint. Called by `deploy` against the chosen
     /// target connection to compute the remote endpoint; `create` is always local.
-    async fn resolve_workspace(name: &str, connection: &str) -> Result<WorkspacePlan, String> {
+    async fn resolve_workspace(name: &str, connection: &str) -> Result<WorkspacePlan, BackendError> {
         let laptop_dir = workspace_path(name)?;
         let Some(info) = Self::remote_connection_info(connection).await? else {
             // Local machine: bind-mount source and laptop directory are the same, no sync.
@@ -246,15 +245,17 @@ fn progress(channel: &Channel<serde_json::Value>, step: &str, status: &str, mess
 
 #[async_trait::async_trait]
 impl SandboxBackend for PodmanCliBackend {
-    async fn create(&self, name: &str) -> Result<Sandbox, String> {
+    async fn create(&self, name: &str) -> Result<Sandbox, BackendError> {
         validate_name(name)?;
         let image = Self::image();
         // Every sandbox is created locally; remoteness is a later deploy action, so the workspace
         // is always a laptop directory bind-mounted directly. Pre-created so an unwritable path
         // fails here, not silently via podman's auto-creation of the mount source.
         let workspace = workspace_path(name)?;
-        std::fs::create_dir_all(&workspace)
-            .map_err(|e| format!("failed to create workspace {workspace}: {e}"))?;
+        std::fs::create_dir_all(&workspace).map_err(|e| BackendError::WorkspaceCreate {
+            path: workspace.clone(),
+            error: e.to_string(),
+        })?;
         let volume = format!("{workspace}:{WORKSPACE_MOUNT}");
         // `--pull=missing` satisfies the trait's "pull if absent, then create" contract.
         let out = self
@@ -272,11 +273,11 @@ impl SandboxBackend for PodmanCliBackend {
         })
     }
 
-    async fn list(&self) -> Result<Vec<Sandbox>, String> {
+    async fn list(&self) -> Result<Vec<Sandbox>, BackendError> {
         let out = self.podman(&["ps", "--all", "--format", "json"]).await?;
         let stdout = check(out)?;
         let containers: Vec<serde_json::Value> =
-            serde_json::from_str(&stdout).map_err(|e| e.to_string())?;
+            serde_json::from_str(&stdout).map_err(|e| BackendError::ParseError(e.to_string()))?;
         // Deployment state is not derived here: a deployed sandbox is identified by its Mutagen
         // session (see the deploy flow), keeping `list` independent of the sync engine.
         Ok(containers
@@ -302,15 +303,15 @@ impl SandboxBackend for PodmanCliBackend {
             .collect())
     }
 
-    async fn start(&self, name: &str) -> Result<(), String> {
+    async fn start(&self, name: &str) -> Result<(), BackendError> {
         check(self.podman(&["start", name]).await?).map(|_| ())
     }
 
-    async fn stop(&self, name: &str) -> Result<(), String> {
+    async fn stop(&self, name: &str) -> Result<(), BackendError> {
         check(self.podman(&["stop", name]).await?).map(|_| ())
     }
 
-    async fn destroy(&self, name: &str) -> Result<(), String> {
+    async fn destroy(&self, name: &str) -> Result<(), BackendError> {
         // `--force` stops a running container first. The workspace directory is left intact.
         check(self.podman(&["rm", "--force", name]).await?).map(|_| ())
     }
@@ -319,23 +320,24 @@ impl SandboxBackend for PodmanCliBackend {
         &self,
         name: &str,
         target_connection: &str,
-    ) -> Result<RemoteDeployment, String> {
+    ) -> Result<RemoteDeployment, BackendError> {
         validate_name(name)?;
         // Deploying onto the source connection would name-collide with the kept-stopped local
         // container and is pointless; any other connection (including a different local machine)
         // is a valid target.
         if target_connection == self.connection {
-            return Err(format!(
-                "cannot deploy {name:?} onto its own connection {target_connection:?}; the local container already runs there"
-            ));
+            return Err(BackendError::SelfDeploy {
+                name: name.to_string(),
+                connection: target_connection.to_string(),
+            });
         }
         // Resolve the remote endpoint first, so an unreachable target fails before any mutation of
         // the local container.
         let plan = Self::resolve_workspace(name, target_connection).await?;
         let SyncStrategy::Remote(info) = plan.strategy else {
-            return Err(format!(
-                "deploy target {target_connection:?} has no SSH endpoint to sync over"
-            ));
+            return Err(BackendError::NoSshEndpoint {
+                connection: target_connection.to_string(),
+            });
         };
 
         // Stop the local container so its filesystem is quiescent before the commit.
@@ -353,12 +355,12 @@ impl SandboxBackend for PodmanCliBackend {
             .args(["save", &image])
             .output()
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| BackendError::CommandFailed(e.to_string()))?;
         if !save_out.status.success() {
-            return Err(format!(
+            return Err(BackendError::CommandFailed(format!(
                 "podman save: {}",
                 String::from_utf8_lossy(&save_out.stderr).trim()
-            ));
+            )));
         }
         let mut load_child = Command::new("podman")
             .arg("--connection")
@@ -368,15 +370,20 @@ impl SandboxBackend for PodmanCliBackend {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| BackendError::CommandFailed(e.to_string()))?;
         if let Some(mut stdin) = load_child.stdin.take() {
             stdin
                 .write_all(&save_out.stdout)
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| BackendError::CommandFailed(e.to_string()))?;
             // Dropping stdin closes the pipe so `podman load` sees EOF.
         }
-        check(load_child.wait_with_output().await.map_err(|e| e.to_string())?)?;
+        check(
+            load_child
+                .wait_with_output()
+                .await
+                .map_err(|e| BackendError::CommandFailed(e.to_string()))?,
+        )?;
 
         // Create the remote workspace empty (the commit carries no workspace files) and register
         // the target host's OpenSSH alias so Mutagen can reach it over the right port and key.
@@ -409,38 +416,44 @@ impl SandboxBackend for PodmanCliBackend {
         })
     }
 
-    async fn remove_remote(&self, name: &str, connection: &str) -> Result<(), String> {
+    async fn remove_remote(&self, name: &str, connection: &str) -> Result<(), BackendError> {
         check(Self::podman_on(connection, &["rm", "--force", name]).await?).map(|_| ())
     }
 
-    async fn listen_events(&self, on_event: Channel<serde_json::Value>) -> Result<(), String> {
+    async fn listen_events(&self, on_event: Channel<serde_json::Value>) -> Result<(), BackendError> {
         let mut child = Command::new("podman")
             .arg("--connection")
             .arg(&self.connection)
             .args(["events", "--format", "json"])
             .stdout(Stdio::piped())
             .spawn()
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| BackendError::CommandFailed(e.to_string()))?;
 
-        let stdout = child.stdout.take().ok_or_else(|| "no stdout".to_string())?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| BackendError::CommandFailed("no stdout".to_string()))?;
         let mut lines = BufReader::new(stdout).lines();
 
-        while let Some(line) = lines.next_line().await.map_err(|e| e.to_string())? {
+        while let Some(line) = lines.next_line().await.map_err(|e| BackendError::CommandFailed(e.to_string()))? {
             if line.trim().is_empty() {
                 continue;
             }
-            let value: serde_json::Value = serde_json::from_str(&line).map_err(|e| e.to_string())?;
-            on_event.send(value).map_err(|e| e.to_string())?;
+            let value: serde_json::Value =
+                serde_json::from_str(&line).map_err(|e| BackendError::ParseError(e.to_string()))?;
+            on_event
+                .send(value)
+                .map_err(|e| BackendError::CommandFailed(e.to_string()))?;
         }
 
         Ok(())
     }
 
-    async fn list_hosts(&self) -> Result<Vec<String>, String> {
+    async fn list_hosts(&self) -> Result<Vec<String>, BackendError> {
         let out = Self::podman_global(&["system", "connection", "list", "--format", "json"]).await?;
         let stdout = check(out)?;
         let entries: Vec<serde_json::Value> =
-            serde_json::from_str(&stdout).map_err(|e| e.to_string())?;
+            serde_json::from_str(&stdout).map_err(|e| BackendError::ParseError(e.to_string()))?;
         Ok(entries
             .into_iter()
             .filter_map(|e| e["Name"].as_str().map(|s| s.to_string()))
@@ -452,7 +465,7 @@ impl SandboxBackend for PodmanCliBackend {
         name: &str,
         ssh_url: &str,
         identity: Option<&str>,
-    ) -> Result<(), String> {
+    ) -> Result<(), BackendError> {
         let mut args = vec!["system", "connection", "add"];
         if let Some(identity) = identity {
             args.push("--identity");
@@ -463,7 +476,7 @@ impl SandboxBackend for PodmanCliBackend {
         check(Self::podman_global(&args).await?).map(|_| ())
     }
 
-    async fn prepare_host(&self, ssh_url: &str, identity_path: &str) -> Result<(), String> {
+    async fn prepare_host(&self, ssh_url: &str, identity_path: &str) -> Result<(), BackendError> {
         let (target, port) = ssh_target(ssh_url)?;
         let mut cmd = Command::new("ssh");
         // BatchMode=yes turns a missing key authorization into a fast failure instead of a
@@ -483,7 +496,10 @@ impl SandboxBackend for PodmanCliBackend {
             "sudo loginctl enable-linger \"$USER\" \
              && XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user enable --now podman.socket",
         );
-        let out = cmd.output().await.map_err(|e| e.to_string())?;
+        let out = cmd
+            .output()
+            .await
+            .map_err(|e| BackendError::CommandFailed(e.to_string()))?;
         check(out).map(|_| ())
     }
 
@@ -493,11 +509,11 @@ impl SandboxBackend for PodmanCliBackend {
         ssh_url: &str,
         identity_path: &str,
         on_progress: Channel<serde_json::Value>,
-    ) -> Result<(), String> {
-        let step = |label: &str, result: Result<(), String>| -> Result<(), String> {
+    ) -> Result<(), BackendError> {
+        let step = |label: &str, result: Result<(), BackendError>| -> Result<(), BackendError> {
             match &result {
                 Ok(()) => progress(&on_progress, label, "ok", ""),
-                Err(e) => progress(&on_progress, label, "error", e),
+                Err(e) => progress(&on_progress, label, "error", &e.to_string()),
             }
             result
         };

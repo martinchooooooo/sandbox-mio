@@ -15,7 +15,7 @@ use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_shell::process::Command;
 use tauri_plugin_shell::ShellExt;
 
-use types::{MutagenCli, SessionInfo, SyncEngine, SyncStatus};
+use types::{MutagenCli, SessionInfo, SyncEngine, SyncError, SyncStatus};
 
 /// Sidecar name as declared in `bundle.externalBin`.
 const SIDECAR: &str = "mutagen";
@@ -23,45 +23,48 @@ const SIDECAR: &str = "mutagen";
 /// App-private Mutagen state directory, created if absent. Isolating it from the default
 /// data directory is what prevents the app's daemon and sessions clashing with a
 /// user-installed Mutagen.
-fn data_dir<R: Runtime>(app: &AppHandle<R>) -> Result<std::path::PathBuf, String> {
+fn data_dir<R: Runtime>(app: &AppHandle<R>) -> Result<std::path::PathBuf, SyncError> {
     let dir = app
         .path()
         .app_data_dir()
-        .map_err(|e| e.to_string())?
+        .map_err(|e| SyncError::DataDir(e.to_string()))?
         .join("mutagen");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("failed to create mutagen data dir: {e}"))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| SyncError::DataDir(format!("failed to create mutagen data dir: {e}")))?;
     Ok(dir)
 }
 
 /// A Mutagen sidecar command with the app-private data directory applied. Callers append the
 /// subcommand args and await `.output()`. The daemon auto-starts on the first session command,
 /// so no explicit `daemon start` is needed.
-pub fn command<R: Runtime>(app: &AppHandle<R>) -> Result<Command, String> {
+pub fn command<R: Runtime>(app: &AppHandle<R>) -> Result<Command, SyncError> {
     let dir = data_dir(app)?;
     Ok(app
         .shell()
         .sidecar(SIDECAR)
-        .map_err(|e| e.to_string())?
+        .map_err(|e| SyncError::Sidecar(e.to_string()))?
         .env("MUTAGEN_DATA_DIRECTORY", dir.to_string_lossy().to_string()))
 }
 
 /// Run a Mutagen subcommand and return trimmed stdout, or the captured stderr as `Err`.
-async fn run<R: Runtime>(app: &AppHandle<R>, args: &[&str]) -> Result<String, String> {
+async fn run<R: Runtime>(app: &AppHandle<R>, args: &[&str]) -> Result<String, SyncError> {
     let output = command(app)?
         .args(args)
         .output()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| SyncError::Sidecar(e.to_string()))?;
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
-        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+        Err(SyncError::CommandFailed(
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ))
     }
 }
 
 /// Report the bundled Mutagen version. A smoke test that the sidecar is bundled, resolvable,
 /// and executable on this platform.
-pub async fn version<R: Runtime>(app: &AppHandle<R>) -> Result<String, String> {
+pub async fn version<R: Runtime>(app: &AppHandle<R>) -> Result<String, SyncError> {
     run(app, &["version"]).await
 }
 
@@ -160,7 +163,7 @@ fn pascal_case(name: &str) -> String {
 
 #[async_trait::async_trait]
 impl SyncEngine for MutagenCli {
-    async fn create(&self, name: &str, alpha: &str, beta: &str) -> Result<(), String> {
+    async fn create(&self, name: &str, alpha: &str, beta: &str) -> Result<(), SyncError> {
         // Idempotent across restarts: drop any stale session of this name first.
         let _ = run(&self.app, &["sync", "terminate", name]).await;
         run(
@@ -178,44 +181,46 @@ impl SyncEngine for MutagenCli {
         .map(|_| ())
     }
 
-    async fn pause(&self, name: &str) -> Result<(), String> {
+    async fn pause(&self, name: &str) -> Result<(), SyncError> {
         run(&self.app, &["sync", "pause", name]).await.map(|_| ())
     }
 
-    async fn resume(&self, name: &str) -> Result<(), String> {
+    async fn resume(&self, name: &str) -> Result<(), SyncError> {
         run(&self.app, &["sync", "resume", name]).await.map(|_| ())
     }
 
-    async fn terminate(&self, name: &str) -> Result<(), String> {
+    async fn terminate(&self, name: &str) -> Result<(), SyncError> {
         run(&self.app, &["sync", "terminate", name]).await.map(|_| ())
     }
 
-    async fn flush(&self, name: &str) -> Result<(), String> {
+    async fn flush(&self, name: &str) -> Result<(), SyncError> {
         run(&self.app, &["sync", "flush", name]).await.map(|_| ())
     }
 
-    async fn status(&self, name: &str) -> Result<SyncStatus, String> {
+    async fn status(&self, name: &str) -> Result<SyncStatus, SyncError> {
         let json = run(
             &self.app,
             &["sync", "list", "--template={{json .}}", name],
         )
         .await?;
-        let parsed: serde_json::Value = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json).map_err(|e| SyncError::ParseError(e.to_string()))?;
         // The template renders the matched sessions as a JSON array; an unknown name yields [].
         let session = parsed
             .as_array()
             .and_then(|a| a.first())
-            .ok_or_else(|| format!("no sync session named {name:?}"))?;
+            .ok_or_else(|| SyncError::SessionNotFound { name: name.to_string() })?;
         Ok(status_from_session(session))
     }
 
-    async fn sessions(&self) -> Result<Vec<SessionInfo>, String> {
+    async fn sessions(&self) -> Result<Vec<SessionInfo>, SyncError> {
         let json = run(&self.app, &["sync", "list", "--template={{json .}}"]).await?;
         // An empty data directory can render nothing rather than `[]`; treat that as no sessions.
         if json.is_empty() {
             return Ok(Vec::new());
         }
-        let parsed: serde_json::Value = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json).map_err(|e| SyncError::ParseError(e.to_string()))?;
         Ok(parsed
             .as_array()
             .map(|a| a.iter().filter_map(parse_session).collect())

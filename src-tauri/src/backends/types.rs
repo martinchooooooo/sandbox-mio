@@ -1,6 +1,40 @@
 use serde::Serialize;
 use tauri::ipc::Channel;
 
+use crate::ssh::types::SshError;
+
+/// Errors produced by the sandbox backend ([`SandboxBackend`] and its helpers).
+#[derive(Debug, thiserror::Error)]
+pub enum BackendError {
+    /// The sandbox name failed the character/length rules Podman requires.
+    #[error("invalid sandbox name {name:?}: use letters, digits, '_', '.' or '-', starting with a letter or digit")]
+    InvalidName { name: String },
+    /// The platform Documents directory could not be resolved (e.g. running in a headless env).
+    #[error("could not resolve the Documents directory")]
+    DocumentsDirNotFound,
+    /// Creating the sandbox's local workspace directory failed.
+    #[error("failed to create workspace {path}: {error}")]
+    WorkspaceCreate { path: String, error: String },
+    /// A `podman` or `ssh` process failed to spawn, or exited with a non-zero status. The
+    /// captured stderr (or the spawn error) is in the payload.
+    #[error("{0}")]
+    CommandFailed(String),
+    /// A JSON or URL parse step failed on output from `podman` or an SSH URL argument.
+    #[error("{0}")]
+    ParseError(String),
+    /// `deploy` was called with the backend's own connection as target — the local container
+    /// already lives there and a name collision would result.
+    #[error("cannot deploy {name:?} onto its own connection {connection:?}; the local container already runs there")]
+    SelfDeploy { name: String, connection: String },
+    /// The chosen deploy target has no SSH endpoint (e.g. a unix-socket-only local connection),
+    /// so the sync engine cannot reach it.
+    #[error("deploy target {connection:?} has no SSH endpoint to sync over")]
+    NoSshEndpoint { connection: String },
+    /// An error propagated from SSH config management ([`crate::ssh`]).
+    #[error(transparent)]
+    Ssh(#[from] SshError),
+}
+
 /// A sandbox instance as seen by the frontend. Returned by all [`SandboxBackend`] operations.
 /// Field `status` is backend-defined (e.g. `"created"`, `"running"`, `"exited"`).
 #[derive(Debug, Serialize, Clone)]
@@ -80,17 +114,17 @@ pub trait SandboxBackend: Send + Sync {
     /// `/root/work`. The directory is `<Documents>/sandbox-mio/<name>` (override the root
     /// with `SANDBOX_WORKSPACE_ROOT`). Phase 1 is local-only: the workspace lives on the
     /// laptop and `podman` translates the Windows path into the machine VM.
-    async fn create(&self, name: &str) -> Result<Sandbox, String>;
+    async fn create(&self, name: &str) -> Result<Sandbox, BackendError>;
     /// Return all containers (running and stopped).
-    async fn list(&self) -> Result<Vec<Sandbox>, String>;
+    async fn list(&self) -> Result<Vec<Sandbox>, BackendError>;
     /// Start a stopped container.
-    async fn start(&self, name: &str) -> Result<(), String>;
+    async fn start(&self, name: &str) -> Result<(), BackendError>;
     /// Stop a running container.
-    async fn stop(&self, name: &str) -> Result<(), String>;
+    async fn stop(&self, name: &str) -> Result<(), BackendError>;
     /// Remove the **local** container, stopping it first if running. The sandbox's workspace
     /// directory is never deleted: for a deployed sandbox it may hold the only copy of unsynced
     /// work. The `destroy_sandbox` command tears down the sync session and remote container first.
-    async fn destroy(&self, name: &str) -> Result<(), String>;
+    async fn destroy(&self, name: &str) -> Result<(), BackendError>;
     /// Migrate `name`'s workload to `target_connection` by snapshot-and-push: stop and `podman
     /// commit` the local container, `podman image scp` the image to the target, create and start a
     /// remote container bind-mounting an empty remote workspace, and register the target's OpenSSH
@@ -101,19 +135,19 @@ pub trait SandboxBackend: Send + Sync {
         &self,
         name: &str,
         target_connection: &str,
-    ) -> Result<RemoteDeployment, String>;
+    ) -> Result<RemoteDeployment, BackendError>;
     /// Remove the container named `name` on `connection` (the deploy target), used when destroying
     /// or undeploying a deployed sandbox. The remote workspace directory is left intact.
-    async fn remove_remote(&self, name: &str, connection: &str) -> Result<(), String>;
+    async fn remove_remote(&self, name: &str, connection: &str) -> Result<(), BackendError>;
     /// Stream container events to the frontend channel until the connection drops.
-    async fn listen_events(&self, on_event: Channel<serde_json::Value>) -> Result<(), String>;
+    async fn listen_events(&self, on_event: Channel<serde_json::Value>) -> Result<(), BackendError>;
 
     // --- Host (connection) management ---------------------------------------
     // These operate on the Podman system-connection registry, independent of which
     // connection the backend is currently bound to.
 
     /// Return the names of all registered Podman system connections (local + remote).
-    async fn list_hosts(&self) -> Result<Vec<String>, String>;
+    async fn list_hosts(&self) -> Result<Vec<String>, BackendError>;
     /// Register an existing remote host as a Podman system connection.
     ///
     /// `ssh_url` is the full `ssh://user@host[:port]/run/user/<uid>/podman/podman.sock`.
@@ -123,11 +157,11 @@ pub trait SandboxBackend: Send + Sync {
         name: &str,
         ssh_url: &str,
         identity: Option<&str>,
-    ) -> Result<(), String>;
+    ) -> Result<(), BackendError>;
     /// Enable the rootless `podman.socket` and user lingering on an already-reachable host
     /// over SSH. Exposed standalone (to prepare a host whose key is already authorized) and
     /// reused as a step of [`SandboxBackend::provision_host`].
-    async fn prepare_host(&self, ssh_url: &str, identity_path: &str) -> Result<(), String>;
+    async fn prepare_host(&self, ssh_url: &str, identity_path: &str) -> Result<(), BackendError>;
     /// Guided "prepare + connect" flow for an external Linux server. Generates an SSH
     /// key if absent, enables the remote `podman.socket` + user lingering, registers the
     /// connection, and verifies it. Progress for each step is streamed to `on_progress`.
@@ -141,7 +175,7 @@ pub trait SandboxBackend: Send + Sync {
         ssh_url: &str,
         identity_path: &str,
         on_progress: Channel<serde_json::Value>,
-    ) -> Result<(), String>;
+    ) -> Result<(), BackendError>;
 }
 
 /// Drives Podman by invoking the `podman` CLI against a named **system connection**.

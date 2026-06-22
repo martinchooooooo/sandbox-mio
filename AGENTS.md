@@ -20,3 +20,27 @@ If a shadcn-svelte component would be a good fit but isn't in `src/lib/component
 ```
 pnpm dlx shadcn-svelte@latest add <component-name>
 ```
+
+# Error Handling
+
+## Rust (backend)
+
+Three typed error enums, each in their module's `types.rs`:
+
+`AppError` in `src-tauri/src/error.rs` is the IPC boundary type. It wraps `BackendError` and `SyncError` via `#[from]`, so `?` works across both in command handlers. Two command-layer variants live here too: `NotDeployed` and `UnsyncedChanges`.
+
+All `#[tauri::command]` functions return `Result<T, AppError>`. Never use `Result<T, String>` for commands.
+
+`AppError` serialises as `{ kind: string, message: string }` — **not** a plain string. `kind` is a stable discriminant matching the variant name (`"Backend"`, `"Sync"`, `"NotDeployed"`, `"UnsyncedChanges"`).
+
+When adding a new `AppError` variant, add its arm to the `kind()` method or it won't compile.
+
+## TypeScript (frontend)
+
+`src/lib/errors.ts` exports:
+
+- `AppError` interface — `{ kind: AppErrorKind, message: string }`
+- `AppErrorKind` union — must stay in sync with Rust `kind()` arms
+- `parseError(e)` — parse any `invoke()` rejection into `AppError`; falls back gracefully for non-Tauri throws
+
+All `invoke()` catch blocks use `parseError(e).message` for display. Branch on `err.kind` for variant-specific logic (e.g. `"UnsyncedChanges"` triggers a confirmation dialog before force-destroy). Never use `String(e)` or substring matching on error messages.

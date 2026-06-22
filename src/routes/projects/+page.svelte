@@ -6,6 +6,7 @@
     import { Channel, invoke } from "@tauri-apps/api/core";
     import { revealItemInDir } from "@tauri-apps/plugin-opener";
     import { onMount, onDestroy, tick } from "svelte";
+    import { parseError } from "$lib/errors";
 
     interface Project {
         id: string;
@@ -46,7 +47,7 @@
         try {
             projects = await invoke<Project[]>("list_sandboxes");
         } catch (e) {
-            error = String(e);
+            error = parseError(e).message;
         }
     }
 
@@ -56,7 +57,7 @@
             deployments = Object.fromEntries(list.map((d) => [d.name, d]));
             for (const d of list) syncOn[d.name] ??= true;
         } catch (e) {
-            error = String(e);
+            error = parseError(e).message;
         }
     }
 
@@ -64,7 +65,7 @@
         try {
             hosts = await invoke<string[]>("list_sandbox_hosts");
         } catch (e) {
-            error = String(e);
+            error = parseError(e).message;
         }
     }
 
@@ -81,7 +82,7 @@
             deployingFor = null;
             await loadDeployments();
         } catch (e) {
-            error = String(e);
+            error = parseError(e).message;
         }
     }
 
@@ -91,7 +92,7 @@
             await invoke("undeploy_sandbox", { name: project.name });
             await Promise.all([loadDeployments(), loadProjects()]);
         } catch (e) {
-            error = String(e);
+            error = parseError(e).message;
         }
     }
 
@@ -100,18 +101,18 @@
             error = "";
             await invoke("destroy_sandbox", { name: project.name, force: false });
         } catch (e) {
+            const err = parseError(e);
             // The guard refuses to discard unsynced remote work; confirm, then force.
-            const message = String(e);
-            if (deployments[project.name] && message.includes("unsynced")) {
-                if (!confirm(`${message}\n\nDestroy anyway and discard them?`)) return;
+            if (err.kind === "UnsyncedChanges") {
+                if (!confirm(`${err.message}\n\nDestroy anyway and discard them?`)) return;
                 try {
                     await invoke("destroy_sandbox", { name: project.name, force: true });
                 } catch (e2) {
-                    error = String(e2);
+                    error = parseError(e2).message;
                     return;
                 }
             } else {
-                error = message;
+                error = err.message;
                 return;
             }
         }
@@ -126,7 +127,7 @@
             await loadDeployments();
         } catch (e) {
             syncOn[project.name] = !on; // revert the optimistic flip
-            error = String(e);
+            error = parseError(e).message;
         }
     }
 
@@ -139,7 +140,7 @@
             error = "";
             await loadProjects();
         } catch (e) {
-            error = String(e);
+            error = parseError(e).message;
         }
     }
 
@@ -147,7 +148,7 @@
         try {
             await invoke("start_sandbox", { name: project.name });
         } catch (e) {
-            error = String(e);
+            error = parseError(e).message;
         }
     }
 
@@ -155,7 +156,7 @@
         try {
             await invoke("stop_sandbox", { name: project.name });
         } catch (e) {
-            error = String(e);
+            error = parseError(e).message;
         }
     }
 
@@ -163,7 +164,7 @@
         try {
             await revealItemInDir(project.workspace_path);
         } catch (e) {
-            error = String(e);
+            error = parseError(e).message;
         }
     }
 
@@ -202,7 +203,7 @@
         try {
             await invoke("listen_events", { onEvent: channel });
         } catch (e) {
-            events.push(`Error: ${String(e)}`);
+            events.push(`Error: ${parseError(e).message}`);
             listening = false;
         }
     }
