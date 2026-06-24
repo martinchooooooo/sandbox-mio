@@ -21,6 +21,7 @@ Every comment must be interpretable without reading surrounding code.
 **Skip documenting:**
 - Methods that are straightforward delegations to an already-documented API.
 - Private helpers whose name already states intent.
+- Error enum variants whose `#[error("…")]` message already carries the full diagnostic — the display string is the documentation.
 
 ## Content rules
 
@@ -31,5 +32,9 @@ Every comment must be interpretable without reading surrounding code.
 **No source code in comments.** Reference other items by name and file path, never by quoting their body.
 
 **One sentence per idea.** No filler, no restating the function name.
+
+**Trait and interface methods get one or two lines, not paragraphs.** State the non-obvious contract (idempotency, ordering constraints, what the return value represents). Skip anything the parameter names and return type already convey.
+
+**Module-level comments state role and wiring, not contents.** Name the public trait or entry point, where it is registered (e.g. Tauri state), and which file does the wiring. Do not list every function in the module.
 
 **Match the language's comment idiom.** Use the doc-comment convention the surrounding code already uses (e.g. `///` or `/** */` in Rust, JSDoc `/** */` or `//` in JS/TS, docstrings in Python) and keep one comment to its smallest sufficient form.

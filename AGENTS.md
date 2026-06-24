@@ -56,3 +56,18 @@ When adding a new `AppError` variant, add its arm to the `kind()` method or it w
 - `parseError(e)` — parse any `invoke()` rejection into `AppError`; falls back gracefully for non-Tauri throws
 
 All `invoke()` catch blocks use `parseError(e).message` for display. Branch on `err.kind` for variant-specific logic (e.g. `"UnsyncedChanges"` triggers a confirmation dialog before force-destroy). Never use `String(e)` or substring matching on error messages.
+
+# Code Comments
+
+Only comment when the WHY is non-obvious: a hidden constraint, a workaround for a specific bug, or behaviour that would surprise a reader. Never restate what the code already says.
+
+**Skip entirely:**
+- Private helpers whose name states intent
+- Error enum variants that have a self-documenting `#[error("…")]` message
+- Trait/interface method implementations that delegate to an already-documented API
+
+**When you do comment:**
+- Trait and interface method *declarations*: one or two lines — non-obvious contract only (idempotency, ordering, what the return value means). Skip what the parameter names and return type already convey.
+- Module-level docs: one or two lines — role and where it is wired in (e.g. Tauri state, registered in `lib.rs`). Not a table of contents.
+- Magic values / opaque selectors: one line stating what they represent.
+- Env vars: name the variable, its default, and any test harness that overrides it.
