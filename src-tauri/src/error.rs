@@ -1,4 +1,5 @@
 use crate::backends::types::BackendError;
+use crate::runtime::types::RuntimeError;
 use crate::sync::types::SyncError;
 
 /// Top-level error type for all Tauri commands. This is the only error type that crosses the
@@ -12,6 +13,8 @@ pub enum AppError {
     Backend(#[from] BackendError),
     #[error(transparent)]
     Sync(#[from] SyncError),
+    #[error(transparent)]
+    Runtime(#[from] RuntimeError),
     /// The requested sandbox has no active sync session — it has not been deployed.
     #[error("sandbox {0:?} is not deployed")]
     NotDeployed(String),
@@ -28,6 +31,7 @@ impl AppError {
         match self {
             AppError::Backend(_) => "Backend",
             AppError::Sync(_) => "Sync",
+            AppError::Runtime(_) => "Runtime",
             AppError::NotDeployed(_) => "NotDeployed",
             AppError::UnsyncedChanges { .. } => "UnsyncedChanges",
         }

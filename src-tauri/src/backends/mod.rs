@@ -3,7 +3,7 @@ pub mod types;
 use std::process::{Output, Stdio};
 
 use tauri::ipc::Channel;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 use types::{
@@ -11,11 +11,16 @@ use types::{
     SyncStrategy, WorkspacePlan,
 };
 
-const BASE_IMAGE: &str = "alpine";
-const BASE_IMAGE_VERSION: &str = "latest";
+/// Flox-baked base image (Nix + flox + cache key). Must be staged on each connection; not pulled from a registry.
+const BASE_IMAGE: &str = "sandbox-mio/base";
+const BASE_IMAGE_VERSION: &str = "flox";
 
 /// The connection `podman machine init` creates for the local machine.
-const DEFAULT_CONNECTION: &str = "podman-machine-default";
+pub(crate) const DEFAULT_CONNECTION: &str = "podman-machine-default";
+
+pub(crate) fn base_image() -> String {
+    format!("{BASE_IMAGE}:{BASE_IMAGE_VERSION}")
+}
 
 /// The container user's `~/work`, used as both the workspace bind-mount target and the
 /// `--workdir`. Spelled literally because `podman -v` rejects a bare `~` and does not expand
@@ -125,7 +130,7 @@ fn parse_connection_entry(entry: &serde_json::Value) -> Result<Option<Connection
 
 impl PodmanCliBackend {
     fn image() -> String {
-        format!("{BASE_IMAGE}:{BASE_IMAGE_VERSION}")
+        base_image()
     }
 
     async fn podman(&self, args: &[&str]) -> Result<Output, BackendError> {
@@ -340,53 +345,13 @@ impl SandboxBackend for PodmanCliBackend {
             });
         };
 
-        // Stop the local container so its filesystem is quiescent before the commit.
+        // Stop the workload onto the remote; kept stopped (not removed) so undeploy can restart it.
         check(self.podman(&["stop", name]).await?)?;
-        // A commit captures installed packages and container state but not the bind-mounted
-        // workspace, so the remote workspace is seeded later by the sync session, not this image.
-        let image = format!("sandbox-mio/{name}:deployed");
-        check(self.podman(&["commit", name, &image]).await?)?;
-        // Transfer the image between the two connections. `podman image scp conn1::img conn2::`
-        // fails on Windows when both endpoints are Podman machine connections (it resolves the
-        // connection name as a DNS hostname). Piping save→load avoids the dual-remote form entirely.
-        let save_out = Command::new("podman")
-            .arg("--connection")
-            .arg(&self.connection)
-            .args(["save", &image])
-            .output()
-            .await
-            .map_err(|e| BackendError::CommandFailed(e.to_string()))?;
-        if !save_out.status.success() {
-            return Err(BackendError::CommandFailed(format!(
-                "podman save: {}",
-                String::from_utf8_lossy(&save_out.stderr).trim()
-            )));
-        }
-        let mut load_child = Command::new("podman")
-            .arg("--connection")
-            .arg(target_connection)
-            .arg("load")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| BackendError::CommandFailed(e.to_string()))?;
-        if let Some(mut stdin) = load_child.stdin.take() {
-            stdin
-                .write_all(&save_out.stdout)
-                .await
-                .map_err(|e| BackendError::CommandFailed(e.to_string()))?;
-            // Dropping stdin closes the pipe so `podman load` sees EOF.
-        }
-        check(
-            load_child
-                .wait_with_output()
-                .await
-                .map_err(|e| BackendError::CommandFailed(e.to_string()))?,
-        )?;
+        // No committed-image transfer: software is reproduced from the flox manifest by
+        // `RuntimeManager::reproduce_remote` after this returns. Must not be reintroduced.
+        let image = Self::image();
 
-        // Create the remote workspace empty (the commit carries no workspace files) and register
-        // the target host's OpenSSH alias so Mutagen can reach it over the right port and key.
+        // Create the remote workspace and register the OpenSSH alias so Mutagen can reach it.
         Self::remote_mkdir(&info, &plan.bind_mount_source).await?;
         crate::ssh::write_alias(&crate::ssh::types::SshAlias {
             alias: target_connection.to_string(),

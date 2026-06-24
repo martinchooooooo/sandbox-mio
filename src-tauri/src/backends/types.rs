@@ -54,7 +54,7 @@ pub struct Sandbox {
 /// command, so the backend never reaches into the sync engine.
 pub struct RemoteDeployment {
     /// Local (alpha) end: the laptop directory, which at deploy time holds the only copy of the
-    /// workspace files (a `podman commit` does not capture the bind-mounted volume).
+    /// workspace files (including the `.flox/` manifest) before the sync session seeds the remote.
     pub alpha: String,
     /// Remote (beta) end as a Mutagen scp-style `alias:path` URL, where `alias` is the target
     /// connection's OpenSSH alias and `path` is the empty remote workspace the initial reconcile
@@ -125,12 +125,9 @@ pub trait SandboxBackend: Send + Sync {
     /// directory is never deleted: for a deployed sandbox it may hold the only copy of unsynced
     /// work. The `destroy_sandbox` command tears down the sync session and remote container first.
     async fn destroy(&self, name: &str) -> Result<(), BackendError>;
-    /// Migrate `name`'s workload to `target_connection` by snapshot-and-push: stop and `podman
-    /// commit` the local container, `podman image scp` the image to the target, create and start a
-    /// remote container bind-mounting an empty remote workspace, and register the target's OpenSSH
-    /// alias. Returns the sync endpoints; the `deploy_sandbox` command seeds the session from them.
-    /// The local container is left stopped (not removed), so deploy is reversible. Runs Podman
-    /// against `target_connection`, not the backend's pinned `connection`.
+    /// Stop the local container, create a remote container from the flox-baked base image, and
+    /// register the target's OpenSSH alias. Returns sync endpoints; software reproduction and
+    /// session seeding are done by the caller. Local container is left stopped so deploy is reversible.
     async fn deploy(
         &self,
         name: &str,

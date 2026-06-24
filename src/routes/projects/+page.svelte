@@ -44,11 +44,56 @@
     // locally, defaulting on for a freshly listed deployment.
     let syncOn = $state<Record<string, boolean>>({});
 
+    let packages = $state<Record<string, string[]>>({});
+    let packageInput = $state<Record<string, string>>({});
+    let packageBusy = $state<Record<string, boolean>>({});
+
     async function loadProjects() {
         try {
             projects = await invoke<Project[]>("list_sandboxes");
+            for (const p of projects) loadPackages(p);
         } catch (e) {
             error = parseError(e).message;
+        }
+    }
+
+    // Reads from the host manifest, so no polling needed — only install/uninstall change it.
+    async function loadPackages(project: Project) {
+        try {
+            packages[project.name] = await invoke<string[]>("list_packages", {
+                workspacePath: project.workspace_path,
+            });
+        } catch (e) {
+            error = parseError(e).message;
+        }
+    }
+
+    async function installPackage(project: Project) {
+        const pkg = (packageInput[project.name] ?? "").trim();
+        if (!pkg) return;
+        packageBusy[project.name] = true;
+        try {
+            error = "";
+            await invoke("install_package", { name: project.name, package: pkg });
+            packageInput[project.name] = "";
+            await loadPackages(project);
+        } catch (e) {
+            error = parseError(e).message;
+        } finally {
+            packageBusy[project.name] = false;
+        }
+    }
+
+    async function uninstallPackage(project: Project, pkg: string) {
+        packageBusy[project.name] = true;
+        try {
+            error = "";
+            await invoke("uninstall_package", { name: project.name, package: pkg });
+            await loadPackages(project);
+        } catch (e) {
+            error = parseError(e).message;
+        } finally {
+            packageBusy[project.name] = false;
         }
     }
 
@@ -328,6 +373,39 @@
                                 <Button size="sm" variant="outline" onclick={() => (deployingFor = null)}>{m.projects_cancel()}</Button>
                             </div>
                         {/if}
+
+                        <div class="flex flex-col gap-1.5 border-t pt-2">
+                            <div class="flex items-center gap-2">
+                                <span class="text-muted-foreground text-xs shrink-0">{m.projects_packages()}</span>
+                                <input
+                                    class="flex-1 rounded border bg-background px-2 py-1 text-xs disabled:opacity-50"
+                                    placeholder={m.projects_package_placeholder()}
+                                    bind:value={packageInput[project.name]}
+                                    disabled={packageBusy[project.name]}
+                                    onkeydown={(e) => e.key === "Enter" && installPackage(project)}
+                                />
+                                <Button size="sm" disabled={packageBusy[project.name]} onclick={() => installPackage(project)}>
+                                    {m.projects_install()}
+                                </Button>
+                            </div>
+                            {#if (packages[project.name] ?? []).length > 0}
+                                <!-- <span> not <li>: nested <li> breaks WebView2's `li*=name` WebDriver lookup. -->
+                                <div class="flex flex-wrap gap-1.5">
+                                    {#each packages[project.name] as pkg}
+                                        <span class="flex items-center gap-1 rounded bg-muted px-2 py-0.5 text-xs">
+                                            <span class="font-mono">{pkg}</span>
+                                            <button
+                                                class="text-destructive disabled:opacity-50"
+                                                disabled={packageBusy[project.name]}
+                                                title={m.projects_uninstall()}
+                                                onclick={() => uninstallPackage(project, pkg)}>✕</button>
+                                        </span>
+                                    {/each}
+                                </div>
+                            {:else}
+                                <span class="text-muted-foreground text-xs">{m.projects_no_packages()}</span>
+                            {/if}
+                        </div>
                     </li>
                 {/each}
             </ul>

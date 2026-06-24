@@ -48,6 +48,14 @@ export default class ProjectRow {
     return this.root.$("button[role='switch']");
   }
 
+  get packageInput(): Element {
+    return this.root.$("input[placeholder='package name']");
+  }
+
+  get installButton(): Element {
+    return this.root.$("button=install");
+  }
+
   // The green dot shown while the container is running.
   get runningIndicator(): Element {
     return this.root.$("span.bg-green-500");
@@ -114,6 +122,29 @@ export default class ProjectRow {
   async destroy(): Promise<void> {
     await this.#clickButton(this.destroyButton);
     await this.waitForGone();
+  }
+
+  async installPackage(pkg: string, { timeout = 180000 }: { timeout?: number } = {}): Promise<void> {
+    const input = await this.packageInput;
+    await input.scrollIntoView();
+    await input.setValue(pkg);
+    await this.#clickButton(this.installButton);
+    await this.waitForPackage(pkg, timeout);
+  }
+
+  async installedPackages(): Promise<string[]> {
+    const chips = await this.root.$$("span.font-mono");
+    const names: string[] = [];
+    for (const chip of chips) names.push(await chip.getText());
+    return names;
+  }
+
+  async waitForPackage(pkg: string, timeoutMs = 180000): Promise<void> {
+    await browser.waitUntil(async () => (await this.installedPackages()).includes(pkg), {
+      timeout: timeoutMs,
+      interval: 2000,
+      timeoutMsg: `package "${pkg}" did not appear in the row within ${timeoutMs}ms`,
+    });
   }
 
   async toggleSyncOffOn(pauseMs = 500): Promise<void> {

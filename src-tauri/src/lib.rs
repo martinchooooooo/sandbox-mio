@@ -1,5 +1,6 @@
 mod backends;
 mod error;
+mod runtime;
 mod ssh;
 mod sync;
 
@@ -9,6 +10,7 @@ use tauri::{ipc::Channel, Manager, State};
 
 use crate::backends::types::{Sandbox, SandboxBackend};
 use crate::error::AppError;
+use crate::runtime::types::RuntimeManager;
 use crate::sync::types::{SessionInfo, SyncEngine, SyncStatus};
 
 #[tauri::command]
@@ -26,8 +28,39 @@ async fn mutagen_version(app: tauri::AppHandle) -> Result<String, AppError> {
 async fn create_sandbox(
     name: String,
     store: State<'_, Arc<dyn SandboxBackend>>,
+    runtime: State<'_, Arc<dyn RuntimeManager>>,
 ) -> Result<Sandbox, AppError> {
-    Ok(store.create(&name).await?)
+    let sandbox = store.create(&name).await?;
+    runtime
+        .init(&backends::base_image(), &sandbox.workspace_path)
+        .await?;
+    Ok(sandbox)
+}
+
+#[tauri::command]
+async fn install_package(
+    name: String,
+    package: String,
+    runtime: State<'_, Arc<dyn RuntimeManager>>,
+) -> Result<(), AppError> {
+    Ok(runtime.install(&name, &package).await?)
+}
+
+#[tauri::command]
+async fn uninstall_package(
+    name: String,
+    package: String,
+    runtime: State<'_, Arc<dyn RuntimeManager>>,
+) -> Result<(), AppError> {
+    Ok(runtime.uninstall(&name, &package).await?)
+}
+
+#[tauri::command]
+async fn list_packages(
+    workspace_path: String,
+    runtime: State<'_, Arc<dyn RuntimeManager>>,
+) -> Result<Vec<String>, AppError> {
+    Ok(runtime.list(&workspace_path).await?)
 }
 
 #[tauri::command]
@@ -52,9 +85,13 @@ async fn deploy_sandbox(
     name: String,
     host: String,
     store: State<'_, Arc<dyn SandboxBackend>>,
+    runtime: State<'_, Arc<dyn RuntimeManager>>,
     engine: State<'_, Arc<dyn SyncEngine>>,
 ) -> Result<(), AppError> {
     let deployment = store.deploy(&name, &host).await?;
+    runtime
+        .reproduce_remote(&name, &host, &deployment.alpha)
+        .await?;
     engine
         .create(&name, &deployment.alpha, &deployment.beta)
         .await?;
@@ -199,6 +236,7 @@ pub fn run() {
     let devtools = tauri_plugin_devtools::Builder::default().init();
 
     let backend = backends::default_backend();
+    let runtime = runtime::default_runtime();
 
     let mut builder = tauri::Builder::default();
 
@@ -211,6 +249,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .manage(backend)
+        .manage(runtime)
         .setup(|app| {
             // Constructed in setup because the sync engine needs the AppHandle to resolve the
             // bundled Mutagen sidecar.
@@ -221,6 +260,9 @@ pub fn run() {
             greet,
             mutagen_version,
             create_sandbox,
+            install_package,
+            uninstall_package,
+            list_packages,
             list_sandboxes,
             start_sandbox,
             stop_sandbox,

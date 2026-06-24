@@ -1,8 +1,17 @@
 import { spawnSync } from "child_process";
+import path from "path";
+import { fileURLToPath } from "url";
 
 // Rootless Podman API socket inside a machine (UID 1000). Both the local test machine and the
 // remote stand-in run rootless, so the socket path is the same on each.
 export const PODMAN_SOCKET = "/run/user/1000/podman/podman.sock";
+
+// Flox-baked base image for all sandboxes (matches BASE_IMAGE in src-tauri/src/backends/mod.rs).
+export const FLOX_BASE_IMAGE = "sandbox-mio/base:flox";
+const SPIKE_DIR = path.resolve(
+  fileURLToPath(new URL(".", import.meta.url)),
+  "../../docs/features/sandbox-runtime-management/spike"
+);
 
 // Transport details for a system connection, parsed from `podman system connection list`.
 export interface ConnectionInfo {
@@ -126,6 +135,39 @@ export function provisionMachine(
       stdio: "inherit",
       shell: true,
     });
+  }
+}
+
+// Idempotent: build FLOX_BASE_IMAGE on localName if absent, then stage onto remoteNames via
+// save|load. `podman image scp` is not used — it fails between machine connections on Windows.
+export function ensureFloxBaseImage(localName: string, remoteNames: string[] = []): void {
+  const has = (name: string) =>
+    spawnSync("podman", ["--connection", name, "image", "exists", FLOX_BASE_IMAGE], {
+      shell: false,
+    }).status === 0;
+
+  if (!has(localName)) {
+    console.log(`Building ${FLOX_BASE_IMAGE} on "${localName}" (one-time, ~1.27 GB)...`);
+    const build = spawnSync(
+      "podman",
+      ["--connection", localName, "build", "-t", FLOX_BASE_IMAGE, "-f", "Containerfile", "."],
+      { cwd: SPIKE_DIR, stdio: "inherit", shell: false }
+    );
+    if (build.status !== 0) {
+      throw new Error(`Failed to build ${FLOX_BASE_IMAGE} on "${localName}"`);
+    }
+  }
+
+  for (const remote of remoteNames) {
+    if (has(remote)) continue;
+    console.log(`Staging ${FLOX_BASE_IMAGE} onto "${remote}" via save | load...`);
+    const staged = spawnSync(
+      `podman --connection ${localName} save ${FLOX_BASE_IMAGE} | podman --connection ${remote} load`,
+      { stdio: "inherit", shell: true }
+    );
+    if (staged.status !== 0) {
+      throw new Error(`Failed to stage ${FLOX_BASE_IMAGE} onto "${remote}"`);
+    }
   }
 }
 
