@@ -21,14 +21,25 @@
         project,
         deployment,
         hosts,
+        currentImageVersion,
         onChanged,
     }: {
         project: Project;
         deployment: Deployment | undefined;
         hosts: string[];
+        currentImageVersion: number | undefined;
         // Tells the parent to reload its sandbox and deployment lists after a mutating action.
         onChanged: () => void;
     } = $props();
+
+    let dismissedVersion = $state<number | undefined>(undefined);
+
+    const imageOutdated = $derived(
+        currentImageVersion !== undefined &&
+        project.image_version !== undefined &&
+        project.image_version < currentImageVersion &&
+        (dismissedVersion === undefined || dismissedVersion < currentImageVersion)
+    );
 
     const action = createActionRunner();
 
@@ -184,7 +195,21 @@
         await action.run("folder", () => revealItemInDir(project.workspace_path));
     }
 
-    onMount(loadPackages);
+    async function dismissUpdate() {
+        if (currentImageVersion === undefined) return;
+        await invoke("dismiss_image_update", {
+            workspacePath: project.workspace_path,
+            version: currentImageVersion,
+        });
+        dismissedVersion = currentImageVersion;
+    }
+
+    onMount(async () => {
+        await loadPackages();
+        dismissedVersion = await invoke<number | undefined>("get_dismissed_image_version", {
+            workspacePath: project.workspace_path,
+        }) ?? undefined;
+    });
 </script>
 
 <li class="flex flex-col gap-2 rounded-lg border p-3 text-sm">
@@ -254,6 +279,15 @@
         error={action.error}
         status={translateStatus(deployment ? deployment.status : project.status)}
     />
+
+    {#if imageOutdated}
+        <div class="flex items-center gap-2">
+            <p class="text-xs text-amber-600 dark:text-amber-400 flex-1">{m.projects_image_outdated()}</p>
+            <button class="text-xs text-muted-foreground hover:text-foreground shrink-0" onclick={dismissUpdate}>
+                {m.projects_image_dismiss()}
+            </button>
+        </div>
+    {/if}
 
     {#if terminalToken}
         <div class="flex items-center gap-2 text-xs">

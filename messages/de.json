@@ -48,6 +48,8 @@
   "projects_status_installing": "{name} installieren…",
   "projects_status_uninstalling": "{name} deinstallieren…",
   "projects_status_creating": "{name} erstellen…",
+  "projects_image_outdated": "Base-Image-Update verfügbar — Sandbox neu erstellen, um Terminal-Verbesserungen zu erhalten.",
+  "projects_image_dismiss": "verwerfen",
   "event_log": "Ereignisprotokoll",
   "event_log_live": "● live",
   "event_log_stopped": "○ gestoppt",

@@ -5,6 +5,8 @@ export interface Project {
     name: string;
     status: string;
     workspace_path: string;
+    /** Absent for sandboxes predating numeric base-image versioning. */
+    image_version?: number;
 }
 
 export interface TerminalSession {

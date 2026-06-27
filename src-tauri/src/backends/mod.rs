@@ -14,11 +14,10 @@ use types::{
 /// mise-baked base image (debian-slim + mise + zellij). Must be staged on each connection; not
 /// pulled from a registry — [`PodmanCliBackend::ensure_base_image`] builds it from [`CONTAINERFILE`].
 const BASE_IMAGE: &str = "sandbox-mio/base";
-// Bumped from "zellij" when the runtime engine moved from flox/Nix to mise (the recipe switched to a
-// debian-slim base, shrinking the image from 1.84 GB to ~324 MB). The tag MUST change whenever the
-// recipe does: `ensure_base_image` short-circuits on `podman image exists <tag>`, so a stale tag
-// would keep existing machines on the old flox image.
-const BASE_IMAGE_VERSION: &str = "mise";
+// Bump whenever the Containerfile changes. `ensure_base_image` short-circuits on
+// `podman image exists <tag>`, so an unchanged tag would silently keep stale images.
+// History: "zellij" (flox/Nix era), "mise" (debian-slim rewrite), 2 (bash + mise activate).
+pub(crate) const BASE_IMAGE_VERSION: u32 = 2;
 
 /// The base-image recipe, baked into the binary so the build needs no resource-path resolution.
 /// Kept in sync with the spike reference at `docs/features/sandbox-runtime-management/spike/mise/Containerfile.glibc`.
@@ -29,6 +28,10 @@ pub(crate) const DEFAULT_CONNECTION: &str = "podman-machine-default";
 
 pub(crate) fn base_image() -> String {
     format!("{BASE_IMAGE}:{BASE_IMAGE_VERSION}")
+}
+
+fn parse_image_version(image: &str) -> Option<u32> {
+    image.rsplit(':').next()?.parse().ok()
 }
 
 /// The container user's `~/work`, used as both the workspace bind-mount target and the
@@ -330,6 +333,7 @@ impl SandboxBackend for PodmanCliBackend {
             name: name.to_string(),
             status: "created".to_string(),
             workspace_path: workspace,
+            image_version: Some(BASE_IMAGE_VERSION),
         })
     }
 
@@ -353,11 +357,14 @@ impl SandboxBackend for PodmanCliBackend {
                 // Derived from the name, not the container's mount JSON, so it is set even
                 // for sandboxes created outside this app.
                 let workspace_path = workspace_path(&name).unwrap_or_default();
+                let image_version =
+                    parse_image_version(c["Image"].as_str().unwrap_or_default());
                 Sandbox {
                     id: c["Id"].as_str().unwrap_or_default().to_string(),
                     status: c["State"].as_str().unwrap_or_default().to_string(),
                     name,
                     workspace_path,
+                    image_version,
                 }
             })
             .collect())

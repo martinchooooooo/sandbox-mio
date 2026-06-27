@@ -47,6 +47,10 @@ pub struct Sandbox {
     /// [`WorkspacePlan`]). Derived from the name, so it is set even for sandboxes only listed this
     /// session.
     pub workspace_path: String,
+    /// `None` for containers predating numeric versioning (image tags "zellij", "mise") or
+    /// non-sandbox-mio containers. Compare against [`crate::backends::BASE_IMAGE_VERSION`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_version: Option<u32>,
 }
 
 /// The Mutagen endpoints a freshly deployed sandbox needs to seed its sync session. Returned by

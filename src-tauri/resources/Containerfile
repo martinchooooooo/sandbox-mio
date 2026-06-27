@@ -17,9 +17,11 @@ RUN curl -fsSL "https://github.com/jdx/mise/releases/download/${MISE_VERSION}/mi
 
 # MISE_LOCKFILE=1 makes installs maintain mise.lock (only when the lockfile already exists, which the
 # runtime's init creates). MISE_YES auto-confirms so `podman exec` never blocks on a prompt.
+# SHELL=bash makes zellij open bash panes (which read .bashrc) instead of /bin/sh.
 ENV MISE_DATA_DIR=/root/.local/share/mise \
     MISE_LOCKFILE=1 \
-    MISE_YES=1
+    MISE_YES=1 \
+    SHELL=/bin/bash
 
 # Bake the in-app web terminal engine (zellij) and symlink it onto the global PATH so the terminal
 # runs plain `zellij` over `podman exec`, NOT through mise. Pinned to an exact version so the install
@@ -35,4 +37,11 @@ RUN mise install "zellij@${ZELLIJ_VERSION}" \
 RUN mkdir -p /root/.config/zellij \
  && zellij setup --dump-config > /root/.config/zellij/config.kdl
 
-CMD ["/bin/sh"]
+# Activate mise in interactive bash sessions so zellij terminal panes have installed tools on PATH.
+RUN echo 'eval "$(mise activate bash)"' > /root/.bashrc
+
+# Default to the workspace directory so the zellij daemon (and the panes it spawns) start where
+# mise.toml lives, letting mise resolve the right tool versions without an explicit `cd`.
+WORKDIR /root/work
+
+CMD ["/bin/bash"]

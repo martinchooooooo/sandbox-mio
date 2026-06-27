@@ -48,6 +48,8 @@
   "projects_status_installing": "Installing {name}…",
   "projects_status_uninstalling": "Uninstalling {name}…",
   "projects_status_creating": "Creating {name}…",
+  "projects_image_outdated": "Base image update available — recreate this sandbox to get terminal improvements.",
+  "projects_image_dismiss": "dismiss",
   "event_log": "Event Log",
   "event_log_live": "● live",
   "event_log_stopped": "○ stopped",

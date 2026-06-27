@@ -22,6 +22,25 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
+#[tauri::command]
+fn base_image_version() -> u32 {
+    backends::BASE_IMAGE_VERSION
+}
+
+#[tauri::command]
+fn get_dismissed_image_version(workspace_path: String) -> Option<u32> {
+    let path = std::path::Path::new(&workspace_path).join(".mio").join("dismissed_image_version");
+    std::fs::read_to_string(path).ok()?.trim().parse().ok()
+}
+
+#[tauri::command]
+fn dismiss_image_update(workspace_path: String, version: u32) -> Result<(), AppError> {
+    let mio_dir = std::path::Path::new(&workspace_path).join(".mio");
+    std::fs::create_dir_all(&mio_dir)
+        .and_then(|_| std::fs::write(mio_dir.join("dismissed_image_version"), version.to_string()))
+        .map_err(|e| crate::backends::types::BackendError::CommandFailed(e.to_string()).into())
+}
+
 /// Smoke test for the bundled Mutagen sidecar: returns its version string.
 #[tauri::command]
 async fn mutagen_version(app: tauri::AppHandle) -> Result<String, AppError> {
@@ -342,6 +361,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             greet,
+            base_image_version,
+            get_dismissed_image_version,
+            dismiss_image_update,
             mutagen_version,
             create_sandbox,
             install_package,

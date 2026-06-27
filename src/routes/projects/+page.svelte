@@ -15,6 +15,7 @@
     let projectName = $state("");
     let projects = $state<Project[]>([]);
     let error = $state("");
+    let currentImageVersion = $state<number | undefined>(undefined);
 
     // Deployment state, overlaid onto the local sandbox list by name. A sandbox with an entry is
     // deployed to `deployments[name].host`; one without is local-only. Polled, since sync status
@@ -79,6 +80,7 @@
         loadProjects();
         loadHosts();
         loadDeployments();
+        invoke<number>("base_image_version").then((v) => (currentImageVersion = v)).catch(() => {});
         // Sync status drifts outside the container event stream, so poll the deployment overlay.
         pollId = setInterval(loadDeployments, 3000);
     });
@@ -120,6 +122,7 @@
                     <SandboxItem
                         {project}
                         {hosts}
+                        {currentImageVersion}
                         deployment={deployments[project.name]}
                         onChanged={reload}
                     />
