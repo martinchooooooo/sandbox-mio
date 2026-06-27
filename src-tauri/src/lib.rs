@@ -4,7 +4,7 @@ mod runtime;
 mod ssh;
 mod sync;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use tauri::{ipc::Channel, Manager, State};
 
@@ -12,6 +12,10 @@ use crate::backends::types::{Sandbox, SandboxBackend};
 use crate::error::AppError;
 use crate::runtime::types::{RuntimeManager, TerminalSession};
 use crate::sync::types::{SessionInfo, SyncEngine, SyncStatus};
+
+/// Maps sandbox name → the Windows-host loopback port of its active Mutagen forwarding session.
+/// Held in Tauri state so undeploy/destroy can terminate the session and reclaim the port.
+type ForwardPortMap = Arc<Mutex<std::collections::HashMap<String, u16>>>;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -56,16 +60,70 @@ async fn uninstall_package(
     Ok(runtime.uninstall(&name, &package).await?)
 }
 
-/// Open the in-app web terminal for local sandbox `name`: start the zellij web server, mint a
-/// one-time token, and return the loopback URL plus token for the frontend to load in a
-/// `WebviewWindow`. `workspace_path` is where the token is persisted host-side.
+/// Open the in-app web terminal for sandbox `name`. Works for both local and deployed sandboxes:
+/// starts the zellij web server over the appropriate Podman connection, mints a one-time token,
+/// creates a Mutagen forwarding session from a Windows-host loopback port to the container's
+/// published zellij port, and returns the Windows-side URL plus token for the frontend.
 #[tauri::command]
 async fn open_terminal(
     name: String,
     workspace_path: String,
     runtime: State<'_, Arc<dyn RuntimeManager>>,
+    engine: State<'_, Arc<dyn SyncEngine>>,
+    forward_ports: State<'_, ForwardPortMap>,
+    app: tauri::AppHandle,
 ) -> Result<TerminalSession, AppError> {
-    Ok(runtime.open_terminal(&name, &workspace_path).await?)
+    // A sync session named after the sandbox means it is deployed to a remote host; use that
+    // host's connection alias. Otherwise fall back to the local machine's default connection.
+    let connection = engine
+        .sessions()
+        .await?
+        .into_iter()
+        .find(|s| s.name == name)
+        .map(|s| s.host)
+        .unwrap_or_else(|| runtime.local_connection().to_string());
+
+    // Refresh the SSH alias for this connection so Mutagen can resolve it. Read fresh every
+    // time: the local machine's SSH port changes on each boot.
+    crate::backends::ensure_connection_alias(&connection).await?;
+
+    let (token, container_port) = runtime.prepare_terminal(&name, &connection, &workspace_path).await?;
+
+    // Allocate an ephemeral Windows-side port by binding and immediately releasing it before
+    // Mutagen binds it. The race window is negligible on loopback.
+    let windows_port = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")
+            .map_err(|e| crate::runtime::types::RuntimeError::TerminalUnavailable(e.to_string()))?;
+        listener
+            .local_addr()
+            .map_err(|e| crate::runtime::types::RuntimeError::TerminalUnavailable(e.to_string()))?
+            .port()
+    };
+
+    let forward_name = format!("terminal-{name}");
+    let url = format!("http://127.0.0.1:{windows_port}/");
+    sync::forward_create(&app, &forward_name, windows_port, &connection, container_port)
+        .await
+        .map_err(|e| crate::runtime::types::RuntimeError::TerminalUnavailable(e.to_string()))?;
+    forward_ports.lock().unwrap().insert(name.clone(), windows_port);
+
+    // Persist token + URL host-side (docs/techdebt.md workaround). Writing host-side avoids
+    // shell-escaping JSON through `podman exec`; the workspace is bind-mounted into the container
+    // at /root/work/.mio/. Written after forward_create so the URL is the live Mutagen port.
+    let mio_dir = std::path::Path::new(&workspace_path).join(".mio");
+    std::fs::create_dir_all(&mio_dir)
+        .and_then(|_| {
+            let json = serde_json::json!({ "token": &token, "url": &url });
+            std::fs::write(mio_dir.join("zellij.json"), json.to_string())
+        })
+        .map_err(|e| {
+            crate::runtime::types::RuntimeError::TerminalUnavailable(format!(
+                "failed to write session to {}: {e}",
+                mio_dir.join("zellij.json").to_string_lossy()
+            ))
+        })?;
+
+    Ok(TerminalSession { url, token })
 }
 
 #[tauri::command]
@@ -118,6 +176,8 @@ async fn undeploy_sandbox(
     name: String,
     store: State<'_, Arc<dyn SandboxBackend>>,
     engine: State<'_, Arc<dyn SyncEngine>>,
+    forward_ports: State<'_, ForwardPortMap>,
+    app: tauri::AppHandle,
 ) -> Result<(), AppError> {
     let session = engine
         .sessions()
@@ -125,6 +185,9 @@ async fn undeploy_sandbox(
         .into_iter()
         .find(|s| s.name == name)
         .ok_or_else(|| AppError::NotDeployed(name.clone()))?;
+    // Tear down any active forwarding session before the sync session closes its SSH channel.
+    sync::forward_terminate(&app, &format!("terminal-{name}")).await;
+    forward_ports.lock().unwrap().remove(&name);
     // Flush before removing so any pending remote writes land locally first.
     // Remove the container before terminating the Mutagen session: terminating closes
     // Mutagen's SSH connections to the machine, which can briefly make it unresponsive
@@ -146,6 +209,8 @@ async fn destroy_sandbox(
     force: bool,
     store: State<'_, Arc<dyn SandboxBackend>>,
     engine: State<'_, Arc<dyn SyncEngine>>,
+    forward_ports: State<'_, ForwardPortMap>,
+    app: tauri::AppHandle,
 ) -> Result<(), AppError> {
     // Absent session ⇒ purely local sandbox ⇒ no sync guard and no remote container.
     let session = engine
@@ -155,6 +220,9 @@ async fn destroy_sandbox(
         .into_iter()
         .find(|s| s.name == name);
     let Some(session) = session else {
+        // Still clean up any forwarding session from a local terminal.
+        sync::forward_terminate(&app, &format!("terminal-{name}")).await;
+        forward_ports.lock().unwrap().remove(&name);
         return Ok(store.destroy(&name).await?);
     };
     // Settle pending propagation, then refuse to drop unsynced remote work unless forced. The
@@ -166,6 +234,8 @@ async fn destroy_sandbox(
             host: session.host.clone(),
         });
     }
+    sync::forward_terminate(&app, &format!("terminal-{name}")).await;
+    forward_ports.lock().unwrap().remove(&name);
     engine.terminate(&name).await?;
     store.remove_remote(&name, &session.host).await?;
     Ok(store.destroy(&name).await?)
@@ -267,6 +337,7 @@ pub fn run() {
             // Constructed in setup because the sync engine needs the AppHandle to resolve the
             // bundled Mutagen sidecar.
             app.manage(sync::default_sync_engine(app.handle().clone()));
+            app.manage(ForwardPortMap::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

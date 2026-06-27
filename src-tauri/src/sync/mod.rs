@@ -68,6 +68,31 @@ pub async fn version<R: Runtime>(app: &AppHandle<R>) -> Result<String, SyncError
     run(app, &["version"]).await
 }
 
+/// Start a Mutagen forwarding session named `name`, listening on `local_port` on the Windows
+/// host and connecting to `remote_port` on `remote_alias`'s loopback. Terminates any prior
+/// session of the same name first so the call is idempotent across `open_terminal` retries.
+pub async fn forward_create<R: Runtime>(
+    app: &AppHandle<R>,
+    name: &str,
+    local_port: u16,
+    remote_alias: &str,
+    remote_port: u16,
+) -> Result<(), SyncError> {
+    // Best-effort: a missing session is not an error, so ignore the result.
+    let _ = run(app, &["forward", "terminate", name]).await;
+    let source = format!("tcp:127.0.0.1:{local_port}");
+    let dest = format!("{remote_alias}:tcp:127.0.0.1:{remote_port}");
+    run(app, &["forward", "create", &format!("--name={name}"), &source, &dest])
+        .await
+        .map(|_| ())
+}
+
+/// Terminate the Mutagen forwarding session named `name`. Best-effort: a missing session is
+/// not an error (desired state already reached).
+pub async fn forward_terminate<R: Runtime>(app: &AppHandle<R>, name: &str) {
+    let _ = run(app, &["forward", "terminate", name]).await;
+}
+
 /// Construct the managed [`SyncEngine`] for Tauri state. Mirrors `default_backend` in
 /// `backends/mod.rs`, but needs the [`AppHandle`] because the sidecar is resolved through it.
 pub fn default_sync_engine(app: AppHandle) -> std::sync::Arc<dyn SyncEngine> {

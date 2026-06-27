@@ -314,8 +314,7 @@ impl SandboxBackend for PodmanCliBackend {
         // decisive pasta flag: it forwards the host-loopback-published port to the container's
         // loopback, where zellij binds; without it pasta forwards to the container's eth0 and the
         // loopback-bound server is unreachable. The host side is pinned to 127.0.0.1 so nothing is
-        // exposed on the local network. Only local sandboxes get this; the remote deploy `create`
-        // path is intentionally left without it (remote terminals are out of scope).
+        // exposed on the local network. Both local and remote containers get these flags.
         let publish = format!("127.0.0.1::{ZELLIJ_WEB_PORT}");
         // `--pull=missing` satisfies the trait's "pull if absent, then create" contract.
         let out = self
@@ -423,11 +422,13 @@ impl SandboxBackend for PodmanCliBackend {
 
         // Create and start the remote container on the target connection, not self.connection.
         let volume = format!("{}:{WORKSPACE_MOUNT}", plan.bind_mount_source);
+        let publish = format!("127.0.0.1::{ZELLIJ_WEB_PORT}");
         check(
             Self::podman_on(
                 target_connection,
                 &[
-                    "create", "--tty", "--volume", &volume, "--workdir", WORKSPACE_MOUNT,
+                    "create", "--tty", "--network", "pasta:--host-lo-to-ns-lo",
+                    "--publish", &publish, "--volume", &volume, "--workdir", WORKSPACE_MOUNT,
                     "--name", name, &image, "/bin/sh",
                 ],
             )
@@ -556,4 +557,22 @@ impl SandboxBackend for PodmanCliBackend {
         progress(&on_progress, "done", "ok", "");
         Ok(())
     }
+}
+
+/// Ensure the SSH alias for `connection` is written to `~/.ssh/sandbox-mio/config` so Mutagen
+/// can resolve it for forwarding sessions. Read fresh from `podman system connection list` each
+/// call so the port (reassigned on each machine boot) is always current. Called before any
+/// `mutagen forward create` that targets `connection`.
+pub async fn ensure_connection_alias(connection: &str) -> Result<(), BackendError> {
+    let Some(info) = PodmanCliBackend::remote_connection_info(connection).await? else {
+        return Err(BackendError::NoSshEndpoint { connection: connection.to_string() });
+    };
+    crate::ssh::write_alias(&crate::ssh::types::SshAlias {
+        alias: connection.to_string(),
+        host: info.host,
+        port: info.port,
+        user: info.user,
+        identity: info.identity,
+    })?;
+    Ok(())
 }

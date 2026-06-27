@@ -228,6 +228,7 @@
                     <Switch checked={syncOn} onCheckedChange={toggleSync} />
                     {m.projects_sync()}
                 </label>
+                <button onclick={openTerminal}>{m.projects_terminal()}</button>
                 <button onclick={undeploy}>{m.projects_undeploy()}</button>
             {:else}
                 {#if project.status === "running"}

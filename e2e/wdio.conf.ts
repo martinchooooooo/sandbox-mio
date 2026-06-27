@@ -60,6 +60,12 @@ export const config: WebdriverIO.Config = {
       stdio: "inherit",
       shell: true,
     });
+    // Mutagen needs its agent bundle adjacent to the sidecar binary to install agents on new SSH
+    // endpoints. The bundle is in tools/ but Tauri's build does not copy it to target/debug/.
+    fs.copyFileSync(
+      path.resolve(__dirname, "../tools/mutagen-agents.tar.gz"),
+      path.resolve(__dirname, "../src-tauri/target/debug/mutagen-agents.tar.gz"),
+    );
   },
   beforeSession: () => {
     tauriDriver = spawn(

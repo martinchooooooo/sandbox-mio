@@ -5,6 +5,7 @@ import path from "path";
 import ProjectsPage from "../pageobjects/projects.page.js";
 import ProjectRow from "../pageobjects/project-row.component.js";
 import { podman, podmanOk, LOCAL_CONNECTION } from "../../lib/podman-connection.js";
+import { forwardList } from "../../lib/mutagen.js";
 
 const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
 
@@ -121,21 +122,27 @@ describe("In-app web terminal (zellij)", function () {
         "This can happen when the baked image lacks zellij or the config file is missing (Phase A)."
     );
 
-    // The persisted token is a non-empty value and the URL points at the published loopback port.
+    // The persisted session has a non-empty token and a loopback URL (the Mutagen-forwarded
+    // Windows port, distinct from the Podman-published container port).
     const session = JSON.parse(fs.readFileSync(tokenPath, "utf8"));
     assert(
       typeof session.token === "string" && session.token.length > 0,
       `Persisted ${tokenPath} has no token. Contents:\n${JSON.stringify(session)}\n` +
         "This can happen when the token parser in open_terminal did not match the --create-token output."
     );
-
-    const portOut = podman(LOCAL_CONNECTION, ["port", projectName, `${ZELLIJ_WEB_PORT}/tcp`]);
-    const hostPort = hostPortFrom(portOut);
-    assert(hostPort !== undefined, `No published host port for ${projectName}. Output:\n${portOut}`);
     assert(
-      session.url === `http://127.0.0.1:${hostPort}/`,
-      `Persisted url "${session.url}" does not match the published port http://127.0.0.1:${hostPort}/. ` +
-        "open_terminal must report the port it actually published."
+      typeof session.url === "string" && session.url.startsWith("http://127.0.0.1:"),
+      `Persisted ${tokenPath} has no valid url. Contents:\n${JSON.stringify(session)}\n` +
+        "open_terminal must write the Mutagen-forwarded Windows-host url alongside the token."
+    );
+
+    // The Mutagen forwarding session is live — proves open_terminal calls forward_create even
+    // for local sandboxes (unified code path introduced in the remote-terminal feature).
+    const fwdOut = forwardList(`terminal-${projectName}`);
+    assert(
+      fwdOut.includes("Connected"),
+      `mutagen forward list terminal-${projectName} did not show Connected. Output:\n${fwdOut}\n` +
+        "open_terminal must call sync::forward_create for both local and remote sandboxes."
     );
 
     // The decisive end-to-end proof: the published host-loopback port serves the web client. Poll
@@ -178,11 +185,18 @@ describe("In-app web terminal (zellij)", function () {
     );
   });
 
-  it("destroy removes the container", async () => {
+  it("destroy removes the container and terminates the forwarding session", async () => {
     await row.destroy();
     assert(
       !podmanOk(LOCAL_CONNECTION, ["inspect", projectName]),
       `Local container "${projectName}" still exists after destroy.`
+    );
+    // destroy_sandbox must call sync::forward_terminate for local sandboxes.
+    const fwdOut = forwardList(`terminal-${projectName}`);
+    assert(
+      !fwdOut.includes("Connected"),
+      `Mutagen forwarding session terminal-${projectName} still shows Connected after destroy. Output:\n${fwdOut}\n` +
+        "destroy_sandbox must call sync::forward_terminate before removing the container."
     );
   });
 });

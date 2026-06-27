@@ -55,16 +55,22 @@ pub trait RuntimeManager: Send + Sync {
         workspace_host_path: &str,
     ) -> Result<(), RuntimeError>;
 
-    /// Start the zellij web server in sandbox `name` (idempotently), mint a one-time login token,
-    /// read the host port Podman published for the container's web port, and return the `{ url,
-    /// token }` pair. Also persists the token host-side to `<workspace_host_path>/.mio/zellij.json`
-    /// (a deliberate, documented workaround — see `docs/techdebt.md`). Local sandboxes only:
-    /// `create` publishes the port for local sandboxes alone.
-    async fn open_terminal(
+    /// Start the zellij web server in sandbox `name` over `connection` (idempotently), mint a
+    /// one-time login token, and return `(token, container_port)` where `container_port` is the
+    /// ephemeral port on `connection`'s host loopback that the container published for the zellij
+    /// web server. The caller creates the Mutagen forwarding session that bridges a Windows-host
+    /// port to `container_port`, then persists the complete session (token + URL) host-side.
+    /// Works for any Podman connection.
+    async fn prepare_terminal(
         &self,
         name: &str,
+        connection: &str,
         workspace_host_path: &str,
-    ) -> Result<TerminalSession, RuntimeError>;
+    ) -> Result<(String, u16), RuntimeError>;
+
+    /// The Podman connection this runtime is pinned to, read from `PODMAN_CONNECTION` (or the
+    /// compiled-in default). Used by `open_terminal` as the fallback connection for local sandboxes.
+    fn local_connection(&self) -> &str;
 }
 
 /// Drives `mise` (over `podman exec`) against a named Podman **system connection**, mirroring

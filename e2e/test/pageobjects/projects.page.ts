@@ -16,8 +16,11 @@ class ProjectsPage extends AppPage {
     return $("button=Create");
   }
 
-  // Navigates to the projects screen; returns once the nav link has been clicked.
+  // Navigates to the projects screen. No-ops when the browser is already on /projects
+  // (the nav link is only rendered on the home page, so waitForDisplayed would time out).
   async open(timeout = 10000): Promise<void> {
+    const url = await browser.getUrl();
+    if (url.includes("/projects")) return;
     const link = await this.navLink;
     await link.waitForDisplayed({ timeout });
     await link.click();

@@ -70,6 +70,28 @@ export function syncTerminate(name: string): void {
   mutagen(["sync", "terminate", name]);
 }
 
+// App-private Mutagen data directory. The Tauri app sets MUTAGEN_DATA_DIRECTORY to
+// app_data_dir()/mutagen (%APPDATA%\com.tincho.sandbox-mio\mutagen) so the daemon is isolated
+// from any user-installed Mutagen. Test helpers that query the app's sessions must pass this
+// directory so the CLI client connects to the same daemon.
+const APP_MUTAGEN_DIR = path.join(
+  process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming"),
+  "com.tincho.sandbox-mio",
+  "mutagen"
+);
+
+// Returns the combined stdout+stderr of `mutagen forward list <name>` against the app's private
+// daemon, or an empty string when the session does not exist (command exits non-zero). Use to
+// assert a session is "Connected" or that it is absent.
+export function forwardList(name: string): string {
+  const out = spawnSync(MUTAGEN_BIN, ["forward", "list", name], {
+    encoding: "utf8",
+    shell: false,
+    env: { ...process.env, MUTAGEN_DATA_DIRECTORY: APP_MUTAGEN_DIR },
+  });
+  return ((out.stdout ?? "") + (out.stderr ?? "")).trim();
+}
+
 // ---- SSH host alias management -------------------------------------------------------------
 //
 // Mutagen uses the system OpenSSH client and reads ~/.ssh/config, but its scp-style URLs cannot
