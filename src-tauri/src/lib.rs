@@ -30,6 +30,9 @@ async fn create_sandbox(
     store: State<'_, Arc<dyn SandboxBackend>>,
     runtime: State<'_, Arc<dyn RuntimeManager>>,
 ) -> Result<Sandbox, AppError> {
+    // Build the flox-baked base image on first use; a no-op once staged. Done here, not in
+    // `create`, so the one-time build is an explicit step of the create command.
+    store.ensure_base_image().await?;
     let sandbox = store.create(&name).await?;
     runtime
         .init(&backends::base_image(), &sandbox.workspace_path)

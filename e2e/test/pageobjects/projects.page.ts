@@ -23,13 +23,15 @@ class ProjectsPage extends AppPage {
     await link.click();
   }
 
-  // Creates the project and returns its row once the row is displayed.
-  async createProject(name: string): Promise<ProjectRow> {
+  // Creates the project and returns its row once the row is displayed. `timeout` covers the wait
+  // for the row: the first sandbox on a connection triggers the one-time base-image build, so the
+  // row can take minutes to appear and callers must widen the wait accordingly.
+  async createProject(name: string, { timeout = 10000 }: { timeout?: number } = {}): Promise<ProjectRow> {
     await (await this.nameInput).setValue(name);
     await (await this.createButton).click();
 
     const row = this.row(name);
-    await row.waitForDisplayed();
+    await row.waitForDisplayed(timeout);
     return row;
   }
 

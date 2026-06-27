@@ -108,6 +108,10 @@ pub(super) struct ConnectionInfo {
 /// `backends/mod.rs`.
 #[async_trait::async_trait]
 pub trait SandboxBackend: Send + Sync {
+    /// Build the flox-baked base image on the active connection if absent; a no-op once staged.
+    /// Idempotent, so callers invoke it before every [`SandboxBackend::create`] — the image is
+    /// never in a registry, so `create`'s `--pull` cannot supply it.
+    async fn ensure_base_image(&self) -> Result<(), BackendError>;
     /// Pull the base image if absent, then create a stopped container named `name`.
     ///
     /// Also ensures the sandbox's host workspace directory exists and bind-mounts it at
@@ -187,4 +191,7 @@ pub trait SandboxBackend: Send + Sync {
 /// `default_backend()`.
 pub(super) struct PodmanCliBackend {
     pub connection: String,
+    /// Serializes [`PodmanCliBackend::ensure_base_image`] so two concurrent `create` commands
+    /// cannot both find the image absent and race a build into the same context directory.
+    pub(super) build_lock: tokio::sync::Mutex<()>,
 }

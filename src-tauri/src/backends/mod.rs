@@ -11,9 +11,14 @@ use types::{
     SyncStrategy, WorkspacePlan,
 };
 
-/// Flox-baked base image (Nix + flox + cache key). Must be staged on each connection; not pulled from a registry.
+/// Flox-baked base image (Nix + flox + cache key). Must be staged on each connection; not pulled
+/// from a registry — [`PodmanCliBackend::ensure_base_image`] builds it from [`CONTAINERFILE`].
 const BASE_IMAGE: &str = "sandbox-mio/base";
 const BASE_IMAGE_VERSION: &str = "flox";
+
+/// The base-image recipe, baked into the binary so the build needs no resource-path resolution.
+/// Kept in sync with the spike reference at `docs/features/sandbox-runtime-management/spike/Containerfile`.
+const CONTAINERFILE: &str = include_str!("../../resources/Containerfile");
 
 /// The connection `podman machine init` creates for the local machine.
 pub(crate) const DEFAULT_CONNECTION: &str = "podman-machine-default";
@@ -62,7 +67,7 @@ fn workspace_path(name: &str) -> Result<String, BackendError> {
 pub fn default_backend() -> std::sync::Arc<dyn SandboxBackend> {
     let connection =
         std::env::var("PODMAN_CONNECTION").unwrap_or_else(|_| DEFAULT_CONNECTION.to_string());
-    std::sync::Arc::new(PodmanCliBackend { connection })
+    std::sync::Arc::new(PodmanCliBackend { connection, build_lock: tokio::sync::Mutex::new(()) })
 }
 
 /// Returns stdout on success, or the captured stderr as `Err` on a non-zero exit.
@@ -250,6 +255,34 @@ fn progress(channel: &Channel<serde_json::Value>, step: &str, status: &str, mess
 
 #[async_trait::async_trait]
 impl SandboxBackend for PodmanCliBackend {
+    async fn ensure_base_image(&self) -> Result<(), BackendError> {
+        let image = Self::image();
+        // Held across the whole build so concurrent creates serialize: the first builds while the
+        // rest wait, then each re-checks `image exists` below and returns without rebuilding —
+        // without it they would race a build into the shared context dir and clobber each other.
+        let _guard = self.build_lock.lock().await;
+        // `image exists` exits 0 when present, so this is a one-`podman`-call no-op on every
+        // create after the first — only the absent case pays the build.
+        if self.podman(&["image", "exists", &image]).await?.status.success() {
+            return Ok(());
+        }
+        // podman build needs a context directory. The recipe COPYs nothing, so a temp dir holding
+        // only the Containerfile is enough — and routing the build through the `--connection`-aware
+        // `podman` helper (rather than piping the recipe to `build -`) reuses one code path and lets
+        // podman stream the context to a remote machine. Forward-slashed for the same Windows-path
+        // reason as `workspace_path`.
+        let context = std::env::temp_dir().join(format!("sandbox-mio-build-{}", std::process::id()));
+        std::fs::create_dir_all(&context)
+            .and_then(|_| std::fs::write(context.join("Containerfile"), CONTAINERFILE))
+            .map_err(|e| BackendError::CommandFailed(e.to_string()))?;
+        let context_arg = context.to_string_lossy().replace('\\', "/");
+        let result =
+            check(self.podman(&["build", "--tag", &image, &context_arg]).await?).map(|_| ());
+        // Best-effort: the recipe is reproducible, so a leftover temp dir is harmless.
+        let _ = std::fs::remove_dir_all(&context);
+        result
+    }
+
     async fn create(&self, name: &str) -> Result<Sandbox, BackendError> {
         validate_name(name)?;
         let image = Self::image();
