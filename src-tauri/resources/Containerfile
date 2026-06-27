@@ -20,5 +20,21 @@ RUN printf '%s\n' \
 RUN nix profile add github:flox/flox/bb1b1c4f3e40ee721ce66d212783649acbbd6750 \
  && ln -sf /root/.nix-profile/bin/flox /usr/local/bin/flox
 
+# Bake the in-app web terminal engine (zellij) into /nix/store so `open_terminal` runs plain
+# `zellij` over `podman exec` — on the global PATH, NOT through `flox activate` or a per-sandbox
+# .flox env. Pinned to the nixos-25.05 commit, which ships zellij 0.43.1; the `zellij web`
+# subcommand the terminal depends on was introduced in 0.43.0, so an older nixpkgs (e.g. 24.11
+# ships 0.41.1) lacks it and fails at runtime with "Found argument 'web' which wasn't expected".
+# A full commit (not the floating `nixpkgs#zellij`) fetches archive/<rev>.tar.gz directly and
+# skips the 60-req/h unauthenticated GitHub commits API that returns HTTP 403. Bump this rev to a
+# newer nixpkgs commit (verify `zellij --version` >= 0.43.0) to upgrade zellij.
+RUN nix profile add github:NixOS/nixpkgs/ac62194c3917d5f474c1a844b6fd6da2db95077d#zellij \
+ && ln -sf /root/.nix-profile/bin/zellij /usr/local/bin/zellij
+
+# The web server aborts with "Failed to find default config file path" unless a config exists, so
+# dump the default config into the location zellij resolves at startup.
+RUN mkdir -p /root/.config/zellij \
+ && zellij setup --dump-config > /root/.config/zellij/config.kdl
+
 ENV FLOX_DISABLE_METRICS=true
 CMD ["/bin/sh"]

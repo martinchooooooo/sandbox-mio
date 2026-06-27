@@ -28,6 +28,10 @@ export default class ProjectRow {
     return this.root.$("button=stop");
   }
 
+  get terminalButton(): Element {
+    return this.root.$("button=terminal");
+  }
+
   get deployButton(): Element {
     return this.root.$("button=deploy");
   }
@@ -92,6 +96,13 @@ export default class ProjectRow {
 
   async stop(): Promise<void> {
     await this.#clickButton(this.stopButton);
+  }
+
+  // Clicks the "Terminal" button, invoking the open_terminal command. The terminal opens in a
+  // separate top-level WebviewWindow that tauri-driver cannot drive; the spec asserts the
+  // command's side effects (token file, server online, published port serving HTTP 200) instead.
+  async openTerminal(): Promise<void> {
+    await this.#clickButton(this.terminalButton);
   }
 
   async waitForRunning(timeout = 10000): Promise<void> {

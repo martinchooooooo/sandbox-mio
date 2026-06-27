@@ -7,13 +7,17 @@ use std::process::Output;
 
 use tokio::process::Command;
 
-use types::{PodmanFloxRuntime, RuntimeError, RuntimeManager};
+use types::{PodmanFloxRuntime, RuntimeError, RuntimeManager, TerminalSession};
 
 /// Workspace bind-mount target inside every container. Matches `WORKSPACE_MOUNT` in `backends/mod.rs`.
 const WORKSPACE_MOUNT: &str = "/root/work";
 
 /// Path of the flox manifest relative to the workspace directory.
 const MANIFEST_REL: &str = ".flox/env/manifest.toml";
+
+/// Container port the zellij web server binds. Matches `ZELLIJ_WEB_PORT` in `backends/mod.rs`,
+/// which publishes it to the host at `create`.
+const ZELLIJ_WEB_PORT: u16 = 8082;
 
 /// Construct the managed [`RuntimeManager`] for Tauri state. The Podman connection is read from
 /// `PODMAN_CONNECTION`; defaults to [`crate::backends::DEFAULT_CONNECTION`] when unset. The e2e
@@ -55,6 +59,30 @@ fn parse_installed(manifest: &str) -> Result<Vec<String>, RuntimeError> {
     Ok(install.keys().cloned().collect())
 }
 
+/// Parse the plaintext token from `zellij web --create-token` stdout. The token is emitted on a
+/// `token_<n>: <value>` line; the value is taken as the text after the colon. Returns the first
+/// such value found, or `None` when no token line is present (e.g. the command changed format).
+fn parse_token(stdout: &str) -> Option<String> {
+    stdout
+        .lines()
+        .filter(|l| l.trim_start().starts_with("token"))
+        .find_map(|l| l.split_once(':').map(|(_, v)| v.trim().to_string()))
+        .filter(|t| !t.is_empty())
+}
+
+/// Parse the published host port from `podman port <name> <port>/tcp` output. Podman prints one
+/// `<ip>:<port>` mapping per line (an IPv4 and possibly an IPv6 line); the `127.0.0.1` mapping is
+/// selected because `create` publishes to host loopback. Returns the host port string, or `None`
+/// when no loopback mapping is present (the container was created without the `--publish` flag).
+fn parse_host_port(output: &str) -> Option<String> {
+    output
+        .lines()
+        .map(str::trim)
+        .filter_map(|l| l.strip_prefix("127.0.0.1:"))
+        .map(|p| p.to_string())
+        .find(|p| !p.is_empty())
+}
+
 impl PodmanFloxRuntime {
     async fn podman(&self, args: &[&str]) -> Result<Output, RuntimeError> {
         Self::podman_on(&self.connection, args).await
@@ -75,6 +103,17 @@ impl PodmanFloxRuntime {
         let mut args = vec!["exec", "--workdir", WORKSPACE_MOUNT, name, "flox"];
         args.extend_from_slice(flox_args);
         check(self.podman(&args).await?)
+    }
+
+    /// Run `cmd` in container `name` without a login shell and without `flox` — zellij is on the
+    /// global PATH from the baked base image (a login shell would set `NIX_REMOTE=daemon` with no
+    /// nix daemon present and break the exec). Returns the raw [`Output`] so the caller can inspect
+    /// stdout/stderr and the exit code itself (e.g. `zellij web --status` exits non-zero when
+    /// offline, which is not an error to surface).
+    async fn container_exec(&self, name: &str, cmd: &[&str]) -> Result<Output, RuntimeError> {
+        let mut args = vec!["exec", name];
+        args.extend_from_slice(cmd);
+        self.podman(&args).await
     }
 }
 
@@ -157,5 +196,65 @@ impl RuntimeManager for PodmanFloxRuntime {
             .await?,
         )
         .map(|_| ())
+    }
+
+    async fn open_terminal(
+        &self,
+        name: &str,
+        workspace_host_path: &str,
+    ) -> Result<TerminalSession, RuntimeError> {
+        // The container must be running before any `podman exec`.
+        check(self.podman(&["start", name]).await?)?;
+
+        // Ensure the web server is up, idempotently: start it only when `--status` reports offline.
+        // `--status` exits non-zero when offline, so inspect the combined output instead of `check`.
+        // "online" is not a substring of "offline", so the contains-check does not false-positive.
+        let status = self.container_exec(name, &["zellij", "web", "--status"]).await?;
+        let status_text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&status.stdout),
+            String::from_utf8_lossy(&status.stderr)
+        );
+        if !status_text.contains("online") {
+            check(self.container_exec(name, &["zellij", "web", "--daemonize"]).await?)?;
+        }
+
+        // Mint a one-time token; its plaintext is emitted only here and can never be re-read.
+        let token_out = check(self.container_exec(name, &["zellij", "web", "--create-token"]).await?)?;
+        let token = parse_token(&token_out).ok_or_else(|| {
+            RuntimeError::TerminalUnavailable(format!(
+                "could not parse a token from `zellij web --create-token` output:\n{token_out}"
+            ))
+        })?;
+
+        // Read the ephemeral host port Podman published for the container's web port.
+        let port_spec = format!("{ZELLIJ_WEB_PORT}/tcp");
+        let port_out = check(self.podman(&["port", name, &port_spec]).await?)?;
+        let host_port = parse_host_port(&port_out).ok_or_else(|| {
+            RuntimeError::TerminalUnavailable(format!(
+                "no 127.0.0.1 host mapping for container port {ZELLIJ_WEB_PORT}; \
+                 the sandbox was likely created before the web port was published. Output:\n{port_out}"
+            ))
+        })?;
+        let url = format!("http://127.0.0.1:{host_port}/");
+
+        // Persist the token host-side (the docs/techdebt.md workaround). Writing host-side — the
+        // path is bind-mounted into the container at /root/work/.mio/ — avoids shell-escaping JSON
+        // through `podman exec`.
+        let session = TerminalSession { url, token };
+        let mio_dir = std::path::Path::new(workspace_host_path).join(".mio");
+        std::fs::create_dir_all(&mio_dir)
+            .and_then(|_| {
+                let json = serde_json::json!({ "url": session.url, "token": session.token });
+                std::fs::write(mio_dir.join("zellij.json"), json.to_string())
+            })
+            .map_err(|e| {
+                RuntimeError::TerminalUnavailable(format!(
+                    "failed to write token to {}: {e}",
+                    mio_dir.join("zellij.json").to_string_lossy()
+                ))
+            })?;
+
+        Ok(session)
     }
 }

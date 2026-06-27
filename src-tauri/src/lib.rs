@@ -10,7 +10,7 @@ use tauri::{ipc::Channel, Manager, State};
 
 use crate::backends::types::{Sandbox, SandboxBackend};
 use crate::error::AppError;
-use crate::runtime::types::RuntimeManager;
+use crate::runtime::types::{RuntimeManager, TerminalSession};
 use crate::sync::types::{SessionInfo, SyncEngine, SyncStatus};
 
 #[tauri::command]
@@ -56,6 +56,18 @@ async fn uninstall_package(
     runtime: State<'_, Arc<dyn RuntimeManager>>,
 ) -> Result<(), AppError> {
     Ok(runtime.uninstall(&name, &package).await?)
+}
+
+/// Open the in-app web terminal for local sandbox `name`: start the zellij web server, mint a
+/// one-time token, and return the loopback URL plus token for the frontend to load in a
+/// `WebviewWindow`. `workspace_path` is where the token is persisted host-side.
+#[tauri::command]
+async fn open_terminal(
+    name: String,
+    workspace_path: String,
+    runtime: State<'_, Arc<dyn RuntimeManager>>,
+) -> Result<TerminalSession, AppError> {
+    Ok(runtime.open_terminal(&name, &workspace_path).await?)
 }
 
 #[tauri::command]
@@ -265,6 +277,7 @@ pub fn run() {
             create_sandbox,
             install_package,
             uninstall_package,
+            open_terminal,
             list_packages,
             list_sandboxes,
             start_sandbox,

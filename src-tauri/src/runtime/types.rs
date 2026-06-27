@@ -11,6 +11,20 @@ pub enum RuntimeError {
     ManifestRead { path: String, error: String },
     #[error("failed to parse flox manifest: {0}")]
     ManifestParse(String),
+    /// The web terminal could not be reached: token or published-port parsing failed, or the
+    /// server did not come online. Distinct from [`RuntimeError::CommandFailed`] so the message
+    /// names the terminal-specific cause.
+    #[error("terminal unavailable: {0}")]
+    TerminalUnavailable(String),
+}
+
+/// Result of [`RuntimeManager::open_terminal`]: the loopback URL of the running zellij web client
+/// and the one-time login token minted for it. Serialized to `{ url, token }` for the frontend,
+/// which opens `url` in a `WebviewWindow` and surfaces `token` for the one-time login.
+#[derive(serde::Serialize)]
+pub struct TerminalSession {
+    pub url: String,
+    pub token: String,
 }
 
 /// Manages the flox software environment embedded in a sandbox workspace. Distinct from
@@ -40,6 +54,17 @@ pub trait RuntimeManager: Send + Sync {
         target_connection: &str,
         workspace_host_path: &str,
     ) -> Result<(), RuntimeError>;
+
+    /// Start the zellij web server in sandbox `name` (idempotently), mint a one-time login token,
+    /// read the host port Podman published for the container's web port, and return the `{ url,
+    /// token }` pair. Also persists the token host-side to `<workspace_host_path>/.mio/zellij.json`
+    /// (a deliberate, documented workaround — see `docs/techdebt.md`). Local sandboxes only:
+    /// `create` publishes the port for local sandboxes alone.
+    async fn open_terminal(
+        &self,
+        name: &str,
+        workspace_host_path: &str,
+    ) -> Result<TerminalSession, RuntimeError>;
 }
 
 /// Drives `flox` (over `podman exec`) against a named Podman **system connection**, mirroring

@@ -6,6 +6,8 @@
   "permissions": [
     "core:default",
     "opener:default",
+    "core:webview:allow-create-webview-window",
+    "core:window:allow-set-focus",
     {
       "identifier": "shell:allow-execute",
       "allow": [{ "name": "binaries/mutagen", "sidecar": true, "args": true }]

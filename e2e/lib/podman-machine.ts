@@ -6,11 +6,14 @@ import { fileURLToPath } from "url";
 // remote stand-in run rootless, so the socket path is the same on each.
 export const PODMAN_SOCKET = "/run/user/1000/podman/podman.sock";
 
-// Flox-baked base image for all sandboxes (matches BASE_IMAGE in src-tauri/src/backends/mod.rs).
-export const FLOX_BASE_IMAGE = "sandbox-mio/base:flox";
-const SPIKE_DIR = path.resolve(
+// Base image for all sandboxes — flox + zellij baked in. Tag matches BASE_IMAGE (name) and
+// BASE_IMAGE_VERSION (tag) in src-tauri/src/backends/mod.rs; bump both together when the recipe
+// changes. Built from the real recipe the binary bakes (src-tauri/resources/Containerfile), not a
+// spike copy, so the staged image is identical to what the app would build on first create.
+export const FLOX_BASE_IMAGE = "sandbox-mio/base:zellij";
+const RECIPE_DIR = path.resolve(
   fileURLToPath(new URL(".", import.meta.url)),
-  "../../docs/features/sandbox-runtime-management/spike"
+  "../../src-tauri/resources"
 );
 
 // Transport details for a system connection, parsed from `podman system connection list`.
@@ -151,7 +154,7 @@ export function ensureFloxBaseImage(localName: string, remoteNames: string[] = [
     const build = spawnSync(
       "podman",
       ["--connection", localName, "build", "-t", FLOX_BASE_IMAGE, "-f", "Containerfile", "."],
-      { cwd: SPIKE_DIR, stdio: "inherit", shell: false }
+      { cwd: RECIPE_DIR, stdio: "inherit", shell: false }
     );
     if (build.status !== 0) {
       throw new Error(`Failed to build ${FLOX_BASE_IMAGE} on "${localName}"`);

@@ -14,7 +14,10 @@ use types::{
 /// Flox-baked base image (Nix + flox + cache key). Must be staged on each connection; not pulled
 /// from a registry — [`PodmanCliBackend::ensure_base_image`] builds it from [`CONTAINERFILE`].
 const BASE_IMAGE: &str = "sandbox-mio/base";
-const BASE_IMAGE_VERSION: &str = "flox";
+// Bumped from "flox" when zellij was baked into the recipe (see resources/Containerfile). The tag
+// MUST change whenever the recipe does: `ensure_base_image` short-circuits on `podman image exists
+// <tag>`, so a stale tag would keep existing machines on the pre-zellij image with no terminal.
+const BASE_IMAGE_VERSION: &str = "zellij";
 
 /// The base-image recipe, baked into the binary so the build needs no resource-path resolution.
 /// Kept in sync with the spike reference at `docs/features/sandbox-runtime-management/spike/Containerfile`.
@@ -31,6 +34,11 @@ pub(crate) fn base_image() -> String {
 /// `--workdir`. Spelled literally because `podman -v` rejects a bare `~` and does not expand
 /// `$HOME`, which is `/root` for the Alpine root user.
 const WORKSPACE_MOUNT: &str = "/root/work";
+
+/// Container port the zellij web server binds (its default). Published to an ephemeral host
+/// loopback port at `create` so [`crate::runtime::types::RuntimeManager::open_terminal`] can reach
+/// the in-app terminal. Named once here and reused to build the `--publish` argument.
+const ZELLIJ_WEB_PORT: u16 = 8082;
 
 /// Root holding every sandbox's workspace directory: `SANDBOX_WORKSPACE_ROOT` if set,
 /// else `<Documents>/sandbox-mio`. Documents is resolved at runtime because Windows may
@@ -295,11 +303,19 @@ impl SandboxBackend for PodmanCliBackend {
             error: e.to_string(),
         })?;
         let volume = format!("{workspace}:{WORKSPACE_MOUNT}");
+        // Publish zellij's web port to an ephemeral host-loopback port. `--host-lo-to-ns-lo` is the
+        // decisive pasta flag: it forwards the host-loopback-published port to the container's
+        // loopback, where zellij binds; without it pasta forwards to the container's eth0 and the
+        // loopback-bound server is unreachable. The host side is pinned to 127.0.0.1 so nothing is
+        // exposed on the local network. Only local sandboxes get this; the remote deploy `create`
+        // path is intentionally left without it (remote terminals are out of scope).
+        let publish = format!("127.0.0.1::{ZELLIJ_WEB_PORT}");
         // `--pull=missing` satisfies the trait's "pull if absent, then create" contract.
         let out = self
             .podman(&[
-                "create", "--pull=missing", "--tty", "--volume", &volume, "--workdir",
-                WORKSPACE_MOUNT, "--name", name, &image, "/bin/sh",
+                "create", "--pull=missing", "--tty", "--network",
+                "pasta:--host-lo-to-ns-lo", "--publish", &publish, "--volume", &volume,
+                "--workdir", WORKSPACE_MOUNT, "--name", name, &image, "/bin/sh",
             ])
             .await?;
         let id = check(out)?.trim().to_string();

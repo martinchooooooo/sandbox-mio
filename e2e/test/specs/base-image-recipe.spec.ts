@@ -25,6 +25,17 @@ const PINNED_FLOX = /nix profile add\s+github:flox\/flox\/[0-9a-f]{40}\b/;
 // Floating: the HEAD form the bug shipped with — `nix profile add github:flox/flox` with no `/rev`.
 const FLOATING_FLOX = /nix profile add\s+github:flox\/flox(?![/0-9a-zA-Z])/;
 
+// The zellij web-terminal engine is baked the same way and carries the same rate-limit risk: the
+// floating `nixpkgs#zellij` flakeref resolves through the GitHub API (60 req/h unauthenticated) and
+// fails the build with HTTP 403, while a full nixpkgs rev fetches archive/<rev>.tar.gz directly.
+// Only the binary-baked recipe (src-tauri/resources/Containerfile) bakes zellij, so this guard runs
+// against that file alone — the sandbox-runtime-management spike recipe predates the terminal.
+const ZELLIJ_RECIPE = "../../../src-tauri/resources/Containerfile";
+// Pinned: `nix profile add github:NixOS/nixpkgs/<40-hex>#zellij`.
+const PINNED_ZELLIJ = /nix profile add\s+github:NixOS\/nixpkgs\/[0-9a-f]{40}#zellij\b/;
+// Floating: the bare `nixpkgs#zellij` flakeref that hits the rate-limited API.
+const FLOATING_ZELLIJ = /nix profile add\s+nixpkgs#zellij\b/;
+
 describe("Base image recipe", () => {
   for (const relPath of CONTAINERFILES) {
     it(`pins flox to an immutable revision in ${relPath}`, () => {
@@ -37,4 +48,14 @@ describe("Base image recipe", () => {
       expect(recipe).not.toMatch(FLOATING_FLOX);
     });
   }
+
+  it(`pins zellij to an immutable nixpkgs revision in ${ZELLIJ_RECIPE}`, () => {
+    const recipe = readFileSync(
+      fileURLToPath(new URL(ZELLIJ_RECIPE, import.meta.url)),
+      "utf8"
+    );
+
+    expect(recipe).toMatch(PINNED_ZELLIJ);
+    expect(recipe).not.toMatch(FLOATING_ZELLIJ);
+  });
 });

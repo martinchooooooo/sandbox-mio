@@ -4,6 +4,7 @@
     import { Input } from "$lib/components/ui/input";
     import { Switch } from "$lib/components/ui/switch";
     import { Channel, invoke } from "@tauri-apps/api/core";
+    import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
     import { revealItemInDir } from "@tauri-apps/plugin-opener";
     import { onMount, onDestroy, tick } from "svelte";
     import { parseError } from "$lib/errors";
@@ -14,6 +15,11 @@
         name: string;
         status: string;
         workspace_path: string;
+    }
+
+    interface TerminalSession {
+        url: string;
+        token: string;
     }
 
     type SyncStatus = "syncing" | "up-to-date" | "conflict" | "error";
@@ -43,6 +49,10 @@
     // The toggle is optimistic: Mutagen does not surface a "paused" status, so on/off is tracked
     // locally, defaulting on for a freshly listed deployment.
     let syncOn = $state<Record<string, boolean>>({});
+
+    // The one-time login token from the last openTerminal call, shown in a banner per sandbox so the
+    // user can paste it into the terminal window's login page (auto-login is a deferred follow-up).
+    let terminalToken = $state<Record<string, string>>({});
 
     let packages = $state<Record<string, string[]>>({});
     let packageInput = $state<Record<string, string>>({});
@@ -206,6 +216,35 @@
         }
     }
 
+    // Opens the in-app web terminal: starts the zellij web server (via the command), then loads the
+    // returned loopback URL in a dedicated top-level WebviewWindow (an iframe is blocked by the
+    // terminal's X-Frame-Options: DENY). A deterministic per-sandbox label keeps one window per
+    // sandbox — a second click focuses the existing window instead of stacking a duplicate.
+    async function openTerminal(project: Project) {
+        try {
+            error = "";
+            const session = await invoke<TerminalSession>("open_terminal", {
+                name: project.name,
+                workspacePath: project.workspace_path,
+            });
+            terminalToken[project.name] = session.token;
+            const label = `terminal-${project.name}`;
+            const existing = await WebviewWindow.getByLabel(label);
+            if (existing) {
+                await existing.setFocus();
+            } else {
+                new WebviewWindow(label, { url: session.url, title: `${project.name} — terminal` });
+            }
+        } catch (e) {
+            error = parseError(e).message;
+        }
+    }
+
+    async function copyToken(project: Project) {
+        const token = terminalToken[project.name];
+        if (token) await navigator.clipboard.writeText(token);
+    }
+
     async function openWorkspace(project: Project) {
         try {
             await revealItemInDir(project.workspace_path);
@@ -352,11 +391,20 @@
                                     {:else}
                                         <button onclick={() => start(project)}>{m.projects_start()}</button>
                                     {/if}
+                                    <button onclick={() => openTerminal(project)}>{m.projects_terminal()}</button>
                                     <button onclick={() => openPicker(project)}>{m.projects_deploy()}</button>
                                 {/if}
                                 <button onclick={() => destroyProject(project)} class="text-destructive">{m.projects_destroy()}</button>
                             </span>
                         </div>
+
+                        {#if terminalToken[project.name]}
+                            <div class="flex items-center gap-2 text-xs">
+                                <span class="text-muted-foreground shrink-0">{m.projects_terminal_token()}</span>
+                                <span class="font-mono truncate">{terminalToken[project.name]}</span>
+                                <button class="shrink-0" onclick={() => copyToken(project)}>{m.projects_terminal_copy()}</button>
+                            </div>
+                        {/if}
 
                         {#if deployingFor === project.id}
                             <div class="flex items-center gap-2">
