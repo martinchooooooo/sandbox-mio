@@ -191,6 +191,32 @@ impl PodmanCliBackend {
         check(out).map(|_| ())
     }
 
+    /// Ensures the mise base image exists on `connection`, building from the bundled Containerfile
+    /// if absent. The image is never published to any registry, so absence always means build.
+    /// Called by `ensure_base_image` (local, serialized under the build lock) and `deploy` (remote,
+    /// no lock — concurrent deploys to the same target are harmless since `podman build` is idempotent).
+    async fn ensure_image_on(connection: &str) -> Result<(), BackendError> {
+        let image = Self::image();
+        if Self::podman_on(connection, &["image", "exists", &image]).await?.status.success() {
+            return Ok(());
+        }
+        // A temp context dir is needed because `podman build -` does not stream the Containerfile
+        // through `--connection` to a remote machine. The connection name disambiguates concurrent
+        // local+remote builds sharing the same process ID.
+        let context = std::env::temp_dir().join(format!(
+            "sandbox-mio-build-{pid}-{conn}",
+            pid = std::process::id(),
+            conn = connection.replace(['/', '\\', ':'], "-"),
+        ));
+        std::fs::create_dir_all(&context)
+            .and_then(|_| std::fs::write(context.join("Containerfile"), CONTAINERFILE))
+            .map_err(|e| BackendError::CommandFailed(e.to_string()))?;
+        let context_arg = context.to_string_lossy().replace('\\', "/");
+        let result = check(Self::podman_on(connection, &["build", "--tag", &image, &context_arg]).await?).map(|_| ());
+        let _ = std::fs::remove_dir_all(&context);
+        result
+    }
+
     /// Live SSH endpoint for connection `name`, or `None` for a connection not reachable over SSH.
     /// Read fresh every call: a machine's SSH port changes on each boot.
     async fn remote_connection_info(name: &str) -> Result<Option<ConnectionInfo>, BackendError> {
@@ -265,31 +291,11 @@ fn progress(channel: &Channel<serde_json::Value>, step: &str, status: &str, mess
 #[async_trait::async_trait]
 impl SandboxBackend for PodmanCliBackend {
     async fn ensure_base_image(&self) -> Result<(), BackendError> {
-        let image = Self::image();
-        // Held across the whole build so concurrent creates serialize: the first builds while the
-        // rest wait, then each re-checks `image exists` below and returns without rebuilding —
-        // without it they would race a build into the shared context dir and clobber each other.
+        // Held across the whole check+build so concurrent local creates serialize: the first
+        // builder wins while the rest wait, then each re-checks `image exists` inside
+        // `ensure_image_on` and returns immediately — without it they would race the build.
         let _guard = self.build_lock.lock().await;
-        // `image exists` exits 0 when present, so this is a one-`podman`-call no-op on every
-        // create after the first — only the absent case pays the build.
-        if self.podman(&["image", "exists", &image]).await?.status.success() {
-            return Ok(());
-        }
-        // podman build needs a context directory. The recipe COPYs nothing, so a temp dir holding
-        // only the Containerfile is enough — and routing the build through the `--connection`-aware
-        // `podman` helper (rather than piping the recipe to `build -`) reuses one code path and lets
-        // podman stream the context to a remote machine. Forward-slashed for the same Windows-path
-        // reason as `workspace_path`.
-        let context = std::env::temp_dir().join(format!("sandbox-mio-build-{}", std::process::id()));
-        std::fs::create_dir_all(&context)
-            .and_then(|_| std::fs::write(context.join("Containerfile"), CONTAINERFILE))
-            .map_err(|e| BackendError::CommandFailed(e.to_string()))?;
-        let context_arg = context.to_string_lossy().replace('\\', "/");
-        let result =
-            check(self.podman(&["build", "--tag", &image, &context_arg]).await?).map(|_| ());
-        // Best-effort: the recipe is reproducible, so a leftover temp dir is harmless.
-        let _ = std::fs::remove_dir_all(&context);
-        result
+        Self::ensure_image_on(&self.connection).await
     }
 
     async fn create(&self, name: &str) -> Result<Sandbox, BackendError> {
@@ -410,6 +416,10 @@ impl SandboxBackend for PodmanCliBackend {
             user: info.user.clone(),
             identity: info.identity.clone(),
         })?;
+
+        // Ensure the base image exists on the remote. It is never published to any registry, so
+        // absence means build — the same path `ensure_base_image` takes for the local connection.
+        Self::ensure_image_on(target_connection).await?;
 
         // Create and start the remote container on the target connection, not self.connection.
         let volume = format!("{}:{WORKSPACE_MOUNT}", plan.bind_mount_source);
