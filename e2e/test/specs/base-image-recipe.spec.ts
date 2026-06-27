@@ -1,61 +1,44 @@
 import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 
-// Regression guard for the base-image build failing at the flox step. `nix profile add
-// github:flox/flox` resolves the floating HEAD through the GitHub commits API, which is rate-limited
-// to 60 requests/h per unauthenticated IP; once the machine's egress IP trips that limit the build
-// dies with "HTTP error 403 ... API rate limit exceeded" — non-deterministically, and the floating
-// ref is non-reproducible regardless. The fix pins flox to a full 40-hex commit so nix fetches
-// archive/<rev>.tar.gz directly, with no API call. This static guard asserts the recipe stays
-// pinned; it needs no podman machine, so it is cheap to keep alongside the full build spec.
+// Regression guard for the base-image build failing on a floating version. mise and zellij are
+// fetched from GitHub releases; resolving "latest" (the `releases/latest` redirect, a `mise@latest`
+// install, or the `mise.run` script) hits the GitHub API, which is rate-limited to 60 requests/h per
+// unauthenticated IP — once the machine's egress IP trips that limit the build dies with HTTP 403,
+// non-deterministically, and a floating version is non-reproducible regardless. The fix pins both
+// the mise release (ARG MISE_VERSION=v…) and the zellij version (ARG ZELLIJ_VERSION=…) to exact
+// tags so the downloads address a known artifact with no version-listing call. This static guard
+// asserts the recipes stay pinned; it needs no podman machine, so it is cheap to keep.
 //
-// Two copies of the recipe must stay in lockstep: the one baked into the binary (CONTAINERFILE in
-// src-tauri/src/backends/mod.rs) and the spike reference that e2e provisioning builds from
-// (ensureFloxBaseImage in e2e/lib/podman-machine.ts). Both are checked.
+// The recipe baked into the binary (CONTAINERFILE in src-tauri/src/backends/mod.rs) and the spike
+// references that document the build must stay in lockstep. All are checked.
 const CONTAINERFILES = [
   "../../../src-tauri/resources/Containerfile",
-  "../../../docs/features/sandbox-runtime-management/spike/Containerfile",
+  "../../../docs/features/sandbox-runtime-management/spike/mise/Containerfile.glibc",
+  "../../../docs/features/sandbox-runtime-management/spike/mise/Containerfile.musl",
 ];
 
-// Both patterns anchor on the `nix profile add` directive so a prose mention of `github:flox/flox`
-// in a recipe comment cannot trip them.
-// Pinned: `nix profile add github:flox/flox/<rev>` where <rev> is exactly 40 hex chars — the form
-// that skips the GitHub API.
-const PINNED_FLOX = /nix profile add\s+github:flox\/flox\/[0-9a-f]{40}\b/;
-// Floating: the HEAD form the bug shipped with — `nix profile add github:flox/flox` with no `/rev`.
-const FLOATING_FLOX = /nix profile add\s+github:flox\/flox(?![/0-9a-zA-Z])/;
-
-// The zellij web-terminal engine is baked the same way and carries the same rate-limit risk: the
-// floating `nixpkgs#zellij` flakeref resolves through the GitHub API (60 req/h unauthenticated) and
-// fails the build with HTTP 403, while a full nixpkgs rev fetches archive/<rev>.tar.gz directly.
-// Only the binary-baked recipe (src-tauri/resources/Containerfile) bakes zellij, so this guard runs
-// against that file alone — the sandbox-runtime-management spike recipe predates the terminal.
-const ZELLIJ_RECIPE = "../../../src-tauri/resources/Containerfile";
-// Pinned: `nix profile add github:NixOS/nixpkgs/<40-hex>#zellij`.
-const PINNED_ZELLIJ = /nix profile add\s+github:NixOS\/nixpkgs\/[0-9a-f]{40}#zellij\b/;
-// Floating: the bare `nixpkgs#zellij` flakeref that hits the rate-limited API.
-const FLOATING_ZELLIJ = /nix profile add\s+nixpkgs#zellij\b/;
+// Pinned: an exact mise release tag (`ARG MISE_VERSION=v2026.6.14`) the curl download interpolates.
+const PINNED_MISE = /ARG\s+MISE_VERSION=v[0-9][0-9.]*\b/;
+// Pinned: an exact zellij semver (`ARG ZELLIJ_VERSION=0.44.3`) the `mise install` interpolates.
+const PINNED_ZELLIJ = /ARG\s+ZELLIJ_VERSION=[0-9]+\.[0-9]+\.[0-9]+\b/;
+// Floating forms that hit the rate-limited GitHub API: a `releases/latest` redirect, an `@latest`
+// tool spec, or piping the `mise.run` installer. None may appear in a recipe.
+const FLOATING = [/releases\/latest/, /@latest/, /mise\.run/];
 
 describe("Base image recipe", () => {
   for (const relPath of CONTAINERFILES) {
-    it(`pins flox to an immutable revision in ${relPath}`, () => {
+    it(`pins mise and zellij to exact versions in ${relPath}`, () => {
       const recipe = readFileSync(
         fileURLToPath(new URL(relPath, import.meta.url)),
         "utf8"
       );
 
-      expect(recipe).toMatch(PINNED_FLOX);
-      expect(recipe).not.toMatch(FLOATING_FLOX);
+      expect(recipe).toMatch(PINNED_MISE);
+      expect(recipe).toMatch(PINNED_ZELLIJ);
+      for (const floating of FLOATING) {
+        expect(recipe).not.toMatch(floating);
+      }
     });
   }
-
-  it(`pins zellij to an immutable nixpkgs revision in ${ZELLIJ_RECIPE}`, () => {
-    const recipe = readFileSync(
-      fileURLToPath(new URL(ZELLIJ_RECIPE, import.meta.url)),
-      "utf8"
-    );
-
-    expect(recipe).toMatch(PINNED_ZELLIJ);
-    expect(recipe).not.toMatch(FLOATING_ZELLIJ);
-  });
 });

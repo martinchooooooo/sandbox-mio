@@ -1,40 +1,38 @@
-FROM docker.io/library/alpine:3.24
+FROM docker.io/library/debian:12-slim
 
-# Nix substrate + git (flox manages .flox/ with git internally)
-RUN apk add --no-cache nix git
+# mise fetches tools over HTTPS (curl), some backends clone repos (git), xz unpacks tool tarballs.
+# A glibc base (not Alpine/musl) is deliberate: mise installs prebuilt upstream release binaries and
+# glibc-only language runtimes (e.g. Node from nodejs.org) fail on musl — and mise's musl-node
+# workarounds compile from source. See docs/features/sandbox-runtime-management/02_dev.md.
+RUN apt-get update -qq \
+ && apt-get install -y -qq --no-install-recommends curl git ca-certificates xz-utils \
+ && rm -rf /var/lib/apt/lists/*
 
-# Nix config: flakes, no build-sandbox (rootless container cannot nest userns),
-# and the flox binary cache with the CORRECT public key.
-RUN printf '%s\n' \
-  'experimental-features = nix-command flakes' \
-  'sandbox = false' \
-  'substituters = https://cache.flox.dev https://cache.nixos.org' \
-  'trusted-public-keys = flox-cache-public-1:7F4OyH7ZCnFhcze3fJdfyXYLQw/aV7GEed86nQ7IsOs= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=' \
-  > /etc/nix/nix.conf
+# Bake the mise binary into the image so `create` pays no download. Pinned to an exact release so the
+# build never hits GitHub's version-listing API (rate-limited to 60 req/h unauthenticated, returns
+# 403 — the same failure flox's HEAD resolution hit). Bump MISE_VERSION to upgrade mise.
+ARG MISE_VERSION=v2026.6.14
+RUN curl -fsSL "https://github.com/jdx/mise/releases/download/${MISE_VERSION}/mise-${MISE_VERSION}-linux-x64.tar.gz" \
+    | tar xz -C /usr/local --strip-components=1 mise/bin/mise
 
-# Bake the flox CLI into /nix/store so `create` pays no download. Pinned to the v1.13.0 commit
-# (not the floating `github:flox/flox` HEAD): a full rev makes nix fetch archive/<rev>.tar.gz
-# directly, so the build is reproducible AND skips the GitHub commits API that HEAD resolution hits
-# — that API is rate-limited to 60 req/h per unauthenticated IP and was returning HTTP 403, failing
-# the build. Bump this rev to upgrade flox.
-RUN nix profile add github:flox/flox/bb1b1c4f3e40ee721ce66d212783649acbbd6750 \
- && ln -sf /root/.nix-profile/bin/flox /usr/local/bin/flox
+# MISE_LOCKFILE=1 makes installs maintain mise.lock (only when the lockfile already exists, which the
+# runtime's init creates). MISE_YES auto-confirms so `podman exec` never blocks on a prompt.
+ENV MISE_DATA_DIR=/root/.local/share/mise \
+    MISE_LOCKFILE=1 \
+    MISE_YES=1
 
-# Bake the in-app web terminal engine (zellij) into /nix/store so `open_terminal` runs plain
-# `zellij` over `podman exec` — on the global PATH, NOT through `flox activate` or a per-sandbox
-# .flox env. Pinned to the nixos-25.05 commit, which ships zellij 0.43.1; the `zellij web`
-# subcommand the terminal depends on was introduced in 0.43.0, so an older nixpkgs (e.g. 24.11
-# ships 0.41.1) lacks it and fails at runtime with "Found argument 'web' which wasn't expected".
-# A full commit (not the floating `nixpkgs#zellij`) fetches archive/<rev>.tar.gz directly and
-# skips the 60-req/h unauthenticated GitHub commits API that returns HTTP 403. Bump this rev to a
-# newer nixpkgs commit (verify `zellij --version` >= 0.43.0) to upgrade zellij.
-RUN nix profile add github:NixOS/nixpkgs/ac62194c3917d5f474c1a844b6fd6da2db95077d#zellij \
- && ln -sf /root/.nix-profile/bin/zellij /usr/local/bin/zellij
+# Bake the in-app web terminal engine (zellij) and symlink it onto the global PATH so the terminal
+# runs plain `zellij` over `podman exec`, NOT through mise. Pinned to an exact version so the install
+# skips the rate-limited GitHub releases-list API; zellij >= 0.43.0 is required for the `zellij web`
+# subcommand the terminal depends on. Bump ZELLIJ_VERSION (verify >= 0.43.0) to upgrade zellij.
+ARG ZELLIJ_VERSION=0.44.3
+RUN mise install "zellij@${ZELLIJ_VERSION}" \
+ && ln -sf "$(mise where zellij@${ZELLIJ_VERSION})/zellij" /usr/local/bin/zellij \
+ && zellij --version
 
 # The web server aborts with "Failed to find default config file path" unless a config exists, so
 # dump the default config into the location zellij resolves at startup.
 RUN mkdir -p /root/.config/zellij \
  && zellij setup --dump-config > /root/.config/zellij/config.kdl
 
-ENV FLOX_DISABLE_METRICS=true
 CMD ["/bin/sh"]

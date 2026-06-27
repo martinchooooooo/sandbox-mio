@@ -1,0 +1,24 @@
+FROM docker.io/library/alpine:3.24
+
+# mise needs curl/git/ca-certs at runtime to fetch tools. No Nix, no daemon.
+RUN apk add --no-cache curl git ca-certificates
+
+# Bake the mise binary (musl build) into the image. Pinned to an exact release so the build never
+# hits GitHub's rate-limited version-listing API. Bump to upgrade mise.
+ARG MISE_VERSION=v2026.6.14
+RUN curl -fsSL "https://github.com/jdx/mise/releases/download/${MISE_VERSION}/mise-${MISE_VERSION}-linux-x64-musl.tar.gz" \
+    | tar xz -C /usr/local --strip-components=1 mise/bin/mise
+
+ENV MISE_DATA_DIR=/root/.local/share/mise \
+    MISE_LOCKFILE=1 \
+    MISE_YES=1
+
+ARG ZELLIJ_VERSION=0.44.3
+RUN mise install "zellij@${ZELLIJ_VERSION}" \
+ && ln -sf "$(mise where zellij@${ZELLIJ_VERSION})/zellij" /usr/local/bin/zellij \
+ && zellij --version
+
+RUN mkdir -p /root/.config/zellij \
+ && zellij setup --dump-config > /root/.config/zellij/config.kdl
+
+CMD ["/bin/sh"]

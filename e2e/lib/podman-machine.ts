@@ -6,11 +6,11 @@ import { fileURLToPath } from "url";
 // remote stand-in run rootless, so the socket path is the same on each.
 export const PODMAN_SOCKET = "/run/user/1000/podman/podman.sock";
 
-// Base image for all sandboxes — flox + zellij baked in. Tag matches BASE_IMAGE (name) and
+// Base image for all sandboxes — mise + zellij baked in. Tag matches BASE_IMAGE (name) and
 // BASE_IMAGE_VERSION (tag) in src-tauri/src/backends/mod.rs; bump both together when the recipe
 // changes. Built from the real recipe the binary bakes (src-tauri/resources/Containerfile), not a
 // spike copy, so the staged image is identical to what the app would build on first create.
-export const FLOX_BASE_IMAGE = "sandbox-mio/base:zellij";
+export const MISE_BASE_IMAGE = "sandbox-mio/base:mise";
 const RECIPE_DIR = path.resolve(
   fileURLToPath(new URL(".", import.meta.url)),
   "../../src-tauri/resources"
@@ -141,35 +141,35 @@ export function provisionMachine(
   }
 }
 
-// Idempotent: build FLOX_BASE_IMAGE on localName if absent, then stage onto remoteNames via
+// Idempotent: build MISE_BASE_IMAGE on localName if absent, then stage onto remoteNames via
 // save|load. `podman image scp` is not used — it fails between machine connections on Windows.
-export function ensureFloxBaseImage(localName: string, remoteNames: string[] = []): void {
+export function ensureMiseBaseImage(localName: string, remoteNames: string[] = []): void {
   const has = (name: string) =>
-    spawnSync("podman", ["--connection", name, "image", "exists", FLOX_BASE_IMAGE], {
+    spawnSync("podman", ["--connection", name, "image", "exists", MISE_BASE_IMAGE], {
       shell: false,
     }).status === 0;
 
   if (!has(localName)) {
-    console.log(`Building ${FLOX_BASE_IMAGE} on "${localName}" (one-time, ~1.27 GB)...`);
+    console.log(`Building ${MISE_BASE_IMAGE} on "${localName}" (one-time, ~324 MB)...`);
     const build = spawnSync(
       "podman",
-      ["--connection", localName, "build", "-t", FLOX_BASE_IMAGE, "-f", "Containerfile", "."],
+      ["--connection", localName, "build", "-t", MISE_BASE_IMAGE, "-f", "Containerfile", "."],
       { cwd: RECIPE_DIR, stdio: "inherit", shell: false }
     );
     if (build.status !== 0) {
-      throw new Error(`Failed to build ${FLOX_BASE_IMAGE} on "${localName}"`);
+      throw new Error(`Failed to build ${MISE_BASE_IMAGE} on "${localName}"`);
     }
   }
 
   for (const remote of remoteNames) {
     if (has(remote)) continue;
-    console.log(`Staging ${FLOX_BASE_IMAGE} onto "${remote}" via save | load...`);
+    console.log(`Staging ${MISE_BASE_IMAGE} onto "${remote}" via save | load...`);
     const staged = spawnSync(
-      `podman --connection ${localName} save ${FLOX_BASE_IMAGE} | podman --connection ${remote} load`,
+      `podman --connection ${localName} save ${MISE_BASE_IMAGE} | podman --connection ${remote} load`,
       { stdio: "inherit", shell: true }
     );
     if (staged.status !== 0) {
-      throw new Error(`Failed to stage ${FLOX_BASE_IMAGE} onto "${remote}"`);
+      throw new Error(`Failed to stage ${MISE_BASE_IMAGE} onto "${remote}"`);
     }
   }
 }

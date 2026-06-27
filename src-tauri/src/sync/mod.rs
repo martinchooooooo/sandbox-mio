@@ -173,9 +173,6 @@ impl SyncEngine for MutagenCli {
                 "create",
                 &format!("--name={name}"),
                 "--sync-mode=two-way-resolved",
-                // `.flox/run/` symlinks have a file mode Go's archive/tar cannot encode on Windows,
-                // crashing the initial scan. They are machine-local; flox regenerates them on activate.
-                "--ignore=.flox/run",
                 alpha,
                 beta,
             ],

@@ -1,4 +1,4 @@
-//! Flox-based software management for sandboxes. Public surface is [`types::RuntimeManager`],
+//! mise-based software management for sandboxes. Public surface is [`types::RuntimeManager`],
 //! held in Tauri state as `Arc<dyn RuntimeManager>` and registered in `src-tauri/src/lib.rs`.
 
 pub mod types;
@@ -7,13 +7,16 @@ use std::process::Output;
 
 use tokio::process::Command;
 
-use types::{PodmanFloxRuntime, RuntimeError, RuntimeManager, TerminalSession};
+use types::{PodmanMiseRuntime, RuntimeError, RuntimeManager, TerminalSession};
 
 /// Workspace bind-mount target inside every container. Matches `WORKSPACE_MOUNT` in `backends/mod.rs`.
 const WORKSPACE_MOUNT: &str = "/root/work";
 
-/// Path of the flox manifest relative to the workspace directory.
-const MANIFEST_REL: &str = ".flox/env/manifest.toml";
+/// Path of the mise manifest (human-readable intent) relative to the workspace directory.
+const MANIFEST_REL: &str = "mise.toml";
+
+/// Path of the mise lockfile (resolved, checksum-pinned closure) relative to the workspace directory.
+const LOCKFILE_REL: &str = "mise.lock";
 
 /// Container port the zellij web server binds. Matches `ZELLIJ_WEB_PORT` in `backends/mod.rs`,
 /// which publishes it to the host at `create`.
@@ -25,7 +28,7 @@ const ZELLIJ_WEB_PORT: u16 = 8082;
 pub fn default_runtime() -> std::sync::Arc<dyn RuntimeManager> {
     let connection = std::env::var("PODMAN_CONNECTION")
         .unwrap_or_else(|_| crate::backends::DEFAULT_CONNECTION.to_string());
-    std::sync::Arc::new(PodmanFloxRuntime { connection })
+    std::sync::Arc::new(PodmanMiseRuntime { connection })
 }
 
 fn check(out: Output) -> Result<String, RuntimeError> {
@@ -50,13 +53,15 @@ fn validate_package(package: &str) -> Result<(), RuntimeError> {
     }
 }
 
+/// Parse the installed tool names from the `[tools]` table of a `mise.toml`. An absent `[tools]`
+/// table (a freshly initialized manifest) yields an empty list, not an error.
 fn parse_installed(manifest: &str) -> Result<Vec<String>, RuntimeError> {
     let value: toml::Value =
         toml::from_str(manifest).map_err(|e| RuntimeError::ManifestParse(e.to_string()))?;
-    let Some(install) = value.get("install").and_then(|v| v.as_table()) else {
+    let Some(tools) = value.get("tools").and_then(|v| v.as_table()) else {
         return Ok(Vec::new());
     };
-    Ok(install.keys().cloned().collect())
+    Ok(tools.keys().cloned().collect())
 }
 
 /// Parse the plaintext token from `zellij web --create-token` stdout. The token is emitted on a
@@ -83,7 +88,7 @@ fn parse_host_port(output: &str) -> Option<String> {
         .find(|p| !p.is_empty())
 }
 
-impl PodmanFloxRuntime {
+impl PodmanMiseRuntime {
     async fn podman(&self, args: &[&str]) -> Result<Output, RuntimeError> {
         Self::podman_on(&self.connection, args).await
     }
@@ -98,18 +103,18 @@ impl PodmanFloxRuntime {
             .map_err(|e| RuntimeError::CommandFailed(e.to_string()))
     }
 
-    async fn flox_exec(&self, name: &str, flox_args: &[&str]) -> Result<String, RuntimeError> {
+    /// Run `mise <args>` in container `name`, in the workspace so mise reads the workspace `mise.toml`.
+    /// mise's data dir and lockfile settings come from the image ENV the base image bakes.
+    async fn mise_exec(&self, name: &str, mise_args: &[&str]) -> Result<String, RuntimeError> {
         check(self.podman(&["start", name]).await?)?;
-        let mut args = vec!["exec", "--workdir", WORKSPACE_MOUNT, name, "flox"];
-        args.extend_from_slice(flox_args);
+        let mut args = vec!["exec", "--workdir", WORKSPACE_MOUNT, name, "mise"];
+        args.extend_from_slice(mise_args);
         check(self.podman(&args).await?)
     }
 
-    /// Run `cmd` in container `name` without a login shell and without `flox` — zellij is on the
-    /// global PATH from the baked base image (a login shell would set `NIX_REMOTE=daemon` with no
-    /// nix daemon present and break the exec). Returns the raw [`Output`] so the caller can inspect
-    /// stdout/stderr and the exit code itself (e.g. `zellij web --status` exits non-zero when
-    /// offline, which is not an error to surface).
+    /// Run `cmd` in container `name` without `mise` — zellij is on the global PATH from the baked
+    /// base image. Returns the raw [`Output`] so the caller can inspect stdout/stderr and the exit
+    /// code itself (e.g. `zellij web --status` exits non-zero when offline, which is not an error).
     async fn container_exec(&self, name: &str, cmd: &[&str]) -> Result<Output, RuntimeError> {
         let mut args = vec!["exec", name];
         args.extend_from_slice(cmd);
@@ -118,33 +123,33 @@ impl PodmanFloxRuntime {
 }
 
 #[async_trait::async_trait]
-impl RuntimeManager for PodmanFloxRuntime {
-    async fn init(&self, image: &str, workspace_host_path: &str) -> Result<(), RuntimeError> {
-        let flox_dir = std::path::Path::new(workspace_host_path).join(".flox");
-        if flox_dir.exists() {
+impl RuntimeManager for PodmanMiseRuntime {
+    async fn init(&self, workspace_host_path: &str) -> Result<(), RuntimeError> {
+        let workspace = std::path::Path::new(workspace_host_path);
+        let manifest = workspace.join(MANIFEST_REL);
+        if manifest.exists() {
             return Ok(());
         }
-        // Throwaway container so the sandbox container's state stays untouched; the bind-mount
-        // lands `.flox/` directly in the workspace directory on the host.
-        let volume = format!("{workspace_host_path}:{WORKSPACE_MOUNT}");
-        check(
-            self.podman(&[
-                "run", "--rm", "--volume", &volume, "--workdir", WORKSPACE_MOUNT, image, "flox",
-                "init",
-            ])
-            .await?,
-        )
-        .map(|_| ())
+        // Written host-side: the workspace is bind-mounted into the container, so no container is
+        // needed (mise has no `init` subcommand; the config is otherwise created on first `mise use`).
+        // The empty `mise.lock` must exist for `MISE_LOCKFILE=1` installs to maintain the lockfile.
+        std::fs::create_dir_all(workspace)
+            .and_then(|_| std::fs::write(&manifest, "[tools]\n"))
+            .and_then(|_| std::fs::write(workspace.join(LOCKFILE_REL), ""))
+            .map_err(|e| RuntimeError::ManifestRead {
+                path: manifest.to_string_lossy().to_string(),
+                error: e.to_string(),
+            })
     }
 
     async fn install(&self, name: &str, package: &str) -> Result<(), RuntimeError> {
         validate_package(package)?;
-        self.flox_exec(name, &["install", package]).await.map(|_| ())
+        self.mise_exec(name, &["use", package]).await.map(|_| ())
     }
 
     async fn uninstall(&self, name: &str, package: &str) -> Result<(), RuntimeError> {
         validate_package(package)?;
-        self.flox_exec(name, &["uninstall", package]).await.map(|_| ())
+        self.mise_exec(name, &["rm", package]).await.map(|_| ())
     }
 
     async fn list(&self, workspace_host_path: &str) -> Result<Vec<String>, RuntimeError> {
@@ -166,32 +171,32 @@ impl RuntimeManager for PodmanFloxRuntime {
         target_connection: &str,
         workspace_host_path: &str,
     ) -> Result<(), RuntimeError> {
-        let flox_env_json_src = format!("{workspace_host_path}/.flox/env.json");
-        let flox_env_src = format!("{workspace_host_path}/.flox/env");
-        let flox_dir = format!("{WORKSPACE_MOUNT}/.flox");
-        // `podman cp` requires the destination parent to exist.
-        check(Self::podman_on(target_connection, &["exec", name, "mkdir", "-p", &flox_dir]).await?)?;
-        // Copy `env.json` (flox's environment pointer) and `env/` (manifest.toml + manifest.lock).
-        // `.flox/run/` is excluded: its activation symlinks cannot be tarred from a Windows host
-        // ("archive/tar: unknown file mode") and are machine-local anyway — flox recreates them on activate.
+        let manifest_src = format!("{workspace_host_path}/{MANIFEST_REL}");
+        let lockfile_src = format!("{workspace_host_path}/{LOCKFILE_REL}");
+        // The container must be running for `podman exec`.
+        check(Self::podman_on(target_connection, &["start", name]).await?)?;
+        // Copy `mise.toml` and `mise.lock` directly rather than racing the workspace sync (see the
+        // "Manifest timing on deploy" note in docs/features/sandbox-runtime-management/02_dev.md).
         check(
             Self::podman_on(
                 target_connection,
-                &["cp", &flox_env_json_src, &format!("{name}:{flox_dir}/env.json")],
+                &["cp", &manifest_src, &format!("{name}:{WORKSPACE_MOUNT}/{MANIFEST_REL}")],
             )
             .await?,
         )?;
         check(
             Self::podman_on(
                 target_connection,
-                &["cp", &flox_env_src, &format!("{name}:{flox_dir}/")],
+                &["cp", &lockfile_src, &format!("{name}:{WORKSPACE_MOUNT}/{LOCKFILE_REL}")],
             )
             .await?,
         )?;
+        // Install the lock-pinned tools from the upstream release hosts. Resolving from `mise.lock`
+        // (not tool names) is what makes the remote reproduce the identical builds the laptop locked.
         check(
             Self::podman_on(
                 target_connection,
-                &["exec", "--workdir", WORKSPACE_MOUNT, name, "flox", "activate", "--", "true"],
+                &["exec", "--workdir", WORKSPACE_MOUNT, name, "mise", "install"],
             )
             .await?,
         )

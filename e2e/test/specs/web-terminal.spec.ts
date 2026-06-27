@@ -22,7 +22,7 @@ function hostPortFrom(output: string): string | undefined {
 }
 
 // `function ()` (not an arrow) so `this.timeout` raises the suite ceiling: the first create on a
-// connection may trigger the one-time base-image build (~1.27 GB+).
+// connection may trigger the one-time mise base-image build (~324 MB).
 describe("In-app web terminal (zellij)", function () {
   this.timeout(600000);
 
@@ -110,8 +110,8 @@ describe("In-app web terminal (zellij)", function () {
     });
 
     // The zellij web server is online inside the container — proves zellij is on the global PATH
-    // from the baked image (Phase A), reached without flox activate. `--status` exits non-zero when
-    // offline, so read with check:false; "online" is not a substring of "offline".
+    // from the baked image (Phase A), reached without mise (no `mise exec`/activation). `--status`
+    // exits non-zero when offline, so read with check:false; "online" is not a substring of "offline".
     const status = podman(LOCAL_CONNECTION, ["exec", projectName, "zellij", "web", "--status"], {
       check: false,
     });

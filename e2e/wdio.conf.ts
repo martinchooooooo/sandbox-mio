@@ -4,7 +4,7 @@ import path from "path";
 import { spawn, spawnSync, type ChildProcess } from "child_process";
 import { fileURLToPath } from "url";
 
-import { provisionMachine, stopMachine, removeMachine, ensureFloxBaseImage } from "./lib/podman-machine.js";
+import { provisionMachine, stopMachine, removeMachine, ensureMiseBaseImage } from "./lib/podman-machine.js";
 import { LOCAL_CONNECTION, REMOTE_CONNECTION } from "./lib/podman-connection.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
@@ -53,8 +53,8 @@ export const config: WebdriverIO.Config = {
     // The remote machine is used as a deploy target by deploy-remote.spec.ts. Provisioned here
     // so the spec can assume it is up; cleaned up in onComplete.
     provisionMachine(REMOTE_CONNECTION);
-    // Stage the flox base image on both connections before any spec runs.
-    ensureFloxBaseImage(LOCAL_CONNECTION, [REMOTE_CONNECTION]);
+    // Stage the mise base image on both connections before any spec runs.
+    ensureMiseBaseImage(LOCAL_CONNECTION, [REMOTE_CONNECTION]);
     spawnSync("pnpm", ["tauri", "build", "--debug", "--no-bundle"], {
       cwd: path.resolve(__dirname, ".."),
       stdio: "inherit",

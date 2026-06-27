@@ -11,16 +11,17 @@ use types::{
     SyncStrategy, WorkspacePlan,
 };
 
-/// Flox-baked base image (Nix + flox + cache key). Must be staged on each connection; not pulled
-/// from a registry — [`PodmanCliBackend::ensure_base_image`] builds it from [`CONTAINERFILE`].
+/// mise-baked base image (debian-slim + mise + zellij). Must be staged on each connection; not
+/// pulled from a registry — [`PodmanCliBackend::ensure_base_image`] builds it from [`CONTAINERFILE`].
 const BASE_IMAGE: &str = "sandbox-mio/base";
-// Bumped from "flox" when zellij was baked into the recipe (see resources/Containerfile). The tag
-// MUST change whenever the recipe does: `ensure_base_image` short-circuits on `podman image exists
-// <tag>`, so a stale tag would keep existing machines on the pre-zellij image with no terminal.
-const BASE_IMAGE_VERSION: &str = "zellij";
+// Bumped from "zellij" when the runtime engine moved from flox/Nix to mise (the recipe switched to a
+// debian-slim base, shrinking the image from 1.84 GB to ~324 MB). The tag MUST change whenever the
+// recipe does: `ensure_base_image` short-circuits on `podman image exists <tag>`, so a stale tag
+// would keep existing machines on the old flox image.
+const BASE_IMAGE_VERSION: &str = "mise";
 
 /// The base-image recipe, baked into the binary so the build needs no resource-path resolution.
-/// Kept in sync with the spike reference at `docs/features/sandbox-runtime-management/spike/Containerfile`.
+/// Kept in sync with the spike reference at `docs/features/sandbox-runtime-management/spike/mise/Containerfile.glibc`.
 const CONTAINERFILE: &str = include_str!("../../resources/Containerfile");
 
 /// The connection `podman machine init` creates for the local machine.
@@ -32,7 +33,7 @@ pub(crate) fn base_image() -> String {
 
 /// The container user's `~/work`, used as both the workspace bind-mount target and the
 /// `--workdir`. Spelled literally because `podman -v` rejects a bare `~` and does not expand
-/// `$HOME`, which is `/root` for the Alpine root user.
+/// `$HOME`, which is `/root` for the debian root user.
 const WORKSPACE_MOUNT: &str = "/root/work";
 
 /// Container port the zellij web server binds (its default). Published to an ephemeral host
@@ -396,7 +397,7 @@ impl SandboxBackend for PodmanCliBackend {
 
         // Stop the workload onto the remote; kept stopped (not removed) so undeploy can restart it.
         check(self.podman(&["stop", name]).await?)?;
-        // No committed-image transfer: software is reproduced from the flox manifest by
+        // No committed-image transfer: software is reproduced from the mise manifest by
         // `RuntimeManager::reproduce_remote` after this returns. Must not be reintroduced.
         let image = Self::image();
 

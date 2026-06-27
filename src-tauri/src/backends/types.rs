@@ -54,7 +54,7 @@ pub struct Sandbox {
 /// command, so the backend never reaches into the sync engine.
 pub struct RemoteDeployment {
     /// Local (alpha) end: the laptop directory, which at deploy time holds the only copy of the
-    /// workspace files (including the `.flox/` manifest) before the sync session seeds the remote.
+    /// workspace files (including `mise.toml`/`mise.lock`) before the sync session seeds the remote.
     pub alpha: String,
     /// Remote (beta) end as a Mutagen scp-style `alias:path` URL, where `alias` is the target
     /// connection's OpenSSH alias and `path` is the empty remote workspace the initial reconcile
@@ -108,7 +108,7 @@ pub(super) struct ConnectionInfo {
 /// `backends/mod.rs`.
 #[async_trait::async_trait]
 pub trait SandboxBackend: Send + Sync {
-    /// Build the flox-baked base image on the active connection if absent; a no-op once staged.
+    /// Build the mise-baked base image on the active connection if absent; a no-op once staged.
     /// Idempotent, so callers invoke it before every [`SandboxBackend::create`] — the image is
     /// never in a registry, so `create`'s `--pull` cannot supply it.
     async fn ensure_base_image(&self) -> Result<(), BackendError>;
@@ -129,7 +129,7 @@ pub trait SandboxBackend: Send + Sync {
     /// directory is never deleted: for a deployed sandbox it may hold the only copy of unsynced
     /// work. The `destroy_sandbox` command tears down the sync session and remote container first.
     async fn destroy(&self, name: &str) -> Result<(), BackendError>;
-    /// Stop the local container, create a remote container from the flox-baked base image, and
+    /// Stop the local container, create a remote container from the mise-baked base image, and
     /// register the target's OpenSSH alias. Returns sync endpoints; software reproduction and
     /// session seeding are done by the caller. Local container is left stopped so deploy is reversible.
     async fn deploy(
