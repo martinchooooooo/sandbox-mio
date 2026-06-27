@@ -38,10 +38,14 @@
 		WithElementRef<HTMLAnchorAttributes> & {
 			variant?: ButtonVariant;
 			size?: ButtonSize;
+			loading?: boolean;
 		};
 </script>
 
 <script lang="ts">
+	import { HugeiconsIcon } from "@hugeicons/svelte";
+	import { LoaderPinwheelIcon } from "@hugeicons/core-free-icons";
+
 	let {
 		class: className,
 		variant = "default",
@@ -50,9 +54,12 @@
 		href = undefined,
 		type = "button",
 		disabled,
+		loading = false,
 		children,
 		...restProps
 	}: ButtonProps = $props();
+
+	const effectiveDisabled = $derived(disabled || loading);
 </script>
 
 {#if href}
@@ -60,12 +67,14 @@
 		bind:this={ref}
 		data-slot="button"
 		class={cn(buttonVariants({ variant, size }), className)}
-		href={disabled ? undefined : href}
-		aria-disabled={disabled}
-		role={disabled ? "link" : undefined}
-		tabindex={disabled ? -1 : undefined}
+		href={effectiveDisabled ? undefined : href}
+		aria-disabled={effectiveDisabled}
+		aria-busy={loading}
+		role={effectiveDisabled ? "link" : undefined}
+		tabindex={effectiveDisabled ? -1 : undefined}
 		{...restProps}
 	>
+		{#if loading}<HugeiconsIcon icon={LoaderPinwheelIcon} class="animate-spin" />{/if}
 		{@render children?.()}
 	</a>
 {:else}
@@ -74,9 +83,11 @@
 		data-slot="button"
 		class={cn(buttonVariants({ variant, size }), className)}
 		{type}
-		{disabled}
+		disabled={effectiveDisabled}
+		aria-busy={loading}
 		{...restProps}
 	>
+		{#if loading}<HugeiconsIcon icon={LoaderPinwheelIcon} class="animate-spin" />{/if}
 		{@render children?.()}
 	</button>
 {/if}

@@ -7,6 +7,8 @@
     import { onMount } from "svelte";
     import { parseError } from "$lib/errors";
     import { m } from "$lib/paraglide/messages.js";
+    import { createActionRunner } from "$lib/actions.svelte";
+    import StatusRow from "./StatusRow.svelte";
     import {
         translateStatus,
         syncColor,
@@ -19,21 +21,19 @@
         project,
         deployment,
         hosts,
-        onError,
         onChanged,
     }: {
         project: Project;
-        // Deployment overlay for this sandbox by name; absent means local-only.
         deployment: Deployment | undefined;
         hosts: string[];
-        onError: (message: string) => void;
         // Tells the parent to reload its sandbox and deployment lists after a mutating action.
         onChanged: () => void;
     } = $props();
 
+    const action = createActionRunner();
+
     let packages = $state<string[]>([]);
     let packageInput = $state("");
-    let packageBusy = $state(false);
 
     // The one-time login token from the last openTerminal call, shown in a banner so the user can
     // paste it into the terminal window's login page (auto-login is a deferred follow-up).
@@ -49,41 +49,33 @@
 
     // Reads from the host manifest, so no polling needed — only install/uninstall change it.
     async function loadPackages() {
-        try {
+        await action.run("load", async () => {
             packages = await invoke<string[]>("list_packages", {
                 workspacePath: project.workspace_path,
             });
-        } catch (e) {
-            onError(parseError(e).message);
-        }
+        });
     }
 
     async function installPackage() {
         const pkg = packageInput.trim();
         if (!pkg) return;
-        packageBusy = true;
-        try {
-            onError("");
-            await invoke("install_package", { name: project.name, package: pkg });
+        if (await action.run(
+            "install",
+            () => invoke("install_package", { name: project.name, package: pkg }),
+            { message: m.projects_status_installing({ name: pkg }) }
+        )) {
             packageInput = "";
             await loadPackages();
-        } catch (e) {
-            onError(parseError(e).message);
-        } finally {
-            packageBusy = false;
         }
     }
 
     async function uninstallPackage(pkg: string) {
-        packageBusy = true;
-        try {
-            onError("");
-            await invoke("uninstall_package", { name: project.name, package: pkg });
+        if (await action.run(
+            "uninstall",
+            () => invoke("uninstall_package", { name: project.name, package: pkg }),
+            { message: m.projects_status_uninstalling({ name: pkg }) }
+        )) {
             await loadPackages();
-        } catch (e) {
-            onError(parseError(e).message);
-        } finally {
-            packageBusy = false;
         }
     }
 
@@ -94,75 +86,73 @@
 
     async function deploy() {
         if (!chosenHost) return;
-        try {
-            onError("");
-            await invoke("deploy_sandbox", { name: project.name, host: chosenHost });
+        if (await action.run(
+            "deploy",
+            () => invoke("deploy_sandbox", { name: project.name, host: chosenHost }),
+            { message: m.projects_status_deploying({ host: chosenHost }) }
+        )) {
             picking = false;
             onChanged();
-        } catch (e) {
-            onError(parseError(e).message);
         }
     }
 
     async function undeploy() {
-        try {
-            onError("");
-            await invoke("undeploy_sandbox", { name: project.name });
+        if (await action.run(
+            "undeploy",
+            () => invoke("undeploy_sandbox", { name: project.name }),
+            { message: m.projects_status_undeploying() }
+        )) {
             onChanged();
-        } catch (e) {
-            onError(parseError(e).message);
         }
     }
 
     async function destroyProject() {
-        try {
-            onError("");
-            await invoke("destroy_sandbox", { name: project.name, force: false });
-        } catch (e) {
-            const err = parseError(e);
-            // The guard refuses to discard unsynced remote work; confirm, then force.
-            if (err.kind === "UnsyncedChanges") {
-                if (!confirm(`${err.message}\n\nDestroy anyway and discard them?`)) return;
-                try {
+        if (await action.run("destroy", async () => {
+            try {
+                await invoke("destroy_sandbox", { name: project.name, force: false });
+            } catch (e) {
+                const err = parseError(e);
+                // The guard refuses to discard unsynced remote work; confirm, then force.
+                if (err.kind === "UnsyncedChanges") {
+                    if (!confirm(`${err.message}\n\nDestroy anyway and discard them?`)) return;
                     await invoke("destroy_sandbox", { name: project.name, force: true });
-                } catch (e2) {
-                    onError(parseError(e2).message);
-                    return;
+                } else {
+                    throw e;
                 }
-            } else {
-                onError(err.message);
-                return;
             }
+        })) {
+            onChanged();
         }
-        onChanged();
     }
 
     async function toggleSync(on: boolean) {
         syncOn = on;
-        try {
-            onError("");
-            await invoke(on ? "enable_sync" : "disable_sync", { name: project.name });
+        const success = await action.run(
+            "sync",
+            () => invoke(on ? "enable_sync" : "disable_sync", { name: project.name }),
+            { message: on ? m.projects_status_enabling_sync() : m.projects_status_disabling_sync() }
+        );
+        if (success) {
             onChanged();
-        } catch (e) {
+        } else {
             syncOn = !on; // revert the optimistic flip
-            onError(parseError(e).message);
         }
     }
 
     async function start() {
-        try {
-            await invoke("start_sandbox", { name: project.name });
-        } catch (e) {
-            onError(parseError(e).message);
-        }
+        await action.run(
+            "start",
+            () => invoke("start_sandbox", { name: project.name }),
+            { message: m.projects_status_starting() }
+        );
     }
 
     async function stop() {
-        try {
-            await invoke("stop_sandbox", { name: project.name });
-        } catch (e) {
-            onError(parseError(e).message);
-        }
+        await action.run(
+            "stop",
+            () => invoke("stop_sandbox", { name: project.name }),
+            { message: m.projects_status_stopping() }
+        );
     }
 
     // Opens the in-app web terminal: starts the zellij web server (via the command), then loads the
@@ -170,8 +160,7 @@
     // terminal's X-Frame-Options: DENY). A deterministic per-sandbox label keeps one window per
     // sandbox — a second click focuses the existing window instead of stacking a duplicate.
     async function openTerminal() {
-        try {
-            onError("");
+        await action.run("terminal", async () => {
             const session = await invoke<TerminalSession>("open_terminal", {
                 name: project.name,
                 workspacePath: project.workspace_path,
@@ -184,9 +173,7 @@
             } else {
                 new WebviewWindow(label, { url: session.url, title: `${project.name} — terminal` });
             }
-        } catch (e) {
-            onError(parseError(e).message);
-        }
+        }, { message: m.projects_status_opening_terminal() });
     }
 
     async function copyToken() {
@@ -194,11 +181,7 @@
     }
 
     async function openWorkspace() {
-        try {
-            await revealItemInDir(project.workspace_path);
-        } catch (e) {
-            onError(parseError(e).message);
-        }
+        await action.run("folder", () => revealItemInDir(project.workspace_path));
     }
 
     onMount(loadPackages);
@@ -221,27 +204,56 @@
             {/if}
         </span>
         <span class="flex items-center gap-2 shrink-0">
-            <span class="text-muted-foreground text-xs">{translateStatus(deployment ? deployment.status : project.status)}</span>
-            <button onclick={openWorkspace} title={project.workspace_path}>{m.projects_folder()}</button>
+            <Button variant="ghost" size="sm" onclick={openWorkspace} title={project.workspace_path}
+                loading={action.busy === "folder"} disabled={action.busy !== null}>
+                {m.projects_folder()}
+            </Button>
             {#if deployment}
                 <label class="flex items-center gap-1 text-xs">
-                    <Switch checked={syncOn} onCheckedChange={toggleSync} />
+                    <Switch checked={syncOn} onCheckedChange={toggleSync} disabled={action.busy !== null} />
                     {m.projects_sync()}
                 </label>
-                <button onclick={openTerminal}>{m.projects_terminal()}</button>
-                <button onclick={undeploy}>{m.projects_undeploy()}</button>
+                <Button variant="ghost" size="sm" onclick={openTerminal}
+                    loading={action.busy === "terminal"} disabled={action.busy !== null}>
+                    {m.projects_terminal()}
+                </Button>
+                <Button variant="ghost" size="sm" onclick={undeploy}
+                    loading={action.busy === "undeploy"} disabled={action.busy !== null}>
+                    {m.projects_undeploy()}
+                </Button>
             {:else}
                 {#if project.status === "running"}
-                    <button onclick={stop}>{m.projects_stop()}</button>
+                    <Button variant="ghost" size="sm" onclick={stop}
+                        loading={action.busy === "stop"} disabled={action.busy !== null}>
+                        {m.projects_stop()}
+                    </Button>
                 {:else}
-                    <button onclick={start}>{m.projects_start()}</button>
+                    <Button variant="ghost" size="sm" onclick={start}
+                        loading={action.busy === "start"} disabled={action.busy !== null}>
+                        {m.projects_start()}
+                    </Button>
                 {/if}
-                <button onclick={openTerminal}>{m.projects_terminal()}</button>
-                <button onclick={openPicker}>{m.projects_deploy()}</button>
+                <Button variant="ghost" size="sm" onclick={openTerminal}
+                    loading={action.busy === "terminal"} disabled={action.busy !== null}>
+                    {m.projects_terminal()}
+                </Button>
+                <Button variant="ghost" size="sm" onclick={openPicker} disabled={action.busy !== null}>
+                    {m.projects_deploy()}
+                </Button>
             {/if}
-            <button onclick={destroyProject} class="text-destructive">{m.projects_destroy()}</button>
+            <Button variant="destructive" size="sm" onclick={destroyProject}
+                loading={action.busy === "destroy"} disabled={action.busy !== null}>
+                {m.projects_destroy()}
+            </Button>
         </span>
     </div>
+
+    <StatusRow
+        busy={action.busy}
+        message={action.message}
+        error={action.error}
+        status={translateStatus(deployment ? deployment.status : project.status)}
+    />
 
     {#if terminalToken}
         <div class="flex items-center gap-2 text-xs">
@@ -261,9 +273,13 @@
                         <option value={host}>{host}</option>
                     {/each}
                 </select>
-                <Button size="sm" onclick={deploy}>{m.projects_deploy_confirm()}</Button>
+                <Button size="sm" loading={action.busy === "deploy"} disabled={action.busy !== null} onclick={deploy}>
+                    {m.projects_deploy_confirm()}
+                </Button>
             {/if}
-            <Button size="sm" variant="outline" onclick={() => (picking = false)}>{m.projects_cancel()}</Button>
+            <Button size="sm" variant="outline" disabled={action.busy !== null} onclick={() => (picking = false)}>
+                {m.projects_cancel()}
+            </Button>
         </div>
     {/if}
 
@@ -274,10 +290,10 @@
                 class="flex-1 rounded border bg-background px-2 py-1 text-xs disabled:opacity-50"
                 placeholder={m.projects_package_placeholder()}
                 bind:value={packageInput}
-                disabled={packageBusy}
+                disabled={action.busy !== null}
                 onkeydown={(e) => e.key === "Enter" && installPackage()}
             />
-            <Button size="sm" disabled={packageBusy} onclick={installPackage}>
+            <Button size="sm" loading={action.busy === "install"} disabled={action.busy !== null} onclick={installPackage}>
                 {m.projects_install()}
             </Button>
         </div>
@@ -287,11 +303,11 @@
                 {#each packages as pkg}
                     <span class="flex items-center gap-1 rounded bg-muted px-2 py-0.5 text-xs">
                         <span class="font-mono">{pkg}</span>
-                        <button
-                            class="text-destructive disabled:opacity-50"
-                            disabled={packageBusy}
+                        <Button variant="ghost" size="icon-xs"
+                            loading={action.busy === "uninstall"}
+                            disabled={action.busy !== null}
                             title={m.projects_uninstall()}
-                            onclick={() => uninstallPackage(pkg)}>✕</button>
+                            onclick={() => uninstallPackage(pkg)}>✕</Button>
                     </span>
                 {/each}
             </div>

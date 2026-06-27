@@ -6,7 +6,9 @@
     import { onMount, onDestroy } from "svelte";
     import { parseError } from "$lib/errors";
     import { m } from "$lib/paraglide/messages.js";
+    import { createActionRunner } from "$lib/actions.svelte";
     import SandboxItem from "./SandboxItem.svelte";
+    import StatusRow from "./StatusRow.svelte";
     import EventLog from "./EventLog.svelte";
     import type { Project, Deployment } from "$lib/sandbox";
 
@@ -19,6 +21,8 @@
     // changes outside our event stream.
     let hosts = $state<string[]>([]);
     let deployments = $state<Record<string, Deployment>>({});
+
+    const action = createActionRunner();
 
     async function loadProjects() {
         try {
@@ -48,13 +52,13 @@
     async function createProject() {
         const name = projectName.trim();
         if (!name) return;
-        try {
-            await invoke("create_sandbox", { name });
+        if (await action.run(
+            "create",
+            () => invoke("create_sandbox", { name }),
+            { message: m.projects_status_creating({ name }) }
+        )) {
             projectName = "";
-            error = "";
             await loadProjects();
-        } catch (e) {
-            error = parseError(e).message;
         }
     }
 
@@ -94,7 +98,11 @@
                     <Field.Label>{m.projects_name_label()}</Field.Label>
                     <div class="flex w-full gap-2">
                         <Input placeholder={m.projects_name_placeholder()} bind:value={projectName} />
-                        <Button onclick={createProject}>{m.projects_create()}</Button>
+                        <Button
+                            loading={action.busy === "create"}
+                            disabled={action.busy !== null}
+                            onclick={createProject}
+                        >{m.projects_create()}</Button>
                     </div>
                 </Field.Field>
             </Field.Group>
@@ -104,6 +112,8 @@
             <p class="text-destructive mt-4 text-sm">{error}</p>
         {/if}
 
+        <StatusRow busy={action.busy} message={action.message} error={action.error} />
+
         {#if projects.length > 0}
             <ul class="mt-6 space-y-2">
                 {#each projects as project (project.id)}
@@ -111,7 +121,6 @@
                         {project}
                         {hosts}
                         deployment={deployments[project.name]}
-                        onError={(msg) => (error = msg)}
                         onChanged={reload}
                     />
                 {/each}
