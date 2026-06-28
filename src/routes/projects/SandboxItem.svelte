@@ -2,7 +2,6 @@
     import Button from "$lib/components/ui/button/button.svelte";
     import { Switch } from "$lib/components/ui/switch";
     import { invoke } from "@tauri-apps/api/core";
-    import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
     import { revealItemInDir } from "@tauri-apps/plugin-opener";
     import { onMount } from "svelte";
     import { parseError } from "$lib/errors";
@@ -14,7 +13,6 @@
         syncColor,
         type Project,
         type Deployment,
-        type TerminalSession,
     } from "$lib/sandbox";
 
     let {
@@ -45,10 +43,6 @@
 
     let packages = $state<string[]>([]);
     let packageInput = $state("");
-
-    // The one-time login token from the last openTerminal call, shown in a banner so the user can
-    // paste it into the terminal window's login page (auto-login is a deferred follow-up).
-    let terminalToken = $state("");
 
     // Whether this sandbox's host picker is open, and the host chosen within it.
     let picking = $state(false);
@@ -166,29 +160,13 @@
         );
     }
 
-    // Opens the in-app web terminal: starts the zellij web server (via the command), then loads the
-    // returned loopback URL in a dedicated top-level WebviewWindow (an iframe is blocked by the
-    // terminal's X-Frame-Options: DENY). A deterministic per-sandbox label keeps one window per
-    // sandbox — a second click focuses the existing window instead of stacking a duplicate.
     async function openTerminal() {
         await action.run("terminal", async () => {
-            const session = await invoke<TerminalSession>("open_terminal", {
+            await invoke("open_terminal", {
                 name: project.name,
                 workspacePath: project.workspace_path,
             });
-            terminalToken = session.token;
-            const label = `terminal-${project.name}`;
-            const existing = await WebviewWindow.getByLabel(label);
-            if (existing) {
-                await existing.setFocus();
-            } else {
-                new WebviewWindow(label, { url: session.url, title: `${project.name} — terminal` });
-            }
         }, { message: m.projects_status_opening_terminal() });
-    }
-
-    async function copyToken() {
-        if (terminalToken) await navigator.clipboard.writeText(terminalToken);
     }
 
     async function openWorkspace() {
@@ -286,14 +264,6 @@
             <button class="text-xs text-muted-foreground hover:text-foreground shrink-0" onclick={dismissUpdate}>
                 {m.projects_image_dismiss()}
             </button>
-        </div>
-    {/if}
-
-    {#if terminalToken}
-        <div class="flex items-center gap-2 text-xs">
-            <span class="text-muted-foreground shrink-0">{m.projects_terminal_token()}</span>
-            <span class="font-mono truncate">{terminalToken}</span>
-            <button class="shrink-0" onclick={copyToken}>{m.projects_terminal_copy()}</button>
         </div>
     {/if}
 

@@ -9,11 +9,6 @@ export interface Project {
     image_version?: number;
 }
 
-export interface TerminalSession {
-    url: string;
-    token: string;
-}
-
 export type SyncStatus = "syncing" | "up-to-date" | "conflict" | "error";
 
 export interface Deployment {

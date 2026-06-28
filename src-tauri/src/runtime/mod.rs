@@ -28,7 +28,7 @@ const ZELLIJ_WEB_PORT: u16 = 8082;
 pub fn default_runtime() -> std::sync::Arc<dyn RuntimeManager> {
     let connection = std::env::var("PODMAN_CONNECTION")
         .unwrap_or_else(|_| crate::backends::DEFAULT_CONNECTION.to_string());
-    std::sync::Arc::new(PodmanMiseRuntime { connection })
+    std::sync::Arc::new(PodmanMiseRuntime { connection, registry_cache: tokio::sync::OnceCell::new() })
 }
 
 fn check(out: Output) -> Result<String, RuntimeError> {
@@ -252,5 +252,16 @@ impl RuntimeManager for PodmanMiseRuntime {
 
     fn local_connection(&self) -> &str {
         &self.connection
+    }
+
+    async fn registry(&self, name: &str) -> Result<Vec<types::RegistryEntry>, types::RuntimeError> {
+        self.registry_cache.get_or_try_init(|| async {
+            #[derive(serde::Deserialize)]
+            struct Raw { short: String, description: Option<String> }
+            let json = self.mise_exec(name, &["registry", "--json"]).await?;
+            let raw: Vec<Raw> = serde_json::from_str(&json)
+                .map_err(|e| types::RuntimeError::ManifestParse(format!("mise registry --json: {e}")))?;
+            Ok(raw.into_iter().map(|r| types::RegistryEntry { short: r.short, description: r.description }).collect())
+        }).await.cloned()
     }
 }

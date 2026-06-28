@@ -10,7 +10,7 @@ use tauri::{ipc::Channel, Manager, State};
 
 use crate::backends::types::{Sandbox, SandboxBackend};
 use crate::error::AppError;
-use crate::runtime::types::{RuntimeManager, TerminalSession};
+use crate::runtime::types::RuntimeManager;
 use crate::sync::types::{SessionInfo, SyncEngine, SyncStatus};
 
 /// Maps sandbox name → the Windows-host loopback port of its active Mutagen forwarding session.
@@ -82,7 +82,8 @@ async fn uninstall_package(
 /// Open the in-app web terminal for sandbox `name`. Works for both local and deployed sandboxes:
 /// starts the zellij web server over the appropriate Podman connection, mints a one-time token,
 /// creates a Mutagen forwarding session from a Windows-host loopback port to the container's
-/// published zellij port, and returns the Windows-side URL plus token for the frontend.
+/// published zellij port, and opens a dedicated WebviewWindow with an initialization script that
+/// auto-logs in via POST /command/login (sets a 30-day cookie) so no manual paste is needed.
 #[tauri::command]
 async fn open_terminal(
     name: String,
@@ -91,7 +92,17 @@ async fn open_terminal(
     engine: State<'_, Arc<dyn SyncEngine>>,
     forward_ports: State<'_, ForwardPortMap>,
     app: tauri::AppHandle,
-) -> Result<TerminalSession, AppError> {
+) -> Result<(), AppError> {
+    let label = format!("terminal-{name}");
+
+    // Second click: focus the existing window without re-preparing the terminal.
+    if let Some(window) = app.get_webview_window(&label) {
+        window.set_focus().map_err(|e| {
+            crate::runtime::types::RuntimeError::TerminalUnavailable(e.to_string())
+        })?;
+        return Ok(());
+    }
+
     // A sync session named after the sandbox means it is deployed to a remote host; use that
     // host's connection alias. Otherwise fall back to the local machine's default connection.
     let connection = engine
@@ -142,7 +153,35 @@ async fn open_terminal(
             ))
         })?;
 
-    Ok(TerminalSession { url, token })
+    // WindowConfig (used by the create_webview_window IPC command) has deny_unknown_fields, so
+    // initialization_script cannot be passed from the JS side. Create the window from Rust instead,
+    // where WebviewWindowBuilder::initialization_script() is available as a typed builder method.
+    // The script POSTs /command/login to set a 30-day session cookie, eliminating manual paste.
+    // See: https://github.com/zellij-org/zellij/issues/5194#issuecomment-4516799423
+    let token_json = serde_json::to_string(&token)
+        .map_err(|e| crate::runtime::types::RuntimeError::TerminalUnavailable(e.to_string()))?;
+    let init_script = format!(
+        r#"(async () => {{
+    try {{
+        const r = await fetch('/command/login', {{
+            method: 'POST',
+            headers: {{ 'Content-Type': 'application/json' }},
+            body: JSON.stringify({{ auth_token: {token_json}, remember_me: true }})
+        }});
+        if (r.ok && location.pathname.startsWith('/auth')) location.replace('/');
+    }} catch (_) {{}}
+}})();"#
+    );
+    let parsed_url = url
+        .parse::<tauri::Url>()
+        .map_err(|e| crate::runtime::types::RuntimeError::TerminalUnavailable(e.to_string()))?;
+    tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::External(parsed_url))
+        .title(format!("{name} — terminal"))
+        .initialization_script(&init_script)
+        .build()
+        .map_err(|e| crate::runtime::types::RuntimeError::TerminalUnavailable(e.to_string()))?;
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -151,6 +190,14 @@ async fn list_packages(
     runtime: State<'_, Arc<dyn RuntimeManager>>,
 ) -> Result<Vec<String>, AppError> {
     Ok(runtime.list(&workspace_path).await?)
+}
+
+#[tauri::command]
+async fn list_registry(
+    name: String,
+    runtime: State<'_, Arc<dyn RuntimeManager>>,
+) -> Result<Vec<runtime::types::RegistryEntry>, AppError> {
+    Ok(runtime.registry(&name).await?)
 }
 
 #[tauri::command]
@@ -384,7 +431,8 @@ pub fn run() {
             provision_sandbox_host,
             sync_status,
             enable_sync,
-            disable_sync
+            disable_sync,
+            list_registry
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

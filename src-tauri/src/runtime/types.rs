@@ -1,5 +1,11 @@
 use async_trait::async_trait;
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RegistryEntry {
+    pub short: String,
+    pub description: Option<String>,
+}
+
 /// Errors from [`RuntimeManager`]. Converts into [`crate::error::AppError`] via `#[from]`.
 #[derive(Debug, thiserror::Error)]
 pub enum RuntimeError {
@@ -16,15 +22,6 @@ pub enum RuntimeError {
     /// names the terminal-specific cause.
     #[error("terminal unavailable: {0}")]
     TerminalUnavailable(String),
-}
-
-/// Result of [`RuntimeManager::open_terminal`]: the loopback URL of the running zellij web client
-/// and the one-time login token minted for it. Serialized to `{ url, token }` for the frontend,
-/// which opens `url` in a `WebviewWindow` and surfaces `token` for the one-time login.
-#[derive(serde::Serialize)]
-pub struct TerminalSession {
-    pub url: String,
-    pub token: String,
 }
 
 /// Manages the mise tool environment embedded in a sandbox workspace. Distinct from
@@ -71,6 +68,10 @@ pub trait RuntimeManager: Send + Sync {
     /// The Podman connection this runtime is pinned to, read from `PODMAN_CONNECTION` (or the
     /// compiled-in default). Used by `open_terminal` as the fallback connection for local sandboxes.
     fn local_connection(&self) -> &str;
+
+    /// Run `mise registry --json` in container `name` and return the full tool list.
+    /// Implementations cache the result process-wide; the first call pays the `podman exec` cost.
+    async fn registry(&self, name: &str) -> Result<Vec<RegistryEntry>, RuntimeError>;
 }
 
 /// Drives `mise` (over `podman exec`) against a named Podman **system connection**, mirroring
@@ -78,4 +79,5 @@ pub trait RuntimeManager: Send + Sync {
 /// pinned to; deploy passes an explicit target connection per call.
 pub struct PodmanMiseRuntime {
     pub connection: String,
+    pub registry_cache: tokio::sync::OnceCell<Vec<RegistryEntry>>,
 }
