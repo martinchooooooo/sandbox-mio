@@ -111,15 +111,6 @@ impl PodmanMiseRuntime {
         args.extend_from_slice(mise_args);
         check(self.podman(&args).await?)
     }
-
-    /// Run `cmd` in container `name` without `mise` — zellij is on the global PATH from the baked
-    /// base image. Returns the raw [`Output`] so the caller can inspect stdout/stderr and the exit
-    /// code itself (e.g. `zellij web --status` exits non-zero when offline, which is not an error).
-    async fn container_exec(&self, name: &str, cmd: &[&str]) -> Result<Output, RuntimeError> {
-        let mut args = vec!["exec", name];
-        args.extend_from_slice(cmd);
-        self.podman(&args).await
-    }
 }
 
 #[async_trait::async_trait]
