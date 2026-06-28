@@ -1,5 +1,5 @@
 /** Discriminant tags matching `AppError` variants in `src-tauri/src/error.rs`. */
-export type AppErrorKind = "Backend" | "Sync" | "Runtime" | "NotDeployed" | "UnsyncedChanges";
+export type AppErrorKind = "Backend" | "Sync" | "Runtime" | "Agent" | "NotDeployed" | "UnsyncedChanges";
 
 /** Structured error sent over the Tauri IPC boundary from every `#[tauri::command]`. */
 export interface AppError {

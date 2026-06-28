@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "agent-auth",
+  "description": "Capability for the agent authentication window",
+  "windows": ["agent-auth-*"],
+  "permissions": [
+    "core:default",
+    "opener:default"
+  ]
+}

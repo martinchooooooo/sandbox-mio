@@ -1,3 +1,4 @@
+use crate::agents::types::AgentError;
 use crate::backends::types::BackendError;
 use crate::runtime::types::RuntimeError;
 use crate::sync::types::SyncError;
@@ -15,6 +16,8 @@ pub enum AppError {
     Sync(#[from] SyncError),
     #[error(transparent)]
     Runtime(#[from] RuntimeError),
+    #[error(transparent)]
+    Agent(#[from] AgentError),
     /// The requested sandbox has no active sync session — it has not been deployed.
     #[error("sandbox {0:?} is not deployed")]
     NotDeployed(String),
@@ -32,6 +35,7 @@ impl AppError {
             AppError::Backend(_) => "Backend",
             AppError::Sync(_) => "Sync",
             AppError::Runtime(_) => "Runtime",
+            AppError::Agent(_) => "Agent",
             AppError::NotDeployed(_) => "NotDeployed",
             AppError::UnsyncedChanges { .. } => "UnsyncedChanges",
         }

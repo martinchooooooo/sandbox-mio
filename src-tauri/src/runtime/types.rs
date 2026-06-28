@@ -72,6 +72,14 @@ pub trait RuntimeManager: Send + Sync {
     /// Run `mise registry --json` in container `name` and return the full tool list.
     /// Implementations cache the result process-wide; the first call pays the `podman exec` cost.
     async fn registry(&self, name: &str) -> Result<Vec<RegistryEntry>, RuntimeError>;
+
+    /// Return the absolute install directory for `tool` inside container `name` (via `mise where`).
+    /// Used by agent postinstall steps that need a path into the tool's installation.
+    async fn tool_dir(&self, name: &str, tool: &str) -> Result<String, RuntimeError>;
+
+    /// Run an arbitrary command inside container `name` in the workspace directory and return stdout.
+    /// Starts the container first (idempotent). Extension point for agent postinstall steps.
+    async fn exec_in_container(&self, name: &str, args: &[&str]) -> Result<String, RuntimeError>;
 }
 
 /// Drives `mise` (over `podman exec`) against a named Podman **system connection**, mirroring

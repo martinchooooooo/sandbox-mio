@@ -198,6 +198,50 @@ export default class ProjectRow {
     return (await this.deployedHostLabel(host)).isDisplayed();
   }
 
+  get addAgentButton(): Element {
+    return this.root.$("button=Add agent");
+  }
+
+  agentInstallButton(agentLabel: string): Element {
+    return this.root.$(`span*=${agentLabel}`).$("../..").$("button=install");
+  }
+
+  agentAuthButton(agentLabel: string): Element {
+    return this.root.$(`span=${agentLabel}`).$("..").$("button*=thenticate");
+  }
+
+  agentStatusText(agentLabel: string): Element {
+    return this.root
+      .$(`span=${agentLabel}`)
+      .$("..")
+      .$("span.text-muted-foreground, span.text-amber-600");
+  }
+
+  async startAgentInstall(agentLabel: string): Promise<void> {
+    await this.#clickButton(this.addAgentButton);
+    await this.#clickButton(this.agentInstallButton(agentLabel));
+  }
+
+  async waitForAgentRow(agentLabel: string, timeoutMs = 600000): Promise<void> {
+    await browser.waitUntil(
+      async () => (await this.root.$(`span=${agentLabel}`)).isExisting(),
+      { timeout: timeoutMs, interval: 3000, timeoutMsg: `agent row for "${agentLabel}" did not appear` }
+    );
+  }
+
+  async waitForAgentStatus(agentLabel: string, text: string, timeoutMs = 10000): Promise<void> {
+    await browser.waitUntil(
+      async () => {
+        try {
+          return (await this.agentStatusText(agentLabel).getText()) === text;
+        } catch {
+          return false;
+        }
+      },
+      { timeout: timeoutMs, interval: 500, timeoutMsg: `agent status for "${agentLabel}" did not become "${text}"` }
+    );
+  }
+
   /**
    * Poll the deployment status text until it equals `targetStatus`. The status span and the
    * host label both carry text-muted-foreground + text-xs, so this checks every match rather

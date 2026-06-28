@@ -1,3 +1,4 @@
+mod agents;
 mod backends;
 mod error;
 mod runtime;
@@ -8,6 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use tauri::{ipc::Channel, Manager, State};
 
+use crate::agents::types::AuthSessionMap;
 use crate::backends::types::{Sandbox, SandboxBackend};
 use crate::error::AppError;
 use crate::runtime::types::RuntimeManager;
@@ -379,6 +381,81 @@ async fn disable_sync(name: String, engine: State<'_, Arc<dyn SyncEngine>>) -> R
     Ok(engine.pause(&name).await?)
 }
 
+/// Install all mise packages for an agent sequentially, then run its postinstall steps.
+/// Streams `AgentInstallEvent` JSON objects to `on_progress`.
+/// `postinstall_npm` is `(npm_package, node_tool)` — present only when the agent needs the
+/// npm postinstall workaround for mise's `--ignore-scripts=true` default.
+#[tauri::command]
+async fn install_agent(
+    name: String,
+    packages: Vec<String>,
+    postinstall_npm: Option<(String, String)>,
+    on_progress: Channel<serde_json::Value>,
+    runtime: State<'_, Arc<dyn RuntimeManager>>,
+) -> Result<(), AppError> {
+    agents::install_packages(&name, &packages, &on_progress, &runtime).await?;
+    if let Some((npm_package, node_tool)) = postinstall_npm {
+        agents::run_postinstall_npm(&name, &npm_package, &node_tool, &on_progress, &runtime).await?;
+    }
+    on_progress.send(serde_json::to_value(&agents::types::AgentInstallEvent::Done).unwrap()).ok();
+    Ok(())
+}
+
+/// Spawn the agent auth command inside sandbox `name` with piped stdin/stdout.
+/// Returns a session ID that identifies the auth session for subsequent input/cancel calls.
+/// Emits `AgentAuthEvent` objects to the Tauri app-wide event `agent-auth-output-<session_id>`.
+#[tauri::command]
+async fn start_agent_auth(
+    name: String,
+    auth_command: Vec<String>,
+    app: tauri::AppHandle,
+    sessions: State<'_, AuthSessionMap>,
+    runtime: State<'_, Arc<dyn RuntimeManager>>,
+) -> Result<String, AppError> {
+    Ok(agents::start_auth(&name, &auth_command, &app, &sessions, &runtime).await?)
+}
+
+/// Write a line to the auth process stdin identified by `session_id`. One-shot for PKCE flows.
+#[tauri::command]
+async fn send_agent_auth_input(
+    session_id: String,
+    input: String,
+    sessions: State<'_, AuthSessionMap>,
+) -> Result<(), AppError> {
+    Ok(agents::send_auth_input(&session_id, &input, &sessions).await?)
+}
+
+/// Cancel a running auth session by closing its stdin pipe (process receives EOF and exits).
+#[tauri::command]
+async fn cancel_agent_auth(
+    session_id: String,
+    sessions: State<'_, AuthSessionMap>,
+) -> Result<(), AppError> {
+    Ok(agents::cancel_auth(&session_id, &sessions).await?)
+}
+
+/// Read the agent credential file from the container and return auth status.
+/// `expires_at_json_key` and `account_email_json_key` are dot-separated JSON paths.
+#[tauri::command]
+async fn get_agent_auth_status(
+    name: String,
+    credential_path: String,
+    expires_at_json_key: String,
+    account_source_path: Option<String>,
+    account_email_json_key: Option<String>,
+    runtime: State<'_, Arc<dyn RuntimeManager>>,
+) -> Result<agents::types::AgentAuthStatus, AppError> {
+    Ok(agents::get_auth_status(
+        &name,
+        &credential_path,
+        &expires_at_json_key,
+        account_source_path.as_deref(),
+        account_email_json_key.as_deref(),
+        &runtime,
+    )
+    .await?)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[cfg(debug_assertions)]
@@ -404,6 +481,7 @@ pub fn run() {
             // bundled Mutagen sidecar.
             app.manage(sync::default_sync_engine(app.handle().clone()));
             app.manage(ForwardPortMap::default());
+            app.manage(AuthSessionMap::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -432,7 +510,12 @@ pub fn run() {
             sync_status,
             enable_sync,
             disable_sync,
-            list_registry
+            list_registry,
+            install_agent,
+            start_agent_auth,
+            send_agent_auth_input,
+            cancel_agent_auth,
+            get_agent_auth_status
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

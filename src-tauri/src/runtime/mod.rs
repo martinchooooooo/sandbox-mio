@@ -264,4 +264,16 @@ impl RuntimeManager for PodmanMiseRuntime {
             Ok(raw.into_iter().map(|r| types::RegistryEntry { short: r.short, description: r.description }).collect())
         }).await.cloned()
     }
+
+    async fn tool_dir(&self, name: &str, tool: &str) -> Result<String, types::RuntimeError> {
+        let output = self.mise_exec(name, &["where", tool]).await?;
+        Ok(output.trim().to_string())
+    }
+
+    async fn exec_in_container(&self, name: &str, args: &[&str]) -> Result<String, types::RuntimeError> {
+        check(self.podman(&["start", name]).await?)?;
+        let mut full_args = vec!["exec", "--workdir", WORKSPACE_MOUNT, name];
+        full_args.extend_from_slice(args);
+        check(self.podman(&full_args).await?)
+    }
 }
