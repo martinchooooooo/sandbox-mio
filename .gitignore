@@ -22,6 +22,7 @@ tools/mutagen-agents.tar.gz
 /src/lib/paraglide
 
 e2e/.diag
+e2e/failures.log
 
 # Stray Windows NUL device-files created by accidental `> NUL` redirects
 NUL

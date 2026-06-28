@@ -88,10 +88,6 @@ describe("Remote terminal — open via Mutagen forward, undeploy cleans up sessi
     );
   });
 
-  it("waits for sync to reach up-to-date", async () => {
-    await row.waitForSyncStatus("up-to-date");
-  });
-
   it("opens the terminal: Mutagen session Connected and forwarded port serves HTTP 200", async () => {
     await row.openTerminal();
 
@@ -213,7 +209,6 @@ describe("Remote terminal — destroy deployed sandbox with active forwarding se
     await ProjectsPage.open();
     await ProjectsPage.createProject(projectName, { timeout: 600000 });
     await row.deployTo(REMOTE_CONNECTION);
-    await row.waitForSyncStatus("up-to-date");
     await row.openTerminal();
 
     await browser.waitUntil(() => fs.existsSync(tokenPath), {

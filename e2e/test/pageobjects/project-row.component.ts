@@ -115,6 +115,7 @@ export default class ProjectRow {
 
   // Deploys to the named host and resolves once the deployment is live (undeploy button shown).
   async deployTo(host: string, { timeout = 120000 }: { timeout?: number } = {}): Promise<void> {
+    const start = Date.now();
     await this.#clickButton(this.deployButton);
 
     const select = await this.hostSelect;
@@ -122,7 +123,30 @@ export default class ProjectRow {
     await select.selectByVisibleText(host);
 
     await this.#clickButton(this.root.$("button=Deploy"));
-    await (await this.undeployButton).waitForDisplayed({ timeout });
+
+    // Race: undeploy button (success) vs error div (backend failure). Without this, a failed
+    // deploy (SSH not reachable, image build error, …) silently burns the full timeout because
+    // the undeploy button never appears.
+    let errorText = "";
+    await browser.waitUntil(
+      async () => {
+        const err = await this.root.$("div.text-destructive.text-xs");
+        if (await err.isExisting()) {
+          errorText = await err.getText();
+          return true;
+        }
+        return (await this.undeployButton).isDisplayed();
+      },
+      {
+        timeout,
+        interval: 1000,
+        timeoutMsg: `deploy to "${host}" did not complete within ${timeout}ms — undeploy button never appeared and no error was shown`,
+      }
+    );
+    if (errorText) throw new Error(`deploy to "${host}" failed: ${errorText}`);
+
+    const remaining = timeout - (Date.now() - start);
+    await this.waitForSyncStatus("up-to-date", Math.max(remaining, 60000));
   }
 
   async undeploy(timeout = 30000): Promise<void> {
@@ -182,9 +206,9 @@ export default class ProjectRow {
   async waitForSyncStatus(targetStatus: string, timeoutMs = 60000): Promise<void> {
     await browser.waitUntil(
       async () => {
-        const spans = await this.root.$$("span.text-muted-foreground.text-xs");
-        for (const span of spans) {
-          if ((await span.getText()) === targetStatus) return true;
+        const divs = await this.root.$$("div.text-muted-foreground.text-xs");
+        for (const div of divs) {
+          if ((await div.getText()) === targetStatus) return true;
         }
         return false;
       },

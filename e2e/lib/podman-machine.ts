@@ -1,4 +1,5 @@
 import { spawnSync } from "child_process";
+import { readFileSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -6,11 +7,19 @@ import { fileURLToPath } from "url";
 // remote stand-in run rootless, so the socket path is the same on each.
 export const PODMAN_SOCKET = "/run/user/1000/podman/podman.sock";
 
-// Base image for all sandboxes — mise + zellij baked in. Tag matches BASE_IMAGE (name) and
-// BASE_IMAGE_VERSION (tag) in src-tauri/src/backends/mod.rs; bump both together when the recipe
-// changes. Built from the real recipe the binary bakes (src-tauri/resources/Containerfile), not a
-// spike copy, so the staged image is identical to what the app would build on first create.
-export const MISE_BASE_IMAGE = "sandbox-mio/base:mise";
+// Base image for all sandboxes — mise + zellij baked in. Name and version are read directly from
+// src-tauri/src/backends/mod.rs so this file never needs a manual update when the version bumps.
+function readBaseImage(): string {
+  const src = readFileSync(
+    fileURLToPath(new URL("../../src-tauri/src/backends/mod.rs", import.meta.url)),
+    "utf8"
+  );
+  const name = src.match(/const BASE_IMAGE:\s*&str\s*=\s*"([^"]+)"/)?.[1];
+  const version = src.match(/const BASE_IMAGE_VERSION:\s*u32\s*=\s*(\d+)/)?.[1];
+  if (!name || !version) throw new Error("Could not parse BASE_IMAGE / BASE_IMAGE_VERSION from backends/mod.rs");
+  return `${name}:${version}`;
+}
+export const MISE_BASE_IMAGE = readBaseImage();
 const RECIPE_DIR = path.resolve(
   fileURLToPath(new URL(".", import.meta.url)),
   "../../src-tauri/resources"
@@ -115,7 +124,17 @@ export function provisionMachine(
 
   if (!machine?.Running) {
     console.log(`Starting podman machine "${machineName}"...`);
-    spawnSync("podman", ["machine", "start", machineName], { stdio: "inherit", shell: true });
+    const startResult = spawnSync("podman", ["machine", "start", machineName], { stdio: "inherit", shell: true });
+    if (startResult.status !== 0) {
+      // HCS_E_CONNECTION_TIMEOUT and similar WSL2 bootstrap failures leave the WSL kernel service
+      // in a stuck state. A wsl --shutdown resets all instances cleanly; the machine can then be
+      // started on the next attempt. Only attempted once — if shutdown+start also fails, the
+      // machine is genuinely broken and we should not retry further.
+      console.log(`  machine start failed (exit ${startResult.status}), attempting wsl --shutdown recovery...`);
+      spawnSync("wsl", ["--shutdown"], { stdio: "inherit", shell: true });
+      sleepSync(2000);
+      spawnSync("podman", ["machine", "start", machineName], { stdio: "inherit", shell: true });
+    }
   }
 
   console.log(`Activating rootless Podman socket on "${machineName}"...`);

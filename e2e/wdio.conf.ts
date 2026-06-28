@@ -8,6 +8,7 @@ import { provisionMachine, stopMachine, removeMachine, ensureMiseBaseImage } fro
 import { LOCAL_CONNECTION, REMOTE_CONNECTION } from "./lib/podman-connection.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
+const FAILURES_LOG = path.join(__dirname, "failures.log");
 
 // MIO_REMOTE_KEEP=1  — leave remote machine running after the suite (fast iteration)
 // MIO_REMOTE_REMOVE=1 — delete the remote machine's disk image entirely
@@ -48,11 +49,28 @@ export const config: WebdriverIO.Config = {
     timeout: 180000,
   },
   onPrepare: () => {
+    fs.writeFileSync(FAILURES_LOG, "");
     fs.rmSync(WORKSPACE_ROOT, { recursive: true, force: true });
-    provisionMachine(LOCAL_CONNECTION);
+    // Abort the entire suite on failure: WDIO catches onPrepare errors and logs "Error in hook"
+    // but continues running, so the app would start against a stopped machine.
+    try {
+      provisionMachine(LOCAL_CONNECTION);
+    } catch (e) {
+      console.error(`[e2e] Local machine not ready: ${e instanceof Error ? e.message : String(e)}`);
+      console.error("[e2e] Aborting suite — cannot run without the local Podman connection.");
+      process.exit(1);
+    }
     // The remote machine is used as a deploy target by deploy-remote.spec.ts. Provisioned here
     // so the spec can assume it is up; cleaned up in onComplete.
-    provisionMachine(REMOTE_CONNECTION);
+    // Abort the entire suite on failure: WDIO catches onPrepare errors and logs "Error in hook"
+    // but continues running, so remote-dependent specs would silently burn their full timeouts.
+    try {
+      provisionMachine(REMOTE_CONNECTION);
+    } catch (e) {
+      console.error(`[e2e] Remote machine not ready: ${e instanceof Error ? e.message : String(e)}`);
+      console.error("[e2e] Aborting suite — remote-dependent specs cannot run without the connection.");
+      process.exit(1);
+    }
     // Stage the mise base image on both connections before any spec runs.
     ensureMiseBaseImage(LOCAL_CONNECTION, [REMOTE_CONNECTION]);
     spawnSync("pnpm", ["tauri", "build", "--debug", "--no-bundle"], {
@@ -86,6 +104,17 @@ export const config: WebdriverIO.Config = {
         process.exit(1);
       }
     });
+  },
+  afterTest(_test, _context, result) {
+    if (!result.passed && result.error) {
+      const err = result.error as Error & { stack?: string };
+      const stripAnsi = (s: string) => s.replace(/\x1B\[[0-9;]*[A-Za-z]/g, "");
+      const title = _test.fullTitle || `${_test.parent} > ${_test.title}`;
+      const message = stripAnsi(err.message ?? String(err));
+      const stack = stripAnsi(err.stack ?? "");
+      const lines = [`FAILED: ${title}`, message, stack, ""].join("\n");
+      fs.appendFileSync(FAILURES_LOG, lines);
+    }
   },
   afterSession: () => {
     closeTauriDriver();

@@ -177,8 +177,6 @@ describe("Sandbox runtime management (mise)", function () {
   });
 
   it("carries the manifest into the remote workspace", async () => {
-    await row.waitForSyncStatus("up-to-date");
-
     const remoteManifest = podman(REMOTE_CONNECTION, [
       "exec",
       projectName,
