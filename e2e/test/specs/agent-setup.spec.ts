@@ -8,6 +8,15 @@ import { podman, podmanOk, LOCAL_CONNECTION } from "../../lib/podman-connection.
 
 const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
 
+// `browser.url` rejects relative paths, and there is no wdio `baseUrl`: the app is served from a
+// Tauri custom-protocol origin (e.g. http://tauri.localhost). Resolve "/" against the live origin
+// so the navigation is a full reload to home, which remounts the projects page (onMount →
+// loadProjects → loadAgentStatuses).
+async function navigateHome(): Promise<void> {
+  const origin = new URL(await browser.getUrl()).origin;
+  await browser.url(`${origin}/`);
+}
+
 // `function ()` (not an arrow) so `this.timeout` raises the suite ceiling: node@lts downloads
 // ~30 MB and the claude-code npm package + native postinstall binary add another ~40 MB.
 describe("Agent setup — Claude Code", function () {
@@ -104,7 +113,7 @@ describe("Agent setup — Claude Code", function () {
     ]);
 
     // Navigate away and back to trigger onMount → loadAgentStatuses.
-    await browser.url("/");
+    await navigateHome();
     await ProjectsPage.open();
     await row.waitForDisplayed();
 
@@ -119,7 +128,7 @@ describe("Agent setup — Claude Code", function () {
     podman(LOCAL_CONNECTION, ["exec", projectName, "bash", "-c",
       "rm -f /root/.claude/.credentials.json /root/.claude.json"]);
 
-    await browser.url("/");
+    await navigateHome();
     await ProjectsPage.open();
     await row.waitForDisplayed();
     await row.waitForAgentStatus("Claude Code", "not authenticated");
