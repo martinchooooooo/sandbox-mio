@@ -195,4 +195,63 @@ export default class ProjectRow {
       }
     );
   }
+
+  // ── Package autocomplete helpers ─────────────────────────────────────────────
+  // The suggestion dropdown is mounted to document.body via a Svelte portal action,
+  // so it is NOT inside this.root — all selectors below query the document globally.
+
+  // Focus the package input and type `text`, triggering the registry load via onfocus.
+  async typeInPackageInput(text: string): Promise<void> {
+    const input = await this.packageInput;
+    await input.scrollIntoView();
+    await input.click();
+    await input.setValue(text);
+  }
+
+  // Short names of all suggestion items currently visible in the portal dropdown.
+  // Items are <button> elements inside a .fixed.bg-popover div mounted at body level.
+  async visibleSuggestions(): Promise<string[]> {
+    const items = await $$(".fixed.bg-popover button[type='button']");
+    const names: string[] = [];
+    for (const item of items) {
+      const span = await item.$("span.font-mono");
+      if (await span.isExisting()) names.push(await span.getText());
+    }
+    return names;
+  }
+
+  // Description text of the suggestion whose short name exactly matches `shortName`.
+  // Returns "" when that suggestion is absent or has no description span.
+  async suggestionDescription(shortName: string): Promise<string> {
+    const items = await $$(".fixed.bg-popover button[type='button']");
+    for (const item of items) {
+      const nameSpan = await item.$("span.font-mono");
+      if (!await nameSpan.isExisting()) continue;
+      if ((await nameSpan.getText()) !== shortName) continue;
+      const desc = await item.$("span.text-muted-foreground");
+      return await desc.isExisting() ? desc.getText() : "";
+    }
+    return "";
+  }
+
+  // Click the suggestion item whose short name exactly matches `shortName`.
+  // Uses onmousedown (not onclick) — click() dispatches mousedown first, so it fires
+  // before the input's onblur, without needing a setTimeout deferral.
+  async selectSuggestion(shortName: string): Promise<void> {
+    const items = await $$(".fixed.bg-popover button[type='button']");
+    for (const item of items) {
+      const span = await item.$("span.font-mono");
+      if (await span.isExisting() && (await span.getText()) === shortName) {
+        await item.scrollIntoView();
+        await item.click();
+        return;
+      }
+    }
+    throw new Error(`suggestion "${shortName}" not found in the dropdown`);
+  }
+
+  // Current value of the package input field.
+  async packageInputValue(): Promise<string> {
+    return (await this.packageInput).getValue();
+  }
 }

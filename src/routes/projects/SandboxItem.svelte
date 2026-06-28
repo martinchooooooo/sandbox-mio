@@ -8,6 +8,7 @@
     import { m } from "$lib/paraglide/messages.js";
     import { createActionRunner } from "$lib/actions.svelte";
     import StatusRow from "./StatusRow.svelte";
+    import PackageManager from "./PackageManager.svelte";
     import {
         translateStatus,
         syncColor,
@@ -41,9 +42,6 @@
 
     const action = createActionRunner();
 
-    let packages = $state<string[]>([]);
-    let packageInput = $state("");
-
     // Whether this sandbox's host picker is open, and the host chosen within it.
     let picking = $state(false);
     let chosenHost = $state("");
@@ -51,38 +49,6 @@
     // The toggle is optimistic: Mutagen does not surface a "paused" status, so on/off is tracked
     // locally, defaulting on for a freshly listed deployment.
     let syncOn = $state(true);
-
-    // Reads from the host manifest, so no polling needed — only install/uninstall change it.
-    async function loadPackages() {
-        await action.run("load", async () => {
-            packages = await invoke<string[]>("list_packages", {
-                workspacePath: project.workspace_path,
-            });
-        });
-    }
-
-    async function installPackage() {
-        const pkg = packageInput.trim();
-        if (!pkg) return;
-        if (await action.run(
-            "install",
-            () => invoke("install_package", { name: project.name, package: pkg }),
-            { message: m.projects_status_installing({ name: pkg }) }
-        )) {
-            packageInput = "";
-            await loadPackages();
-        }
-    }
-
-    async function uninstallPackage(pkg: string) {
-        if (await action.run(
-            "uninstall",
-            () => invoke("uninstall_package", { name: project.name, package: pkg }),
-            { message: m.projects_status_uninstalling({ name: pkg }) }
-        )) {
-            await loadPackages();
-        }
-    }
 
     function openPicker() {
         picking = true;
@@ -183,7 +149,6 @@
     }
 
     onMount(async () => {
-        await loadPackages();
         dismissedVersion = await invoke<number | undefined>("get_dismissed_image_version", {
             workspacePath: project.workspace_path,
         }) ?? undefined;
@@ -287,36 +252,5 @@
         </div>
     {/if}
 
-    <div class="flex flex-col gap-1.5 border-t pt-2">
-        <div class="flex items-center gap-2">
-            <span class="text-muted-foreground text-xs shrink-0">{m.projects_packages()}</span>
-            <input
-                class="flex-1 rounded border bg-background px-2 py-1 text-xs disabled:opacity-50"
-                placeholder={m.projects_package_placeholder()}
-                bind:value={packageInput}
-                disabled={action.busy !== null}
-                onkeydown={(e) => e.key === "Enter" && installPackage()}
-            />
-            <Button size="sm" loading={action.busy === "install"} disabled={action.busy !== null} onclick={installPackage}>
-                {m.projects_install()}
-            </Button>
-        </div>
-        {#if packages.length > 0}
-            <!-- <span> not <li>: nested <li> breaks WebView2's `li*=name` WebDriver lookup. -->
-            <div class="flex flex-wrap gap-1.5">
-                {#each packages as pkg}
-                    <span class="flex items-center gap-1 rounded bg-muted px-2 py-0.5 text-xs">
-                        <span class="font-mono">{pkg}</span>
-                        <Button variant="ghost" size="icon-xs"
-                            loading={action.busy === "uninstall"}
-                            disabled={action.busy !== null}
-                            title={m.projects_uninstall()}
-                            onclick={() => uninstallPackage(pkg)}>✕</Button>
-                    </span>
-                {/each}
-            </div>
-        {:else}
-            <span class="text-muted-foreground text-xs">{m.projects_no_packages()}</span>
-        {/if}
-    </div>
+    <PackageManager sandboxName={project.name} workspacePath={project.workspace_path} {action} />
 </li>
