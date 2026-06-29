@@ -1,3 +1,4 @@
+mod activity;
 mod agents;
 mod backends;
 mod error;
@@ -11,6 +12,8 @@ use std::sync::{Arc, Mutex};
 
 use tauri::{ipc::Channel, Manager, State};
 
+use crate::activity::types::{Task, TaskKind};
+use crate::activity::TaskRegistry;
 use crate::agents::types::AuthSessionMap;
 use crate::backends::types::{Sandbox, SandboxBackend};
 use crate::error::AppError;
@@ -482,7 +485,17 @@ async fn detect_machine_specs(app: tauri::AppHandle) -> Result<MachineSpecs, App
     Ok(specs)
 }
 
-/// Download a GGUF for the llama engine. No-op if already present.
+/// Snapshot the activity registry for the global activity center. Infallible: a snapshot read
+/// cannot meaningfully fail (precedent: `test_model` returns `Option` without `Result`). The store
+/// subscribes to `activity://task-updated` *before* calling this, then folds both sources by version.
+#[tauri::command]
+fn list_tasks(activity: State<'_, TaskRegistry>) -> Vec<Task> {
+    activity.snapshot()
+}
+
+/// Download a GGUF for the llama engine. No-op if already present. Enrolled in the activity center:
+/// opens a `model-download:<model_id>` task, succeeds/fails it (the registry has no view of the
+/// command's `Result`, so the failure path must be recorded here before propagating).
 #[tauri::command]
 async fn download_model(
     model_id: String,
@@ -492,8 +505,18 @@ async fn download_model(
     on_progress: Channel<serde_json::Value>,
     app: tauri::AppHandle,
 ) -> Result<(), AppError> {
-    inference::download_gguf(&app, &model_id, &repo, &file, &sha256, &on_progress).await?;
-    Ok(())
+    let id = format!("model-download:{model_id}");
+    activity::open(&app, &id, TaskKind::ModelDownload, Some(model_id.clone()));
+    match inference::download_gguf(&app, &model_id, &repo, &file, &sha256, &on_progress).await {
+        Ok(()) => {
+            activity::succeed(&app, &id, None);
+            Ok(())
+        }
+        Err(e) => {
+            activity::fail(&app, &id, e.to_string());
+            Err(e.into())
+        }
+    }
 }
 
 /// Catalogue model_ids that have a verified local GGUF.
@@ -529,10 +552,50 @@ async fn start_inference(
     }
     let port = ephemeral_port()?;
     let engine_impl = inference::engine_for(engine, &app);
-    let handle = engine_impl.start(&model_id, port, &on_progress).await.inspect_err(|e| {
-        tracing::error!(target: "inference", ?engine, %model_id, error = %e, "start failed");
-    })?;
+
+    // Enroll in the activity center. `inference-setup` is an app-wide singleton (the
+    // one-model-at-a-time `ActiveServer` rule), so re-running replaces the prior row.
+    activity::open(&app, "inference-setup", TaskKind::InferenceSetup, Some(model_id.clone()));
+    let total_steps = engine_impl.setup_steps().len();
+
+    // Wrap the JS `on_progress` channel: each `RuntimeSetupEvent` is forwarded verbatim to the
+    // in-context `/models` checklist *and* mapped to a registry `progress` update. The mapping
+    // lives here (not in the engine trait) so `InferenceEngine` impls stay unaware of activity.
+    let completed = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let app_chan = app.clone();
+    let real = on_progress.clone();
+    let completed_chan = completed.clone();
+    let activity_channel: Channel<serde_json::Value> = Channel::new(move |body| {
+        if let Ok(val) = body.deserialize::<serde_json::Value>() {
+            real.send(val.clone()).ok();
+            let kind = val.get("kind").and_then(|k| k.as_str()).unwrap_or("");
+            if matches!(kind, "stepDone" | "stepSkipped") {
+                completed_chan.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            if kind != "ready" {
+                let done = completed_chan.load(std::sync::atomic::Ordering::Relaxed);
+                let fraction = (total_steps > 0).then(|| done as f32 / total_steps as f32);
+                let detail = val
+                    .get("detail")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| val.get("id").and_then(|v| v.as_str()))
+                    .map(String::from);
+                activity::progress(&app_chan, "inference-setup", fraction, detail);
+            }
+        }
+        Ok(())
+    });
+
+    let handle = match engine_impl.start(&model_id, port, &activity_channel).await {
+        Ok(handle) => handle,
+        Err(e) => {
+            tracing::error!(target: "inference", ?engine, %model_id, error = %e, "start failed");
+            activity::fail(&app, "inference-setup", e.to_string());
+            return Err(e.into());
+        }
+    };
     tracing::info!(target: "inference", base_url = %handle.base_url, model_id = %handle.model_id, "server ready");
+    activity::succeed(&app, "inference-setup", Some(handle.base_url.clone()));
     let status = handle.status();
     *guard = Some(handle);
     Ok(status)
@@ -609,6 +672,7 @@ pub fn run() {
             app.manage(ForwardPortMap::default());
             app.manage(AuthSessionMap::default());
             app.manage(ActiveServer::default());
+            app.manage(TaskRegistry::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -645,6 +709,7 @@ pub fn run() {
             get_agent_auth_status,
             detect_machine_specs,
             download_model,
+            list_tasks,
             downloaded_models,
             runtime_setup_steps,
             start_inference,

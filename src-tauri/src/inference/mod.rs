@@ -105,6 +105,10 @@ pub async fn download_gguf(
     let mut file_out = tokio::fs::File::create(&part_path)
         .await
         .map_err(|e| InferenceError::Download(e.to_string()))?;
+    // Drives the global activity center in addition to the per-invoke `Channel` (which stays for
+    // the in-context `/models` progress bar). The id matches the one `download_model` opened.
+    let task_id = format!("model-download:{model_id}");
+    const GB: f64 = 1024.0 * 1024.0 * 1024.0;
     let mut hasher = Sha256::new();
     let mut downloaded: u64 = 0;
     let mut stream = resp.bytes_stream();
@@ -125,6 +129,13 @@ pub async fn download_gguf(
                 .unwrap(),
             )
             .ok();
+        let fraction = (total > 0).then(|| downloaded as f32 / total as f32);
+        let detail = if total > 0 {
+            format!("{:.1} / {:.1} GB", downloaded as f64 / GB, total as f64 / GB)
+        } else {
+            format!("{:.1} GB", downloaded as f64 / GB)
+        };
+        crate::activity::progress(app, &task_id, fraction, Some(detail));
     }
     file_out.flush().await.map_err(|e| InferenceError::Download(e.to_string()))?;
     drop(file_out);

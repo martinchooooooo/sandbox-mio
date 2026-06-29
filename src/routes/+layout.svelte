@@ -5,6 +5,13 @@
     import { HugeiconsIcon } from "@hugeicons/svelte";
     import { SunIcon, MoonIcon } from "@hugeicons/core-free-icons";
     import { locales, getLocale, setLocale } from "$lib/paraglide/runtime.js";
+    import { Toaster } from "$lib/components/ui/sonner";
+    import ActivityCenter from "$lib/activity/ActivityCenter.svelte";
+    import { ensureActivity } from "$lib/activity/activity.svelte";
+
+    // Start the global activity store once, above the router, so its subscription is established
+    // before any route mounts and is never torn down for the life of the webview.
+    ensureActivity();
 
     function cycleLocale() {
         const current = getLocale();
@@ -25,4 +32,6 @@
 </div>
 
 <ModeWatcher />
+<Toaster />
 <slot />
+<ActivityCenter />

@@ -9,7 +9,7 @@
     import { createActionRunner } from "$lib/actions.svelte";
     import SandboxItem from "./SandboxItem.svelte";
     import StatusRow from "./StatusRow.svelte";
-    import EventLog from "./EventLog.svelte";
+    import { activityEvents, containerStatusFor } from "$lib/activity/activity.svelte";
     import type { Project, Deployment } from "$lib/sandbox";
 
     let projectName = $state("");
@@ -63,11 +63,18 @@
         }
     }
 
-    // Applies a container lifecycle event from the log stream to the matching sandbox's status.
-    function applyStatus(name: string, status: string) {
-        const idx = projects.findIndex((p) => p.name === name);
-        if (idx !== -1) projects[idx] = { ...projects[idx], status };
-    }
+    // The global activity store now owns the listen_events container stream (it superseded the
+    // route-local EventLog). Re-apply the latest container status to each project whenever a new
+    // container event arrives; reading activityEvents() makes this effect re-run on each event.
+    $effect(() => {
+        activityEvents();
+        for (let i = 0; i < projects.length; i++) {
+            const status = containerStatusFor(projects[i].name);
+            if (status && projects[i].status !== status) {
+                projects[i] = { ...projects[i], status };
+            }
+        }
+    });
 
     // After a sandbox mutates its deploy/lifecycle state, refresh both overlays it depends on.
     function reload() {
@@ -131,5 +138,3 @@
         {/if}
     </div>
 </main>
-
-<EventLog onStatusChange={applyStatus} />

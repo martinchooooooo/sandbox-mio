@@ -11,6 +11,7 @@ Currently available components:
 - `input`
 - `label`
 - `separator`
+- `sonner` (toast notifications; mount a single `<Toaster />` in `src/routes/+layout.svelte`, call `toast.success`/`toast.error` from `svelte-sonner`)
 - `switch`
 
 ## Adding new components
