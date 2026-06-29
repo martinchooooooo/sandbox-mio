@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "test": "wdio run wdio.conf.ts",
-    "test:llm": "wdio run wdio.conf.ts --spec ./test/specs/local-llm.spec.ts",
+    "test:heavy": "wdio run wdio.conf.ts --suite heavy",
+    "test:llm": "wdio run wdio.conf.ts --spec ./test/specs/local-llm-ui.spec.ts",
     "test:failures": "node -e \"const fs=require('fs');try{const c=fs.readFileSync('failures.log','utf8');process.stdout.write(c||'No failures\\n')}catch{console.log('Run pnpm test first')}\"",
     "typecheck": "tsc --noEmit"
   },

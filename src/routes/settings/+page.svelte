@@ -102,13 +102,15 @@
         <Field.Group>
             <Field.Field>
                 <Field.Label>{m.settings_engine_label()}</Field.Label>
-                <div class="flex flex-col gap-2">
+                <div class="flex flex-col gap-2" data-active-engine={engine}>
                     <Button
+                        data-engine="llama"
                         variant={engine === "llama" ? "default" : "outline"}
                         onclick={() => selectEngine("llama")}
                         class="justify-start"
                     >{m.settings_engine_llama()}</Button>
                     <Button
+                        data-engine="foundry"
                         variant={engine === "foundry" ? "default" : "outline"}
                         onclick={() => selectEngine("foundry")}
                         class="justify-start"
@@ -153,10 +155,10 @@
     </Field.Set>
 
     <div class="mt-4 flex items-center gap-3">
-        <Button loading={action.busy === "save"} disabled={action.busy !== null} onclick={save}>
+        <Button data-save loading={action.busy === "save"} disabled={action.busy !== null} onclick={save}>
             {m.settings_save()}
         </Button>
-        {#if saved}<span class="text-sm text-emerald-600 dark:text-emerald-400">{m.settings_saved()}</span>{/if}
+        {#if saved}<span class="text-sm text-emerald-600 dark:text-emerald-400" data-saved>{m.settings_saved()}</span>{/if}
     </div>
     {#if action.error}<p class="text-destructive mt-3 text-sm">{action.error}</p>{/if}
 

@@ -12,6 +12,12 @@ class ModelsPage extends AppPage {
     return $("[data-specs]");
   }
 
+  // Present only once detect_machine_specs has resolved and the host numbers render (replacing the
+  // "Detecting…" placeholder). Waited on in open() so callers never read the panel mid-probe.
+  get specsReady(): Element {
+    return $("[data-specs-ready]");
+  }
+
   get runningPanel(): Element {
     return $("[data-running]");
   }
@@ -20,13 +26,46 @@ class ModelsPage extends AppPage {
     return $("[data-base-url]");
   }
 
+  // The chat-test surface; only rendered while a server is running (status.running).
+  get chatPanel(): Element {
+    return $("[data-chat]");
+  }
+
   // The row for a catalogue/test model, keyed by its stable id (data-model-id).
   row(modelId: string): Element {
     return $(`[data-model-id='${modelId}']`);
   }
 
-  // Navigate to /models and wait for the specs panel to render. The nav link only exists on the
-  // home page, so callers must start from home (the app launches there).
+  // Every rendered catalogue row id (data-model-id), in display order.
+  async modelIds(): Promise<string[]> {
+    const rows = await $$("[data-model-id]");
+    const ids: string[] = [];
+    for (const r of rows) ids.push((await r.getAttribute("data-model-id")) ?? "");
+    return ids;
+  }
+
+  // The rating badge text for a model row (e.g. "Recommended"). Asserts recommend.ts ran.
+  async rating(modelId: string): Promise<string> {
+    return (await (await this.row(modelId)).$("[data-rating]")).getText();
+  }
+
+  // Whether a model row's Start button is enabled. Used to assert the not-downloaded gate.
+  async startEnabled(modelId: string): Promise<boolean> {
+    return (await (await this.row(modelId)).$("[data-start]")).isEnabled();
+  }
+
+  // Whether the running-state UI is present (status panel / chat surface).
+  async isRunningShown(): Promise<boolean> {
+    return (await this.runningPanel).isExisting();
+  }
+  async isChatShown(): Promise<boolean> {
+    return (await this.chatPanel).isExisting();
+  }
+
+  // Navigate to /models and wait for the host-specs probe to resolve. The nav link only exists on
+  // the home page, so callers must start from home (the app launches there). detect_machine_specs
+  // shells out (PowerShell/winget) so the populated panel can lag the container by seconds — wait
+  // for [data-specs-ready], not just the [data-specs] placeholder, or callers race the probe.
   async open(timeout = 10000): Promise<void> {
     const url = await browser.getUrl();
     if (!url.includes("/models")) {
@@ -35,6 +74,7 @@ class ModelsPage extends AppPage {
       await link.click();
     }
     await (await this.specsPanel).waitForDisplayed({ timeout });
+    await (await this.specsReady).waitForDisplayed({ timeout: 30000 });
   }
 
   // The rendered host-specs block; asserts the probe ran.
@@ -75,8 +115,13 @@ class ModelsPage extends AppPage {
     });
   }
 
+  // Reads the running endpoint's base_url. Waits for the element: it only renders inside the
+  // running model row ([data-running]), so a missing element means the row isn't running yet —
+  // surfacing as a timeout here rather than a bare "element not found" at the call site.
   async baseUrl(): Promise<string> {
-    return (await this.baseUrlEl).getText();
+    const el = await this.baseUrlEl;
+    await el.waitForDisplayed({ timeout: 10000 });
+    return el.getText();
   }
 
   // The non-empty titles of every rendered runtime-setup checklist row.
@@ -91,10 +136,16 @@ class ModelsPage extends AppPage {
     const btn = await (await this.runningPanel).$("button=Stop");
     await btn.waitForClickable({ timeout: 10000 });
     await btn.click();
+    // stop_inference is optimistic: it drops the server handle and releases the active lock before
+    // reaping the child in the background (lib.rs), so inference_status reports not-running and
+    // [data-running] clears on the next poll — independent of how long the GPU-backed process takes
+    // to actually reap. A timeout here now means the handle was never dropped (the command errored
+    // or never returned), not merely a slow kill.
     await browser.waitUntil(async () => !(await this.runningPanel).isExisting(), {
       timeout: 30000,
-      interval: 1000,
-      timeoutMsg: "status panel still shows running after stop",
+      interval: 500,
+      timeoutMsg: "status panel still shows running 30s after clicking Stop — stop_inference did " +
+        "not drop the server handle (the command errored or never returned).",
     });
   }
 }

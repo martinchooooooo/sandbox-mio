@@ -221,7 +221,7 @@
     <section class="border rounded-lg p-4 mb-6" data-specs>
         <h2 class="text-sm font-medium mb-2">{m.models_specs_title()}</h2>
         {#if specs}
-            <ul class="text-sm text-muted-foreground space-y-0.5">
+            <ul class="text-sm text-muted-foreground space-y-0.5" data-specs-ready>
                 <li>{m.models_cpu_cores({ cores: specs.cpuCores })}</li>
                 <li>{m.models_ram({ free: gb(specs.freeRamBytes), total: gb(specs.totalRamBytes) })}</li>
                 <li>

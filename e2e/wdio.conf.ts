@@ -40,11 +40,11 @@ process.env.MIO_TEST_MODEL = JSON.stringify(TEST_MODEL);
 // The debug build writes models under app_data_dir() = %APPDATA%/<bundle identifier>/models
 // (identifier com.tincho.sandbox-mio in src-tauri/tauri.conf.json). Only the test model's own
 // subdirectory is cleaned up, never the whole store, since debug and release share the identifier.
-const APP_DATA_MODELS = path.join(
+const APP_DATA_DIR = path.join(
   process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming"),
   "com.tincho.sandbox-mio",
-  "models",
 );
+const APP_DATA_MODELS = path.join(APP_DATA_DIR, "models");
 
 let tauriDriver: ChildProcess | undefined;
 let exit = false;
@@ -54,7 +54,13 @@ const ext = process.platform === "win32" ? ".exe" : "";
 export const config: WebdriverIO.Config = {
   hostname: "127.0.0.1",
   port: 4444,
-  specs: ["./test/specs/**/*.ts"],
+  // Default run: top-level specs only. The heavy/ subdirectory (expensive specs that download and
+  // load real models) is intentionally excluded here and run via the `heavy` suite below —
+  // `pnpm run test:heavy`, or `pnpm run test:llm` for just the local-llm spec.
+  specs: ["./test/specs/*.ts"],
+  suites: {
+    heavy: ["./test/specs/heavy/**/*.ts"],
+  },
   maxInstances: 1,
   capabilities: [
     {
@@ -74,6 +80,10 @@ export const config: WebdriverIO.Config = {
   onPrepare: () => {
     fs.writeFileSync(FAILURES_LOG, "");
     fs.rmSync(WORKSPACE_ROOT, { recursive: true, force: true });
+    // Reset persisted app settings so each run starts from the Rust defaults (inferenceEngine:
+    // "llama"). Without this, a previous aborted run that saved "foundry" would pollute test 3's
+    // Start-gate assertion (the gate only fires when engine === "llama").
+    fs.rmSync(path.join(APP_DATA_DIR, "settings.json"), { force: true });
     // Abort the entire suite on failure: WDIO catches onPrepare errors and logs "Error in hook"
     // but continues running, so the app would start against a stopped machine.
     try {
@@ -96,11 +106,27 @@ export const config: WebdriverIO.Config = {
     }
     // Stage the mise base image on both connections before any spec runs.
     ensureMiseBaseImage(LOCAL_CONNECTION, [REMOTE_CONNECTION]);
-    spawnSync("pnpm", ["tauri", "build", "--debug", "--no-bundle"], {
+    // Delete the existing debug exe before building. `tauri build` runs beforeBuildCommand
+    // (pnpm build) which regenerates ../build, but tauri-build does not emit a rerun-if-changed
+    // for those asset contents — so when only the frontend changed, cargo sees no Rust input
+    // change and skips relinking the bin, leaving whatever exe was last linked. If that leftover
+    // is a `tauri dev` binary, its webview points at devUrl (localhost:1420) and shows a
+    // "lost connection" page under wdio. Removing the output forces cargo to relink and re-embed
+    // the current assets every run.
+    const appExe = path.resolve(__dirname, `../src-tauri/target/debug/sandbox-mio${ext}`);
+    fs.rmSync(appExe, { force: true });
+    // Abort on a failed build: spawnSync does not throw on a non-zero exit, and a silent failure
+    // would leave no exe (or a stale one) for tauri-driver to launch.
+    const build = spawnSync("pnpm", ["tauri", "build", "--debug", "--no-bundle"], {
       cwd: path.resolve(__dirname, ".."),
       stdio: "inherit",
       shell: true,
     });
+    if (build.status !== 0 || !fs.existsSync(appExe)) {
+      console.error(`[e2e] tauri build --debug failed (exit ${build.status}); ${appExe} not produced.`);
+      console.error("[e2e] Aborting suite — cannot run specs without a freshly built app binary.");
+      process.exit(1);
+    }
     // Mutagen needs its agent bundle adjacent to the sidecar binary to install agents on new SSH
     // endpoints. The bundle is in tools/ but Tauri's build does not copy it to target/debug/.
     fs.copyFileSync(
