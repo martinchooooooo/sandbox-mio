@@ -22,6 +22,8 @@
     <nav class="flex gap-3 mt-4">
         <Button href="/intro" variant="outline">{m.nav_intro()}</Button>
         <Button href="/projects" variant="outline">{m.nav_projects()}</Button>
+        <Button href="/models" variant="outline">{m.nav_models()}</Button>
+        <Button href="/settings" variant="outline">{m.nav_settings()}</Button>
     </nav>
 
     <form class="flex flex-col items-center w-full mt-8" onsubmit={greet}>

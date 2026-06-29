@@ -1,7 +1,9 @@
 mod agents;
 mod backends;
 mod error;
+mod inference;
 mod runtime;
+mod settings;
 mod ssh;
 mod sync;
 
@@ -12,7 +14,9 @@ use tauri::{ipc::Channel, Manager, State};
 use crate::agents::types::AuthSessionMap;
 use crate::backends::types::{Sandbox, SandboxBackend};
 use crate::error::AppError;
+use crate::inference::types::{ActiveServer, EngineKind, InferenceStatus, MachineSpecs, SetupStep};
 use crate::runtime::types::RuntimeManager;
+use crate::settings::types::AppSettings;
 use crate::sync::types::{SessionInfo, SyncEngine, SyncStatus};
 
 /// Maps sandbox name → the Windows-host loopback port of its active Mutagen forwarding session.
@@ -456,6 +460,128 @@ async fn get_agent_auth_status(
     .await?)
 }
 
+/// Allocate an ephemeral loopback port by binding and immediately releasing it. Same trick as
+/// `open_terminal`; the race window before the inference server rebinds it is negligible on loopback.
+fn ephemeral_port() -> Result<u16, AppError> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")
+        .map_err(|e| inference::types::InferenceError::Sidecar(e.to_string()))?;
+    let port = listener
+        .local_addr()
+        .map_err(|e| inference::types::InferenceError::Sidecar(e.to_string()))?
+        .port();
+    Ok(port)
+}
+
+/// Probe host CPU/RAM/GPU/NPU and Foundry availability. Runs on the host, never the container VM.
+#[tauri::command]
+async fn detect_machine_specs(app: tauri::AppHandle) -> Result<MachineSpecs, AppError> {
+    // `detect_specs` shells out (PowerShell/winget on Windows); run it off the async runtime.
+    let specs = tauri::async_runtime::spawn_blocking(move || inference::detect_specs(&app))
+        .await
+        .map_err(|e| inference::types::InferenceError::CommandFailed(e.to_string()))?;
+    Ok(specs)
+}
+
+/// Download a GGUF for the llama engine. No-op if already present.
+#[tauri::command]
+async fn download_model(
+    model_id: String,
+    repo: String,
+    file: String,
+    sha256: String,
+    on_progress: Channel<serde_json::Value>,
+    app: tauri::AppHandle,
+) -> Result<(), AppError> {
+    inference::download_gguf(&app, &model_id, &repo, &file, &sha256, &on_progress).await?;
+    Ok(())
+}
+
+/// Catalogue model_ids that have a verified local GGUF.
+#[tauri::command]
+fn downloaded_models(app: tauri::AppHandle) -> Result<Vec<String>, AppError> {
+    Ok(inference::downloaded(&app)?)
+}
+
+/// Return an engine's ordered setup checklist without starting anything, so the UI can render the
+/// full plan up front (also used by the `/settings` static explainer).
+#[tauri::command]
+fn runtime_setup_steps(engine: EngineKind, app: tauri::AppHandle) -> Result<Vec<SetupStep>, AppError> {
+    Ok(inference::engine_for(engine, &app).setup_steps())
+}
+
+/// Start the app-wide server for `engine` + `model_id`, stopping any prior server first.
+/// Streams `RuntimeSetupEvent` to `on_progress` so the UI shows each setup step live.
+#[tauri::command]
+async fn start_inference(
+    engine: EngineKind,
+    model_id: String,
+    on_progress: Channel<serde_json::Value>,
+    active: State<'_, ActiveServer>,
+    app: tauri::AppHandle,
+) -> Result<InferenceStatus, AppError> {
+    tracing::info!(target: "inference", ?engine, %model_id, "start_inference requested");
+    let mut guard = active.lock().await;
+    // Enforce one-model-at-a-time: stop the existing server before starting the next.
+    if let Some(existing) = guard.take() {
+        tracing::info!(target: "inference", model_id = %existing.model_id, "stopping prior server");
+        let prev = inference::engine_for(existing.engine, &app);
+        let _ = prev.stop(existing).await;
+    }
+    let port = ephemeral_port()?;
+    let engine_impl = inference::engine_for(engine, &app);
+    let handle = engine_impl.start(&model_id, port, &on_progress).await.inspect_err(|e| {
+        tracing::error!(target: "inference", ?engine, %model_id, error = %e, "start failed");
+    })?;
+    tracing::info!(target: "inference", base_url = %handle.base_url, model_id = %handle.model_id, "server ready");
+    let status = handle.status();
+    *guard = Some(handle);
+    Ok(status)
+}
+
+#[tauri::command]
+async fn stop_inference(active: State<'_, ActiveServer>, app: tauri::AppHandle) -> Result<(), AppError> {
+    let mut guard = active.lock().await;
+    if let Some(handle) = guard.take() {
+        let engine = inference::engine_for(handle.engine, &app);
+        engine.stop(handle).await?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn inference_status(active: State<'_, ActiveServer>) -> Result<InferenceStatus, AppError> {
+    let guard = active.lock().await;
+    Ok(match guard.as_ref() {
+        Some(handle) => handle.status(),
+        None => InferenceStatus { running: false, engine: None, model_id: None, base_url: None },
+    })
+}
+
+/// Install Foundry Local via winget (advanced-settings action). Streams CLI output.
+#[tauri::command]
+async fn install_foundry_local(on_progress: Channel<serde_json::Value>) -> Result<(), AppError> {
+    inference::install_foundry(&on_progress).await?;
+    Ok(())
+}
+
+/// Raw `MIO_TEST_MODEL` JSON (a tiny test-only GGUF descriptor) for the e2e harness, or `None` in
+/// normal runs. The webview cannot read process env directly, so the `/models` route asks Rust.
+#[tauri::command]
+fn test_model() -> Option<String> {
+    std::env::var("MIO_TEST_MODEL").ok().filter(|s| !s.trim().is_empty())
+}
+
+#[tauri::command]
+fn get_settings(app: tauri::AppHandle) -> Result<AppSettings, AppError> {
+    Ok(settings::load(&app)?)
+}
+
+#[tauri::command]
+fn set_settings(settings: AppSettings, app: tauri::AppHandle) -> Result<(), AppError> {
+    settings::save(&app, &settings)?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[cfg(debug_assertions)]
@@ -482,6 +608,7 @@ pub fn run() {
             app.manage(sync::default_sync_engine(app.handle().clone()));
             app.manage(ForwardPortMap::default());
             app.manage(AuthSessionMap::default());
+            app.manage(ActiveServer::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -515,7 +642,18 @@ pub fn run() {
             start_agent_auth,
             send_agent_auth_input,
             cancel_agent_auth,
-            get_agent_auth_status
+            get_agent_auth_status,
+            detect_machine_specs,
+            download_model,
+            downloaded_models,
+            runtime_setup_steps,
+            start_inference,
+            stop_inference,
+            inference_status,
+            install_foundry_local,
+            test_model,
+            get_settings,
+            set_settings
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -524,6 +662,16 @@ pub fn run() {
         // The app-private Mutagen daemon auto-starts on the first session command; stop it on
         // exit so we never orphan it. Best-effort: a failed stop must not block shutdown.
         if let tauri::RunEvent::Exit = event {
+            // Stop the active inference server first so a llama-server sidecar holding gigabytes
+            // resident is never orphaned; then stop the app-private Mutagen daemon.
+            let active = app_handle.state::<ActiveServer>();
+            let app_for_stop = app_handle.clone();
+            tauri::async_runtime::block_on(async move {
+                if let Some(handle) = active.lock().await.take() {
+                    let engine = inference::engine_for(handle.engine, &app_for_stop);
+                    let _ = engine.stop(handle).await;
+                }
+            });
             let engine = app_handle.state::<Arc<dyn SyncEngine>>();
             tauri::async_runtime::block_on(engine.shutdown());
         }

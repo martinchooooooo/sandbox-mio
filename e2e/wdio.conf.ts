@@ -23,6 +23,29 @@ const MIO_REMOTE_REMOVE = process.env.MIO_REMOTE_REMOVE === "1";
 const WORKSPACE_ROOT = path.join(os.homedir(), ".sandbox-mio-e2e");
 process.env.SANDBOX_WORKSPACE_ROOT = WORKSPACE_ROOT;
 
+// Tiny test-only GGUF the /models route offers via the `test_model` command (kept out of the
+// shipped catalogue so a ~100 MB model never leaks into the product). Values from the 2026-06-29
+// bring-up spike (docs/features/local-llm/03_e2e.md). Set in process.env so both this spec process
+// and the app (spawned with `...process.env` in beforeSession) see it.
+const TEST_MODEL = {
+  id: "smollm2-135m",
+  label: "SmolLM2 135M (test)",
+  repo: "bartowski/SmolLM2-135M-Instruct-GGUF",
+  file: "SmolLM2-135M-Instruct-Q4_K_M.gguf",
+  sha256: "2e8040ceae7815abe0dcb3540b9995eaa1fa0d2ca9e797d0a635ae4433c68c2d",
+  sizeBytes: 105454432,
+};
+process.env.MIO_TEST_MODEL = JSON.stringify(TEST_MODEL);
+
+// The debug build writes models under app_data_dir() = %APPDATA%/<bundle identifier>/models
+// (identifier com.tincho.sandbox-mio in src-tauri/tauri.conf.json). Only the test model's own
+// subdirectory is cleaned up, never the whole store, since debug and release share the identifier.
+const APP_DATA_MODELS = path.join(
+  process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming"),
+  "com.tincho.sandbox-mio",
+  "models",
+);
+
 let tauriDriver: ChildProcess | undefined;
 let exit = false;
 
@@ -84,6 +107,22 @@ export const config: WebdriverIO.Config = {
       path.resolve(__dirname, "../tools/mutagen-agents.tar.gz"),
       path.resolve(__dirname, "../src-tauri/target/debug/mutagen-agents.tar.gz"),
     );
+    // Stage the bundled llama.cpp Vulkan engine next to the debug exe so resource_dir()/llama
+    // resolves: the --no-bundle build does not copy Tauri `resources`, and the engine launches
+    // llama-server from <resource_dir>/llama (src-tauri/src/inference/llama.rs). Mirrors the
+    // Mutagen sidecar staging requirement. Skipped with a warning when the binaries are not staged
+    // in the repo, so the rest of the suite still runs (local-llm.spec.ts then fails at sidecar
+    // resolution). See docs/features/local-llm/03_e2e.md.
+    const llamaSrc = path.resolve(__dirname, "../src-tauri/binaries/llama");
+    const llamaDst = path.resolve(__dirname, "../src-tauri/target/debug/llama");
+    if (fs.existsSync(path.join(llamaSrc, `llama-server${ext}`))) {
+      fs.cpSync(llamaSrc, llamaDst, { recursive: true });
+    } else {
+      console.warn(
+        `[e2e] llama-server not staged at ${llamaSrc}; local-llm.spec.ts will fail at sidecar ` +
+          "resolution. Stage the llama.cpp Vulkan release there per docs/features/local-llm/03_e2e.md.",
+      );
+    }
   },
   beforeSession: () => {
     tauriDriver = spawn(
@@ -121,6 +160,10 @@ export const config: WebdriverIO.Config = {
   },
   onComplete: () => {
     fs.rmSync(WORKSPACE_ROOT, { recursive: true, force: true });
+
+    // Remove the downloaded test GGUF so it does not persist or grow the disk across runs. Only
+    // the test model's own subdirectory is deleted (debug and release share the app-data store).
+    fs.rmSync(path.join(APP_DATA_MODELS, TEST_MODEL.id), { recursive: true, force: true });
 
     // Remove the SSH alias block the app's deploy flow wrote under ~/.ssh/sandbox-mio/config
     // and strip the one-time Include line from ~/.ssh/config so the user's file is left clean.

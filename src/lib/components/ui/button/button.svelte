@@ -38,6 +38,8 @@
 		WithElementRef<HTMLAnchorAttributes> & {
 			variant?: ButtonVariant;
 			size?: ButtonSize;
+			/** When true the button is disabled and marked busy (`aria-busy`) for the duration of an action. */
+			loading?: boolean;
 		};
 </script>
 
@@ -50,9 +52,12 @@
 		href = undefined,
 		type = "button",
 		disabled,
+		loading = false,
 		children,
 		...restProps
 	}: ButtonProps = $props();
+
+	const isDisabled = $derived(disabled || loading);
 </script>
 
 {#if href}
@@ -60,10 +65,11 @@
 		bind:this={ref}
 		data-slot="button"
 		class={cn(buttonVariants({ variant, size }), className)}
-		href={disabled ? undefined : href}
-		aria-disabled={disabled}
-		role={disabled ? "link" : undefined}
-		tabindex={disabled ? -1 : undefined}
+		href={isDisabled ? undefined : href}
+		aria-disabled={isDisabled}
+		aria-busy={loading}
+		role={isDisabled ? "link" : undefined}
+		tabindex={isDisabled ? -1 : undefined}
 		{...restProps}
 	>
 		{@render children?.()}
@@ -74,7 +80,8 @@
 		data-slot="button"
 		class={cn(buttonVariants({ variant, size }), className)}
 		{type}
-		{disabled}
+		disabled={isDisabled}
+		aria-busy={loading}
 		{...restProps}
 	>
 		{@render children?.()}

@@ -1,7 +1,11 @@
-use std::{env, fs, path::PathBuf, process::Command, sync::atomic::{AtomicU32, Ordering}};
+use std::{env, fs, path::{Path, PathBuf}, process::Command, sync::atomic::{AtomicU32, Ordering}};
 
 /// Mutagen release staged as the Tauri sidecar. Pinned to match the e2e suite's Mutagen.
 const MUTAGEN_VERSION: &str = "v0.18.1";
+
+/// llama.cpp release whose prebuilt Windows Vulkan binaries are staged as the bundled inference
+/// engine (`src-tauri/binaries/llama`). Pinned so every checkout stages the same `llama-server`.
+const LLAMA_VERSION: &str = "b9835";
 
 static CHILD_PID: AtomicU32 = AtomicU32::new(0);
 
@@ -9,6 +13,14 @@ fn e2e_dir() -> PathBuf { PathBuf::from(env::current_dir().unwrap()).join("e2e")
 fn tools_dir() -> PathBuf { PathBuf::from(env::current_dir().unwrap()).join("tools") }
 fn binaries_dir() -> PathBuf { root_dir().join("src-tauri").join("binaries") }
 fn root_dir() -> PathBuf { env::current_dir().unwrap() }
+
+/// Absolute path to the bsdtar that ships in `System32`. A bare `tar` on PATH may resolve to msys
+/// or GNU tar (e.g. from Git for Windows), which cannot extract zip archives and reads `C:\...`
+/// paths as a remote `host:path` (`tar: Cannot connect to C: resolve failed`). bsdtar handles both.
+fn windows_tar() -> String {
+    let root = env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into());
+    format!("{root}\\System32\\tar.exe")
+}
 
 
 fn main() {
@@ -21,8 +33,10 @@ fn main() {
         Some("dev") if args.get(2).map(String::as_str) == Some("--setup") => {
             run(root_dir(), "pnpm", &["install"]);
             fetch_mutagen();
+            fetch_llama();
         }
         Some("dev") => {
+            stage_llama();
             run(root_dir(), "pnpm", &["run", "tauri", "dev"]);
         }
         Some("e2e") if args.get(2).map(String::as_str) == Some("--setup") => {
@@ -34,7 +48,7 @@ fn main() {
         _ => {
             eprintln!("Usage:");
             eprintln!("  build dev          - run `pnpm run tauri dev`");
-            eprintln!("  build dev --setup  - install app dependencies and stage the Mutagen sidecar");
+            eprintln!("  build dev --setup  - install app dependencies and stage the Mutagen sidecar + llama.cpp engine");
             eprintln!("  build e2e          - run `pnpm test` in the e2e folder");
             eprintln!("  build e2e --setup  - install e2e test dependencies");
             std::process::exit(1);
@@ -82,13 +96,13 @@ fn fetch_mutagen() {
     let _ = fs::remove_dir_all(&extract);
     fs::create_dir_all(&extract).unwrap();
 
-    // curl and tar (bsdtar, which extracts zip) ship with Windows 10/11, so the download and
-    // extraction route through the same `run` helper as every other command.
+    // curl and the System32 bsdtar (which extracts zip) ship with Windows 10/11, so the download
+    // and extraction route through the same `run` helper as every other command.
     let zip_arg = zip.to_string_lossy();
     let extract_arg = extract.to_string_lossy();
     println!("Downloading Mutagen {MUTAGEN_VERSION} for {triple}...");
     run(root_dir(), "curl", &["-fsSL", "-o", &zip_arg, &url]);
-    run(root_dir(), "tar", &["-xf", &zip_arg, "-C", &extract_arg]);
+    run(root_dir(), &windows_tar(), &["-xf", &zip_arg, "-C", &extract_arg]);
 
     // The archive holds a `mutagen.exe` plus a bundled agents tarball; only the executable is
     // the sidecar — Mutagen ships the remote agents inside it.
@@ -102,6 +116,91 @@ fn fetch_mutagen() {
     let _ = fs::remove_dir_all(&extract);
     let _ = fs::remove_file(&zip);
     println!("Staged Mutagen sidecar: {}", dest.display());
+}
+
+/// Download the prebuilt llama.cpp Vulkan release and extract its **entire** contents into
+/// `src-tauri/binaries/llama` (`llama-server.exe` plus ~50 DLLs incl. the ~48 MB `ggml-vulkan.dll`).
+/// The whole directory ships so the DLLs resolve at runtime; see `src-tauri/binaries/llama/README.md`.
+fn fetch_llama() {
+    if !cfg!(windows) {
+        todo!("llama.cpp Vulkan engine fetch is implemented for Windows only");
+    }
+    let arch = match env::consts::ARCH {
+        "x86_64" => "x64",
+        "aarch64" => "arm64",
+        other => panic!("unsupported arch for llama.cpp Vulkan release: {}", other),
+    };
+    let dest_dir = binaries_dir().join("llama");
+    let server = dest_dir.join("llama-server.exe");
+    if server.exists() {
+        println!("llama.cpp engine already staged: {}", server.display());
+        return;
+    }
+    fs::create_dir_all(&dest_dir).unwrap();
+
+    let asset = format!("llama-{LLAMA_VERSION}-bin-win-vulkan-{arch}.zip");
+    let url = format!(
+        "https://github.com/ggml-org/llama.cpp/releases/download/{LLAMA_VERSION}/{asset}"
+    );
+    let zip = env::temp_dir().join(&asset);
+
+    // curl and the System32 bsdtar (which extracts zip) ship with Windows 10/11. The release zip
+    // holds its files at the archive root, so extracting straight into `dest_dir` lays the engine
+    // out flat.
+    let zip_arg = zip.to_string_lossy();
+    let dest_arg = dest_dir.to_string_lossy();
+    println!("Downloading llama.cpp {LLAMA_VERSION} (Vulkan, {arch})...");
+    run(root_dir(), "curl", &["-fsSL", "-o", &zip_arg, &url]);
+    run(root_dir(), &windows_tar(), &["-xf", &zip_arg, "-C", &dest_arg]);
+
+    assert!(
+        server.exists(),
+        "expected llama-server.exe in extracted archive at {}",
+        server.display()
+    );
+    let _ = fs::remove_file(&zip);
+    println!("Staged llama.cpp engine: {}", dest_dir.display());
+}
+
+/// Stage the bundled llama.cpp Vulkan engine next to the debug exe so `resource_dir()/llama`
+/// resolves under `tauri dev`: a dev / `--no-bundle` build does not copy Tauri `resources` (that
+/// only happens at bundle time), yet the engine launches `llama-server` from `<resource_dir>/llama`
+/// (`src-tauri/src/inference/llama.rs`). Mirrors the e2e harness staging in `e2e/wdio.conf.ts`.
+///
+/// Skipped with a warning when the binaries are not staged in the repo, so a checkout without the
+/// (large, un-versioned) Vulkan release still runs; local inference then fails at sidecar
+/// resolution with a clear path. See `src-tauri/binaries/llama/README.md`.
+fn stage_llama() {
+    let exe_name = if cfg!(windows) { "llama-server.exe" } else { "llama-server" };
+    let src = binaries_dir().join("llama");
+    if !src.join(exe_name).exists() {
+        println!(
+            "llama-server not staged at {}; local inference will fail at sidecar resolution. \
+             Stage the llama.cpp Vulkan release there per src-tauri/binaries/llama/README.md.",
+            src.display()
+        );
+        return;
+    }
+    let dst = root_dir().join("src-tauri").join("target").join("debug").join("llama");
+    copy_dir(&src, &dst)
+        .unwrap_or_else(|e| panic!("failed to stage llama engine to {}: {}", dst.display(), e));
+    println!("Staged llama.cpp engine: {}", dst.display());
+}
+
+/// Recursively copy `src` into `dst`, overwriting existing files (std has no recursive copy).
+fn copy_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir(&from, &to)?;
+        } else {
+            fs::copy(&from, &to)?;
+        }
+    }
+    Ok(())
 }
 
 fn run(dir: PathBuf, cmd: &str, args: &[&str]) {

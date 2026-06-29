@@ -1,6 +1,8 @@
 use crate::agents::types::AgentError;
 use crate::backends::types::BackendError;
+use crate::inference::types::InferenceError;
 use crate::runtime::types::RuntimeError;
+use crate::settings::types::SettingsError;
 use crate::sync::types::SyncError;
 
 /// Top-level error type for all Tauri commands. This is the only error type that crosses the
@@ -18,6 +20,10 @@ pub enum AppError {
     Runtime(#[from] RuntimeError),
     #[error(transparent)]
     Agent(#[from] AgentError),
+    #[error(transparent)]
+    Inference(#[from] InferenceError),
+    #[error(transparent)]
+    Settings(#[from] SettingsError),
     /// The requested sandbox has no active sync session — it has not been deployed.
     #[error("sandbox {0:?} is not deployed")]
     NotDeployed(String),
@@ -36,6 +42,8 @@ impl AppError {
             AppError::Sync(_) => "Sync",
             AppError::Runtime(_) => "Runtime",
             AppError::Agent(_) => "Agent",
+            AppError::Inference(_) => "Inference",
+            AppError::Settings(_) => "Settings",
             AppError::NotDeployed(_) => "NotDeployed",
             AppError::UnsyncedChanges { .. } => "UnsyncedChanges",
         }
