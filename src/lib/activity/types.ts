@@ -1,6 +1,11 @@
 /** Mirrors the Rust activity types (`src-tauri/src/activity/types.rs`), camelCase per serde. */
 
-export type TaskKind = "model-download" | "inference-setup" | "host-provision" | "agent-install";
+export type TaskKind =
+  | "model-download"
+  | "inference-setup"
+  | "host-provision"
+  | "agent-install"
+  | "podman-startup";
 export type TaskStatus = "running" | "succeeded" | "failed";
 
 /** One long-running background operation (mirrors Rust `Task`). */

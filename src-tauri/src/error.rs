@@ -31,6 +31,9 @@ pub enum AppError {
     /// confirmation dialog and retries the destroy with `force = true`.
     #[error("sandbox {name:?} has unsynced changes on {host}; confirm to destroy and discard them")]
     UnsyncedChanges { name: String, host: String },
+    /// Podman machine is stopped or its rootless socket is not ready.
+    #[error("Podman is not ready: {0}")]
+    PodmanUnavailable(String),
 }
 
 impl AppError {
@@ -46,6 +49,7 @@ impl AppError {
             AppError::Settings(_) => "Settings",
             AppError::NotDeployed(_) => "NotDeployed",
             AppError::UnsyncedChanges { .. } => "UnsyncedChanges",
+            AppError::PodmanUnavailable(_) => "PodmanUnavailable",
         }
     }
 }

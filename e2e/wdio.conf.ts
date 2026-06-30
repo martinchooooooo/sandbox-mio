@@ -106,6 +106,22 @@ export const config: WebdriverIO.Config = {
     }
     // Stage the mise base image on both connections before any spec runs.
     ensureMiseBaseImage(LOCAL_CONNECTION, [REMOTE_CONNECTION]);
+    // Guard: podman-startup-recovery.spec.ts needs podman-machine-default to be initialized (its
+    // own before() hook stops it but cannot init it). Warn (don't abort) so the rest of the suite
+    // still runs on machines where only mio-tests is provisioned — the spec then fails on Step 2
+    // navigation with a clear timeoutMsg instead of here.
+    const defaultMachineRaw = spawnSync(
+      "podman", ["machine", "list", "--format", "json"],
+      { encoding: "utf8", shell: true },
+    );
+    const defaultMachines: Array<{ Name: string }> = JSON.parse(defaultMachineRaw.stdout || "[]");
+    if (!defaultMachines.some((m) => m.Name === "podman-machine-default")) {
+      console.warn(
+        "[e2e] podman-machine-default is not initialized. " +
+          "podman-startup-recovery.spec.ts will fail on navigation. " +
+          "Run `podman machine init && podman machine start` once to initialize it.",
+      );
+    }
     // Delete the existing debug exe before building. `tauri build` runs beforeBuildCommand
     // (pnpm build) which regenerates ../build, but tauri-build does not emit a rerun-if-changed
     // for those asset contents — so when only the frontend changed, cargo sees no Rust input

@@ -16,6 +16,22 @@ class ProjectsPage extends AppPage {
     return $("button=Create");
   }
 
+  // ── Podman startup-recovery gate (podman-startup-recovery feature) ───────────
+  // Rendered in place of the sandbox list when check_podman_ready reports the default machine is
+  // down. The create form above the list stays mounted, so the recovery signal is this button's
+  // presence/absence — not the Create button.
+  get startPodmanButton(): Element {
+    return $("button=Start Podman");
+  }
+
+  get podmanNotRunningText(): Element {
+    return $("p=Podman machine is not running");
+  }
+
+  get retryButton(): Element {
+    return $("button=Retry");
+  }
+
   // Navigates to the projects screen. No-ops when the browser is already on /projects
   // (the nav link is only rendered on the home page, so waitForDisplayed would time out).
   async open(timeout = 10000): Promise<void> {

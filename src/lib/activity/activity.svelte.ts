@@ -45,6 +45,7 @@ const kindLabels: Record<TaskKind, () => string> = {
     "inference-setup": m.task_inference_setup_label,
     "host-provision": m.task_host_provision_label,
     "agent-install": m.task_agent_install_label,
+    "podman-startup": m.task_podman_startup_label,
 };
 
 export function taskLabel(kind: TaskKind): string {

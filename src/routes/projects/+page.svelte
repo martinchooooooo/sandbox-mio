@@ -23,7 +23,13 @@
     let hosts = $state<string[]>([]);
     let deployments = $state<Record<string, Deployment>>({});
 
+    // Startup gate: set when `check_podman_ready` reports the machine/socket is down. While true the
+    // sandbox list is replaced by the "Start Podman" screen and the deployment poll is not started
+    // (polling a down Podman floods the backend with failing invocations).
+    let podmanUnavailable = $state(false);
+
     const action = createActionRunner();
+    const startAction = createActionRunner();
 
     async function loadProjects() {
         try {
@@ -83,14 +89,46 @@
 
     let pollId: ReturnType<typeof setInterval>;
 
-    onMount(() => {
+    // The normal load sequence, run only once Podman is confirmed ready. Sync status drifts outside
+    // the container event stream, so the caller follows this with the deployment poll.
+    function loadAll() {
         loadProjects();
         loadHosts();
         loadDeployments();
         invoke<number>("base_image_version").then((v) => (currentImageVersion = v)).catch(() => {});
-        // Sync status drifts outside the container event stream, so poll the deployment overlay.
+    }
+
+    onMount(async () => {
+        // Probe Podman before anything else: a stopped machine after a host restart should show the
+        // "Start Podman" screen, not a wall of failing load errors.
+        try {
+            await invoke("check_podman_ready");
+        } catch (e) {
+            if (parseError(e).kind === "PodmanUnavailable") {
+                podmanUnavailable = true;
+                return; // skip the load sequence; the deployment poll stays unstarted
+            }
+            error = parseError(e).message;
+            return;
+        }
+        loadAll();
         pollId = setInterval(loadDeployments, 3000);
     });
+
+    // Drive the startup sequence from the "Start Podman" button. On success, clear the gate and run
+    // the normal load + poll; on failure `startAction.error` surfaces a Retry button.
+    async function startPodman() {
+        const ok = await startAction.run(
+            "start",
+            () => invoke("start_podman_machine"),
+            { message: m.podman_starting() }
+        );
+        if (ok) {
+            podmanUnavailable = false;
+            loadAll();
+            pollId = setInterval(loadDeployments, 3000);
+        }
+    }
 
     onDestroy(() => clearInterval(pollId));
 </script>
@@ -123,7 +161,20 @@
 
         <StatusRow busy={action.busy} message={action.message} error={action.error} />
 
-        {#if projects.length > 0}
+        {#if podmanUnavailable}
+            <div class="mt-8 text-center space-y-4">
+                <p class="text-muted-foreground">{m.podman_not_running()}</p>
+                <Button
+                    loading={startAction.busy === "start"}
+                    disabled={startAction.busy !== null}
+                    onclick={startPodman}
+                >{m.podman_start_button()}</Button>
+                {#if startAction.error}
+                    <p class="text-destructive text-sm">{startAction.error}</p>
+                    <Button variant="outline" onclick={startPodman}>{m.retry()}</Button>
+                {/if}
+            </div>
+        {:else if projects.length > 0}
             <ul class="mt-6 space-y-2">
                 {#each projects as project (project.id)}
                     <SandboxItem

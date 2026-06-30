@@ -12,6 +12,7 @@ pub enum TaskKind {
     InferenceSetup,
     HostProvision,
     AgentInstall,
+    PodmanStartup,
 }
 
 #[derive(serde::Serialize, Clone, Copy, PartialEq, Eq)]

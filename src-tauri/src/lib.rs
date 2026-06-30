@@ -325,6 +325,59 @@ async fn sandbox_deployments(
     Ok(engine.sessions().await?)
 }
 
+/// Read-only probe for the projects page startup gate. Reports whether the default Podman machine
+/// is running *and* its rootless socket answers. Starts nothing — `start_podman_machine` does that.
+/// Takes no state: it drives the global Podman CLI, not the `SandboxBackend` trait.
+#[tauri::command]
+async fn check_podman_ready() -> Result<(), AppError> {
+    if !backends::machine_is_running().await
+        .map_err(|e| AppError::PodmanUnavailable(e.to_string()))?
+    {
+        return Err(AppError::PodmanUnavailable("Podman machine is not running".into()));
+    }
+    backends::poll_ready(1).await
+        .map_err(|_| AppError::PodmanUnavailable("Podman socket is not ready".into()))
+}
+
+/// Full startup sequence for the default Podman machine, driven from the "Start Podman" button.
+/// Drives the activity center task `"podman-startup"` so the global panel shows live progress.
+/// Every `Err` return path first calls `activity::fail` — the registry has no view of the command's
+/// `Result`, so a missing `fail` would leave the task stuck `running` until the app restarts.
+#[tauri::command]
+async fn start_podman_machine(app: tauri::AppHandle) -> Result<(), AppError> {
+    activity::open(&app, "podman-startup", TaskKind::PodmanStartup, None);
+
+    activity::progress(&app, "podman-startup", None, Some("Starting machine…".into()));
+    if backends::run_machine_start().await.is_err() {
+        // A bare retry first; only reset WSL if no other machine is running (a `wsl --shutdown`
+        // would terminate mio-tests/mio-tests-remote mid-run).
+        if backends::check_other_machines_running().await {
+            activity::progress(&app, "podman-startup", None, Some("Retrying…".into()));
+        } else {
+            activity::progress(&app, "podman-startup", None, Some("Retrying after WSL reset…".into()));
+            backends::run_wsl_shutdown().await.ok();
+        }
+        if backends::run_machine_start().await.is_err() {
+            let err = "Failed to start Podman machine".to_string();
+            activity::fail(&app, "podman-startup", err.clone());
+            return Err(AppError::PodmanUnavailable(err));
+        }
+    }
+
+    activity::progress(&app, "podman-startup", None, Some("Activating Podman socket…".into()));
+    backends::activate_podman_socket().await.ok();
+
+    activity::progress(&app, "podman-startup", None, Some("Waiting for socket…".into()));
+    if let Err(e) = backends::poll_ready(4).await {
+        let err = format!("Podman socket did not become ready: {e}");
+        activity::fail(&app, "podman-startup", err.clone());
+        return Err(AppError::PodmanUnavailable(err));
+    }
+
+    activity::succeed(&app, "podman-startup", None);
+    Ok(())
+}
+
 #[tauri::command]
 async fn listen_events(on_event: Channel<serde_json::Value>, store: State<'_, Arc<dyn SandboxBackend>>) -> Result<(), AppError> {
     Ok(store.listen_events(on_event).await?)
@@ -693,6 +746,8 @@ pub fn run() {
             undeploy_sandbox,
             destroy_sandbox,
             sandbox_deployments,
+            check_podman_ready,
+            start_podman_machine,
             listen_events,
             list_sandbox_hosts,
             add_sandbox_host,

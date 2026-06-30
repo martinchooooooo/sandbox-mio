@@ -26,6 +26,10 @@ const CONTAINERFILE: &str = include_str!("../../resources/Containerfile");
 /// The connection `podman machine init` creates for the local machine.
 pub(crate) const DEFAULT_CONNECTION: &str = "podman-machine-default";
 
+/// Rootless Podman API socket inside the default machine (UID 1000). Must be activated manually
+/// via `podman system service` because the machine's user systemd session does not start on boot.
+const PODMAN_SOCKET: &str = "/run/user/1000/podman/podman.sock";
+
 pub(crate) fn base_image() -> String {
     format!("{BASE_IMAGE}:{BASE_IMAGE_VERSION}")
 }
@@ -582,4 +586,107 @@ pub async fn ensure_connection_alias(connection: &str) -> Result<(), BackendErro
         identity: info.identity,
     })?;
     Ok(())
+}
+
+// --- Podman startup recovery -------------------------------------------------
+// Free functions, not `PodmanCliBackend` methods: they drive the global Podman CLI (machine
+// lifecycle + the rootless socket) rather than a specific connection. They live here to reach the
+// private `podman_global`/`verify_host` helpers. Used by the `check_podman_ready` and
+// `start_podman_machine` commands in `lib.rs`.
+
+/// True if the default machine reports `Running: true` in `podman machine list`. Note: a `true`
+/// here does not mean the rootless socket is bound — `poll_ready` is the authoritative gate.
+pub(crate) async fn machine_is_running() -> Result<bool, BackendError> {
+    let out = PodmanCliBackend::podman_global(&["machine", "list", "--format", "json"]).await?;
+    let stdout = check(out)?;
+    let machines: Vec<serde_json::Value> =
+        serde_json::from_str(&stdout).map_err(|e| BackendError::ParseError(e.to_string()))?;
+    Ok(machines.iter().any(|m| {
+        m["Name"].as_str() == Some(DEFAULT_CONNECTION) && m["Running"].as_bool() == Some(true)
+    }))
+}
+
+/// True if any machine *other than* the default reports `Running: true`. Conservative: any error
+/// (cannot determine state) returns `false` so the WSL shutdown guard never disrupts a running
+/// `mio-tests`/`mio-tests-remote` machine during an E2E run. Never returns `Err`.
+pub(crate) async fn check_other_machines_running() -> bool {
+    let Ok(out) = PodmanCliBackend::podman_global(&["machine", "list", "--format", "json"]).await
+    else {
+        return false;
+    };
+    let Ok(stdout) = check(out) else {
+        return false;
+    };
+    let Ok(machines) = serde_json::from_str::<Vec<serde_json::Value>>(&stdout) else {
+        return false;
+    };
+    machines.iter().any(|m| {
+        m["Name"].as_str() != Some(DEFAULT_CONNECTION) && m["Running"].as_bool() == Some(true)
+    })
+}
+
+/// Run `podman machine start podman-machine-default`. `Ok` on exit 0, the captured stderr otherwise.
+pub(crate) async fn run_machine_start() -> Result<(), BackendError> {
+    check(PodmanCliBackend::podman_global(&["machine", "start", DEFAULT_CONNECTION]).await?).map(|_| ())
+}
+
+/// `wsl --shutdown` to reset a stuck WSL kernel service, then wait 2 s for WSL to settle. Run on the
+/// blocking pool (synchronous `std::process::Command`). Always `Ok`: a shutdown failure is non-fatal
+/// — the caller retries the machine start regardless of the exit code.
+pub(crate) async fn run_wsl_shutdown() -> Result<(), BackendError> {
+    let _ = tokio::task::spawn_blocking(|| {
+        std::process::Command::new("wsl").arg("--shutdown").output()
+    })
+    .await;
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    Ok(())
+}
+
+/// Launch the rootless Podman API service inside the default machine over `podman machine ssh`. The
+/// machine's per-user systemd manager does not start on boot, so the socket must be activated by
+/// hand; `setsid` detaches the service so it survives the SIGHUP when the SSH channel closes.
+///
+/// Fire-and-forget: `podman machine ssh` allocates a pty and blocks until its timeout even after the
+/// service backgrounds, so the call is capped at 7 s and the SSH client is then asked to stop. The
+/// SSH exit code is never the readiness signal — always follow with `poll_ready`. Always `Ok`.
+///
+/// The script is passed as one argv element (shell `false`): routing through `cmd.exe` on Windows
+/// would let it shred the `||`, `&`, `>`, and `<` metacharacters before they reach the remote bash
+/// (see `e2e/lib/podman-machine.ts:87`).
+pub(crate) async fn activate_podman_socket() -> Result<(), BackendError> {
+    let script = format!(
+        "test -S {sock} || {{ mkdir -p $(dirname {sock}) && setsid env XDG_RUNTIME_DIR=/run/user/1000 podman system service --time=0 </dev/null >/tmp/podman-svc.log 2>&1 & }}",
+        sock = PODMAN_SOCKET,
+    );
+    let Ok(mut child) = Command::new("podman")
+        .args(["machine", "ssh", DEFAULT_CONNECTION])
+        .arg(&script)
+        .spawn()
+    else {
+        return Ok(());
+    };
+    // SIGTERM (start_kill), not SIGKILL: the latter tears down the pty abruptly and can take the
+    // newly backgrounded service with it. `tokio::time::timeout` only cancels the future, so the OS
+    // process must be stopped explicitly.
+    if tokio::time::timeout(std::time::Duration::from_secs(7), child.wait()).await.is_err() {
+        let _ = child.start_kill();
+    }
+    Ok(())
+}
+
+/// Poll `verify_host(podman-machine-default)` up to `attempts` times, 500 ms apart. `Ok` on the
+/// first success; the last error after all attempts are exhausted. The authoritative readiness gate
+/// — `machine_is_running` and `activate_podman_socket` are both insufficient on their own.
+pub(crate) async fn poll_ready(attempts: usize) -> Result<(), BackendError> {
+    let mut last = BackendError::CommandFailed("Podman socket is not ready".to_string());
+    for attempt in 0..attempts {
+        match PodmanCliBackend::verify_host(DEFAULT_CONNECTION).await {
+            Ok(()) => return Ok(()),
+            Err(e) => last = e,
+        }
+        if attempt + 1 < attempts {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+    }
+    Err(last)
 }
