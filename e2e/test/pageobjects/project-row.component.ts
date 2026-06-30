@@ -217,6 +217,13 @@ export default class ProjectRow {
       .$("span.text-muted-foreground, span.text-amber-600");
   }
 
+  // The "Start a model to use OpenCode" hint, an <a href="/models"> rendered for a provisioned,
+  // auth-less agent when no inference server is running. Distinct from agentStatusText, which only
+  // matches <span> status text (the provider-configured state).
+  agentProviderHint(agentLabel: string): Element {
+    return this.root.$(`span=${agentLabel}`).$("..").$("a[href='/models']");
+  }
+
   async startAgentInstall(agentLabel: string): Promise<void> {
     await this.#clickButton(this.addAgentButton);
     await this.#clickButton(this.agentInstallButton(agentLabel));

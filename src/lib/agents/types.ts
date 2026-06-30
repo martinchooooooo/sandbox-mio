@@ -17,13 +17,24 @@ export interface ExecInteractiveAuth {
 
 export type AuthStrategy = ExecInteractiveAuth;
 
+/** Provider-provisioning step for agents that configure an endpoint instead of authenticating.
+ * The concrete provider JSON and default model are generated at call time from the model
+ * catalogue (see `buildLocalLlmProvider`), so the catalogue stays the single source of truth. */
+export interface ProviderProvisionConfig {
+  kind: "opencode-provider"; // discriminant for future provisioners
+  providerId: string; // "local-llm"
+  relativeConfigPath: string; // "opencode.json" (relative to the workspace root)
+}
+
 export interface AgentDescriptor {
   id: string;
   label: string;
   description: string;
   misePackages: string[];
   postInstallSteps: PostInstallStep[];
-  auth: AuthStrategy;
+  /** Absent for agents that configure a provider instead of authenticating (e.g. OpenCode). */
+  auth?: AuthStrategy;
+  provision?: ProviderProvisionConfig;
 }
 
 export type AgentInstallEvent =

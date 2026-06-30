@@ -136,11 +136,11 @@ class ModelsPage extends AppPage {
     const btn = await (await this.runningPanel).$("button=Stop");
     await btn.waitForClickable({ timeout: 10000 });
     await btn.click();
-    // stop_inference is optimistic: it drops the server handle and releases the active lock before
-    // reaping the child in the background (lib.rs), so inference_status reports not-running and
-    // [data-running] clears on the next poll — independent of how long the GPU-backed process takes
-    // to actually reap. A timeout here now means the handle was never dropped (the command errored
-    // or never returned), not merely a slow kill.
+    // stop_inference kills the llama child synchronously (fast) then drops the handle, but tears the
+    // reverse Mutagen forward down on a detached task (lib.rs) — `forward terminate` can take many
+    // seconds against the VM listener and must not block the command. So the command returns
+    // promptly, inference_status reports not-running, and [data-running] clears on the next poll. A
+    // timeout here means the command itself errored or never returned, not a slow forward teardown.
     await browser.waitUntil(async () => !(await this.runningPanel).isExisting(), {
       timeout: 30000,
       interval: 500,

@@ -5,7 +5,9 @@
     import { m } from "$lib/paraglide/messages.js";
     import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
     import { AGENTS, miseKey } from "$lib/agents/catalogue";
+    import { buildLocalLlmProvider } from "$lib/agents/opencode";
     import type { AgentDescriptor, AgentInstallEvent, AgentAuthStatus } from "$lib/agents/types";
+    import type { InferenceStatus } from "$lib/models/types";
     import type { createActionRunner } from "$lib/actions.svelte";
 
     let {
@@ -23,6 +25,7 @@
     let packages = $state<string[]>([]);
 
     let agentStatuses = $state<Record<string, AgentAuthStatus>>({});
+    let inferenceRunning = $state(false);
     let installingAgent = $state<string | null>(null);
     let installLog = $state<string[]>([]);
     let showAgentPicker = $state(false);
@@ -49,6 +52,7 @@
     async function loadAgentStatuses() {
         for (const agent of installedAgents) {
             const auth = agent.auth;
+            if (!auth) continue; // Config-only agents (OpenCode) have no auth status to read.
             try {
                 const result = await invoke<{ authenticated: boolean; expiresAtMs: number | null; accountEmail: string | null }>(
                     "get_agent_auth_status",
@@ -84,6 +88,18 @@
                 postinstallNpm: npmStep ? [npmStep.package, npmStep.nodeVersion] : null,
                 onProgress: channel,
             });
+            if (descriptor.provision) {
+                installLog = [...installLog, m.projects_agent_provisioning()];
+                const { providerId, providerJson, defaultModel } = buildLocalLlmProvider();
+                await invoke("provision_opencode", {
+                    workspacePath,
+                    relativePath: descriptor.provision.relativeConfigPath,
+                    providerId,
+                    providerJson,
+                    defaultModel,
+                });
+                installLog = [...installLog, `✓ ${m.projects_agent_provider_configured()}`];
+            }
         });
         installingAgent = null;
         if (success) {
@@ -93,6 +109,8 @@
     }
 
     async function openAgentAuth(descriptor: AgentDescriptor) {
+        if (!descriptor.auth) return;
+        const auth = descriptor.auth;
         await action.run("auth", async () => {
             const label = `agent-auth-${sandboxName}-${descriptor.id}`;
             const existing = await WebviewWindow.getByLabel(label);
@@ -102,7 +120,7 @@
             }
             const sessionId = await invoke<string>("start_agent_auth", {
                 name: sandboxName,
-                authCommand: descriptor.auth.command,
+                authCommand: auth.command,
             });
             new WebviewWindow(label, {
                 url: `/agent-auth?sandbox=${encodeURIComponent(sandboxName)}&agent=${encodeURIComponent(descriptor.id)}&session=${encodeURIComponent(sessionId)}`,
@@ -113,9 +131,19 @@
         });
     }
 
+    async function loadInferenceStatus() {
+        try {
+            const status = await invoke<InferenceStatus>("inference_status");
+            inferenceRunning = status.running;
+        } catch {
+            inferenceRunning = false;
+        }
+    }
+
     onMount(async () => {
         await loadPackages();
         await loadAgentStatuses();
+        await loadInferenceStatus();
     });
 </script>
 
@@ -139,16 +167,26 @@
         {@const status = agentStatuses[agent.id]}
         <div class="flex items-center justify-between gap-2 text-xs">
             <span class="font-medium">{agent.label}</span>
-            {#if status?.authenticated}
-                <span class="text-muted-foreground">{status.accountEmail ?? "authenticated"}</span>
-            {:else}
-                <span class="text-amber-600 dark:text-amber-400">{m.projects_agent_not_authed()}</span>
+            {#if agent.auth}
+                {#if status?.authenticated}
+                    <span class="text-muted-foreground">{status.accountEmail ?? "authenticated"}</span>
+                {:else}
+                    <span class="text-amber-600 dark:text-amber-400">{m.projects_agent_not_authed()}</span>
+                {/if}
+                <Button size="sm" variant="ghost"
+                    onclick={() => openAgentAuth(agent)}
+                    disabled={action.busy !== null}>
+                    {status?.authenticated ? m.projects_agent_reauth() : m.projects_agent_auth()}
+                </Button>
+            {:else if agent.provision}
+                {#if inferenceRunning}
+                    <span class="text-muted-foreground">{m.projects_agent_provider_configured()}</span>
+                {:else}
+                    <a href="/models" class="text-amber-600 dark:text-amber-400 hover:underline">
+                        {m.projects_agent_start_model_hint()}
+                    </a>
+                {/if}
             {/if}
-            <Button size="sm" variant="ghost"
-                onclick={() => openAgentAuth(agent)}
-                disabled={action.busy !== null}>
-                {status?.authenticated ? m.projects_agent_reauth() : m.projects_agent_auth()}
-            </Button>
         </div>
     {/each}
 

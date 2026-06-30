@@ -26,6 +26,10 @@ use crate::sync::types::{SessionInfo, SyncEngine, SyncStatus};
 /// Held in Tauri state so undeploy/destroy can terminate the session and reclaim the port.
 type ForwardPortMap = Arc<Mutex<std::collections::HashMap<String, u16>>>;
 
+/// Name of the single app-wide reverse forward bridging container netns to the host inference
+/// server. Created in `start_inference`, torn down in `stop_inference` and on app exit.
+const INFERENCE_FORWARD: &str = "inference-reverse";
+
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
@@ -461,6 +465,65 @@ async fn install_agent(
     Ok(())
 }
 
+/// Write/merge the OpenCode provider config into `<workspace_path>/<relative_path>` host-side.
+/// Mirrors `open_terminal`'s host-side JSON write into the bind-mounted workspace, so it needs no
+/// `podman exec` and works whether the container is running or stopped. Preserves any existing
+/// `opencode.json`: sets `provider[provider_id]` and ensures `$schema`, and sets the top-level
+/// `model` only when absent, so a user's own config is never clobbered.
+#[tauri::command]
+async fn provision_opencode(
+    workspace_path: String,
+    relative_path: String,
+    provider_id: String,
+    provider_json: serde_json::Value,
+    default_model: Option<String>,
+) -> Result<(), AppError> {
+    let path = std::path::Path::new(&workspace_path).join(&relative_path);
+
+    // Read+parse any existing config. An absent or empty file starts from `{}`; a genuine parse
+    // error of non-empty content is surfaced rather than silently overwriting the user's file.
+    let mut obj = match std::fs::read_to_string(&path) {
+        Ok(s) if s.trim().is_empty() => serde_json::Map::new(),
+        Ok(s) => serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&s)
+            .map_err(|e| crate::backends::types::BackendError::CommandFailed(format!(
+                "failed to parse existing {}: {e}",
+                path.to_string_lossy()
+            )))?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::Map::new(),
+        Err(e) => {
+            return Err(crate::backends::types::BackendError::CommandFailed(format!(
+                "failed to read {}: {e}",
+                path.to_string_lossy()
+            ))
+            .into())
+        }
+    };
+
+    obj.insert(
+        "$schema".into(),
+        serde_json::Value::String("https://opencode.ai/config.json".into()),
+    );
+    let provider = obj
+        .entry("provider")
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    if let Some(map) = provider.as_object_mut() {
+        map.insert(provider_id, provider_json);
+    }
+    if let Some(model) = default_model {
+        obj.entry("model").or_insert(serde_json::Value::String(model));
+    }
+
+    let pretty = serde_json::to_string_pretty(&obj)
+        .map_err(|e| crate::backends::types::BackendError::CommandFailed(e.to_string()))?;
+    std::fs::write(&path, pretty).map_err(|e| {
+        crate::backends::types::BackendError::CommandFailed(format!(
+            "failed to write {}: {e}",
+            path.to_string_lossy()
+        ))
+    })?;
+    Ok(())
+}
+
 /// Spawn the agent auth command inside sandbox `name` with piped stdin/stdout.
 /// Returns a session ID that identifies the auth session for subsequent input/cancel calls.
 /// Emits `AgentAuthEvent` objects to the Tauri app-wide event `agent-auth-output-<session_id>`.
@@ -593,6 +656,7 @@ async fn start_inference(
     model_id: String,
     on_progress: Channel<serde_json::Value>,
     active: State<'_, ActiveServer>,
+    runtime: State<'_, Arc<dyn RuntimeManager>>,
     app: tauri::AppHandle,
 ) -> Result<InferenceStatus, AppError> {
     tracing::info!(target: "inference", ?engine, %model_id, "start_inference requested");
@@ -649,6 +713,31 @@ async fn start_inference(
     };
     tracing::info!(target: "inference", base_url = %handle.base_url, model_id = %handle.model_id, "server ready");
     activity::succeed(&app, "inference-setup", Some(handle.base_url.clone()));
+
+    // App-wide reverse forward so in-sandbox agents (OpenCode) reach the host inference server at
+    // a stable address. Local connection only (v1): a remote sandbox runs on a different machine
+    // and cannot reach the host server. Failure here is logged, not fatal — the host-side `/models`
+    // chat surface still works; only the in-container OpenCode path depends on the forward.
+    let connection = runtime.local_connection().to_string();
+    match crate::backends::ensure_connection_alias(&connection).await {
+        Ok(()) => {
+            if let Err(e) = sync::forward_create_reverse(
+                &app,
+                INFERENCE_FORWARD,
+                &connection,
+                sync::INFERENCE_VM_PORT,
+                handle.port,
+            )
+            .await
+            {
+                tracing::warn!(target: "inference", error = %e, "inference reverse forward failed");
+            }
+        }
+        Err(e) => {
+            tracing::warn!(target: "inference", error = %e, "could not resolve connection alias for inference forward");
+        }
+    }
+
     let status = handle.status();
     *guard = Some(handle);
     Ok(status)
@@ -656,11 +745,20 @@ async fn start_inference(
 
 #[tauri::command]
 async fn stop_inference(active: State<'_, ActiveServer>, app: tauri::AppHandle) -> Result<(), AppError> {
-    let mut guard = active.lock().await;
-    if let Some(handle) = guard.take() {
+    let handle = active.lock().await.take();
+    if let Some(handle) = handle {
         let engine = inference::engine_for(handle.engine, &app);
         engine.stop(handle).await?;
     }
+    // Tear down the reverse forward off the command's critical path: `forward terminate` can take
+    // many seconds against the VM listener, and the frontend Stop awaits this command before
+    // refreshing status. A brief window where the forward dials a dead port is harmless (containers
+    // get connection-refused); the app-exit daemon shutdown is the backstop if this is still
+    // running at exit.
+    let app_for_forward = app.clone();
+    tauri::async_runtime::spawn(async move {
+        sync::forward_terminate(&app_for_forward, INFERENCE_FORWARD).await;
+    });
     Ok(())
 }
 
@@ -758,6 +856,7 @@ pub fn run() {
             disable_sync,
             list_registry,
             install_agent,
+            provision_opencode,
             start_agent_auth,
             send_agent_auth_input,
             cancel_agent_auth,
@@ -792,6 +891,9 @@ pub fn run() {
                     let _ = engine.stop(handle).await;
                 }
             });
+            // The daemon stop below tears down every Mutagen session, including the inference
+            // reverse forward, so no explicit `forward terminate` is needed here (and avoids a
+            // multi-second teardown blocking app exit).
             let engine = app_handle.state::<Arc<dyn SyncEngine>>();
             tauri::async_runtime::block_on(engine.shutdown());
         }

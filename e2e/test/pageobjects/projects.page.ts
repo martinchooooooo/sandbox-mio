@@ -42,6 +42,31 @@ class ProjectsPage extends AppPage {
     await link.click();
   }
 
+  // Clears the Podman startup-recovery gate if it is showing, so createProject is not blocked.
+  // /projects probes check_podman_ready on mount; when podman-machine-default is down (or its
+  // rootless socket is inactive) it renders the "Start Podman" screen in place of the sandbox list.
+  // This drives the app's own recovery — which activates the rootless socket that a bare
+  // `podman machine start` can leave down — and resolves once the page is usable. No-op (after the
+  // probe window) when Podman is already ready. Call after open(), before createProject.
+  async ensurePodmanReady(probeWindow = 10000, recoverTimeout = 90000): Promise<void> {
+    const btn = await this.startPodmanButton;
+    try {
+      await btn.waitForDisplayed({ timeout: probeWindow });
+    } catch {
+      return; // gate never appeared within the probe window → Podman is ready
+    }
+    await btn.click();
+    await btn.waitForDisplayed({
+      reverse: true,
+      timeout: recoverTimeout,
+      timeoutMsg:
+        "Podman recovery did not clear the 'Start Podman' gate; podman-machine-default failed to " +
+        "start or its rootless socket never came up (see start_podman_machine / activate_podman_socket " +
+        "in src-tauri, and the activity center for a failed 'podman-startup' task).",
+    });
+    await this.createButton.waitForDisplayed({ timeout: 5000 });
+  }
+
   // Creates the project and returns its row once the row is displayed. `timeout` covers the wait
   // for the row: the first sandbox on a connection triggers the one-time base-image build, so the
   // row can take minutes to appear and callers must widen the wait accordingly.

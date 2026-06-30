@@ -87,6 +87,31 @@ pub async fn forward_create<R: Runtime>(
         .map(|_| ())
 }
 
+/// App-owned VM port the inference reverse-forward listens on. Containers reach the host
+/// inference server at `http://host.containers.internal:<INFERENCE_VM_PORT>/v1`. Must equal the
+/// frontend `INFERENCE_VM_PORT` in `src/lib/agents/opencode.ts`.
+pub const INFERENCE_VM_PORT: u16 = 51199;
+
+/// Reverse of [`forward_create`]: listen on `remote_alias`'s `0.0.0.0:remote_listen_port` and dial
+/// the host's `127.0.0.1:host_port`. The `0.0.0.0` bind is required so container netns can reach the
+/// listener via `host.containers.internal` (a `127.0.0.1` bind is VM-loopback-only; spiked
+/// 2026-06-29). Idempotent: terminates any prior session of `name` first.
+pub async fn forward_create_reverse<R: Runtime>(
+    app: &AppHandle<R>,
+    name: &str,
+    remote_alias: &str,
+    remote_listen_port: u16,
+    host_port: u16,
+) -> Result<(), SyncError> {
+    // Best-effort: a missing session is not an error, so ignore the result.
+    let _ = run(app, &["forward", "terminate", name]).await;
+    let source = format!("{remote_alias}:tcp:0.0.0.0:{remote_listen_port}");
+    let dest = format!("tcp:127.0.0.1:{host_port}");
+    run(app, &["forward", "create", &format!("--name={name}"), &source, &dest])
+        .await
+        .map(|_| ())
+}
+
 /// Terminate the Mutagen forwarding session named `name`. Best-effort: a missing session is
 /// not an error (desired state already reached).
 pub async fn forward_terminate<R: Runtime>(app: &AppHandle<R>, name: &str) {

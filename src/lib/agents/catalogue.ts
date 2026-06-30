@@ -25,6 +25,15 @@ export const AGENTS: AgentDescriptor[] = [
       accountEmailJsonKey: "oauthAccount.emailAddress",
     },
   },
+  {
+    id: "opencode",
+    label: "OpenCode",
+    description: "Open-source terminal coding agent, pre-wired to your local LLM",
+    misePackages: ["opencode"],
+    postInstallSteps: [],
+    // No `auth`: OpenCode configures a provider instead of authenticating.
+    provision: { kind: "opencode-provider", providerId: "local-llm", relativeConfigPath: "opencode.json" },
+  },
 ];
 
 /** Extract the mise.toml key from a full package spec (strips the @version suffix). */
