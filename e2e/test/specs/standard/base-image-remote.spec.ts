@@ -1,6 +1,6 @@
-import ProjectsPage from "../pageobjects/projects.page.js";
-import { podman, podmanOk, LOCAL_CONNECTION, REMOTE_CONNECTION } from "../../lib/podman-connection.js";
-import { MISE_BASE_IMAGE } from "../../lib/podman-machine.js";
+import ProjectsPage from "../../pageobjects/projects.page.js";
+import { podman, podmanOk, LOCAL_CONNECTION, REMOTE_CONNECTION } from "../../../lib/podman-connection.js";
+import { MISE_BASE_IMAGE } from "../../../lib/podman-machine.js";
 
 // Regression guard for the missing base-image build on the remote deploy path. The mise base image
 // is never published to a registry, so when it is absent on the target connection `podman create`

@@ -51,15 +51,23 @@ let exit = false;
 
 const ext = process.platform === "win32" ? ".exe" : "";
 
+// True when invoked as `wdio run wdio.conf.ts --suite light` (see package.json's `test:light`).
+// The light suite runs against the in-memory mock backend (MIO_MOCK_BACKEND=1, see
+// src-tauri/src/backends/mod.rs), so onPrepare skips podman provisioning and beforeSession skips
+// pinning a real connection.
+const suiteFlagIndex = process.argv.indexOf("--suite");
+const IS_LIGHT_SUITE = suiteFlagIndex !== -1 && process.argv[suiteFlagIndex + 1] === "light";
+
 export const config: WebdriverIO.Config = {
   hostname: "127.0.0.1",
   port: 4444,
-  // Default run: top-level specs only. The heavy/ subdirectory (expensive specs that download and
-  // load real models) is intentionally excluded here and run via the `heavy` suite below —
-  // `pnpm run test:heavy`, or `pnpm run test:llm` for just the local-llm spec.
-  specs: ["./test/specs/*.ts"],
+  // Default run: the standard tier only. `light/` (mocked, no podman) and `heavy/` (large-asset
+  // downloads) are excluded here and run via their own suites below — `pnpm run test:light`,
+  // `pnpm run test:heavy`, or `pnpm run test:llm` for just the local-llm spec. See e2e/AGENTS.md.
+  specs: ["./test/specs/standard/*.ts"],
   suites: {
     heavy: ["./test/specs/heavy/**/*.ts"],
+    light: ["./test/specs/light/**/*.ts"],
   },
   maxInstances: 1,
   capabilities: [
@@ -84,43 +92,47 @@ export const config: WebdriverIO.Config = {
     // "llama"). Without this, a previous aborted run that saved "foundry" would pollute test 3's
     // Start-gate assertion (the gate only fires when engine === "llama").
     fs.rmSync(path.join(APP_DATA_DIR, "settings.json"), { force: true });
-    // Abort the entire suite on failure: WDIO catches onPrepare errors and logs "Error in hook"
-    // but continues running, so the app would start against a stopped machine.
-    try {
-      provisionMachine(LOCAL_CONNECTION);
-    } catch (e) {
-      console.error(`[e2e] Local machine not ready: ${e instanceof Error ? e.message : String(e)}`);
-      console.error("[e2e] Aborting suite — cannot run without the local Podman connection.");
-      process.exit(1);
-    }
-    // The remote machine is used as a deploy target by deploy-remote.spec.ts. Provisioned here
-    // so the spec can assume it is up; cleaned up in onComplete.
-    // Abort the entire suite on failure: WDIO catches onPrepare errors and logs "Error in hook"
-    // but continues running, so remote-dependent specs would silently burn their full timeouts.
-    try {
-      provisionMachine(REMOTE_CONNECTION);
-    } catch (e) {
-      console.error(`[e2e] Remote machine not ready: ${e instanceof Error ? e.message : String(e)}`);
-      console.error("[e2e] Aborting suite — remote-dependent specs cannot run without the connection.");
-      process.exit(1);
-    }
-    // Stage the mise base image on both connections before any spec runs.
-    ensureMiseBaseImage(LOCAL_CONNECTION, [REMOTE_CONNECTION]);
-    // Guard: podman-startup-recovery.spec.ts needs podman-machine-default to be initialized (its
-    // own before() hook stops it but cannot init it). Warn (don't abort) so the rest of the suite
-    // still runs on machines where only mio-tests is provisioned — the spec then fails on Step 2
-    // navigation with a clear timeoutMsg instead of here.
-    const defaultMachineRaw = spawnSync(
-      "podman", ["machine", "list", "--format", "json"],
-      { encoding: "utf8", shell: true },
-    );
-    const defaultMachines: Array<{ Name: string }> = JSON.parse(defaultMachineRaw.stdout || "[]");
-    if (!defaultMachines.some((m) => m.Name === "podman-machine-default")) {
-      console.warn(
-        "[e2e] podman-machine-default is not initialized. " +
-          "podman-startup-recovery.spec.ts will fail on navigation. " +
-          "Run `podman machine init && podman machine start` once to initialize it.",
+    if (IS_LIGHT_SUITE) {
+      console.log("[e2e] light suite: skipping podman machine provisioning (MIO_MOCK_BACKEND=1).");
+    } else {
+      // Abort the entire suite on failure: WDIO catches onPrepare errors and logs "Error in hook"
+      // but continues running, so the app would start against a stopped machine.
+      try {
+        provisionMachine(LOCAL_CONNECTION);
+      } catch (e) {
+        console.error(`[e2e] Local machine not ready: ${e instanceof Error ? e.message : String(e)}`);
+        console.error("[e2e] Aborting suite — cannot run without the local Podman connection.");
+        process.exit(1);
+      }
+      // The remote machine is used as a deploy target by deploy-remote.spec.ts. Provisioned here
+      // so the spec can assume it is up; cleaned up in onComplete.
+      // Abort the entire suite on failure: WDIO catches onPrepare errors and logs "Error in hook"
+      // but continues running, so remote-dependent specs would silently burn their full timeouts.
+      try {
+        provisionMachine(REMOTE_CONNECTION);
+      } catch (e) {
+        console.error(`[e2e] Remote machine not ready: ${e instanceof Error ? e.message : String(e)}`);
+        console.error("[e2e] Aborting suite — remote-dependent specs cannot run without the connection.");
+        process.exit(1);
+      }
+      // Stage the mise base image on both connections before any spec runs.
+      ensureMiseBaseImage(LOCAL_CONNECTION, [REMOTE_CONNECTION]);
+      // Guard: podman-startup-recovery.spec.ts needs podman-machine-default to be initialized (its
+      // own before() hook stops it but cannot init it). Warn (don't abort) so the rest of the suite
+      // still runs on machines where only mio-tests is provisioned — the spec then fails on Step 2
+      // navigation with a clear timeoutMsg instead of here.
+      const defaultMachineRaw = spawnSync(
+        "podman", ["machine", "list", "--format", "json"],
+        { encoding: "utf8", shell: true },
       );
+      const defaultMachines: Array<{ Name: string }> = JSON.parse(defaultMachineRaw.stdout || "[]");
+      if (!defaultMachines.some((m) => m.Name === "podman-machine-default")) {
+        console.warn(
+          "[e2e] podman-machine-default is not initialized. " +
+            "podman-startup-recovery.spec.ts will fail on navigation. " +
+            "Run `podman machine init && podman machine start` once to initialize it.",
+        );
+      }
     }
     // Delete the existing debug exe before building. `tauri build` runs beforeBuildCommand
     // (pnpm build) which regenerates ../build, but tauri-build does not emit a rerun-if-changed
@@ -172,7 +184,11 @@ export const config: WebdriverIO.Config = {
       ["--native-driver", "../tools/msedgedriver.exe"],
       {
         stdio: [null, process.stdout, process.stderr],
-        env: { ...process.env, PODMAN_CONNECTION: LOCAL_CONNECTION },
+        env: {
+          ...process.env,
+          PODMAN_CONNECTION: LOCAL_CONNECTION,
+          ...(IS_LIGHT_SUITE ? { MIO_MOCK_BACKEND: "1" } : {}),
+        },
       }
     );
     tauriDriver.on("error", (error) => {
@@ -224,9 +240,12 @@ export const config: WebdriverIO.Config = {
       fs.writeFileSync(userConfig, cleaned ? `${cleaned}\n` : "", "ascii");
     }
 
-    // Tear down the remote machine unless the caller wants to keep it.
-    if (MIO_REMOTE_REMOVE) removeMachine(REMOTE_CONNECTION);
-    else if (!MIO_REMOTE_KEEP) stopMachine(REMOTE_CONNECTION);
+    // Tear down the remote machine unless the caller wants to keep it. Never provisioned for the
+    // light suite, so there is nothing to tear down.
+    if (!IS_LIGHT_SUITE) {
+      if (MIO_REMOTE_REMOVE) removeMachine(REMOTE_CONNECTION);
+      else if (!MIO_REMOTE_KEEP) stopMachine(REMOTE_CONNECTION);
+    }
   },
 };
 

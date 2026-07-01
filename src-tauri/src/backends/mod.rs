@@ -1,11 +1,14 @@
 pub mod types;
 
+mod mock;
+
 use std::process::{Output, Stdio};
 
 use tauri::ipc::Channel;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
+use mock::MockBackend;
 use types::{
     BackendError, ConnectionInfo, PodmanCliBackend, RemoteDeployment, Sandbox, SandboxBackend,
     SyncStrategy, WorkspacePlan,
@@ -81,9 +84,20 @@ fn workspace_path(name: &str) -> Result<String, BackendError> {
 }
 
 pub fn default_backend() -> std::sync::Arc<dyn SandboxBackend> {
+    if mock_backend_enabled() {
+        return std::sync::Arc::new(MockBackend::new());
+    }
     let connection =
         std::env::var("PODMAN_CONNECTION").unwrap_or_else(|_| DEFAULT_CONNECTION.to_string());
     std::sync::Arc::new(PodmanCliBackend { connection, build_lock: tokio::sync::Mutex::new(()) })
+}
+
+/// True when `MIO_MOCK_BACKEND=1` is set, steering `default_backend`/`default_runtime`/
+/// `default_sync_engine` to their in-memory mocks and short-circuiting the machine-lifecycle
+/// free functions below, so the e2e "light" tier can drive real Tauri commands without podman.
+/// Read once per call (no caching), mirroring the `PODMAN_CONNECTION` idiom.
+pub(crate) fn mock_backend_enabled() -> bool {
+    std::env::var("MIO_MOCK_BACKEND").ok().as_deref() == Some("1")
 }
 
 /// Returns stdout on success, or the captured stderr as `Err` on a non-zero exit.
@@ -597,6 +611,9 @@ pub async fn ensure_connection_alias(connection: &str) -> Result<(), BackendErro
 /// True if the default machine reports `Running: true` in `podman machine list`. Note: a `true`
 /// here does not mean the rootless socket is bound — `poll_ready` is the authoritative gate.
 pub(crate) async fn machine_is_running() -> Result<bool, BackendError> {
+    if mock_backend_enabled() {
+        return Ok(true);
+    }
     let out = PodmanCliBackend::podman_global(&["machine", "list", "--format", "json"]).await?;
     let stdout = check(out)?;
     let machines: Vec<serde_json::Value> =
@@ -610,6 +627,9 @@ pub(crate) async fn machine_is_running() -> Result<bool, BackendError> {
 /// (cannot determine state) returns `false` so the WSL shutdown guard never disrupts a running
 /// `mio-tests`/`mio-tests-remote` machine during an E2E run. Never returns `Err`.
 pub(crate) async fn check_other_machines_running() -> bool {
+    if mock_backend_enabled() {
+        return false;
+    }
     let Ok(out) = PodmanCliBackend::podman_global(&["machine", "list", "--format", "json"]).await
     else {
         return false;
@@ -627,6 +647,9 @@ pub(crate) async fn check_other_machines_running() -> bool {
 
 /// Run `podman machine start podman-machine-default`. `Ok` on exit 0, the captured stderr otherwise.
 pub(crate) async fn run_machine_start() -> Result<(), BackendError> {
+    if mock_backend_enabled() {
+        return Ok(());
+    }
     check(PodmanCliBackend::podman_global(&["machine", "start", DEFAULT_CONNECTION]).await?).map(|_| ())
 }
 
@@ -634,6 +657,9 @@ pub(crate) async fn run_machine_start() -> Result<(), BackendError> {
 /// blocking pool (synchronous `std::process::Command`). Always `Ok`: a shutdown failure is non-fatal
 /// — the caller retries the machine start regardless of the exit code.
 pub(crate) async fn run_wsl_shutdown() -> Result<(), BackendError> {
+    if mock_backend_enabled() {
+        return Ok(());
+    }
     let _ = tokio::task::spawn_blocking(|| {
         std::process::Command::new("wsl").arg("--shutdown").output()
     })
@@ -654,6 +680,9 @@ pub(crate) async fn run_wsl_shutdown() -> Result<(), BackendError> {
 /// would let it shred the `||`, `&`, `>`, and `<` metacharacters before they reach the remote bash
 /// (see `e2e/lib/podman-machine.ts:87`).
 pub(crate) async fn activate_podman_socket() -> Result<(), BackendError> {
+    if mock_backend_enabled() {
+        return Ok(());
+    }
     let script = format!(
         "test -S {sock} || {{ mkdir -p $(dirname {sock}) && setsid env XDG_RUNTIME_DIR=/run/user/1000 podman system service --time=0 </dev/null >/tmp/podman-svc.log 2>&1 & }}",
         sock = PODMAN_SOCKET,
@@ -678,6 +707,9 @@ pub(crate) async fn activate_podman_socket() -> Result<(), BackendError> {
 /// first success; the last error after all attempts are exhausted. The authoritative readiness gate
 /// — `machine_is_running` and `activate_podman_socket` are both insufficient on their own.
 pub(crate) async fn poll_ready(attempts: usize) -> Result<(), BackendError> {
+    if mock_backend_enabled() {
+        return Ok(());
+    }
     let mut last = BackendError::CommandFailed("Podman socket is not ready".to_string());
     for attempt in 0..attempts {
         match PodmanCliBackend::verify_host(DEFAULT_CONNECTION).await {

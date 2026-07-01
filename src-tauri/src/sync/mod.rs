@@ -11,10 +11,13 @@
 
 pub mod types;
 
+mod mock;
+
 use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_shell::process::Command;
 use tauri_plugin_shell::ShellExt;
 
+use mock::MockSync;
 use types::{MutagenCli, SessionInfo, SyncEngine, SyncError, SyncStatus};
 
 /// Sidecar name as declared in `bundle.externalBin`.
@@ -89,7 +92,7 @@ pub async fn forward_create<R: Runtime>(
 
 /// App-owned VM port the inference reverse-forward listens on. Containers reach the host
 /// inference server at `http://host.containers.internal:<INFERENCE_VM_PORT>/v1`. Must equal the
-/// frontend `INFERENCE_VM_PORT` in `src/lib/agents/opencode.ts`.
+/// frontend `INFERENCE_VM_PORT` in `src/lib/agents/local-llm.ts`.
 pub const INFERENCE_VM_PORT: u16 = 51199;
 
 /// Reverse of [`forward_create`]: listen on `remote_alias`'s `0.0.0.0:remote_listen_port` and dial
@@ -121,6 +124,9 @@ pub async fn forward_terminate<R: Runtime>(app: &AppHandle<R>, name: &str) {
 /// Construct the managed [`SyncEngine`] for Tauri state. Mirrors `default_backend` in
 /// `backends/mod.rs`, but needs the [`AppHandle`] because the sidecar is resolved through it.
 pub fn default_sync_engine(app: AppHandle) -> std::sync::Arc<dyn SyncEngine> {
+    if crate::backends::mock_backend_enabled() {
+        return std::sync::Arc::new(MockSync);
+    }
     std::sync::Arc::new(MutagenCli { app })
 }
 

@@ -1,7 +1,7 @@
 import assert from "node:assert";
 
-import ModelsPage from "../pageobjects/models.page.js";
-import SettingsPage from "../pageobjects/settings.page.js";
+import ModelsPage from "../../pageobjects/models.page.js";
+import SettingsPage from "../../pageobjects/settings.page.js";
 
 // LIGHT spec for the local-llm feature: runs in the default `pnpm test` suite. It proves the
 // routes render and the cheap Tauri commands round-trip (detect_machine_specs, downloaded_models,

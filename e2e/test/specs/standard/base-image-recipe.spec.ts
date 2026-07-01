@@ -13,9 +13,9 @@ import { fileURLToPath } from "url";
 // The recipe baked into the binary (CONTAINERFILE in src-tauri/src/backends/mod.rs) and the spike
 // references that document the build must stay in lockstep. All are checked.
 const CONTAINERFILES = [
-  "../../../src-tauri/resources/Containerfile",
-  "../../../docs/features/sandbox-runtime-management/spike/mise/Containerfile.glibc",
-  "../../../docs/features/sandbox-runtime-management/spike/mise/Containerfile.musl",
+  "../../../../src-tauri/resources/Containerfile",
+  "../../../../docs/features/sandbox-runtime-management/spike/mise/Containerfile.glibc",
+  "../../../../docs/features/sandbox-runtime-management/spike/mise/Containerfile.musl",
 ];
 
 // Pinned: an exact mise release tag (`ARG MISE_VERSION=v2026.6.14`) the curl download interpolates.

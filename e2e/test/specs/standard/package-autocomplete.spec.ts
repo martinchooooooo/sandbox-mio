@@ -2,9 +2,9 @@ import assert from "node:assert";
 import fs from "fs";
 import path from "path";
 
-import ProjectsPage from "../pageobjects/projects.page.js";
-import ProjectRow from "../pageobjects/project-row.component.js";
-import { podman, LOCAL_CONNECTION } from "../../lib/podman-connection.js";
+import ProjectsPage from "../../pageobjects/projects.page.js";
+import ProjectRow from "../../pageobjects/project-row.component.js";
+import { podman, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
 
 const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
 

@@ -1,8 +1,8 @@
 import fs from "fs";
 import path from "path";
 
-import ProjectsPage from "../pageobjects/projects.page.js";
-import { podman, LOCAL_CONNECTION } from "../../lib/podman-connection.js";
+import ProjectsPage from "../../pageobjects/projects.page.js";
+import { podman, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
 
 // Mirrors the env wdio.conf.ts passes to the app, so this spec resolves the same per-sandbox
 // directory the backend writes.

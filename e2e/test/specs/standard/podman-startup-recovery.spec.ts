@@ -1,9 +1,9 @@
 import assert from "node:assert";
 import { spawnSync } from "child_process";
 
-import ProjectsPage from "../pageobjects/projects.page.js";
-import ActivityCenter from "../pageobjects/activity.page.js";
-import { podman, LOCAL_CONNECTION } from "../../lib/podman-connection.js";
+import ProjectsPage from "../../pageobjects/projects.page.js";
+import ActivityCenter from "../../pageobjects/activity.page.js";
+import { podman, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
 
 // Proves the Podman startup-recovery feature end to end (docs/features/podman-startup-recovery):
 // with podman-machine-default stopped, /projects shows the recovery screen; clicking "Start Podman"

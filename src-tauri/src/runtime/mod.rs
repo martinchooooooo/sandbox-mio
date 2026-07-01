@@ -3,10 +3,13 @@
 
 pub mod types;
 
+mod mock;
+
 use std::process::Output;
 
 use tokio::process::Command;
 
+use mock::MockRuntime;
 use types::{PodmanMiseRuntime, RuntimeError, RuntimeManager};
 
 /// Workspace bind-mount target inside every container. Matches `WORKSPACE_MOUNT` in `backends/mod.rs`.
@@ -26,6 +29,9 @@ const ZELLIJ_WEB_PORT: u16 = 8082;
 /// `PODMAN_CONNECTION`; defaults to [`crate::backends::DEFAULT_CONNECTION`] when unset. The e2e
 /// harness overrides `PODMAN_CONNECTION` to pin the local test connection.
 pub fn default_runtime() -> std::sync::Arc<dyn RuntimeManager> {
+    if crate::backends::mock_backend_enabled() {
+        return std::sync::Arc::new(MockRuntime);
+    }
     let connection = std::env::var("PODMAN_CONNECTION")
         .unwrap_or_else(|_| crate::backends::DEFAULT_CONNECTION.to_string());
     std::sync::Arc::new(PodmanMiseRuntime { connection, registry_cache: tokio::sync::OnceCell::new() })

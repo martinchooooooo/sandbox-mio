@@ -1,8 +1,8 @@
 import assert from "node:assert";
 
-import ModelsPage from "../pageobjects/models.page.js";
-import ProjectsPage from "../pageobjects/projects.page.js";
-import ActivityCenter from "../pageobjects/activity.page.js";
+import ModelsPage from "../../pageobjects/models.page.js";
+import ProjectsPage from "../../pageobjects/projects.page.js";
+import ActivityCenter from "../../pageobjects/activity.page.js";
 
 // LIGHT spec for the activity center: runs in the default `pnpm test` suite. It proves the global
 // surface (the layout-mounted bell), the `list_tasks` round-trip (Phase A), and the store's fold /

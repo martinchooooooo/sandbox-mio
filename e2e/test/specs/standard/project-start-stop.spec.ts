@@ -1,4 +1,4 @@
-import ProjectsPage from "../pageobjects/projects.page.js";
+import ProjectsPage from "../../pageobjects/projects.page.js";
 
 describe("Project start and stop", () => {
   it("creates a project, starts it (indicator goes green), then stops it", async () => {

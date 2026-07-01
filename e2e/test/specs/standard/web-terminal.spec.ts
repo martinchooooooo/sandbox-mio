@@ -2,10 +2,10 @@ import assert from "node:assert";
 import fs from "fs";
 import path from "path";
 
-import ProjectsPage from "../pageobjects/projects.page.js";
-import ProjectRow from "../pageobjects/project-row.component.js";
-import { podman, podmanOk, LOCAL_CONNECTION } from "../../lib/podman-connection.js";
-import { forwardList } from "../../lib/mutagen.js";
+import ProjectsPage from "../../pageobjects/projects.page.js";
+import ProjectRow from "../../pageobjects/project-row.component.js";
+import { podman, podmanOk, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
+import { forwardList } from "../../../lib/mutagen.js";
 
 const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
 
