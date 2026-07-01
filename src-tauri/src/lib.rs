@@ -3,6 +3,7 @@ mod agents;
 mod backends;
 mod error;
 mod inference;
+mod machine;
 mod runtime;
 mod settings;
 mod ssh;
@@ -16,6 +17,7 @@ use crate::activity::types::{Task, TaskKind};
 use crate::activity::TaskRegistry;
 use crate::agents::types::AuthSessionMap;
 use crate::backends::types::{Sandbox, SandboxBackend};
+use crate::machine::types::MachineManager;
 use crate::error::AppError;
 use crate::inference::types::{ActiveServer, EngineKind, InferenceStatus, MachineSpecs, SetupStep};
 use crate::runtime::types::RuntimeManager;
@@ -331,15 +333,17 @@ async fn sandbox_deployments(
 
 /// Read-only probe for the projects page startup gate. Reports whether the default Podman machine
 /// is running *and* its rootless socket answers. Starts nothing — `start_podman_machine` does that.
-/// Takes no state: it drives the global Podman CLI, not the `SandboxBackend` trait.
+/// Drives the global-machine `MachineManager`, not the per-connection `SandboxBackend`.
 #[tauri::command]
-async fn check_podman_ready() -> Result<(), AppError> {
-    if !backends::machine_is_running().await
+async fn check_podman_ready(
+    machine: State<'_, Arc<dyn MachineManager>>,
+) -> Result<(), AppError> {
+    if !machine.machine_is_running().await
         .map_err(|e| AppError::PodmanUnavailable(e.to_string()))?
     {
         return Err(AppError::PodmanUnavailable("Podman machine is not running".into()));
     }
-    backends::poll_ready(1).await
+    machine.poll_ready(1).await
         .map_err(|_| AppError::PodmanUnavailable("Podman socket is not ready".into()))
 }
 
@@ -348,20 +352,23 @@ async fn check_podman_ready() -> Result<(), AppError> {
 /// Every `Err` return path first calls `activity::fail` — the registry has no view of the command's
 /// `Result`, so a missing `fail` would leave the task stuck `running` until the app restarts.
 #[tauri::command]
-async fn start_podman_machine(app: tauri::AppHandle) -> Result<(), AppError> {
+async fn start_podman_machine(
+    app: tauri::AppHandle,
+    machine: State<'_, Arc<dyn MachineManager>>,
+) -> Result<(), AppError> {
     activity::open(&app, "podman-startup", TaskKind::PodmanStartup, None);
 
     activity::progress(&app, "podman-startup", None, Some("Starting machine…".into()));
-    if backends::run_machine_start().await.is_err() {
+    if machine.run_machine_start().await.is_err() {
         // A bare retry first; only reset WSL if no other machine is running (a `wsl --shutdown`
         // would terminate mio-tests/mio-tests-remote mid-run).
-        if backends::check_other_machines_running().await {
+        if machine.check_other_machines_running().await {
             activity::progress(&app, "podman-startup", None, Some("Retrying…".into()));
         } else {
             activity::progress(&app, "podman-startup", None, Some("Retrying after WSL reset…".into()));
-            backends::run_wsl_shutdown().await.ok();
+            machine.run_wsl_shutdown().await.ok();
         }
-        if backends::run_machine_start().await.is_err() {
+        if machine.run_machine_start().await.is_err() {
             let err = "Failed to start Podman machine".to_string();
             activity::fail(&app, "podman-startup", err.clone());
             return Err(AppError::PodmanUnavailable(err));
@@ -369,10 +376,10 @@ async fn start_podman_machine(app: tauri::AppHandle) -> Result<(), AppError> {
     }
 
     activity::progress(&app, "podman-startup", None, Some("Activating Podman socket…".into()));
-    backends::activate_podman_socket().await.ok();
+    machine.activate_podman_socket().await.ok();
 
     activity::progress(&app, "podman-startup", None, Some("Waiting for socket…".into()));
-    if let Err(e) = backends::poll_ready(4).await {
+    if let Err(e) = machine.poll_ready(4).await {
         let err = format!("Podman socket did not become ready: {e}");
         activity::fail(&app, "podman-startup", err.clone());
         return Err(AppError::PodmanUnavailable(err));
@@ -875,6 +882,7 @@ pub fn run() {
 
     let backend = backends::default_backend();
     let runtime = runtime::default_runtime();
+    let machine = machine::default_machine_manager();
 
     let mut builder = tauri::Builder::default();
 
@@ -888,6 +896,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .manage(backend)
         .manage(runtime)
+        .manage(machine)
         .setup(|app| {
             // Constructed in setup because the sync engine needs the AppHandle to resolve the
             // bundled Mutagen sidecar.

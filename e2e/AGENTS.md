@@ -61,11 +61,12 @@ podman/mutagen-backed real impl. This mirrors the existing env-steering preceden
 `std::env::var(...)`, no caching.
 
 **The machine-lifecycle gap.** `check_podman_ready` / `start_podman_machine`
-(`src-tauri/src/lib.rs:336` and `:351`) do **not** go through `Arc<dyn SandboxBackend>` — they call
-free functions in `backends/mod.rs:599-692` directly (`machine_is_running`,
+(`src-tauri/src/lib.rs`) do **not** go through `Arc<dyn SandboxBackend>` — they receive an
+`Arc<dyn MachineManager>` (the global-machine trait: `machine_is_running`,
 `check_other_machines_running`, `run_machine_start`, `run_wsl_shutdown`, `activate_podman_socket`,
-`poll_ready`). These six free functions also check `MIO_MOCK_BACKEND=1` and short-circuit to a
-"ready"/no-op result, so the light `projects` flow gets past the start-machine gate without touching
+`poll_ready`). `default_machine_manager()` in `src-tauri/src/machine/mod.rs` picks the implementation
+once from `MIO_MOCK_BACKEND=1`: the `MockMachineManager` in `machine/mock.rs` returns a "ready"/no-op result
+for every method, so the light `projects` flow gets past the start-machine gate without touching
 WSL/podman. `start_podman_machine` still emits its `activity::open`/`activity::succeed` sequence so
 the UI's podman-startup activity card behaves the same.
 

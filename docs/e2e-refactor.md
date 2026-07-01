@@ -69,11 +69,13 @@ All Tauri command bodies (`lib.rs:217-446`) delegate to these, so a mock needs n
    events) gated by a new env var **`MIO_MOCK_BACKEND=1`** read inside the three `default_*()`
    functions. When set, return the mock; otherwise the real podman-backed impl. This mirrors the
    existing env-steering precedent (`PODMAN_CONNECTION`, `SANDBOX_WORKSPACE_ROOT`, `MIO_TEST_MODEL`).
-2. **Close the machine-lifecycle gap.** `check_podman_ready` / `start_podman_machine` (`lib.rs:336`)
-   call free functions in `backends/mod.rs:599-692` (`machine_is_running`, `run_machine_start`,
-   `activate_podman_socket`, …) that bypass the trait. Document the chosen seam: have these two
-   commands short-circuit to a "ready" result when `MIO_MOCK_BACKEND=1` (simplest), so the light
-   `projects` flow gets past the start-machine gate without touching WSL/podman.
+2. **Close the machine-lifecycle gap.** `check_podman_ready` / `start_podman_machine` in `lib.rs`
+   receive an `Arc<dyn MachineManager>` — the global-machine trait (`machine_is_running`,
+   `run_machine_start`, `activate_podman_socket`, …) separate from `SandboxBackend` because it drives
+   the whole default machine, not a single connection. `default_machine_manager()` in
+   `src-tauri/src/machine/mod.rs` picks the impl once from `MIO_MOCK_BACKEND=1`: the
+   `MockMachineManager` in `machine/mock.rs` returns a "ready"/no-op result for every method, so the
+   light `projects` flow gets past the start-machine gate without touching WSL/podman.
 3. **Wire the light suite in `wdio.conf.ts`:** add `suites.light = ["./test/specs/light/**/*.ts"]`;
    in `onPrepare`, **skip `provisionMachine`/`ensureMiseBaseImage`** when the run targets only the
    light suite, and set `MIO_MOCK_BACKEND=1` in the app's env (passed through `beforeSession`'s
