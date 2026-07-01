@@ -2,20 +2,7 @@
 // generic agent `catalogue.ts`. Consumed by `AgentManager.svelte`, which calls
 // `buildLocalLlmProvider` and passes the result to the `provision_opencode` Tauri command.
 import { MODELS } from "$lib/models/catalogue";
-
-/**
- * App-owned VM port the inference reverse-forward listens on. Containers reach the host inference
- * server at `http://host.containers.internal:51199/v1`. **Must equal** the Rust `INFERENCE_VM_PORT`
- * in `src-tauri/src/sync/mod.rs`.
- */
-export const INFERENCE_VM_PORT = 51199;
-
-/** Constant in-container base URL written into `opencode.json`. Stable across inference restarts
- * because the reverse forward absorbs the changing host port behind the fixed VM port. */
-export const LOCAL_LLM_BASE_URL = `http://host.containers.internal:${INFERENCE_VM_PORT}/v1`;
-
-/** Provider id of the custom OpenCode provider this app provisions. */
-export const LOCAL_LLM_PROVIDER_ID = "local-llm";
+import { LOCAL_LLM_BASE_URL, LOCAL_LLM_PROVIDER_ID } from "./local-llm";
 
 /** Catalogue id of the recommended default pick (matches `recommendModels`); the provider-id
  * prefix that forms OpenCode's `provider/model` default is added in `buildLocalLlmProvider`. */

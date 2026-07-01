@@ -55,7 +55,7 @@
   "projects_agent_reauth": "Erneut authentifizieren",
   "projects_agent_not_authed": "nicht authentifiziert",
   "projects_agent_provider_configured": "local-llm-Anbieter konfiguriert",
-  "projects_agent_start_model_hint": "Starte ein Modell, um OpenCode zu nutzen",
+  "projects_agent_start_model_hint": "Starte ein Modell, um diesen Agenten zu nutzen",
   "projects_agent_provisioning": "local-llm-Anbieter wird konfiguriert…",
   "podman_not_running": "Podman-Maschine läuft nicht",
   "podman_start_button": "Podman starten",

@@ -34,6 +34,16 @@ export const AGENTS: AgentDescriptor[] = [
     // No `auth`: OpenCode configures a provider instead of authenticating.
     provision: { kind: "opencode-provider", providerId: "local-llm", relativeConfigPath: "opencode.json" },
   },
+  {
+    id: "pi",
+    label: "Pi",
+    description: "Minimal terminal coding agent, pre-wired to your local LLM",
+    misePackages: ["pi"],
+    postInstallSteps: [],
+    // No `auth`: pi configures a provider instead of authenticating. The nested config path is
+    // redirected into the workspace via PI_CODING_AGENT_DIR (set by provision_pi in mise.toml).
+    provision: { kind: "pi-provider", providerId: "local-llm", relativeConfigPath: ".mio/pi-agent/models.json" },
+  },
 ];
 
 /** Extract the mise.toml key from a full package spec (strips the @version suffix). */

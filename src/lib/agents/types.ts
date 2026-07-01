@@ -21,9 +21,9 @@ export type AuthStrategy = ExecInteractiveAuth;
  * The concrete provider JSON and default model are generated at call time from the model
  * catalogue (see `buildLocalLlmProvider`), so the catalogue stays the single source of truth. */
 export interface ProviderProvisionConfig {
-  kind: "opencode-provider"; // discriminant for future provisioners
+  kind: "opencode-provider" | "pi-provider"; // discriminant selecting the provisioner
   providerId: string; // "local-llm"
-  relativeConfigPath: string; // "opencode.json" (relative to the workspace root)
+  relativeConfigPath: string; // config file relative to the workspace root (e.g. "opencode.json")
 }
 
 export interface AgentDescriptor {

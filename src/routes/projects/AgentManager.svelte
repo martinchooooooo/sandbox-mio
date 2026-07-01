@@ -6,6 +6,7 @@
     import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
     import { AGENTS, miseKey } from "$lib/agents/catalogue";
     import { buildLocalLlmProvider } from "$lib/agents/opencode";
+    import { buildPiLocalLlmProvider, PI_CONFIG_ENV, PI_CONFIG_DIR_CONTAINER } from "$lib/agents/pi";
     import type { AgentDescriptor, AgentInstallEvent, AgentAuthStatus } from "$lib/agents/types";
     import type { InferenceStatus } from "$lib/models/types";
     import type { createActionRunner } from "$lib/actions.svelte";
@@ -90,14 +91,26 @@
             });
             if (descriptor.provision) {
                 installLog = [...installLog, m.projects_agent_provisioning()];
-                const { providerId, providerJson, defaultModel } = buildLocalLlmProvider();
-                await invoke("provision_opencode", {
-                    workspacePath,
-                    relativePath: descriptor.provision.relativeConfigPath,
-                    providerId,
-                    providerJson,
-                    defaultModel,
-                });
+                if (descriptor.provision.kind === "pi-provider") {
+                    const { providerId, providerJson } = buildPiLocalLlmProvider();
+                    await invoke("provision_pi", {
+                        workspacePath,
+                        relativePath: descriptor.provision.relativeConfigPath,
+                        providerId,
+                        providerJson,
+                        configEnv: PI_CONFIG_ENV,
+                        configDirContainer: PI_CONFIG_DIR_CONTAINER,
+                    });
+                } else {
+                    const { providerId, providerJson, defaultModel } = buildLocalLlmProvider();
+                    await invoke("provision_opencode", {
+                        workspacePath,
+                        relativePath: descriptor.provision.relativeConfigPath,
+                        providerId,
+                        providerJson,
+                        defaultModel,
+                    });
+                }
                 installLog = [...installLog, `✓ ${m.projects_agent_provider_configured()}`];
             }
         });

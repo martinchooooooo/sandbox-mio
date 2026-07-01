@@ -524,6 +524,78 @@ async fn provision_opencode(
     Ok(())
 }
 
+/// Provision pi's `local-llm` provider host-side into the bind-mounted workspace, container-state
+/// independent (mirrors `provision_opencode`). Two writes: (1) merge `<workspace>/<relative_path>`
+/// (`models.json`) setting only `providers[provider_id]`, preserving other providers; (2) set
+/// `mise.toml [env] <config_env> = <config_dir_container>`, preserving `[tools]` and other `[env]`
+/// keys, so pi reads the redirected `models.json` from the bind-mounted workspace.
+#[tauri::command]
+async fn provision_pi(
+    workspace_path: String,
+    relative_path: String,            // ".mio/pi-agent/models.json"
+    provider_id: String,              // "local-llm"
+    provider_json: serde_json::Value, // the provider block from buildPiLocalLlmProvider()
+    config_env: String,               // "PI_CODING_AGENT_DIR"
+    config_dir_container: String,     // "/root/work/.mio/pi-agent"
+) -> Result<(), AppError> {
+    use crate::backends::types::BackendError;
+
+    // (1) models.json scoped merge. The config path is nested, so create its parent first.
+    let models_path = std::path::Path::new(&workspace_path).join(&relative_path);
+    if let Some(parent) = models_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            BackendError::CommandFailed(format!("failed to create {}: {e}", parent.to_string_lossy()))
+        })?;
+    }
+    let mut models = match std::fs::read_to_string(&models_path) {
+        Ok(s) if s.trim().is_empty() => serde_json::Map::new(),
+        Ok(s) => serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&s).map_err(|e| {
+            BackendError::CommandFailed(format!("failed to parse existing {}: {e}", models_path.to_string_lossy()))
+        })?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::Map::new(),
+        Err(e) => {
+            return Err(BackendError::CommandFailed(format!("failed to read {}: {e}", models_path.to_string_lossy())).into())
+        }
+    };
+    let providers = models
+        .entry("providers")
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    if let Some(map) = providers.as_object_mut() {
+        map.insert(provider_id, provider_json);
+    }
+    let pretty = serde_json::to_string_pretty(&models)
+        .map_err(|e| BackendError::CommandFailed(e.to_string()))?;
+    std::fs::write(&models_path, pretty).map_err(|e| {
+        BackendError::CommandFailed(format!("failed to write {}: {e}", models_path.to_string_lossy()))
+    })?;
+
+    // (2) mise.toml [env] redirect. `init` always writes the manifest before any agent install, so
+    // it normally exists; fall back to a bare `[tools]` manifest if not.
+    let manifest_path = std::path::Path::new(&workspace_path).join("mise.toml");
+    let manifest_src = match std::fs::read_to_string(&manifest_path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => "[tools]\n".to_string(),
+        Err(e) => {
+            return Err(BackendError::CommandFailed(format!("failed to read {}: {e}", manifest_path.to_string_lossy())).into())
+        }
+    };
+    let mut manifest: toml::Table = manifest_src
+        .parse()
+        .map_err(|e| BackendError::CommandFailed(format!("failed to parse {}: {e}", manifest_path.to_string_lossy())))?;
+    let env = manifest
+        .entry("env")
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+    if let Some(table) = env.as_table_mut() {
+        table.insert(config_env, toml::Value::String(config_dir_container));
+    }
+    let manifest_out = toml::to_string(&manifest)
+        .map_err(|e| BackendError::CommandFailed(e.to_string()))?;
+    std::fs::write(&manifest_path, manifest_out).map_err(|e| {
+        BackendError::CommandFailed(format!("failed to write {}: {e}", manifest_path.to_string_lossy()))
+    })?;
+    Ok(())
+}
+
 /// Spawn the agent auth command inside sandbox `name` with piped stdin/stdout.
 /// Returns a session ID that identifies the auth session for subsequent input/cancel calls.
 /// Emits `AgentAuthEvent` objects to the Tauri app-wide event `agent-auth-output-<session_id>`.
@@ -857,6 +929,7 @@ pub fn run() {
             list_registry,
             install_agent,
             provision_opencode,
+            provision_pi,
             start_agent_auth,
             send_agent_auth_input,
             cancel_agent_auth,
