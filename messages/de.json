@@ -87,6 +87,7 @@
   "models_title": "Lokale Modelle",
   "models_specs_title": "Dein Gerät",
   "models_detecting": "Gerät wird erkannt…",
+  "models_redetect": "Hardware erneut erkennen",
   "models_cpu_cores": "{cores} CPU-Kerne",
   "models_ram": "{free} GB frei von {total} GB RAM",
   "models_gpu": "GPU",

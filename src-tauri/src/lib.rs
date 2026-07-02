@@ -20,7 +20,9 @@ use crate::agents::types::AuthSessionMap;
 use crate::backends::types::{Sandbox, SandboxBackend};
 use crate::machine::types::MachineManager;
 use crate::error::AppError;
-use crate::inference::types::{ActiveServer, EngineKind, InferenceStatus, MachineSpecs, SetupStep};
+use crate::inference::types::{
+    ActiveServer, EngineKind, InferenceStatus, MachineSpecs, MachineSpecsCache, SetupStep,
+};
 use crate::runtime::types::RuntimeManager;
 use crate::settings::types::AppSettings;
 use crate::sync::types::{SessionInfo, SyncEngine, SyncStatus};
@@ -749,10 +751,24 @@ fn ephemeral_port() -> Result<u16, AppError> {
 }
 
 /// Probe host CPU/RAM/GPU/NPU and Foundry availability. Runs on the host, never the container VM.
+/// The static subset is served from `MachineSpecsCache` after the first call this app run.
 #[tauri::command]
-async fn detect_machine_specs(app: tauri::AppHandle) -> Result<MachineSpecs, AppError> {
-    // `detect_specs` shells out (PowerShell/winget on Windows); run it off the async runtime.
-    let specs = tauri::async_runtime::spawn_blocking(move || inference::detect_specs(&app))
+async fn detect_machine_specs(cache: State<'_, MachineSpecsCache>) -> Result<MachineSpecs, AppError> {
+    let cache = cache.inner().clone();
+    // `detect_specs` shells out (PowerShell/winget on Windows) on a cache miss; run it off the
+    // async runtime.
+    let specs = tauri::async_runtime::spawn_blocking(move || inference::detect_specs(&cache))
+        .await
+        .map_err(|e| inference::types::InferenceError::CommandFailed(e.to_string()))?;
+    Ok(specs)
+}
+
+/// Force a full re-probe (clearing `MachineSpecsCache`), e.g. after the user installs Foundry
+/// Local mid-session. Wired to the `/models` manual "re-detect hardware" button.
+#[tauri::command]
+async fn redetect_machine_specs(cache: State<'_, MachineSpecsCache>) -> Result<MachineSpecs, AppError> {
+    let cache = cache.inner().clone();
+    let specs = tauri::async_runtime::spawn_blocking(move || inference::redetect_specs(&cache))
         .await
         .map_err(|e| inference::types::InferenceError::CommandFailed(e.to_string()))?;
     Ok(specs)
@@ -984,6 +1000,7 @@ pub fn run() {
             app.manage(AuthSessionMap::default());
             app.manage(ActiveServer::default());
             app.manage(TaskRegistry::default());
+            app.manage(MachineSpecsCache::default());
             // The main window IS the workspace container (bare window + chrome child webviews),
             // so it is built here rather than declared in tauri.conf.json, which would give it a
             // webview of its own.
@@ -1032,6 +1049,7 @@ pub fn run() {
             cancel_agent_auth,
             get_agent_auth_status,
             detect_machine_specs,
+            redetect_machine_specs,
             download_model,
             list_tasks,
             downloaded_models,

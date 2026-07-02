@@ -87,6 +87,7 @@
   "models_title": "Local Models",
   "models_specs_title": "Your machine",
   "models_detecting": "Detecting your machine…",
+  "models_redetect": "Re-detect hardware",
   "models_cpu_cores": "{cores} CPU cores",
   "models_ram": "{free} GB free of {total} GB RAM",
   "models_gpu": "GPU",

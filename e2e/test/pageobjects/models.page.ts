@@ -31,6 +31,18 @@ class ModelsPage extends AppPage {
     return $("[data-chat]");
   }
 
+  // The manual "re-detect hardware" icon button in the specs section header. Only rendered once
+  // specs is non-null (see specsReady), so callers must open() first.
+  get redetectButton(): Element {
+    return $("[data-redetect]");
+  }
+
+  async redetect(): Promise<void> {
+    const btn = await this.redetectButton;
+    await btn.waitForClickable({ timeout: 10000 });
+    await btn.click();
+  }
+
   // The row for a catalogue/test model, keyed by its stable id (data-model-id).
   row(modelId: string): Element {
     return $(`[data-model-id='${modelId}']`);

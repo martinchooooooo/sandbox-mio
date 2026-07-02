@@ -13,7 +13,10 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager};
 use tokio::io::AsyncWriteExt;
 
-use types::{EngineKind, InferenceEngine, InferenceError, MachineSpecs, ModelDownloadEvent};
+use types::{
+    EngineKind, InferenceEngine, InferenceError, MachineSpecs, MachineSpecsCache,
+    ModelDownloadEvent, StaticMachineSpecs,
+};
 
 /// Construct the chosen engine. Both impls hold the `AppHandle` (llama to resolve its bundled
 /// resource dir, Foundry to satisfy a uniform constructor).
@@ -158,25 +161,63 @@ pub async fn download_gguf(
     Ok(())
 }
 
-/// Probe host CPU cores + RAM (`sysinfo`, cross-platform) and, on Windows, the GPU/NPU and
-/// Foundry availability. Run on the host, never the container VM (whose 2 GiB cap is misleading).
-pub fn detect_specs(_app: &AppHandle) -> MachineSpecs {
+/// Probe the hardware/OS-constant subset of `MachineSpecs`: CPU cores, and, on Windows, GPU/NPU
+/// and Foundry availability. This is the expensive half (four PowerShell/winget subprocess spawns
+/// on Windows), so callers cache the result across mounts via [`MachineSpecsCache`].
+fn probe_static() -> StaticMachineSpecs {
     use sysinfo::System;
     let mut sys = System::new();
-    sys.refresh_memory();
     sys.refresh_cpu_all();
     let cpu_cores = sys.physical_core_count().unwrap_or_else(|| sys.cpus().len());
 
-    MachineSpecs {
+    StaticMachineSpecs {
         cpu_cores,
-        total_ram_bytes: sys.total_memory(),
-        free_ram_bytes: sys.available_memory(),
         gpu_names: gpu_names(),
         has_npu: has_npu(),
         arch: std::env::consts::ARCH.to_string(),
         foundry_installed: foundry_installed(),
         foundry_installable: foundry_installable(),
     }
+}
+
+/// Probe host CPU/RAM/GPU/NPU and Foundry availability. Run on the host, never the container VM
+/// (whose 2 GiB cap is misleading). The static subset (`probe_static`) is served from `cache` on
+/// a hit; RAM is always re-read fresh via `sysinfo`, since it is the one field a user opening
+/// `/models` is actively checking.
+pub fn detect_specs(cache: &MachineSpecsCache) -> MachineSpecs {
+    let static_specs = {
+        let mut guard = cache.lock().unwrap();
+        match guard.as_ref() {
+            Some(s) => s.clone(),
+            None => {
+                let s = probe_static();
+                *guard = Some(s.clone());
+                s
+            }
+        }
+    };
+
+    use sysinfo::System;
+    let mut sys = System::new();
+    sys.refresh_memory();
+
+    MachineSpecs {
+        cpu_cores: static_specs.cpu_cores,
+        total_ram_bytes: sys.total_memory(),
+        free_ram_bytes: sys.available_memory(),
+        gpu_names: static_specs.gpu_names,
+        has_npu: static_specs.has_npu,
+        arch: static_specs.arch,
+        foundry_installed: static_specs.foundry_installed,
+        foundry_installable: static_specs.foundry_installable,
+    }
+}
+
+/// Clear the cached static probe and force a full re-probe, e.g. after the user installs
+/// Foundry Local mid-session and clicks the manual "re-detect hardware" affordance.
+pub fn redetect_specs(cache: &MachineSpecsCache) -> MachineSpecs {
+    *cache.lock().unwrap() = None;
+    detect_specs(cache)
 }
 
 #[cfg(windows)]

@@ -87,6 +87,7 @@
   "models_title": "Локальные модели",
   "models_specs_title": "Ваш компьютер",
   "models_detecting": "Определение характеристик…",
+  "models_redetect": "Определить оборудование заново",
   "models_cpu_cores": "{cores} ядер ЦП",
   "models_ram": "{free} ГБ свободно из {total} ГБ ОЗУ",
   "models_gpu": "Видеокарта",

@@ -4,6 +4,8 @@
     import { invoke, Channel } from "@tauri-apps/api/core";
     import { onMount } from "svelte";
     import { slide } from "svelte/transition";
+    import { HugeiconsIcon } from "@hugeicons/svelte";
+    import { LoaderPinwheelIcon, RefreshIcon } from "@hugeicons/core-free-icons";
     import { m } from "$lib/paraglide/messages.js";
     import { createActionRunner } from "$lib/actions.svelte";
     import RuntimeSteps from "$lib/models/RuntimeSteps.svelte";
@@ -88,6 +90,13 @@
 
     async function refreshStatus() {
         status = await invoke<InferenceStatus>("inference_status");
+    }
+
+    async function redetectSpecs() {
+        await action.run("redetect", async () => {
+            specs = await invoke<MachineSpecs>("redetect_machine_specs");
+            ranked = recommendModels(specs);
+        });
     }
 
     async function downloadModel(model: ModelDescriptor) {
@@ -219,7 +228,23 @@
 
     <!-- Step 1: probed host specs -->
     <section class="border rounded-lg p-4 mb-6" data-specs>
-        <h2 class="text-sm font-medium mb-2">{m.models_specs_title()}</h2>
+        <div class="flex items-center justify-between mb-2">
+            <h2 class="text-sm font-medium">{m.models_specs_title()}</h2>
+            {#if specs}
+                <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    data-redetect
+                    loading={action.busy === "redetect"}
+                    disabled={action.busy !== null}
+                    onclick={redetectSpecs}
+                    title={m.models_redetect()}
+                    aria-label={m.models_redetect()}
+                >
+                    <HugeiconsIcon icon={RefreshIcon} class="size-3.5" />
+                </Button>
+            {/if}
+        </div>
         {#if specs}
             <ul class="text-sm text-muted-foreground space-y-0.5" data-specs-ready>
                 <li>{m.models_cpu_cores({ cores: specs.cpuCores })}</li>
@@ -231,7 +256,10 @@
                 </li>
             </ul>
         {:else}
-            <p class="text-sm text-muted-foreground">{m.models_detecting()}</p>
+            <div role="status" aria-live="polite" class="flex items-center gap-1.5 text-sm text-muted-foreground">
+                <HugeiconsIcon icon={LoaderPinwheelIcon} class="animate-spin size-3.5" />
+                <span>{m.models_detecting()}</span>
+            </div>
         {/if}
     </section>
 

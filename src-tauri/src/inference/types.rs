@@ -166,3 +166,20 @@ pub trait InferenceEngine: Send + Sync {
 
 /// The single app-wide inference server, enforcing the one-model-at-a-time decision.
 pub type ActiveServer = std::sync::Arc<tokio::sync::Mutex<Option<ServerHandle>>>;
+
+/// App-lifetime cache of the "static" (hardware/OS-constant) subset of [`MachineSpecs`], so
+/// repeat `/models` mounts skip the PowerShell/winget subprocess spawns. Never persisted to disk;
+/// cleared only by process restart or an explicit re-detect. `std::sync::Mutex` is correct (not
+/// `tokio::sync::Mutex`) because it is only ever locked inside `spawn_blocking` closures.
+pub type MachineSpecsCache = std::sync::Arc<std::sync::Mutex<Option<StaticMachineSpecs>>>;
+
+/// The subset of [`MachineSpecs`] that does not change within a single app run.
+#[derive(Clone)]
+pub struct StaticMachineSpecs {
+    pub cpu_cores: usize,
+    pub gpu_names: Vec<String>,
+    pub has_npu: bool,
+    pub arch: String,
+    pub foundry_installed: bool,
+    pub foundry_installable: bool,
+}
