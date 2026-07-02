@@ -98,11 +98,8 @@ export function startPodmanSocket(machineName: string): void {
 
 // Bring a podman machine up and ready: init if missing, start if stopped, activate the rootless
 // API socket (launch-and-poll, retried because the socket sometimes fails to bind first try on
-// the WSL image), then pre-pull the requested images. Idempotent — safe to call every run.
-export function provisionMachine(
-  machineName: string,
-  { pullImages = ["docker.io/library/alpine:latest"] }: { pullImages?: string[] } = {}
-): void {
+// the WSL image). Idempotent — safe to call every run.
+export function provisionMachine(machineName: string): void {
   const listResult = spawnSync("podman", ["machine", "list", "--format", "json"], {
     encoding: "utf8",
     shell: true,
@@ -149,14 +146,6 @@ export function provisionMachine(
   }
   if (!ready) {
     throw new Error(`Podman connection "${machineName}" did not become ready after ${SOCKET_ATTEMPTS} attempts`);
-  }
-
-  for (const image of pullImages) {
-    console.log(`Ensuring ${image} is available on "${machineName}"...`);
-    spawnSync("podman", ["machine", "ssh", machineName, `podman pull ${image}`], {
-      stdio: "inherit",
-      shell: true,
-    });
   }
 }
 
