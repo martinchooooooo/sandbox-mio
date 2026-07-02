@@ -4,6 +4,7 @@ use crate::inference::types::InferenceError;
 use crate::runtime::types::RuntimeError;
 use crate::settings::types::SettingsError;
 use crate::sync::types::SyncError;
+use crate::workspace::types::WorkspaceError;
 
 /// Top-level error type for all Tauri commands. This is the only error type that crosses the
 /// IPC boundary
@@ -24,6 +25,8 @@ pub enum AppError {
     Inference(#[from] InferenceError),
     #[error(transparent)]
     Settings(#[from] SettingsError),
+    #[error(transparent)]
+    Workspace(#[from] WorkspaceError),
     /// The requested sandbox has no active sync session — it has not been deployed.
     #[error("sandbox {0:?} is not deployed")]
     NotDeployed(String),
@@ -47,6 +50,7 @@ impl AppError {
             AppError::Agent(_) => "Agent",
             AppError::Inference(_) => "Inference",
             AppError::Settings(_) => "Settings",
+            AppError::Workspace(_) => "Workspace",
             AppError::NotDeployed(_) => "NotDeployed",
             AppError::UnsyncedChanges { .. } => "UnsyncedChanges",
             AppError::PodmanUnavailable(_) => "PodmanUnavailable",

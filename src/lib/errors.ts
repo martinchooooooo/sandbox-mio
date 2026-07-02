@@ -6,6 +6,7 @@ export type AppErrorKind =
     | "Agent"
     | "Inference"
     | "Settings"
+    | "Workspace"
     | "NotDeployed"
     | "UnsyncedChanges"
     | "PodmanUnavailable";

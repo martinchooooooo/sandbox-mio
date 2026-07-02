@@ -32,6 +32,10 @@ export default class ProjectRow {
     return this.root.$("button=terminal");
   }
 
+  get workspaceButton(): Element {
+    return this.root.$("button=workspace");
+  }
+
   get deployButton(): Element {
     return this.root.$("button=deploy");
   }
@@ -103,6 +107,13 @@ export default class ProjectRow {
   // command's side effects (token file, server online, published port serving HTTP 200) instead.
   async openTerminal(): Promise<void> {
     await this.#clickButton(this.terminalButton);
+  }
+
+  // Clicks the "workspace" button, invoking open_workspace. The embedded terminal renders inside
+  // the main window's child webviews (docs/features/embedded-windows/02_dev.md), which
+  // tauri-driver cannot drive; specs read state back via workspace_state (e2e/lib/workspace.ts).
+  async openWorkspace(): Promise<void> {
+    await this.#clickButton(this.workspaceButton);
   }
 
   async waitForRunning(timeout = 10000): Promise<void> {

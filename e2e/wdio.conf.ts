@@ -202,6 +202,19 @@ export const config: WebdriverIO.Config = {
       }
     });
   },
+  // The main window is a multi-webview container (docs/features/embedded-windows/02_dev.md):
+  // the app UI lives in the `main-global` child webview, next to the `main-switcher` tab bar
+  // (and, once opened, per-sandbox terminal webviews). Each webview is a WebDriver window
+  // handle and the session may attach to any of them, so pin the session to the app UI handle —
+  // the one whose page is neither the /workspace/* chrome nor a remote terminal origin.
+  before: async () => {
+    for (const handle of await browser.getWindowHandles()) {
+      await browser.switchToWindow(handle);
+      const pagePath = await browser.execute(() => window.location.pathname);
+      if (!pagePath.startsWith("/workspace")) return;
+    }
+    throw new Error("[e2e] no app webview found among the window handles");
+  },
   afterTest(_test, _context, result) {
     if (!result.passed && result.error) {
       const err = result.error as Error & { stack?: string };

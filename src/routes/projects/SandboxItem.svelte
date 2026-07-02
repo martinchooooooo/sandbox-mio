@@ -136,7 +136,18 @@
         }, { message: m.projects_status_opening_terminal() });
     }
 
+    // Primary action: the embedded multi-webview workspace. `openTerminal` above stays as the
+    // standalone-window fallback (Resolved Decision 7 in docs/features/embedded-windows/02_dev.md).
     async function openWorkspace() {
+        await action.run("workspace", async () => {
+            await invoke("open_workspace", {
+                name: project.name,
+                workspacePath: project.workspace_path,
+            });
+        }, { message: m.projects_status_opening_workspace() });
+    }
+
+    async function openFolder() {
         await action.run("folder", () => revealItemInDir(project.workspace_path));
     }
 
@@ -173,7 +184,7 @@
             {/if}
         </span>
         <span class="flex items-center gap-2 shrink-0">
-            <Button variant="ghost" size="sm" onclick={openWorkspace} title={project.workspace_path}
+            <Button variant="ghost" size="sm" onclick={openFolder} title={project.workspace_path}
                 loading={action.busy === "folder"} disabled={action.busy !== null}>
                 {m.projects_folder()}
             </Button>
@@ -182,6 +193,10 @@
                     <Switch checked={syncOn} onCheckedChange={toggleSync} disabled={action.busy !== null} />
                     {m.projects_sync()}
                 </label>
+                <Button variant="ghost" size="sm" onclick={openWorkspace}
+                    loading={action.busy === "workspace"} disabled={action.busy !== null}>
+                    {m.projects_workspace()}
+                </Button>
                 <Button variant="ghost" size="sm" onclick={openTerminal}
                     loading={action.busy === "terminal"} disabled={action.busy !== null}>
                     {m.projects_terminal()}
@@ -202,6 +217,10 @@
                         {m.projects_start()}
                     </Button>
                 {/if}
+                <Button variant="ghost" size="sm" onclick={openWorkspace}
+                    loading={action.busy === "workspace"} disabled={action.busy !== null}>
+                    {m.projects_workspace()}
+                </Button>
                 <Button variant="ghost" size="sm" onclick={openTerminal}
                     loading={action.busy === "terminal"} disabled={action.busy !== null}>
                     {m.projects_terminal()}

@@ -8,6 +8,7 @@ mod runtime;
 mod settings;
 mod ssh;
 mod sync;
+mod workspace;
 
 use std::sync::{Arc, Mutex};
 
@@ -23,10 +24,11 @@ use crate::inference::types::{ActiveServer, EngineKind, InferenceStatus, Machine
 use crate::runtime::types::RuntimeManager;
 use crate::settings::types::AppSettings;
 use crate::sync::types::{SessionInfo, SyncEngine, SyncStatus};
+use crate::workspace::types::{TerminalPane, WorkspaceRegistry, WorkspaceState};
 
 /// Maps sandbox name → the Windows-host loopback port of its active Mutagen forwarding session.
 /// Held in Tauri state so undeploy/destroy can terminate the session and reclaim the port.
-type ForwardPortMap = Arc<Mutex<std::collections::HashMap<String, u16>>>;
+pub(crate) type ForwardPortMap = Arc<Mutex<std::collections::HashMap<String, u16>>>;
 
 /// Name of the single app-wide reverse forward bridging container netns to the host inference
 /// server. Created in `start_inference`, torn down in `stop_inference` and on app exit.
@@ -94,11 +96,99 @@ async fn uninstall_package(
     Ok(runtime.uninstall(&name, &package).await?)
 }
 
-/// Open the in-app web terminal for sandbox `name`. Works for both local and deployed sandboxes:
-/// starts the zellij web server over the appropriate Podman connection, mints a one-time token,
-/// creates a Mutagen forwarding session from a Windows-host loopback port to the container's
-/// published zellij port, and opens a dedicated WebviewWindow with an initialization script that
-/// auto-logs in via POST /command/login (sets a 30-day cookie) so no manual paste is needed.
+/// Prepare everything a webview needs to show sandbox `name`'s terminal, shared by the standalone
+/// `open_terminal` window and the embedded `open_workspace` pane (the shared helper is also the
+/// code-level fallback path: reverting to standalone windows is one call site — Resolved
+/// Decision 7 in docs/features/embedded-windows/02_dev.md). Works for both local and deployed
+/// sandboxes: starts the zellij web server over the appropriate Podman connection, mints a
+/// one-time token, creates a Mutagen forwarding session from a Windows-host loopback port to the
+/// container's published zellij port, and builds an initialization script that auto-logs in via
+/// POST /command/login (sets a 30-day cookie) so no manual paste is needed.
+async fn prepare_terminal_webview(
+    name: &str,
+    workspace_path: &str,
+    runtime: &Arc<dyn RuntimeManager>,
+    engine: &Arc<dyn SyncEngine>,
+    forward_ports: &ForwardPortMap,
+    app: &tauri::AppHandle,
+) -> Result<TerminalPane, AppError> {
+    // A sync session named after the sandbox means it is deployed to a remote host; use that
+    // host's connection alias. Otherwise fall back to the local machine's default connection.
+    let connection = engine
+        .sessions()
+        .await?
+        .into_iter()
+        .find(|s| s.name == name)
+        .map(|s| s.host)
+        .unwrap_or_else(|| runtime.local_connection().to_string());
+
+    // Refresh the SSH alias for this connection so Mutagen can resolve it. Read fresh every
+    // time: the local machine's SSH port changes on each boot.
+    crate::backends::ensure_connection_alias(&connection).await?;
+
+    let (token, container_port) = runtime.prepare_terminal(name, &connection, workspace_path).await?;
+
+    // Allocate an ephemeral Windows-side port by binding and immediately releasing it before
+    // Mutagen binds it. The race window is negligible on loopback.
+    let windows_port = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")
+            .map_err(|e| crate::runtime::types::RuntimeError::TerminalUnavailable(e.to_string()))?;
+        listener
+            .local_addr()
+            .map_err(|e| crate::runtime::types::RuntimeError::TerminalUnavailable(e.to_string()))?
+            .port()
+    };
+
+    let forward_name = format!("terminal-{name}");
+    let url = format!("http://127.0.0.1:{windows_port}/");
+    sync::forward_create(app, &forward_name, windows_port, &connection, container_port)
+        .await
+        .map_err(|e| crate::runtime::types::RuntimeError::TerminalUnavailable(e.to_string()))?;
+    forward_ports.lock().unwrap().insert(name.to_string(), windows_port);
+
+    // Persist token + URL host-side (docs/techdebt.md workaround). Writing host-side avoids
+    // shell-escaping JSON through `podman exec`; the workspace is bind-mounted into the container
+    // at /root/work/.mio/. Written after forward_create so the URL is the live Mutagen port.
+    let mio_dir = std::path::Path::new(workspace_path).join(".mio");
+    std::fs::create_dir_all(&mio_dir)
+        .and_then(|_| {
+            let json = serde_json::json!({ "token": &token, "url": &url });
+            std::fs::write(mio_dir.join("zellij.json"), json.to_string())
+        })
+        .map_err(|e| {
+            crate::runtime::types::RuntimeError::TerminalUnavailable(format!(
+                "failed to write session to {}: {e}",
+                mio_dir.join("zellij.json").to_string_lossy()
+            ))
+        })?;
+
+    // The webview creation stays on the Rust side because WindowConfig (used by the
+    // create_webview_window IPC command) has deny_unknown_fields, so initialization_script cannot
+    // be passed from JS. The script POSTs /command/login to set a 30-day session cookie,
+    // eliminating manual paste.
+    // See: https://github.com/zellij-org/zellij/issues/5194#issuecomment-4516799423
+    let token_json = serde_json::to_string(&token)
+        .map_err(|e| crate::runtime::types::RuntimeError::TerminalUnavailable(e.to_string()))?;
+    let init_script = format!(
+        r#"(async () => {{
+    try {{
+        const r = await fetch('/command/login', {{
+            method: 'POST',
+            headers: {{ 'Content-Type': 'application/json' }},
+            body: JSON.stringify({{ auth_token: {token_json}, remember_me: true }})
+        }});
+        if (r.ok && location.pathname.startsWith('/auth')) location.replace('/');
+    }} catch (_) {{}}
+}})();"#
+    );
+    let parsed_url = url
+        .parse::<tauri::Url>()
+        .map_err(|e| crate::runtime::types::RuntimeError::TerminalUnavailable(e.to_string()))?;
+    Ok(TerminalPane { url: parsed_url, init_script, forward_name })
+}
+
+/// Open the standalone web-terminal window for sandbox `name`. Kept as the code-level fallback to
+/// the embedded workspace (Resolved Decision 7): both paths share `prepare_terminal_webview`.
 #[tauri::command]
 async fn open_terminal(
     name: String,
@@ -118,85 +208,67 @@ async fn open_terminal(
         return Ok(());
     }
 
-    // A sync session named after the sandbox means it is deployed to a remote host; use that
-    // host's connection alias. Otherwise fall back to the local machine's default connection.
-    let connection = engine
-        .sessions()
-        .await?
-        .into_iter()
-        .find(|s| s.name == name)
-        .map(|s| s.host)
-        .unwrap_or_else(|| runtime.local_connection().to_string());
-
-    // Refresh the SSH alias for this connection so Mutagen can resolve it. Read fresh every
-    // time: the local machine's SSH port changes on each boot.
-    crate::backends::ensure_connection_alias(&connection).await?;
-
-    let (token, container_port) = runtime.prepare_terminal(&name, &connection, &workspace_path).await?;
-
-    // Allocate an ephemeral Windows-side port by binding and immediately releasing it before
-    // Mutagen binds it. The race window is negligible on loopback.
-    let windows_port = {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0")
-            .map_err(|e| crate::runtime::types::RuntimeError::TerminalUnavailable(e.to_string()))?;
-        listener
-            .local_addr()
-            .map_err(|e| crate::runtime::types::RuntimeError::TerminalUnavailable(e.to_string()))?
-            .port()
-    };
-
-    let forward_name = format!("terminal-{name}");
-    let url = format!("http://127.0.0.1:{windows_port}/");
-    sync::forward_create(&app, &forward_name, windows_port, &connection, container_port)
-        .await
-        .map_err(|e| crate::runtime::types::RuntimeError::TerminalUnavailable(e.to_string()))?;
-    forward_ports.lock().unwrap().insert(name.clone(), windows_port);
-
-    // Persist token + URL host-side (docs/techdebt.md workaround). Writing host-side avoids
-    // shell-escaping JSON through `podman exec`; the workspace is bind-mounted into the container
-    // at /root/work/.mio/. Written after forward_create so the URL is the live Mutagen port.
-    let mio_dir = std::path::Path::new(&workspace_path).join(".mio");
-    std::fs::create_dir_all(&mio_dir)
-        .and_then(|_| {
-            let json = serde_json::json!({ "token": &token, "url": &url });
-            std::fs::write(mio_dir.join("zellij.json"), json.to_string())
-        })
-        .map_err(|e| {
-            crate::runtime::types::RuntimeError::TerminalUnavailable(format!(
-                "failed to write session to {}: {e}",
-                mio_dir.join("zellij.json").to_string_lossy()
-            ))
-        })?;
-
-    // WindowConfig (used by the create_webview_window IPC command) has deny_unknown_fields, so
-    // initialization_script cannot be passed from the JS side. Create the window from Rust instead,
-    // where WebviewWindowBuilder::initialization_script() is available as a typed builder method.
-    // The script POSTs /command/login to set a 30-day session cookie, eliminating manual paste.
-    // See: https://github.com/zellij-org/zellij/issues/5194#issuecomment-4516799423
-    let token_json = serde_json::to_string(&token)
-        .map_err(|e| crate::runtime::types::RuntimeError::TerminalUnavailable(e.to_string()))?;
-    let init_script = format!(
-        r#"(async () => {{
-    try {{
-        const r = await fetch('/command/login', {{
-            method: 'POST',
-            headers: {{ 'Content-Type': 'application/json' }},
-            body: JSON.stringify({{ auth_token: {token_json}, remember_me: true }})
-        }});
-        if (r.ok && location.pathname.startsWith('/auth')) location.replace('/');
-    }} catch (_) {{}}
-}})();"#
-    );
-    let parsed_url = url
-        .parse::<tauri::Url>()
-        .map_err(|e| crate::runtime::types::RuntimeError::TerminalUnavailable(e.to_string()))?;
-    tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::External(parsed_url))
+    let pane =
+        prepare_terminal_webview(&name, &workspace_path, &runtime, &engine, &forward_ports, &app)
+            .await?;
+    tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::External(pane.url))
         .title(format!("{name} — terminal"))
-        .initialization_script(&init_script)
+        .initialization_script(&pane.init_script)
         .build()
         .map_err(|e| crate::runtime::types::RuntimeError::TerminalUnavailable(e.to_string()))?;
 
     Ok(())
+}
+
+/// Embed sandbox `name`'s terminal as a tab in the main workspace window's content area. Second
+/// click on an already-embedded sandbox switches to its tab instead of re-preparing the terminal.
+#[tauri::command]
+async fn open_workspace(
+    name: String,
+    workspace_path: String,
+    runtime: State<'_, Arc<dyn RuntimeManager>>,
+    engine: State<'_, Arc<dyn SyncEngine>>,
+    forward_ports: State<'_, ForwardPortMap>,
+    workspaces: State<'_, WorkspaceRegistry>,
+    app: tauri::AppHandle,
+) -> Result<(), AppError> {
+    let exists = workspaces.lock().unwrap().apps.iter().any(|p| p.sandbox == name);
+    if exists {
+        workspace::switch_app(&app, &name)?;
+        return Ok(());
+    }
+
+    let pane =
+        prepare_terminal_webview(&name, &workspace_path, &runtime, &engine, &forward_ports, &app)
+            .await?;
+    workspace::embed_terminal(&app, &name, pane)?;
+    Ok(())
+}
+
+/// Bring sandbox `name`'s embedded tab to the front (switcher tab click).
+#[tauri::command]
+fn switch_app(name: String, app: tauri::AppHandle) -> Result<(), AppError> {
+    Ok(workspace::switch_app(&app, &name)?)
+}
+
+/// Collapse or expand the main window's global panel between `GLOBAL_EXPANDED_W` and the thin rail.
+#[tauri::command]
+fn set_panel_collapsed(collapsed: bool, app: tauri::AppHandle) -> Result<(), AppError> {
+    Ok(workspace::set_collapsed(&app, collapsed)?)
+}
+
+/// Close sandbox `name`'s embedded pane and reclaim its forward. No-op if none is open.
+#[tauri::command]
+async fn close_workspace(name: String, app: tauri::AppHandle) -> Result<(), AppError> {
+    workspace::close_app(&app, &name).await;
+    Ok(())
+}
+
+/// Read-back of the main workspace state (panes, active tab, collapse flag, last-applied logical
+/// rects). Backs the chrome webviews and the e2e introspection seam; infallible like `list_tasks`.
+#[tauri::command]
+fn workspace_state(workspaces: State<'_, WorkspaceRegistry>) -> WorkspaceState {
+    workspaces.lock().unwrap().clone()
 }
 
 #[tauri::command]
@@ -266,6 +338,9 @@ async fn undeploy_sandbox(
         .into_iter()
         .find(|s| s.name == name)
         .ok_or_else(|| AppError::NotDeployed(name.clone()))?;
+    // Close the embedded workspace pane (tab + its forward) before the sync session closes its
+    // SSH channel, so no orphaned pane or forward survives the undeploy.
+    workspace::close_app(&app, &name).await;
     // Tear down any active forwarding session before the sync session closes its SSH channel.
     sync::forward_terminate(&app, &format!("terminal-{name}")).await;
     forward_ports.lock().unwrap().remove(&name);
@@ -301,7 +376,9 @@ async fn destroy_sandbox(
         .into_iter()
         .find(|s| s.name == name);
     let Some(session) = session else {
-        // Still clean up any forwarding session from a local terminal.
+        // Still close any embedded workspace pane and clean up any forwarding session from a
+        // local terminal.
+        workspace::close_app(&app, &name).await;
         sync::forward_terminate(&app, &format!("terminal-{name}")).await;
         forward_ports.lock().unwrap().remove(&name);
         return Ok(store.destroy(&name).await?);
@@ -315,6 +392,7 @@ async fn destroy_sandbox(
             host: session.host.clone(),
         });
     }
+    workspace::close_app(&app, &name).await;
     sync::forward_terminate(&app, &format!("terminal-{name}")).await;
     forward_ports.lock().unwrap().remove(&name);
     engine.terminate(&name).await?;
@@ -902,9 +980,14 @@ pub fn run() {
             // bundled Mutagen sidecar.
             app.manage(sync::default_sync_engine(app.handle().clone()));
             app.manage(ForwardPortMap::default());
+            app.manage(WorkspaceRegistry::default());
             app.manage(AuthSessionMap::default());
             app.manage(ActiveServer::default());
             app.manage(TaskRegistry::default());
+            // The main window IS the workspace container (bare window + chrome child webviews),
+            // so it is built here rather than declared in tauri.conf.json, which would give it a
+            // webview of its own.
+            workspace::create_main_window(app.handle())?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -917,6 +1000,11 @@ pub fn run() {
             install_package,
             uninstall_package,
             open_terminal,
+            open_workspace,
+            switch_app,
+            set_panel_collapsed,
+            close_workspace,
+            workspace_state,
             list_packages,
             list_sandboxes,
             start_sandbox,
