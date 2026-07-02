@@ -4,6 +4,7 @@ import path from "path";
 
 import ProjectsPage from "../../pageobjects/projects.page.js";
 import ProjectRow from "../../pageobjects/project-row.component.js";
+import workspaceDashboard from "../../pageobjects/workspace-dashboard.page.js";
 import { podman, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
 
 const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
@@ -25,6 +26,12 @@ describe("Package autocomplete", function () {
     podman(LOCAL_CONNECTION, ["rm", "-f", projectName], { check: false });
   });
 
+  // Safety net: if a test above throws while still attached to the dashboard webview, later
+  // tests must not inherit that attachment — the global `before` hook only pins the session once.
+  afterEach(async () => {
+    await workspaceDashboard.switchToAppWebview().catch(() => {});
+  });
+
   afterEach(async function () {
     if (this.currentTest?.state !== "failed") return;
     const diag = path.join(process.cwd(), ".diag");
@@ -41,19 +48,24 @@ describe("Package autocomplete", function () {
     }
   });
 
-  it("creates a project", async () => {
+  it("creates a project and opens its workspace's dashboard pane", async () => {
     await ProjectsPage.open();
     await ProjectsPage.createProject(projectName);
     await expect(row.root).toBeDisplayed();
+
+    // Package management now requires a workspace to be open (Resolved Decision 3,
+    // docs/features/responsive-panel/02_dev.md) — there is no inline fallback in the row anymore.
+    await row.openWorkspace();
+    await workspaceDashboard.switchToDashboard(projectName);
   });
 
   it("shows suggestions after typing a search prefix", async () => {
     // Focus triggers ensureRegistry → invoke("list_registry") → mise registry --json in the container.
-    await row.typeInPackageInput(PKG);
+    await workspaceDashboard.typeInPackageInput(PKG);
 
     // Allow up to 60 s for the registry fetch: mise registry --json starts the container if needed.
     await browser.waitUntil(
-      async () => (await row.visibleSuggestions()).length > 0,
+      async () => (await workspaceDashboard.visibleSuggestions()).length > 0,
       {
         timeout: 60000,
         interval: 1000,
@@ -65,8 +77,8 @@ describe("Package autocomplete", function () {
     );
 
     assert(
-      (await row.visibleSuggestions()).includes(PKG),
-      `"${PKG}" was not among the visible suggestions. Got: ${(await row.visibleSuggestions()).join(", ")}. ` +
+      (await workspaceDashboard.visibleSuggestions()).includes(PKG),
+      `"${PKG}" was not among the visible suggestions. Got: ${(await workspaceDashboard.visibleSuggestions()).join(", ")}. ` +
         "This can happen when the client-side substring filter dropped the entry or list_registry returned an empty list."
     );
   });
@@ -74,7 +86,7 @@ describe("Package autocomplete", function () {
   it("shows a description for the jq suggestion", async () => {
     // A non-empty description proves mise registry --json (not the plain-text format) was used,
     // and that the description field survived the Rust→frontend serialisation round trip.
-    const desc = await row.suggestionDescription(PKG);
+    const desc = await workspaceDashboard.suggestionDescription(PKG);
     assert(
       desc.length > 0,
       `The "${PKG}" suggestion has no description text. ` +
@@ -86,11 +98,11 @@ describe("Package autocomplete", function () {
   it("populates the input when a suggestion is selected", async () => {
     // The onmousedown handler on each suggestion button calls e.preventDefault(), which prevents
     // the blur event from stealing focus away from the input before the handler sets packageInput.
-    await row.selectSuggestion(PKG);
+    await workspaceDashboard.selectSuggestion(PKG);
 
     // Poll briefly: Svelte's reactive binding may need one tick to flush the DOM value attribute.
     await browser.waitUntil(
-      async () => (await row.packageInputValue()) === PKG,
+      async () => (await workspaceDashboard.packageInputValue()) === PKG,
       {
         timeout: 2000,
         interval: 100,
@@ -101,7 +113,7 @@ describe("Package autocomplete", function () {
     );
 
     assert.strictEqual(
-      await row.packageInputValue(),
+      await workspaceDashboard.packageInputValue(),
       PKG,
       `Expected package input to contain "${PKG}" after suggestion selection.`
     );
@@ -110,11 +122,11 @@ describe("Package autocomplete", function () {
   it("installs successfully after autocomplete selection", async () => {
     // The input already contains PKG from the previous step; installPackage calls setValue(PKG)
     // (idempotent) then clicks Install and waits for the package chip to appear.
-    await row.installPackage(PKG);
+    await workspaceDashboard.installPackage(PKG);
 
     assert(
-      (await row.installedPackages()).includes(PKG),
-      `"${PKG}" chip did not appear in the row after install. ` +
+      (await workspaceDashboard.installedPackages()).includes(PKG),
+      `"${PKG}" chip did not appear in the dashboard pane after install. ` +
         "This can happen when install_package errored or list_packages did not re-read mise.toml."
     );
 
@@ -126,5 +138,7 @@ describe("Package autocomplete", function () {
         `mise.toml does not list "${PKG}" after install via autocomplete. Contents:\n${manifest}`
       );
     }
+
+    await workspaceDashboard.switchToAppWebview();
   });
 });

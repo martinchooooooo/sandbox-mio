@@ -4,6 +4,7 @@ import path from "path";
 
 import ProjectsPage from "../../pageobjects/projects.page.js";
 import ProjectRow from "../../pageobjects/project-row.component.js";
+import workspaceDashboard from "../../pageobjects/workspace-dashboard.page.js";
 import { podman, podmanOk, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
 
 const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
@@ -37,6 +38,13 @@ describe("Agent setup — Claude Code", function () {
     podman(LOCAL_CONNECTION, ["rm", "-f", projectName], { check: false });
   });
 
+  // Safety net: if a test above throws while still attached to the dashboard webview (an
+  // assertion failure between switchToDashboard and switchToAppWebview), later tests must not
+  // inherit that attachment — the global `before` hook only pins the session once per session.
+  afterEach(async () => {
+    await workspaceDashboard.switchToAppWebview().catch(() => {});
+  });
+
   afterEach(async function () {
     if (this.currentTest?.state !== "failed") return;
     const diag = path.join(process.cwd(), ".diag");
@@ -53,7 +61,7 @@ describe("Agent setup — Claude Code", function () {
     }
   });
 
-  it("creates a project with an Agents section showing no agents", async () => {
+  it("creates a project, opens its workspace, and shows an Agents section with no agents in the dashboard pane", async () => {
     await ProjectsPage.open();
     await ProjectsPage.createProject(projectName, { timeout: 600000 });
 
@@ -63,18 +71,25 @@ describe("Agent setup — Claude Code", function () {
       timeoutMsg: `mise manifest ${manifestPath} did not appear after create`,
     });
 
-    const noAgents = await row.root.$("span=No agents installed.");
-    await noAgents.waitForExist({
+    // Package/agent management now requires a workspace to be open (Resolved Decision 3,
+    // docs/features/responsive-panel/02_dev.md) — there is no inline fallback in the row anymore.
+    await row.openWorkspace();
+    await workspaceDashboard.switchToDashboard(projectName);
+
+    await workspaceDashboard.noAgentsText.waitForExist({
       timeout: 5000,
-      timeoutMsg: "Agents section with 'No agents installed.' did not appear",
+      timeoutMsg: "Agents section with 'No agents installed.' did not appear in the dashboard pane",
     });
+
+    await workspaceDashboard.switchToAppWebview();
   });
 
   it("installs Claude Code through the UI including the npm postinstall step", async () => {
-    await row.startAgentInstall("Claude Code");
+    await workspaceDashboard.switchToDashboard(projectName);
+    await workspaceDashboard.startAgentInstall("Claude Code");
 
     // Wait for the agent row to appear — install downloads node@lts + claude-code + native binary.
-    await row.waitForAgentRow("Claude Code", 900000);
+    await workspaceDashboard.waitForAgentRow("Claude Code", 900000);
 
     const manifest = fs.readFileSync(manifestPath, "utf8");
     assert(
@@ -98,7 +113,8 @@ describe("Agent setup — Claude Code", function () {
         "This can happen when the npm-postinstall step was skipped, leaving the native binary absent."
     );
 
-    await row.waitForAgentStatus("Claude Code", "not authenticated");
+    await workspaceDashboard.waitForAgentStatus("Claude Code", "not authenticated");
+    await workspaceDashboard.switchToAppWebview();
   });
 
   it("shows authenticated status when credential files are pre-seeded", async () => {
@@ -112,15 +128,21 @@ describe("Agent setup — Claude Code", function () {
       `> /root/.claude.json`,
     ]);
 
-    // Navigate away and back to trigger onMount → loadAgentStatuses.
+    // Navigate away and back to trigger onMount → loadAgentStatuses. The reload only remounts
+    // main-global; the workspace's panes (and the Rust registry backing them) are untouched.
     await navigateHome();
     await ProjectsPage.open();
     await row.waitForDisplayed();
 
-    await row.waitForAgentStatus("Claude Code", "e2e-test@example.com", 15000);
+    await row.openWorkspace();
+    await workspaceDashboard.switchToDashboard(projectName);
 
-    const btn = await row.agentAuthButton("Claude Code");
+    await workspaceDashboard.waitForAgentStatus("Claude Code", "e2e-test@example.com", 15000);
+
+    const btn = await workspaceDashboard.agentAuthButton("Claude Code");
     await expect(btn).toHaveText(/re-authenticate/i);
+
+    await workspaceDashboard.switchToAppWebview();
   });
 
   it("clicking Authenticate starts the auth process in the container", async () => {
@@ -131,9 +153,11 @@ describe("Agent setup — Claude Code", function () {
     await navigateHome();
     await ProjectsPage.open();
     await row.waitForDisplayed();
-    await row.waitForAgentStatus("Claude Code", "not authenticated");
+    await row.openWorkspace();
+    await workspaceDashboard.switchToDashboard(projectName);
+    await workspaceDashboard.waitForAgentStatus("Claude Code", "not authenticated");
 
-    const authBtn = await row.agentAuthButton("Claude Code");
+    const authBtn = await workspaceDashboard.agentAuthButton("Claude Code");
     await authBtn.scrollIntoView();
     await authBtn.click();
 
@@ -151,6 +175,8 @@ describe("Agent setup — Claude Code", function () {
         `/proc scan:\n${procs}\n` +
         "This can happen when start_agent_auth did not spawn the process or the binary path is wrong."
     );
+
+    await workspaceDashboard.switchToAppWebview();
   });
 
   it("destroy removes the container even with a running auth process", async () => {

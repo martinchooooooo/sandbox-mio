@@ -138,7 +138,9 @@
 
     <h1 class="text-center text-3xl mb-8">{m.projects_title()}</h1>
 
-    <div class="max-w-2xl mx-auto">
+    <!-- max-[420px]: matches main-global's real rendered width once a workspace is open
+         (GLOBAL_EXPANDED_W = 380, src-tauri/src/workspace/mod.rs:32) with margin above it. -->
+    <div class="max-w-2xl mx-auto max-[420px]:max-w-none max-[420px]:mx-0">
         <Field.Set class="w-full">
             <Field.Group>
                 <Field.Field>

@@ -56,14 +56,6 @@ export default class ProjectRow {
     return this.root.$("button[role='switch']");
   }
 
-  get packageInput(): Element {
-    return this.root.$("input[placeholder='package name']");
-  }
-
-  get installButton(): Element {
-    return this.root.$("button=install");
-  }
-
   // The green dot shown while the container is running.
   get runningIndicator(): Element {
     return this.root.$("span.bg-green-500");
@@ -170,29 +162,6 @@ export default class ProjectRow {
     await this.waitForGone();
   }
 
-  async installPackage(pkg: string, { timeout = 180000 }: { timeout?: number } = {}): Promise<void> {
-    const input = await this.packageInput;
-    await input.scrollIntoView();
-    await input.setValue(pkg);
-    await this.#clickButton(this.installButton);
-    await this.waitForPackage(pkg, timeout);
-  }
-
-  async installedPackages(): Promise<string[]> {
-    const chips = await this.root.$$("span.font-mono");
-    const names: string[] = [];
-    for (const chip of chips) names.push(await chip.getText());
-    return names;
-  }
-
-  async waitForPackage(pkg: string, timeoutMs = 180000): Promise<void> {
-    await browser.waitUntil(async () => (await this.installedPackages()).includes(pkg), {
-      timeout: timeoutMs,
-      interval: 2000,
-      timeoutMsg: `package "${pkg}" did not appear in the row within ${timeoutMs}ms`,
-    });
-  }
-
   async toggleSyncOffOn(pauseMs = 500): Promise<void> {
     const sw = await this.syncSwitch;
     await sw.scrollIntoView();
@@ -207,57 +176,6 @@ export default class ProjectRow {
 
   async isHostShown(host: string): Promise<boolean> {
     return (await this.deployedHostLabel(host)).isDisplayed();
-  }
-
-  get addAgentButton(): Element {
-    return this.root.$("button=Add agent");
-  }
-
-  agentInstallButton(agentLabel: string): Element {
-    return this.root.$(`span*=${agentLabel}`).$("../..").$("button=install");
-  }
-
-  agentAuthButton(agentLabel: string): Element {
-    return this.root.$(`span=${agentLabel}`).$("..").$("button*=thenticate");
-  }
-
-  agentStatusText(agentLabel: string): Element {
-    return this.root
-      .$(`span=${agentLabel}`)
-      .$("..")
-      .$("span.text-muted-foreground, span.text-amber-600");
-  }
-
-  // The "Start a model to use OpenCode" hint, an <a href="/models"> rendered for a provisioned,
-  // auth-less agent when no inference server is running. Distinct from agentStatusText, which only
-  // matches <span> status text (the provider-configured state).
-  agentProviderHint(agentLabel: string): Element {
-    return this.root.$(`span=${agentLabel}`).$("..").$("a[href='/models']");
-  }
-
-  async startAgentInstall(agentLabel: string): Promise<void> {
-    await this.#clickButton(this.addAgentButton);
-    await this.#clickButton(this.agentInstallButton(agentLabel));
-  }
-
-  async waitForAgentRow(agentLabel: string, timeoutMs = 600000): Promise<void> {
-    await browser.waitUntil(
-      async () => (await this.root.$(`span=${agentLabel}`)).isExisting(),
-      { timeout: timeoutMs, interval: 3000, timeoutMsg: `agent row for "${agentLabel}" did not appear` }
-    );
-  }
-
-  async waitForAgentStatus(agentLabel: string, text: string, timeoutMs = 10000): Promise<void> {
-    await browser.waitUntil(
-      async () => {
-        try {
-          return (await this.agentStatusText(agentLabel).getText()) === text;
-        } catch {
-          return false;
-        }
-      },
-      { timeout: timeoutMs, interval: 500, timeoutMsg: `agent status for "${agentLabel}" did not become "${text}"` }
-    );
   }
 
   /**
@@ -282,62 +200,4 @@ export default class ProjectRow {
     );
   }
 
-  // ── Package autocomplete helpers ─────────────────────────────────────────────
-  // The suggestion dropdown is mounted to document.body via a Svelte portal action,
-  // so it is NOT inside this.root — all selectors below query the document globally.
-
-  // Focus the package input and type `text`, triggering the registry load via onfocus.
-  async typeInPackageInput(text: string): Promise<void> {
-    const input = await this.packageInput;
-    await input.scrollIntoView();
-    await input.click();
-    await input.setValue(text);
-  }
-
-  // Short names of all suggestion items currently visible in the portal dropdown.
-  // Items are <button> elements inside a .fixed.bg-popover div mounted at body level.
-  async visibleSuggestions(): Promise<string[]> {
-    const items = await $$(".fixed.bg-popover button[type='button']");
-    const names: string[] = [];
-    for (const item of items) {
-      const span = await item.$("span.font-mono");
-      if (await span.isExisting()) names.push(await span.getText());
-    }
-    return names;
-  }
-
-  // Description text of the suggestion whose short name exactly matches `shortName`.
-  // Returns "" when that suggestion is absent or has no description span.
-  async suggestionDescription(shortName: string): Promise<string> {
-    const items = await $$(".fixed.bg-popover button[type='button']");
-    for (const item of items) {
-      const nameSpan = await item.$("span.font-mono");
-      if (!await nameSpan.isExisting()) continue;
-      if ((await nameSpan.getText()) !== shortName) continue;
-      const desc = await item.$("span.text-muted-foreground");
-      return await desc.isExisting() ? desc.getText() : "";
-    }
-    return "";
-  }
-
-  // Click the suggestion item whose short name exactly matches `shortName`.
-  // Uses onmousedown (not onclick) — click() dispatches mousedown first, so it fires
-  // before the input's onblur, without needing a setTimeout deferral.
-  async selectSuggestion(shortName: string): Promise<void> {
-    const items = await $$(".fixed.bg-popover button[type='button']");
-    for (const item of items) {
-      const span = await item.$("span.font-mono");
-      if (await span.isExisting() && (await span.getText()) === shortName) {
-        await item.scrollIntoView();
-        await item.click();
-        return;
-      }
-    }
-    throw new Error(`suggestion "${shortName}" not found in the dropdown`);
-  }
-
-  // Current value of the package input field.
-  async packageInputValue(): Promise<string> {
-    return (await this.packageInput).getValue();
-  }
 }

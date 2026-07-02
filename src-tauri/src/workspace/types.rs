@@ -1,6 +1,7 @@
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// The live state of the single main workspace window, held in Tauri state (mirroring
 /// `ForwardPortMap`) so the switcher chrome can target the right webviews and undeploy/destroy
@@ -17,12 +18,13 @@ pub enum WorkspaceError {
     Window(String),
 }
 
-/// Which app a content pane embeds. v1 embeds only the terminal; further kinds arrive with the
-/// multi-app phase (Phase F in docs/features/embedded-windows/02_dev.md).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+/// Which app a content pane embeds: a sandbox's live terminal, or its package/agent management
+/// dashboard (docs/features/responsive-panel/02_dev.md Phase C).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AppKind {
     Terminal,
+    Dashboard,
 }
 
 /// One embedded app surface: a content child webview plus the Mutagen forward backing its URL.
@@ -72,4 +74,8 @@ pub struct WorkspaceState {
     pub active_app: Option<String>,
     pub collapsed: bool,
     pub rects: WorkspaceRects,
+    /// Sandbox name -> label of that sandbox's own last-active pane (Terminal or Dashboard), so
+    /// switching back to a sandbox restores whichever pane the user had open instead of always
+    /// defaulting to Terminal.
+    pub sandbox_last_pane: HashMap<String, String>,
 }

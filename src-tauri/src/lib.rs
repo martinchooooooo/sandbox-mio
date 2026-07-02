@@ -26,7 +26,7 @@ use crate::inference::types::{
 use crate::runtime::types::RuntimeManager;
 use crate::settings::types::AppSettings;
 use crate::sync::types::{SessionInfo, SyncEngine, SyncStatus};
-use crate::workspace::types::{TerminalPane, WorkspaceRegistry, WorkspaceState};
+use crate::workspace::types::{AppKind, TerminalPane, WorkspaceRegistry, WorkspaceState};
 
 /// Maps sandbox name → the Windows-host loopback port of its active Mutagen forwarding session.
 /// Held in Tauri state so undeploy/destroy can terminate the session and reclaim the port.
@@ -179,7 +179,11 @@ async fn prepare_terminal_webview(
             headers: {{ 'Content-Type': 'application/json' }},
             body: JSON.stringify({{ auth_token: {token_json}, remember_me: true }})
         }});
-        if (r.ok && location.pathname.startsWith('/auth')) location.replace('/');
+        // Reload unconditionally on success: the webview navigates straight to "/", not "/auth",
+        // so the frontend has already rendered its unauthenticated state by the time this POST
+        // resolves. Gating the reload on pathname.startsWith('/auth') never fired on that path,
+        // leaving the stale "security token required" screen up even after the cookie was set.
+        if (r.ok) location.replace(location.pathname + location.search);
     }} catch (_) {{}}
 }})();"#
     );
@@ -222,8 +226,10 @@ async fn open_terminal(
     Ok(())
 }
 
-/// Embed sandbox `name`'s terminal as a tab in the main workspace window's content area. Second
-/// click on an already-embedded sandbox switches to its tab instead of re-preparing the terminal.
+/// Embed sandbox `name`'s terminal and dashboard as a pair of tabs in the main workspace window's
+/// content area (eager creation, Resolved Decision 2 in
+/// `docs/features/responsive-panel/02_dev.md`). Second click on an already-embedded sandbox
+/// switches to its last-active pane instead of re-preparing the terminal.
 #[tauri::command]
 async fn open_workspace(
     name: String,
@@ -244,13 +250,21 @@ async fn open_workspace(
         prepare_terminal_webview(&name, &workspace_path, &runtime, &engine, &forward_ports, &app)
             .await?;
     workspace::embed_terminal(&app, &name, pane)?;
+    workspace::embed_dashboard(&app, &name)?;
     Ok(())
 }
 
-/// Bring sandbox `name`'s embedded tab to the front (switcher tab click).
+/// Bring sandbox `name`'s last-active embedded pane to the front (e.g. re-clicking "Open
+/// workspace" once its panes already exist).
 #[tauri::command]
 fn switch_app(name: String, app: tauri::AppHandle) -> Result<(), AppError> {
     Ok(workspace::switch_app(&app, &name)?)
+}
+
+/// Bring a specific pane (`kind`) of sandbox `name` to the front (switcher tab click).
+#[tauri::command]
+fn switch_pane(name: String, kind: AppKind, app: tauri::AppHandle) -> Result<(), AppError> {
+    Ok(workspace::switch_pane(&app, &name, kind)?)
 }
 
 /// Collapse or expand the main window's global panel between `GLOBAL_EXPANDED_W` and the thin rail.
@@ -1019,6 +1033,7 @@ pub fn run() {
             open_terminal,
             open_workspace,
             switch_app,
+            switch_pane,
             set_panel_collapsed,
             close_workspace,
             workspace_state,

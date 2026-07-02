@@ -1,11 +1,11 @@
 // Reads/drives the single main-window workspace registry (src-tauri/src/workspace/mod.rs) through
 // its Tauri commands. The container's child webviews (main-global, main-switcher, and each
-// sandbox's terminal pane) are separate native surfaces a WebDriver session attached to the app
-// webview never sees, so specs cannot click into them — they invoke these commands directly via
-// window.__TAURI_INTERNALS__ instead (the technique e2e/AGENTS.md's light specs use for
+// sandbox's terminal/dashboard panes) are separate native surfaces a WebDriver session attached to
+// the app webview never sees, so specs cannot click into them — they invoke these commands directly
+// via window.__TAURI_INTERNALS__ instead (the technique e2e/AGENTS.md's light specs use for
 // browser-side round-trips), then assert the returned state.
 
-export type AppKind = "terminal";
+export type AppKind = "terminal" | "dashboard";
 
 export interface AppPane {
   label: string;
@@ -33,6 +33,7 @@ export interface WorkspaceState {
   active_app: string | null;
   collapsed: boolean;
   rects: WorkspaceRects;
+  sandbox_last_pane: Record<string, string>;
 }
 
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -56,10 +57,23 @@ export async function setPanelCollapsed(collapsed: boolean): Promise<void> {
   await invoke("set_panel_collapsed", { collapsed });
 }
 
+// Brings sandbox `name`'s last-active pane to the front (defaults to Terminal if none recorded).
 export async function switchApp(name: string): Promise<void> {
   await invoke("switch_app", { name });
 }
 
-export function paneFor(state: WorkspaceState, sandbox: string): AppPane | undefined {
-  return state.apps.find((p) => p.sandbox === sandbox);
+// Brings a specific pane (Terminal or Dashboard) of sandbox `name` to the front.
+export async function switchPane(name: string, kind: AppKind): Promise<void> {
+  await invoke("switch_pane", { name, kind });
+}
+
+// Every pane belonging to `sandbox` (Terminal and, once open, Dashboard).
+export function panesFor(state: WorkspaceState, sandbox: string): AppPane[] {
+  return state.apps.filter((p) => p.sandbox === sandbox);
+}
+
+// The one pane of `kind` belonging to `sandbox`. Two panes per sandbox exist once a workspace is
+// open, so callers must say which one they mean.
+export function paneFor(state: WorkspaceState, sandbox: string, kind: AppKind): AppPane | undefined {
+  return state.apps.find((p) => p.sandbox === sandbox && p.kind === kind);
 }

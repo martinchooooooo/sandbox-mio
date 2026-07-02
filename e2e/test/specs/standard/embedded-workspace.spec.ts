@@ -10,7 +10,9 @@ import {
   workspaceState,
   setPanelCollapsed,
   switchApp,
+  switchPane,
   paneFor,
+  panesFor,
   type WorkspaceState,
 } from "../../../lib/workspace.js";
 
@@ -85,10 +87,10 @@ describe("Embedded workspace (multi-webview container)", function () {
     await waitForToken(nameA);
 
     const state = await workspaceState();
-    const pane = paneFor(state, nameA);
+    const pane = paneFor(state, nameA, "terminal");
     assert(
       pane,
-      `workspace_state() has no pane for "${nameA}" after openWorkspace. ` +
+      `workspace_state() has no terminal pane for "${nameA}" after openWorkspace. ` +
         "This can happen when open_workspace did not call workspace::embed_terminal.",
     );
     assert.strictEqual(pane!.kind, "terminal");
@@ -112,6 +114,80 @@ describe("Embedded workspace (multi-webview container)", function () {
     assert.strictEqual(state.rects.content.x, GLOBAL_EXPANDED_W);
   });
 
+  it("open_workspace also eagerly embeds a Dashboard pane, transported over an internal route (not a loopback forward)", async () => {
+    const state = await workspaceState();
+    const panes = panesFor(state, nameA);
+    assert.strictEqual(
+      panes.length,
+      2,
+      `Expected exactly two panes for "${nameA}" (Terminal + Dashboard) after openWorkspace, got ${panes.length}: ` +
+        `${panes.map((p) => p.kind).join(", ")}. This can happen when open_workspace did not also call workspace::embed_dashboard.`,
+    );
+
+    const dashboard = paneFor(state, nameA, "dashboard");
+    assert(dashboard, `workspace_state() has no dashboard pane for "${nameA}".`);
+    assert(
+      dashboard!.url.includes("/workspace/dashboard"),
+      `Dashboard pane url "${dashboard!.url}" is not the internal /workspace/dashboard route — ` +
+        "embed_dashboard must use WebviewUrl::App, not an external loopback URL.",
+    );
+    assert.strictEqual(
+      dashboard!.forward_name,
+      "",
+      "The Dashboard pane has no Mutagen forward (it is pure Tauri IPC); forward_name must stay empty.",
+    );
+
+    // Freshly created, the Dashboard pane must not steal focus from the just-embedded Terminal pane.
+    const terminal = paneFor(state, nameA, "terminal")!;
+    assert.strictEqual(state.active_app, terminal.label, "Dashboard pane creation must not change the active pane.");
+  });
+
+  it("switch_pane brings the Dashboard pane forward and records it as the sandbox's last-active pane", async () => {
+    const terminal = paneFor(await workspaceState(), nameA, "terminal")!;
+    const dashboard = paneFor(await workspaceState(), nameA, "dashboard")!;
+
+    await switchPane(nameA, "dashboard");
+    const afterToDashboard = await workspaceState();
+    assert.strictEqual(afterToDashboard.active_app, dashboard.label);
+    assert.strictEqual(
+      afterToDashboard.sandbox_last_pane[nameA],
+      dashboard.label,
+      "switch_pane must record the sandbox's last-active pane so a later switch_app restores it.",
+    );
+
+    // The projects-list row narrows once nameA's workspace is open (Track 1 + Resolved Decision 3,
+    // docs/features/responsive-panel/02_dev.md): the standalone terminal button and the inline
+    // Package/Agent controls are gone, and the remaining buttons drop their text label at the
+    // panel's real 380px width (GLOBAL_EXPANDED_W, asserted above) — not a resized/simulated window.
+    assert.strictEqual(
+      await (await rowA.terminalButton).isExisting(),
+      false,
+      "The standalone terminal button must be removed from the row once a workspace is open.",
+    );
+    assert.strictEqual(
+      await (await rowA.root.$("input[placeholder='package name']")).isExisting(),
+      false,
+      "Inline package management must never render in the projects-list row (it moved to the dashboard pane).",
+    );
+    assert.strictEqual(
+      await (await rowA.root.$("button=Add agent")).isExisting(),
+      false,
+      "Inline agent management must never render in the projects-list row (it moved to the dashboard pane).",
+    );
+    const workspaceLabel = await (await rowA.workspaceButton).$("span");
+    assert.strictEqual(
+      await workspaceLabel.isDisplayed(),
+      false,
+      "The workspace button's text label must be hidden at the panel's real 380px width — the " +
+        "max-[420px]: breakpoint did not fire, or main-global's viewport is not actually 380px.",
+    );
+
+    // Leave nameA back on its Terminal pane so the pre-existing switch_app assertion below (which
+    // predates the two-pane model) keeps its original meaning unchanged.
+    await switchPane(nameA, "terminal");
+    assert.strictEqual((await workspaceState()).active_app, terminal.label);
+  });
+
   it("the embedded terminal actually serves (server online, forward connected, HTTP 200)", async () => {
     const status = podman(LOCAL_CONNECTION, ["exec", nameA, "zellij", "web", "--status"], {
       check: false,
@@ -125,7 +201,7 @@ describe("Embedded workspace (multi-webview container)", function () {
     );
 
     const state = await workspaceState();
-    const pane = paneFor(state, nameA)!;
+    const pane = paneFor(state, nameA, "terminal")!;
     let status200 = false;
     await browser.waitUntil(
       async () => {
@@ -166,9 +242,9 @@ describe("Embedded workspace (multi-webview container)", function () {
     await rowA.openWorkspace();
     const state = await workspaceState();
     assert.strictEqual(
-      state.apps.filter((p) => p.sandbox === nameA).length,
-      1,
-      "Re-opening must not push a second pane for the same sandbox.",
+      panesFor(state, nameA).length,
+      2,
+      "Re-opening must not push additional panes for the same sandbox (still exactly Terminal + Dashboard).",
     );
     const fwdOut = forwardList(`terminal-${nameA}`);
     assert(
@@ -186,10 +262,10 @@ describe("Embedded workspace (multi-webview container)", function () {
     await waitForToken(nameB);
 
     const state = await workspaceState();
-    const paneA = paneFor(state, nameA);
-    const paneB = paneFor(state, nameB);
-    assert(paneA, `sandbox A's pane disappeared once B's workspace opened.`);
-    assert(paneB, `workspace_state() has no pane for "${nameB}".`);
+    const paneA = paneFor(state, nameA, "terminal");
+    const paneB = paneFor(state, nameB, "terminal");
+    assert(paneA, `sandbox A's terminal pane disappeared once B's workspace opened.`);
+    assert(paneB, `workspace_state() has no terminal pane for "${nameB}".`);
     assert.strictEqual(
       state.active_app,
       paneB!.label,
@@ -207,26 +283,32 @@ describe("Embedded workspace (multi-webview container)", function () {
 
   it("switch_app brings a hidden pane back to the front", async () => {
     const before = await workspaceState();
-    const paneA = paneFor(before, nameA)!;
+    const paneA = paneFor(before, nameA, "terminal")!;
 
     await switchApp(nameA);
     const after = await workspaceState();
     assert.strictEqual(after.active_app, paneA.label);
   });
 
-  it("destroying one sandbox tears down only its own pane and forward", async () => {
+  it("destroying one sandbox tears down every one of its panes and its forward", async () => {
     const beforeState = await workspaceState();
-    const paneB = paneFor(beforeState, nameB)!;
+    const paneB = paneFor(beforeState, nameB, "terminal")!;
 
     await rowA.destroy();
 
     assert(!podmanOk(LOCAL_CONNECTION, ["inspect", nameA]), `Local container "${nameA}" still exists after destroy.`);
 
     const afterState = await workspaceState();
-    assert(
-      !paneFor(afterState, nameA),
+    assert.strictEqual(
+      panesFor(afterState, nameA).length,
+      0,
       `workspace_state() still reports a pane for "${nameA}" after destroy — destroy_sandbox must call ` +
-        "workspace::close_app.",
+        "workspace::close_app for every one of the sandbox's panes.",
+    );
+    assert.strictEqual(
+      afterState.sandbox_last_pane[nameA],
+      undefined,
+      `sandbox_last_pane still has an entry for "${nameA}" after destroy — close_app must clear it.`,
     );
     assert(
       !forwardList(`terminal-${nameA}`).includes("Connected"),
@@ -234,7 +316,7 @@ describe("Embedded workspace (multi-webview container)", function () {
     );
 
     // Sandbox B's workspace must be untouched: same pane, forward still live.
-    const paneBAfter = paneFor(afterState, nameB);
+    const paneBAfter = paneFor(afterState, nameB, "terminal");
     assert(paneBAfter, "Sandbox B's pane disappeared after sandbox A was destroyed.");
     assert.strictEqual(paneBAfter!.label, paneB.label);
     assert(

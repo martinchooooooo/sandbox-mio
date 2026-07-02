@@ -7,9 +7,19 @@
     import { parseError } from "$lib/errors";
     import { m } from "$lib/paraglide/messages.js";
     import { createActionRunner } from "$lib/actions.svelte";
+    import { HugeiconsIcon } from "@hugeicons/svelte";
+    import {
+        Folder01Icon,
+        TerminalIcon,
+        DashboardSquare01Icon,
+        CloudUploadIcon,
+        CloudDownloadIcon,
+        PlayIcon,
+        StopIcon,
+        Delete02Icon,
+    } from "@hugeicons/core-free-icons";
     import StatusRow from "./StatusRow.svelte";
-    import PackageManager from "./PackageManager.svelte";
-    import AgentManager from "./AgentManager.svelte";
+    import { isSandboxOpen } from "$lib/workspace/state.svelte";
     import {
         translateStatus,
         syncColor,
@@ -50,6 +60,11 @@
     // The toggle is optimistic: Mutagen does not surface a "paused" status, so on/off is tracked
     // locally, defaulting on for a freshly listed deployment.
     let syncOn = $state(true);
+
+    // Once this sandbox's workspace panes exist, package/agent management lives in the dashboard
+    // pane (docs/features/responsive-panel/02_dev.md Phase D) and the standalone terminal window
+    // is redundant with the embedded tab, so the row narrows to Folder/Sync/Workspace/Destroy.
+    const workspaceOpen = $derived(isSandboxOpen(project.name));
 
     function openPicker() {
         picking = true;
@@ -138,12 +153,19 @@
 
     // Primary action: the embedded multi-webview workspace. `openTerminal` above stays as the
     // standalone-window fallback (Resolved Decision 7 in docs/features/embedded-windows/02_dev.md).
+    // Once this sandbox's panes already exist, just bring its last-active pane forward instead of
+    // round-tripping through `open_workspace`'s own exists-guard (Resolved Decision 1 in
+    // docs/features/responsive-panel/02_dev.md).
     async function openWorkspace() {
         await action.run("workspace", async () => {
-            await invoke("open_workspace", {
-                name: project.name,
-                workspacePath: project.workspace_path,
-            });
+            if (workspaceOpen) {
+                await invoke("switch_app", { name: project.name });
+            } else {
+                await invoke("open_workspace", {
+                    name: project.name,
+                    workspacePath: project.workspace_path,
+                });
+            }
         }, { message: m.projects_status_opening_workspace() });
     }
 
@@ -183,55 +205,71 @@
                 <span class="text-muted-foreground text-xs shrink-0">→ {deployment.host}</span>
             {/if}
         </span>
+        <!-- max-[420px]: matches main-global's real rendered width once a workspace is open
+             (GLOBAL_EXPANDED_W = 380, src-tauri/src/workspace/mod.rs:32); labels drop to icons. -->
         <span class="flex items-center gap-2 shrink-0">
             <Button variant="ghost" size="sm" onclick={openFolder} title={project.workspace_path}
                 loading={action.busy === "folder"} disabled={action.busy !== null}>
-                {m.projects_folder()}
+                <HugeiconsIcon icon={Folder01Icon} size={16} />
+                <span class="max-[420px]:hidden">{m.projects_folder()}</span>
             </Button>
             {#if deployment}
                 <label class="flex items-center gap-1 text-xs">
                     <Switch checked={syncOn} onCheckedChange={toggleSync} disabled={action.busy !== null} />
-                    {m.projects_sync()}
+                    <span class="max-[420px]:hidden">{m.projects_sync()}</span>
                 </label>
-                <Button variant="ghost" size="sm" onclick={openWorkspace}
+                <Button variant="ghost" size="sm" onclick={openWorkspace} title={m.projects_workspace()}
                     loading={action.busy === "workspace"} disabled={action.busy !== null}>
-                    {m.projects_workspace()}
+                    <HugeiconsIcon icon={DashboardSquare01Icon} size={16} />
+                    <span class="max-[420px]:hidden">{m.projects_workspace()}</span>
                 </Button>
-                <Button variant="ghost" size="sm" onclick={openTerminal}
-                    loading={action.busy === "terminal"} disabled={action.busy !== null}>
-                    {m.projects_terminal()}
-                </Button>
-                <Button variant="ghost" size="sm" onclick={undeploy}
+                {#if !workspaceOpen}
+                    <Button variant="ghost" size="sm" onclick={openTerminal} title={m.projects_terminal()}
+                        loading={action.busy === "terminal"} disabled={action.busy !== null}>
+                        <HugeiconsIcon icon={TerminalIcon} size={16} />
+                        <span class="max-[420px]:hidden">{m.projects_terminal()}</span>
+                    </Button>
+                {/if}
+                <Button variant="ghost" size="sm" onclick={undeploy} title={m.projects_undeploy()}
                     loading={action.busy === "undeploy"} disabled={action.busy !== null}>
-                    {m.projects_undeploy()}
+                    <HugeiconsIcon icon={CloudDownloadIcon} size={16} />
+                    <span class="max-[420px]:hidden">{m.projects_undeploy()}</span>
                 </Button>
             {:else}
                 {#if project.status === "running"}
-                    <Button variant="ghost" size="sm" onclick={stop}
+                    <Button variant="ghost" size="sm" onclick={stop} title={m.projects_stop()}
                         loading={action.busy === "stop"} disabled={action.busy !== null}>
-                        {m.projects_stop()}
+                        <HugeiconsIcon icon={StopIcon} size={16} />
+                        <span class="max-[420px]:hidden">{m.projects_stop()}</span>
                     </Button>
                 {:else}
-                    <Button variant="ghost" size="sm" onclick={start}
+                    <Button variant="ghost" size="sm" onclick={start} title={m.projects_start()}
                         loading={action.busy === "start"} disabled={action.busy !== null}>
-                        {m.projects_start()}
+                        <HugeiconsIcon icon={PlayIcon} size={16} />
+                        <span class="max-[420px]:hidden">{m.projects_start()}</span>
                     </Button>
                 {/if}
-                <Button variant="ghost" size="sm" onclick={openWorkspace}
+                <Button variant="ghost" size="sm" onclick={openWorkspace} title={m.projects_workspace()}
                     loading={action.busy === "workspace"} disabled={action.busy !== null}>
-                    {m.projects_workspace()}
+                    <HugeiconsIcon icon={DashboardSquare01Icon} size={16} />
+                    <span class="max-[420px]:hidden">{m.projects_workspace()}</span>
                 </Button>
-                <Button variant="ghost" size="sm" onclick={openTerminal}
-                    loading={action.busy === "terminal"} disabled={action.busy !== null}>
-                    {m.projects_terminal()}
-                </Button>
-                <Button variant="ghost" size="sm" onclick={openPicker} disabled={action.busy !== null}>
-                    {m.projects_deploy()}
+                {#if !workspaceOpen}
+                    <Button variant="ghost" size="sm" onclick={openTerminal} title={m.projects_terminal()}
+                        loading={action.busy === "terminal"} disabled={action.busy !== null}>
+                        <HugeiconsIcon icon={TerminalIcon} size={16} />
+                        <span class="max-[420px]:hidden">{m.projects_terminal()}</span>
+                    </Button>
+                {/if}
+                <Button variant="ghost" size="sm" onclick={openPicker} title={m.projects_deploy()} disabled={action.busy !== null}>
+                    <HugeiconsIcon icon={CloudUploadIcon} size={16} />
+                    <span class="max-[420px]:hidden">{m.projects_deploy()}</span>
                 </Button>
             {/if}
-            <Button variant="destructive" size="sm" onclick={destroyProject}
+            <Button variant="destructive" size="sm" onclick={destroyProject} title={m.projects_destroy()}
                 loading={action.busy === "destroy"} disabled={action.busy !== null}>
-                {m.projects_destroy()}
+                <HugeiconsIcon icon={Delete02Icon} size={16} />
+                <span class="max-[420px]:hidden">{m.projects_destroy()}</span>
             </Button>
         </span>
     </div>
@@ -271,8 +309,4 @@
             </Button>
         </div>
     {/if}
-
-    <PackageManager sandboxName={project.name} workspacePath={project.workspace_path} {action} />
-
-    <AgentManager sandboxName={project.name} workspacePath={project.workspace_path} {action} />
 </li>

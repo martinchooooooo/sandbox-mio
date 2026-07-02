@@ -4,6 +4,7 @@ import path from "path";
 
 import ProjectsPage from "../../pageobjects/projects.page.js";
 import ProjectRow from "../../pageobjects/project-row.component.js";
+import workspaceDashboard from "../../pageobjects/workspace-dashboard.page.js";
 import { podman, podmanOk, LOCAL_CONNECTION, REMOTE_CONNECTION } from "../../../lib/podman-connection.js";
 
 const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
@@ -48,6 +49,12 @@ describe("Sandbox runtime management (mise)", function () {
 
   // Capture the webview state on any failure: the "row vanished" symptom points at an app crash or
   // navigation, so dump the URL + page source + a screenshot to e2e/.diag for inspection.
+  // Safety net: if a test above throws while still attached to the dashboard webview, later
+  // tests must not inherit that attachment — the global `before` hook only pins the session once.
+  afterEach(async () => {
+    await workspaceDashboard.switchToAppWebview().catch(() => {});
+  });
+
   afterEach(async function () {
     if (this.currentTest?.state !== "failed") return;
     const diag = path.join(process.cwd(), ".diag");
@@ -87,7 +94,11 @@ describe("Sandbox runtime management (mise)", function () {
   });
 
   it("installs a package through the UI and records it in the manifest and lockfile", async () => {
-    await row.installPackage(PKG);
+    // Package management now requires a workspace to be open (Resolved Decision 3,
+    // docs/features/responsive-panel/02_dev.md) — there is no inline fallback in the row anymore.
+    await row.openWorkspace();
+    await workspaceDashboard.switchToDashboard(projectName);
+    await workspaceDashboard.installPackage(PKG);
 
     const manifest = fs.readFileSync(manifestPath, "utf8");
     assert(
@@ -106,10 +117,12 @@ describe("Sandbox runtime management (mise)", function () {
     );
 
     assert(
-      (await row.installedPackages()).includes(PKG),
-      `installed-package list in the row does not show "${PKG}". ` +
+      (await workspaceDashboard.installedPackages()).includes(PKG),
+      `installed-package list in the dashboard pane does not show "${PKG}". ` +
         "This can happen when list_packages did not re-read the [tools] table of mise.toml after install."
     );
+
+    await workspaceDashboard.switchToAppWebview();
   });
 
   it("runs the installed package inside the local container", async () => {
