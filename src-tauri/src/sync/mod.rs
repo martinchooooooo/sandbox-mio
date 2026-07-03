@@ -71,6 +71,9 @@ pub async fn version<R: Runtime>(app: &AppHandle<R>) -> Result<String, SyncError
     run(app, &["version"]).await
 }
 
+/// Serializes every terminate-then-create pair below.
+static FORWARD_CREATE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// Start a Mutagen forwarding session named `name`, listening on `local_port` on the Windows
 /// host and connecting to `remote_port` on `remote_alias`'s loopback. Terminates any prior
 /// session of the same name first so the call is idempotent across `open_terminal` retries.
@@ -81,6 +84,7 @@ pub async fn forward_create<R: Runtime>(
     remote_alias: &str,
     remote_port: u16,
 ) -> Result<(), SyncError> {
+    let _guard = FORWARD_CREATE_LOCK.lock().await;
     // Best-effort: a missing session is not an error, so ignore the result.
     let _ = run(app, &["forward", "terminate", name]).await;
     let source = format!("tcp:127.0.0.1:{local_port}");
@@ -106,6 +110,7 @@ pub async fn forward_create_reverse<R: Runtime>(
     remote_listen_port: u16,
     host_port: u16,
 ) -> Result<(), SyncError> {
+    let _guard = FORWARD_CREATE_LOCK.lock().await;
     // Best-effort: a missing session is not an error, so ignore the result.
     let _ = run(app, &["forward", "terminate", name]).await;
     let source = format!("{remote_alias}:tcp:0.0.0.0:{remote_listen_port}");
@@ -119,6 +124,34 @@ pub async fn forward_create_reverse<R: Runtime>(
 /// not an error (desired state already reached).
 pub async fn forward_terminate<R: Runtime>(app: &AppHandle<R>, name: &str) {
     let _ = run(app, &["forward", "terminate", name]).await;
+}
+
+/// Terminate forwarding sessions orphaned by a previous app run: any `terminal-<sandbox>` /
+/// `agentweb-<sandbox>` session whose sandbox is not in `live_sandboxes`. The Mutagen daemon is
+/// a background process that outlives the app, so these leak whenever the app exits without
+/// teardown (crash, kill, the e2e harness).
+pub async fn sweep_stale_forwards<R: Runtime>(app: &AppHandle<R>, live_sandboxes: &[String]) {
+    let json = match run(app, &["forward", "list", "--template={{json .}}"]).await {
+        Ok(j) if !j.is_empty() => j,
+        _ => return,
+    };
+    let Ok(serde_json::Value::Array(sessions)) = serde_json::from_str(&json) else {
+        return;
+    };
+    for session in &sessions {
+        let name = session
+            .get("name")
+            .or_else(|| session.get("Name"))
+            .and_then(|v| v.as_str());
+        let Some(name) = name else { continue };
+        let sandbox = name
+            .strip_prefix("terminal-")
+            .or_else(|| name.strip_prefix("agentweb-"));
+        if sandbox.is_some_and(|s| !live_sandboxes.iter().any(|live| live == s)) {
+            tracing::info!(target: "sync", session = name, "sweeping stale forward");
+            let _ = run(app, &["forward", "terminate", name]).await;
+        }
+    }
 }
 
 /// Construct the managed [`SyncEngine`] for Tauri state. Mirrors `default_backend` in

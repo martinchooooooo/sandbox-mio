@@ -92,6 +92,39 @@ export function forwardList(name: string): string {
   return ((out.stdout ?? "") + (out.stderr ?? "")).trim();
 }
 
+// Session names seeded by wdio.conf.ts's beforeSession for forward-sweep.spec.ts: an orphan the
+// startup sweep must terminate (swept prefix, no such sandbox) and a bystander it must not touch.
+export const SWEEP_ORPHAN_SESSION = "agentweb-e2e-orphan-sweep";
+export const SWEEP_KEEP_SESSION = "mio-e2e-keep-sweep";
+
+// Create a forwarding session in the app's private daemon (auto-starting it if needed) — the
+// harness seam for planting orphan sessions before the app process spawns
+// (docs/features/agent-web-ui/03_e2e.md, forward-sweep.spec.ts). Local `tcp:` endpoints on both
+// sides keep the create instant and non-interactive (no SSH). Terminates any prior session of the
+// same name first so the call is idempotent across runs. The vendored CLI (v0.18.1) matches the
+// app's sidecar mutagen, so both talk to the same daemon without a version conflict.
+export function forwardCreate(name: string, source: string, dest: string): void {
+  const env = { ...process.env, MUTAGEN_DATA_DIRECTORY: APP_MUTAGEN_DIR };
+  spawnSync(MUTAGEN_BIN, ["forward", "terminate", name], { encoding: "utf8", shell: false, env });
+  const out = spawnSync(MUTAGEN_BIN, ["forward", "create", `--name=${name}`, source, dest], {
+    encoding: "utf8",
+    shell: false,
+    env,
+  });
+  if (out.status !== 0) {
+    throw new Error(`mutagen forward create ${name} failed: ${out.stderr || out.stdout}`);
+  }
+}
+
+// Terminate a forwarding session in the app's private daemon. Best-effort like syncTerminate.
+export function forwardTerminate(name: string): void {
+  spawnSync(MUTAGEN_BIN, ["forward", "terminate", name], {
+    encoding: "utf8",
+    shell: false,
+    env: { ...process.env, MUTAGEN_DATA_DIRECTORY: APP_MUTAGEN_DIR },
+  });
+}
+
 // ---- SSH host alias management -------------------------------------------------------------
 //
 // Mutagen uses the system OpenSSH client and reads ~/.ssh/config, but its scp-style URLs cannot

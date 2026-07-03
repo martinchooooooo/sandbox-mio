@@ -4,8 +4,10 @@ FROM docker.io/library/debian:12-slim
 # A glibc base (not Alpine/musl) is deliberate: mise installs prebuilt upstream release binaries and
 # glibc-only language runtimes (e.g. Node from nodejs.org) fail on musl — and mise's musl-node
 # workarounds compile from source. See docs/features/sandbox-runtime-management/02_dev.md.
+# procps provides the `ps` binary paseo's own `daemon status`/`stop` shell out to
+# (they crash with `spawn ps ENOENT` without it — docs/features/agent-web-ui/02_dev.md).
 RUN apt-get update -qq \
- && apt-get install -y -qq --no-install-recommends curl git ca-certificates xz-utils \
+ && apt-get install -y -qq --no-install-recommends curl git ca-certificates xz-utils procps \
  && rm -rf /var/lib/apt/lists/*
 
 # Bake the mise binary into the image so `create` pays no download. Pinned to an exact release so the

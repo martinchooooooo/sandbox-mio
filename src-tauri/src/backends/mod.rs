@@ -19,8 +19,9 @@ use types::{
 const BASE_IMAGE: &str = "sandbox-mio/base";
 // Bump whenever the Containerfile changes. `ensure_base_image` short-circuits on
 // `podman image exists <tag>`, so an unchanged tag would silently keep stale images.
-// History: "zellij" (flox/Nix era), "mise" (debian-slim rewrite), 2 (bash + mise activate).
-pub(crate) const BASE_IMAGE_VERSION: u32 = 2;
+// History: "zellij" (flox/Nix era), "mise" (debian-slim rewrite), 2 (bash + mise activate),
+// 3 (procps for paseo's `ps` dependency; paseo itself is mise-installed per workspace).
+pub(crate) const BASE_IMAGE_VERSION: u32 = 3;
 
 /// The base-image recipe, baked into the binary so the build needs no resource-path resolution.
 /// Kept in sync with the spike reference at `docs/features/sandbox-runtime-management/spike/mise/Containerfile.glibc`.
@@ -46,6 +47,10 @@ const WORKSPACE_MOUNT: &str = "/root/work";
 /// loopback port at `create` so [`crate::runtime::types::RuntimeManager::open_terminal`] can reach
 /// the in-app terminal. Named once here and reused to build the `--publish` argument.
 const ZELLIJ_WEB_PORT: u16 = 8082;
+
+/// Container port the paseo daemon binds (its default) for the in-app agents web UI. Published
+/// alongside [`ZELLIJ_WEB_PORT`] at `create` so `RuntimeManager::prepare_agent_web` can reach it.
+const PASEO_WEB_PORT: u16 = 6767;
 
 /// Root holding every sandbox's workspace directory: `SANDBOX_WORKSPACE_ROOT` if set,
 /// else `<Documents>/sandbox-mio`. Documents is resolved at runtime because Windows may
@@ -333,12 +338,14 @@ impl SandboxBackend for PodmanCliBackend {
         // loopback-bound server is unreachable. The host side is pinned to 127.0.0.1 so nothing is
         // exposed on the local network. Both local and remote containers get these flags.
         let publish = format!("127.0.0.1::{ZELLIJ_WEB_PORT}");
+        let publish_paseo = format!("127.0.0.1::{PASEO_WEB_PORT}");
         // `--pull=missing` satisfies the trait's "pull if absent, then create" contract.
         let out = self
             .podman(&[
                 "create", "--pull=missing", "--tty", "--network",
-                "pasta:--host-lo-to-ns-lo", "--publish", &publish, "--volume", &volume,
-                "--workdir", WORKSPACE_MOUNT, "--name", name, &image, "/bin/sh",
+                "pasta:--host-lo-to-ns-lo", "--publish", &publish, "--publish", &publish_paseo,
+                "--volume", &volume, "--workdir", WORKSPACE_MOUNT, "--name", name, &image,
+                "/bin/sh",
             ])
             .await?;
         let id = check(out)?.trim().to_string();
@@ -444,13 +451,14 @@ impl SandboxBackend for PodmanCliBackend {
         // Create and start the remote container on the target connection, not self.connection.
         let volume = format!("{}:{WORKSPACE_MOUNT}", plan.bind_mount_source);
         let publish = format!("127.0.0.1::{ZELLIJ_WEB_PORT}");
+        let publish_paseo = format!("127.0.0.1::{PASEO_WEB_PORT}");
         check(
             Self::podman_on(
                 target_connection,
                 &[
                     "create", "--tty", "--network", "pasta:--host-lo-to-ns-lo",
-                    "--publish", &publish, "--volume", &volume, "--workdir", WORKSPACE_MOUNT,
-                    "--name", name, &image, "/bin/sh",
+                    "--publish", &publish, "--publish", &publish_paseo, "--volume", &volume,
+                    "--workdir", WORKSPACE_MOUNT, "--name", name, &image, "/bin/sh",
                 ],
             )
             .await?,

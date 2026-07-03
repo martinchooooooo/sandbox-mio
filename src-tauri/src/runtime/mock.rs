@@ -43,6 +43,15 @@ impl RuntimeManager for MockRuntime {
         Ok(("mock-host".to_string(), 0))
     }
 
+    async fn prepare_agent_web(
+        &self,
+        _name: &str,
+        _connection: &str,
+        _password: &str,
+    ) -> Result<u16, RuntimeError> {
+        Ok(0)
+    }
+
     fn local_connection(&self) -> &str {
         "mock"
     }

@@ -22,6 +22,8 @@ pub enum RuntimeError {
     /// names the terminal-specific cause.
     #[error("terminal unavailable: {0}")]
     TerminalUnavailable(String),
+    #[error("agents UI unavailable: {0}")]
+    AgentWebUnavailable(String),
 }
 
 /// Manages the mise tool environment embedded in a sandbox workspace. Distinct from
@@ -64,6 +66,16 @@ pub trait RuntimeManager: Send + Sync {
         connection: &str,
         workspace_host_path: &str,
     ) -> Result<(String, u16), RuntimeError>;
+
+    /// Paseo analog of [`RuntimeManager::prepare_terminal`]: (re)start the paseo daemon in
+    /// sandbox `name` over `connection` with `password` as `PASEO_PASSWORD`, returning the port
+    /// on `connection`'s host loopback that the container published for the paseo web UI.
+    async fn prepare_agent_web(
+        &self,
+        name: &str,
+        connection: &str,
+        password: &str,
+    ) -> Result<u16, RuntimeError>;
 
     /// The Podman connection this runtime is pinned to, read from `PODMAN_CONNECTION` (or the
     /// compiled-in default). Used by `open_terminal` as the fallback connection for local sandboxes.

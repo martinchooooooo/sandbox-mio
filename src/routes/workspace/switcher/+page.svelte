@@ -3,12 +3,14 @@
     import { invoke } from "@tauri-apps/api/core";
     import { listen } from "@tauri-apps/api/event";
 
-    // The tab bar of the main workspace window (`main-switcher` child webview). Two tabs per
-    // sandbox whose workspace is open — Terminal and Manage (docs/features/responsive-panel/
-    // 02_dev.md Phase E) — the list mirrors the Rust registry via the workspace://state
-    // broadcast; the DOM here only reflects intent, Rust owns which pane is shown.
-    type AppKind = "terminal" | "dashboard";
-    type AppPane = { label: string; sandbox: string; kind: AppKind; url: string };
+    type AppKind = "terminal" | "dashboard" | "agentweb";
+    type AppPane = {
+        label: string;
+        sandbox: string;
+        workspace_path: string;
+        kind: AppKind;
+        url: string;
+    };
     type WorkspaceState = { apps: AppPane[]; active_app: string | null };
 
     let apps = $state<AppPane[]>([]);
@@ -36,6 +38,19 @@
         } catch (e) {
             console.error(e);
         }
+    }
+
+    async function openAgents(sandbox: string, workspacePath: string) {
+        try {
+            await invoke("open_agent_web", { name: sandbox, workspacePath });
+        } catch (e) {
+            console.error(e);
+        }
+    }
+
+    function paneTitle(kind: AppKind): string {
+        // TODO(i18n)
+        return kind === "dashboard" ? "Manage" : kind === "agentweb" ? "Agents" : "Terminal";
     }
 
     async function close(sandbox: string) {
@@ -75,9 +90,17 @@
                     ].join(" ")}
                     onclick={() => activate(pane)}
                 >
-                    {sandbox} — {pane.kind === "dashboard" ? "Manage" : "Terminal"}<!-- TODO(i18n) -->
+                    {sandbox} — {paneTitle(pane.kind)}
                 </button>
             {/each}
+            {#if !panes.some((p) => p.kind === "agentweb")}
+                <button
+                    class="px-3 py-1 rounded text-muted-foreground hover:text-foreground"
+                    onclick={() => openAgents(sandbox, panes[0].workspace_path)}
+                >
+                    {sandbox} — Agents<!-- TODO(i18n) -->
+                </button>
+            {/if}
             <button
                 class="pr-2 text-muted-foreground hover:text-foreground"
                 aria-label={`close ${sandbox}`}

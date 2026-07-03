@@ -18,21 +18,20 @@ pub enum WorkspaceError {
     Window(String),
 }
 
-/// Which app a content pane embeds: a sandbox's live terminal, or its package/agent management
-/// dashboard (docs/features/responsive-panel/02_dev.md Phase C).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AppKind {
     Terminal,
     Dashboard,
+    AgentWeb,
 }
 
 /// One embedded app surface: a content child webview plus the Mutagen forward backing its URL.
 #[derive(Debug, Clone, Serialize)]
 pub struct AppPane {
     pub label: String,
-    /// The sandbox this pane belongs to; switcher tabs and teardown are keyed by it.
     pub sandbox: String,
+    pub workspace_path: String,
     pub forward_name: String,
     pub kind: AppKind,
     pub url: String,

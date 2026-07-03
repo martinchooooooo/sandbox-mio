@@ -201,6 +201,187 @@ async fn prepare_terminal_webview(
     Ok(TerminalPane { url: parsed_url, init_script, forward_name })
 }
 
+/// Read the persisted password out of `<workspace_path>/.mio/paseo.json`, if any.
+fn read_paseo_password(workspace_path: &str) -> Option<String> {
+    let path = std::path::Path::new(workspace_path).join(".mio").join("paseo.json");
+    let value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+    value
+        .get("password")
+        .and_then(|p| p.as_str())
+        .map(String::from)
+        .filter(|p| !p.is_empty())
+}
+
+/// Fetch the daemon's real `serverId` and `hostname` via `GET /api/status` through the port
+/// forward. Retries because the Mutagen forward listener may not accept connections the
+/// instant `forward_create` returns.
+async fn fetch_paseo_server_info(
+    port: u16,
+    password: &str,
+) -> Result<(String, Option<String>), String> {
+    let url = format!("http://127.0.0.1:{port}/api/status");
+    let client = reqwest::Client::new();
+    let mut last_err = String::from("no attempt made");
+    for _ in 0..10 {
+        let attempt = client
+            .get(&url)
+            .bearer_auth(password)
+            .timeout(std::time::Duration::from_secs(2))
+            .send()
+            .await;
+        match attempt {
+            Ok(resp) => match resp.json::<serde_json::Value>().await {
+                Ok(v) => {
+                    if let Some(server_id) = v.get("serverId").and_then(|s| s.as_str()) {
+                        let hostname =
+                            v.get("hostname").and_then(|h| h.as_str()).map(String::from);
+                        return Ok((server_id.to_string(), hostname));
+                    }
+                    last_err = format!("response has no serverId: {v}");
+                }
+                Err(e) => last_err = e.to_string(),
+            },
+            Err(e) => last_err = e.to_string(),
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    }
+    Err(format!("{url}: {last_err}"))
+}
+
+/// Paseo analog of `prepare_terminal_webview` (docs/features/agent-web-ui/02_dev.md Phase B):
+/// (re)start the paseo daemon over the right Podman connection, bridge an ephemeral
+/// Windows-loopback port to the container's published paseo port via a Mutagen forward, and
+/// persist the password at `.mio/paseo.json`. The password is minted once per sandbox and
+/// reused across the daemon restarts `prepare_agent_web` performs. Auto-login (Phase D) seeds the
+/// web client's own `@paseo:daemon-registry` localStorage entry with the known endpoint and
+/// password before the app boots, so its `HostRuntime.loadFromStorage()` finds an already-known,
+/// already-authenticated host and never shows the "Direct Connection" / "Paste pairing link"
+/// screen.
+async fn prepare_agent_web_pane(
+    name: &str,
+    workspace_path: &str,
+    runtime: &Arc<dyn RuntimeManager>,
+    engine: &Arc<dyn SyncEngine>,
+    app: &tauri::AppHandle,
+) -> Result<TerminalPane, AppError> {
+    let unavailable =
+        |e: String| crate::runtime::types::RuntimeError::AgentWebUnavailable(e);
+
+    // Same connection resolution as prepare_terminal_webview: a sync session named after the
+    // sandbox means it is deployed; otherwise use the local connection.
+    let connection = engine
+        .sessions()
+        .await?
+        .into_iter()
+        .find(|s| s.name == name)
+        .map(|s| s.host)
+        .unwrap_or_else(|| runtime.local_connection().to_string());
+    crate::backends::ensure_connection_alias(&connection).await?;
+
+    let password = read_paseo_password(workspace_path)
+        .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
+
+    let container_port = runtime.prepare_agent_web(name, &connection, &password).await?;
+
+    let windows_port = {
+        let listener =
+            std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| unavailable(e.to_string()))?;
+        listener.local_addr().map_err(|e| unavailable(e.to_string()))?.port()
+    };
+
+    let forward_name = format!("agentweb-{name}");
+    let url = format!("http://127.0.0.1:{windows_port}/");
+    sync::forward_create(app, &forward_name, windows_port, &connection, container_port)
+        .await
+        .map_err(|e| unavailable(e.to_string()))?;
+
+    // Persisted host-side next to zellij.json (docs/techdebt.md workaround: the workspace is
+    // bind-mounted, so no JSON shell-escaping through `podman exec`). Lets a later open re-show
+    // the same password instead of minting a new one.
+    let mio_dir = std::path::Path::new(workspace_path).join(".mio");
+    std::fs::create_dir_all(&mio_dir)
+        .and_then(|_| {
+            let json = serde_json::json!({ "password": &password });
+            std::fs::write(mio_dir.join("paseo.json"), json.to_string())
+        })
+        .map_err(|e| {
+            unavailable(format!(
+                "failed to write session to {}: {e}",
+                mio_dir.join("paseo.json").to_string_lossy()
+            ))
+        })?;
+
+    // Reverse-engineered from the web client's minified bundle (paseo 0.1.103, no public docs):
+    // on boot the client reads localStorage key `@paseo:daemon-registry` — an array of host
+    // profiles with `directTcp` connections carrying `password` inline — and auto-connects with
+    // no login screen. Two constraints it enforces:
+    //  - `serverId` must be the daemon's real one: on mismatch the client closes the already-
+    //    authenticated connection, which the UI reports as "Connection timed out". No
+    //    placeholder works, so the id is fetched up front.
+    //  - Loopback endpoints are normalized to `localhost:<port>` on load, so that is the only
+    //    spelling worth seeding.
+    let (server_id, hostname) = fetch_paseo_server_info(windows_port, &password)
+        .await
+        .map_err(|e| unavailable(format!("paseo /api/status through forward: {e}")))?;
+    let endpoint = format!("localhost:{windows_port}");
+    let connection_id = format!("direct:{endpoint}");
+    // Client only checks `typeof createdAt/updatedAt === "string"` (falls back to `new Date()`
+    // otherwise) — never parses it as a real date — so an epoch-seconds string is fine here.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        .to_string();
+    let registry_entry = serde_json::json!([{
+        "serverId": &server_id,
+        "label": hostname.as_deref().unwrap_or(name),
+        "lifecycle": {},
+        "connections": [{
+            "id": &connection_id,
+            "type": "directTcp",
+            "endpoint": &endpoint,
+            "useTls": false,
+            "password": &password,
+        }],
+        "preferredConnectionId": &connection_id,
+        "createdAt": &now,
+        "updatedAt": &now,
+    }]);
+    let registry_json = serde_json::to_string(&registry_entry.to_string())
+        .map_err(|e| unavailable(e.to_string()))?;
+    let init_script = format!("window.localStorage.setItem('@paseo:daemon-registry', {registry_json});");
+
+    let parsed_url = url.parse::<tauri::Url>().map_err(|e| unavailable(e.to_string()))?;
+    Ok(TerminalPane { url: parsed_url, init_script, forward_name })
+}
+
+/// Open (or switch to) sandbox `name`'s embedded Agents pane (the paseo web UI). Embedded lazily
+/// on the first call — unlike Terminal/Dashboard, which `open_workspace` embeds eagerly — and
+/// made the active tab immediately.
+#[tauri::command]
+async fn open_agent_web(
+    name: String,
+    workspace_path: String,
+    runtime: State<'_, Arc<dyn RuntimeManager>>,
+    engine: State<'_, Arc<dyn SyncEngine>>,
+    workspaces: State<'_, WorkspaceRegistry>,
+    app: tauri::AppHandle,
+) -> Result<(), AppError> {
+    let exists = workspaces
+        .lock()
+        .unwrap()
+        .apps
+        .iter()
+        .any(|p| p.sandbox == name && p.kind == AppKind::AgentWeb);
+    if exists {
+        return workspace::switch_pane(&app, &name, AppKind::AgentWeb).map_err(Into::into);
+    }
+
+    let pane = prepare_agent_web_pane(&name, &workspace_path, &runtime, &engine, &app).await?;
+    workspace::embed_agent_web(&app, &name, &workspace_path, pane)?;
+    Ok(())
+}
+
 /// Open the standalone web-terminal window for sandbox `name`. Kept as the code-level fallback to
 /// the embedded workspace (Resolved Decision 7): both paths share `prepare_terminal_webview`.
 #[tauri::command]
@@ -257,8 +438,8 @@ async fn open_workspace(
     let pane =
         prepare_terminal_webview(&name, &workspace_path, &runtime, &engine, &forward_ports, &app)
             .await?;
-    workspace::embed_terminal(&app, &name, pane)?;
-    workspace::embed_dashboard(&app, &name)?;
+    workspace::embed_terminal(&app, &name, &workspace_path, pane)?;
+    workspace::embed_dashboard(&app, &name, &workspace_path)?;
     Ok(())
 }
 
@@ -372,8 +553,11 @@ async fn undeploy_sandbox(
     // Close the embedded workspace pane (tab + its forward) before the sync session closes its
     // SSH channel, so no orphaned pane or forward survives the undeploy.
     workspace::close_app(&app, &name).await;
-    // Tear down any active forwarding session before the sync session closes its SSH channel.
+    // Tear down any active forwarding sessions before the sync session closes its SSH channel.
+    // Named explicitly (not via close_app) because a forward can outlive its pane — e.g. one
+    // created in a previous app run that the in-memory pane registry no longer tracks.
     sync::forward_terminate(&app, &format!("terminal-{name}")).await;
+    sync::forward_terminate(&app, &format!("agentweb-{name}")).await;
     forward_ports.lock().unwrap().remove(&name);
     // Flush before removing so any pending remote writes land locally first.
     // Remove the container before terminating the Mutagen session: terminating closes
@@ -407,10 +591,11 @@ async fn destroy_sandbox(
         .into_iter()
         .find(|s| s.name == name);
     let Some(session) = session else {
-        // Still close any embedded workspace pane and clean up any forwarding session from a
-        // local terminal.
+        // Still close any embedded workspace pane and clean up any forwarding sessions from a
+        // local terminal or agents pane.
         workspace::close_app(&app, &name).await;
         sync::forward_terminate(&app, &format!("terminal-{name}")).await;
+        sync::forward_terminate(&app, &format!("agentweb-{name}")).await;
         forward_ports.lock().unwrap().remove(&name);
         return Ok(store.destroy(&name).await?);
     };
@@ -425,6 +610,7 @@ async fn destroy_sandbox(
     }
     workspace::close_app(&app, &name).await;
     sync::forward_terminate(&app, &format!("terminal-{name}")).await;
+    sync::forward_terminate(&app, &format!("agentweb-{name}")).await;
     forward_ports.lock().unwrap().remove(&name);
     engine.terminate(&name).await?;
     store.remove_remote(&name, &session.host).await?;
@@ -1112,6 +1298,20 @@ pub fn run() {
             // so it is built here rather than declared in tauri.conf.json, which would give it a
             // webview of its own.
             workspace::create_main_window(app.handle())?;
+            // Off the setup path: sweep forwards orphaned by a previous run (the Mutagen daemon
+            // outlives the app, so sessions leak whenever it exits without teardown). Skipped
+            // under the mock backend, whose sandbox list says nothing about real forwards.
+            if !backends::mock_backend_enabled() {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let live = match handle.state::<Arc<dyn SandboxBackend>>().list().await {
+                        Ok(sandboxes) => sandboxes.into_iter().map(|s| s.name).collect::<Vec<_>>(),
+                        // Podman not ready ⇒ can't tell what's live; leave the daemon untouched.
+                        Err(_) => return,
+                    };
+                    sync::sweep_stale_forwards(&handle, &live).await;
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1125,6 +1325,7 @@ pub fn run() {
             uninstall_package,
             open_terminal,
             open_workspace,
+            open_agent_web,
             switch_app,
             switch_pane,
             set_panel_collapsed,

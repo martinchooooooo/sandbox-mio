@@ -25,6 +25,10 @@ const LOCKFILE_REL: &str = "mise.lock";
 /// which publishes it to the host at `create`.
 const ZELLIJ_WEB_PORT: u16 = 8082;
 
+/// Container port the paseo daemon binds. Matches `PASEO_WEB_PORT` in `backends/mod.rs`,
+/// which publishes it to the host at `create`.
+const PASEO_WEB_PORT: u16 = 6767;
+
 /// Construct the managed [`RuntimeManager`] for Tauri state. The Podman connection is read from
 /// `PODMAN_CONNECTION`; defaults to [`crate::backends::DEFAULT_CONNECTION`] when unset. The e2e
 /// harness overrides `PODMAN_CONNECTION` to pin the local test connection.
@@ -245,6 +249,89 @@ impl RuntimeManager for PodmanMiseRuntime {
         })?;
 
         Ok((token, host_port))
+    }
+
+    async fn prepare_agent_web(
+        &self,
+        name: &str,
+        connection: &str,
+        password: &str,
+    ) -> Result<u16, RuntimeError> {
+        // The container must be running before any `podman exec`.
+        check(Self::podman_on(connection, &["start", name]).await?)?;
+
+        check(
+            Self::podman_on(
+                connection,
+                &[
+                    "exec", "--workdir", WORKSPACE_MOUNT, name,
+                    "mise", "use", "node@lts", "npm:@getpaseo/cli",
+                ],
+            )
+            .await?,
+        )?;
+
+        // Stop any running daemon unconditionally (best-effort, fails when none is running):
+        let _ = Self::podman_on(
+            connection,
+            &[
+                "exec", "--workdir", WORKSPACE_MOUNT, name,
+                "mise", "exec", "--", "paseo", "daemon", "stop",
+            ],
+        )
+        .await;
+
+        // `mise exec` from the workspace dir puts the workspace's tools (opencode, pi) on PATH
+        // and applies `mise.toml [env]`, so paseo discovers installed providers and its spawned
+        // agents see the provisioned environment.
+        let listen = format!("0.0.0.0:{PASEO_WEB_PORT}");
+        let password_env = format!("PASEO_PASSWORD={password}");
+        check(
+            Self::podman_on(
+                connection,
+                &[
+                    "exec", "-d", "--workdir", WORKSPACE_MOUNT, "--env", &password_env, name,
+                    "mise", "exec", "--", "paseo", "daemon", "start", "--foreground",
+                    "--listen", &listen, "--web-ui", "--hostnames", "true",
+                ],
+            )
+            .await?,
+        )?;
+
+        // `exec -d --foreground` returns once the process is spawned, not once it accepts
+        // connections, and a fresh daemon's startup can outlast the web client's connect
+        // timeout.
+        let listen_url = format!("http://127.0.0.1:{PASEO_WEB_PORT}/");
+        check(
+            Self::podman_on(
+                connection,
+                &[
+                    "exec", name, "curl", "--silent", "--fail", "--output", "/dev/null",
+                    "--retry", "30", "--retry-delay", "1", "--retry-connrefused",
+                    "--max-time", "45", &listen_url,
+                ],
+            )
+            .await?,
+        )
+        .map_err(|e| {
+            RuntimeError::AgentWebUnavailable(format!(
+                "paseo daemon did not come up on {PASEO_WEB_PORT} within 45s: {e}"
+            ))
+        })?;
+
+        let port_spec = format!("{PASEO_WEB_PORT}/tcp");
+        let port_out = check(Self::podman_on(connection, &["port", name, &port_spec]).await?)?;
+        let host_port_str = parse_host_port(&port_out).ok_or_else(|| {
+            RuntimeError::AgentWebUnavailable(format!(
+                "no 127.0.0.1 host mapping for container port {PASEO_WEB_PORT}; \
+                 the sandbox was likely created before the agents web port was published. Output:\n{port_out}"
+            ))
+        })?;
+        host_port_str.parse().map_err(|e| {
+            RuntimeError::AgentWebUnavailable(format!(
+                "could not parse host port {host_port_str:?}: {e}"
+            ))
+        })
     }
 
     fn local_connection(&self) -> &str {

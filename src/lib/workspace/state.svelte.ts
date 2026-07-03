@@ -5,8 +5,15 @@ import { listen } from "@tauri-apps/api/event";
 // subscription for the whole global-panel document, shared by +layout.svelte (collapse/rail chrome)
 // and the projects list (per-sandbox open/closed state), so neither maintains its own listener.
 
-export type AppKind = "terminal" | "dashboard";
-export type AppPane = { label: string; sandbox: string; forward_name: string; kind: AppKind; url: string };
+export type AppKind = "terminal" | "dashboard" | "agentweb";
+export type AppPane = {
+    label: string;
+    sandbox: string;
+    workspace_path: string;
+    forward_name: string;
+    kind: AppKind;
+    url: string;
+};
 type WorkspaceState = { apps: AppPane[]; active_app: string | null; collapsed: boolean };
 
 let apps = $state<AppPane[]>([]);

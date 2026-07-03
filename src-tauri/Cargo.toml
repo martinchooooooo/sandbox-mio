@@ -39,3 +39,5 @@ futures-util = "0.3"
 # Structured backend logging. Events are captured by tauri-plugin-devtools (debug builds) and
 # surface in its console; in release builds with no subscriber installed they are cheap no-ops.
 tracing = "0.1"
+# Per-sandbox PASEO_PASSWORD minting for the agents web UI (docs/features/agent-web-ui/02_dev.md).
+uuid = { version = "1", features = ["v4"] }

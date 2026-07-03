@@ -6,6 +6,7 @@ import { fileURLToPath } from "url";
 
 import { provisionMachine, stopMachine, removeMachine, ensureMiseBaseImage } from "./lib/podman-machine.js";
 import { LOCAL_CONNECTION, REMOTE_CONNECTION } from "./lib/podman-connection.js";
+import { ensureMutagen, forwardCreate, SWEEP_ORPHAN_SESSION, SWEEP_KEEP_SESSION } from "./lib/mutagen.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const FAILURES_LOG = path.join(__dirname, "failures.log");
@@ -178,7 +179,19 @@ export const config: WebdriverIO.Config = {
       );
     }
   },
-  beforeSession: () => {
+  beforeSession: (_config, _capabilities, specs) => {
+    // Seed the forward-sweep preconditions before the app process spawns (its startup sweep is
+    // the thing under test): an orphan session with a swept prefix and a bystander outside the
+    // prefixes, both in the app's private Mutagen daemon (the CLI auto-starts it; the vendored
+    // v0.18.1 matches the sidecar, so the app attaches to the same daemon). Local tcp endpoints
+    // on both sides keep the create instant and SSH-free — the sweep terminates by name
+    // regardless of connection state. Scoped to the worker running forward-sweep.spec.ts so the
+    // sessions never linger past that spec's own cleanup.
+    if (!IS_LIGHT_SUITE && specs.some((s) => s.includes("forward-sweep"))) {
+      ensureMutagen();
+      forwardCreate(SWEEP_ORPHAN_SESSION, "tcp:127.0.0.1:38471", "tcp:127.0.0.1:1");
+      forwardCreate(SWEEP_KEEP_SESSION, "tcp:127.0.0.1:38473", "tcp:127.0.0.1:1");
+    }
     tauriDriver = spawn(
       path.resolve(os.homedir(), ".cargo", "bin", `tauri-driver${ext}`),
       ["--native-driver", "../tools/msedgedriver.exe"],

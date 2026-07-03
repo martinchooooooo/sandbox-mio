@@ -1,16 +1,7 @@
 //! The embedded multi-webview workspace IS the app's main window: a bare container `Window`
 //! (label `main`, created in setup instead of tauri.conf.json) hosting the full SvelteKit app as
-//! the left collapsible panel (`main-global`), an app-switcher tab bar (`main-switcher`), and two
-//! content child webviews per sandbox whose workspace is open: a Zellij terminal pane and a
-//! package/agent management dashboard pane (`docs/features/responsive-panel/02_dev.md` Phase C).
-//! Requires the `unstable` Tauri feature. With no embedded app the global panel fills the whole
-//! window, so the app looks like a normal single-webview window until a workspace is opened.
-//!
-//! State lives in the [`types::WorkspaceRegistry`] managed in `lib.rs`; the `open_workspace`,
-//! `switch_app`, `switch_pane`, `set_panel_collapsed`, `close_workspace`, and `workspace_state`
-//! commands there are thin wrappers over this module. Every mutation broadcasts the fresh
-//! [`types::WorkspaceState`] as the `workspace://state` event so the chrome webviews mirror what
-//! Rust applied.
+//! the left collapsible panel (`main-global`), an app-switcher tab bar (`main-switcher`), and
+//! content child webviews per sandbox whose workspace is open.
 
 pub mod types;
 
@@ -135,21 +126,53 @@ pub fn create_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), Workspac
 pub fn embed_terminal<R: Runtime>(
     app: &AppHandle<R>,
     name: &str,
+    workspace_path: &str,
     terminal: TerminalPane,
+) -> Result<(), WorkspaceError> {
+    embed_external(app, name, workspace_path, terminal, AppKind::Terminal)
+}
+
+pub fn embed_agent_web<R: Runtime>(
+    app: &AppHandle<R>,
+    name: &str,
+    workspace_path: &str,
+    pane: TerminalPane,
+) -> Result<(), WorkspaceError> {
+    embed_external(app, name, workspace_path, pane, AppKind::AgentWeb)
+}
+
+/// Shared embedder for the externally-served panes (Terminal, AgentWeb): a content child webview
+/// over a Mutagen-forwarded URL that becomes the active tab on creation.
+fn embed_external<R: Runtime>(
+    app: &AppHandle<R>,
+    name: &str,
+    workspace_path: &str,
+    pane: TerminalPane,
+    kind: AppKind,
 ) -> Result<(), WorkspaceError> {
     let app_in = app.clone();
     let name = name.to_string();
-    run_on_main(app, move || embed_terminal_on_main(&app_in, &name, terminal))?
+    let workspace_path = workspace_path.to_string();
+    run_on_main(app, move || {
+        embed_external_on_main(&app_in, &name, &workspace_path, pane, kind)
+    })?
 }
 
-fn embed_terminal_on_main<R: Runtime>(
+fn embed_external_on_main<R: Runtime>(
     app: &AppHandle<R>,
     name: &str,
-    terminal: TerminalPane,
+    workspace_path: &str,
+    pane: TerminalPane,
+    kind: AppKind,
 ) -> Result<(), WorkspaceError> {
     let win = |e: tauri::Error| WorkspaceError::Window(e.to_string());
     let window = main_window(app)?;
-    let label = format!("workspace-{name}-terminal");
+    let suffix = match kind {
+        AppKind::Terminal => "terminal",
+        AppKind::AgentWeb => "agentweb",
+        AppKind::Dashboard => "dashboard",
+    };
+    let label = format!("workspace-{name}-{suffix}");
 
     let registry = app.state::<WorkspaceRegistry>();
     let collapsed = registry.lock().unwrap().collapsed;
@@ -160,9 +183,9 @@ fn embed_terminal_on_main<R: Runtime>(
         .add_child(
             tauri::webview::WebviewBuilder::new(
                 &label,
-                tauri::WebviewUrl::External(terminal.url.clone()),
+                tauri::WebviewUrl::External(pane.url.clone()),
             )
-            .initialization_script(&terminal.init_script),
+            .initialization_script(&pane.init_script),
             tauri::LogicalPosition::new(rects.content.x, rects.content.y),
             tauri::LogicalSize::new(rects.content.width, rects.content.height),
         )
@@ -174,9 +197,10 @@ fn embed_terminal_on_main<R: Runtime>(
         state.apps.push(AppPane {
             label: label.clone(),
             sandbox: name.to_string(),
-            forward_name: terminal.forward_name,
-            kind: AppKind::Terminal,
-            url: terminal.url.to_string(),
+            workspace_path: workspace_path.to_string(),
+            forward_name: pane.forward_name,
+            kind,
+            url: pane.url.to_string(),
         });
         state.active_app = Some(label.clone());
         state.sandbox_last_pane.insert(name.to_string(), label);
@@ -203,15 +227,21 @@ fn embed_terminal_on_main<R: Runtime>(
 /// when reached from a synchronous command, because `run_on_main`'s blocking wait never returns
 /// (confirmed by the de-risking spike, `docs/features/responsive-panel/03_e2e.md`, 2026-07-02).
 /// `open_workspace` is already `async fn`, so this is satisfied today; do not add a sync wrapper.
-pub fn embed_dashboard<R: Runtime>(app: &AppHandle<R>, name: &str) -> Result<(), WorkspaceError> {
+pub fn embed_dashboard<R: Runtime>(
+    app: &AppHandle<R>,
+    name: &str,
+    workspace_path: &str,
+) -> Result<(), WorkspaceError> {
     let app_in = app.clone();
     let name = name.to_string();
-    run_on_main(app, move || embed_dashboard_on_main(&app_in, &name))?
+    let workspace_path = workspace_path.to_string();
+    run_on_main(app, move || embed_dashboard_on_main(&app_in, &name, &workspace_path))?
 }
 
 fn embed_dashboard_on_main<R: Runtime>(
     app: &AppHandle<R>,
     name: &str,
+    workspace_path: &str,
 ) -> Result<(), WorkspaceError> {
     let win = |e: tauri::Error| WorkspaceError::Window(e.to_string());
     let window = main_window(app)?;
@@ -236,6 +266,7 @@ fn embed_dashboard_on_main<R: Runtime>(
         state.apps.push(AppPane {
             label: label.clone(),
             sandbox: name.to_string(),
+            workspace_path: workspace_path.to_string(),
             forward_name: String::new(),
             kind: AppKind::Dashboard,
             url: format!("/{route}"),
@@ -364,9 +395,10 @@ fn set_collapsed_on_main<R: Runtime>(
     Ok(())
 }
 
-/// Tear down every one of sandbox `name`'s embedded panes (Terminal and, if open, Dashboard):
-/// close their webviews, activate the neighbouring tab, terminate the Terminal pane's forward
-/// (Dashboard has none), drop the forward-port entry, clear `sandbox_last_pane`, re-layout
+/// Tear down every one of sandbox `name`'s embedded panes (Terminal and, if open, Dashboard and
+/// AgentWeb): close their webviews, activate the neighbouring tab, terminate the Terminal and
+/// AgentWeb panes' forwards (Dashboard has none), drop the forward-port entry, clear
+/// `sandbox_last_pane`, re-layout
 /// (closing the last pane returns the global panel to full-bleed). Idempotent and best-effort, so
 /// it is safe from the command, from undeploy/destroy, and from the Destroyed event alike.
 pub async fn close_app<R: Runtime>(app: &AppHandle<R>, name: &str) {
@@ -400,7 +432,7 @@ pub async fn close_app<R: Runtime>(app: &AppHandle<R>, name: &str) {
     });
 
     for pane in &panes {
-        if pane.kind == AppKind::Terminal {
+        if matches!(pane.kind, AppKind::Terminal | AppKind::AgentWeb) {
             crate::sync::forward_terminate(app, &pane.forward_name).await;
         }
     }
