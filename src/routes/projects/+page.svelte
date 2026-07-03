@@ -1,18 +1,15 @@
 <script lang="ts">
     import Button from "$lib/components/ui/button/button.svelte";
-    import * as Field from "$lib/components/ui/field";
-    import { Input } from "$lib/components/ui/input";
     import { invoke } from "@tauri-apps/api/core";
     import { onMount, onDestroy } from "svelte";
     import { parseError } from "$lib/errors";
     import { m } from "$lib/paraglide/messages.js";
     import { createActionRunner } from "$lib/actions.svelte";
     import SandboxItem from "./SandboxItem.svelte";
-    import StatusRow from "./StatusRow.svelte";
+    import CreateSandboxItem from "./CreateSandboxItem.svelte";
     import { activityEvents, containerStatusFor } from "$lib/activity/activity.svelte";
     import type { Project, Deployment } from "$lib/sandbox";
 
-    let projectName = $state("");
     let projects = $state<Project[]>([]);
     let error = $state("");
     let currentImageVersion = $state<number | undefined>(undefined);
@@ -28,7 +25,6 @@
     // (polling a down Podman floods the backend with failing invocations).
     let podmanUnavailable = $state(false);
 
-    const action = createActionRunner();
     const startAction = createActionRunner();
 
     async function loadProjects() {
@@ -53,19 +49,6 @@
             hosts = await invoke<string[]>("list_sandbox_hosts");
         } catch (e) {
             error = parseError(e).message;
-        }
-    }
-
-    async function createProject() {
-        const name = projectName.trim();
-        if (!name) return;
-        if (await action.run(
-            "create",
-            () => invoke("create_sandbox", { name }),
-            { message: m.projects_status_creating({ name }) }
-        )) {
-            projectName = "";
-            await loadProjects();
         }
     }
 
@@ -138,10 +121,8 @@
 
     <h1 class="text-center text-3xl mb-8">{m.projects_title()}</h1>
 
-    <!-- max-[420px]: matches main-global's real rendered width once a workspace is open
-         (GLOBAL_EXPANDED_W = 380, src-tauri/src/workspace/mod.rs:32) with margin above it. -->
     <div class="max-w-2xl mx-auto max-[420px]:max-w-none max-[420px]:mx-0">
-        <Field.Set class="w-full">
+        <!-- <Field.Set class="w-full">
             <Field.Group>
                 <Field.Field>
                     <Field.Label>{m.projects_name_label()}</Field.Label>
@@ -155,13 +136,11 @@
                     </div>
                 </Field.Field>
             </Field.Group>
-        </Field.Set>
+        </Field.Set> -->
 
         {#if error}
             <p class="text-destructive mt-4 text-sm">{error}</p>
         {/if}
-
-        <StatusRow busy={action.busy} message={action.message} error={action.error} />
 
         {#if podmanUnavailable}
             <div class="mt-8 text-center space-y-4">
@@ -176,7 +155,7 @@
                     <Button variant="outline" onclick={startPodman}>{m.retry()}</Button>
                 {/if}
             </div>
-        {:else if projects.length > 0}
+        {:else}
             <ul class="mt-6 space-y-2">
                 {#each projects as project (project.id)}
                     <SandboxItem
@@ -187,6 +166,7 @@
                         onChanged={reload}
                     />
                 {/each}
+                <CreateSandboxItem {projects} onCreated={reload} />
             </ul>
         {/if}
     </div>

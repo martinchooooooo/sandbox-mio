@@ -8,12 +8,38 @@ class ProjectsPage extends AppPage {
     return $("a[href='/projects']");
   }
 
+  // The always-present create row, last <li> in the sandbox list (docs/features/sandbox-list-create).
+  get createRow(): Element {
+    return $("li[data-create-row]");
+  }
+
   get nameInput(): Element {
-    return $("input[placeholder='my-project']");
+    return this.createRow.$("input[placeholder='my-project']");
   }
 
   get createButton(): Element {
-    return $("button=Create");
+    return this.createRow.$("button=Create");
+  }
+
+  // The discreet link that reveals the folder picker (initial "name" mode → "folder" mode).
+  get useExistingFolderLink(): Element {
+    return this.createRow.$("button*=existing folder");
+  }
+
+  // Visible only in "folder" mode; clicking it in real automation would spawn a real, blocking OS
+  // dialog (see docs/features/sandbox-list-create/03_e2e.md's Existing Test Styles) — specs assert
+  // its presence/absence to confirm mode-toggle wiring, but never click it.
+  get chooseFolderButton(): Element {
+    return this.createRow.$("button*=Choose folder");
+  }
+
+  // Resets "folder" mode back to "name" mode, discarding any picked path.
+  get backToNameButton(): Element {
+    return this.createRow.$("[aria-label='Back']");
+  }
+
+  async useExistingFolderMode(): Promise<void> {
+    await (await this.useExistingFolderLink).click();
   }
 
   // ── Podman startup-recovery gate (podman-startup-recovery feature) ───────────

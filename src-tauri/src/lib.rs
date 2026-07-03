@@ -70,13 +70,14 @@ async fn mutagen_version(app: tauri::AppHandle) -> Result<String, AppError> {
 #[tauri::command]
 async fn create_sandbox(
     name: String,
+    existing_path: Option<String>,
     store: State<'_, Arc<dyn SandboxBackend>>,
     runtime: State<'_, Arc<dyn RuntimeManager>>,
 ) -> Result<Sandbox, AppError> {
     // Build the mise-baked base image on first use; a no-op once staged. Done here, not in
     // `create`, so the one-time build is an explicit step of the create command.
     store.ensure_base_image().await?;
-    let sandbox = store.create(&name).await?;
+    let sandbox = store.create(&name, existing_path.as_deref()).await?;
     runtime.init(&sandbox.workspace_path).await?;
     Ok(sandbox)
 }
@@ -1281,6 +1282,7 @@ pub fn run() {
     let app = builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(backend)
         .manage(runtime)
         .manage(machine)

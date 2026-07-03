@@ -111,7 +111,7 @@ pub async fn ensure_auth_container(
     let exists = backend.list().await?.iter().any(|s| s.name == name);
     if !exists {
         backend.ensure_base_image().await?;
-        let sandbox = backend.create(name).await?;
+        let sandbox = backend.create(name, None).await?;
         runtime.init(&sandbox.workspace_path).await?;
     }
     Ok(())

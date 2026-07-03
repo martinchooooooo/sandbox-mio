@@ -23,12 +23,14 @@ impl SandboxBackend for MockBackend {
         Ok(())
     }
 
-    async fn create(&self, name: &str) -> Result<Sandbox, BackendError> {
+    async fn create(&self, name: &str, existing_path: Option<&str>) -> Result<Sandbox, BackendError> {
         let sandbox = Sandbox {
             id: name.to_string(),
             name: name.to_string(),
             status: "created".to_string(),
-            workspace_path: format!("/mock/workspace/{name}"),
+            workspace_path: existing_path
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("/mock/workspace/{name}")),
             image_version: Some(1),
         };
         let mut state = self.state.lock().await;

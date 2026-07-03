@@ -43,6 +43,12 @@ fn parse_image_version(image: &str) -> Option<u32> {
 /// `$HOME`, which is `/root` for the debian root user.
 const WORKSPACE_MOUNT: &str = "/root/work";
 
+/// Podman label recording a container's real workspace path verbatim. `list()` reads this back
+/// instead of re-deriving `workspace_path(name)`, since an `existing_path` sandbox's workspace is
+/// not under `workspace_root()` and cannot be reconstructed from the name alone. A container
+/// created before this label existed falls back to the name-derived path in `list()`.
+const WORKSPACE_LABEL: &str = "sandbox-mio.workspace";
+
 /// Container port the zellij web server binds (its default). Published to an ephemeral host
 /// loopback port at `create` so [`crate::runtime::types::RuntimeManager::open_terminal`] can reach
 /// the in-app terminal. Named once here and reused to build the `--publish` argument.
@@ -63,8 +69,10 @@ fn workspace_root() -> Result<std::path::PathBuf, BackendError> {
     Ok(documents.join("sandbox-mio"))
 }
 
-/// Rejects names Podman would refuse. Also the path-safety gate for `workspace_path`: the
-/// name becomes a path segment, so barring `/` and `..` keeps the workspace inside its root.
+/// Rejects names Podman would refuse. Also the path-safety gate for `workspace_path`, but only
+/// on the auto-create path (`create`'s `existing_path: None` branch) — the name becomes a path
+/// segment there, so barring `/` and `..` keeps the workspace inside its root. The `existing_path`
+/// branch bypasses `workspace_path` entirely, so this gate does not apply to it.
 fn validate_name(name: &str) -> Result<(), BackendError> {
     let valid = name
         .chars()
@@ -273,6 +281,45 @@ impl PodmanCliBackend {
         check(out).map(|_| ())
     }
 
+    /// Resolve where a freshly created sandbox's workspace lives. `None` derives and creates a
+    /// fresh directory under `workspace_root()` (today's behavior). `Some(p)` canonicalizes `p`
+    /// via `dunce::canonicalize` (plain `std::fs::canonicalize` would return a Windows `\\?\`
+    /// UNC-prefixed path that `podman -v` does not understand), rejects it if not found or not a
+    /// directory, and rejects it as `PathAlreadyTracked` if it falls inside `workspace_root()` or
+    /// exactly matches an already-tracked sandbox's workspace — without touching the filesystem
+    /// further.
+    async fn resolve_create_workspace(
+        &self,
+        name: &str,
+        existing_path: Option<&str>,
+    ) -> Result<String, BackendError> {
+        let Some(p) = existing_path else {
+            // Pre-created so an unwritable path fails here, not silently via podman's
+            // auto-creation of the mount source.
+            let workspace = workspace_path(name)?;
+            std::fs::create_dir_all(&workspace).map_err(|e| BackendError::WorkspaceCreate {
+                path: workspace.clone(),
+                error: e.to_string(),
+            })?;
+            return Ok(workspace);
+        };
+        let canonical = dunce::canonicalize(p)
+            .map_err(|_| BackendError::PathNotFound { path: p.to_string() })?;
+        if !canonical.is_dir() {
+            return Err(BackendError::PathNotADirectory { path: p.to_string() });
+        }
+        let root = workspace_root()?;
+        let canonical_root = dunce::canonicalize(&root).unwrap_or(root);
+        if canonical.starts_with(&canonical_root) {
+            return Err(BackendError::PathAlreadyTracked { path: p.to_string() });
+        }
+        let normalized = canonical.to_string_lossy().replace('\\', "/");
+        if self.list().await?.iter().any(|s| s.workspace_path == normalized) {
+            return Err(BackendError::PathAlreadyTracked { path: p.to_string() });
+        }
+        Ok(normalized)
+    }
+
     /// Resolve where `name`'s workspace lives on `connection` and how it reaches the laptop. A
     /// local connection returns equal paths and a no-op strategy; a remote connection returns a
     /// remote bind-mount source and the live SSH endpoint. Called by `deploy` against the chosen
@@ -320,18 +367,14 @@ impl SandboxBackend for PodmanCliBackend {
         Self::ensure_image_on(&self.connection).await
     }
 
-    async fn create(&self, name: &str) -> Result<Sandbox, BackendError> {
+    async fn create(&self, name: &str, existing_path: Option<&str>) -> Result<Sandbox, BackendError> {
         validate_name(name)?;
         let image = Self::image();
         // Every sandbox is created locally; remoteness is a later deploy action, so the workspace
-        // is always a laptop directory bind-mounted directly. Pre-created so an unwritable path
-        // fails here, not silently via podman's auto-creation of the mount source.
-        let workspace = workspace_path(name)?;
-        std::fs::create_dir_all(&workspace).map_err(|e| BackendError::WorkspaceCreate {
-            path: workspace.clone(),
-            error: e.to_string(),
-        })?;
+        // is always a laptop directory bind-mounted directly.
+        let workspace = self.resolve_create_workspace(name, existing_path).await?;
         let volume = format!("{workspace}:{WORKSPACE_MOUNT}");
+        let label = format!("{WORKSPACE_LABEL}={workspace}");
         // Publish zellij's web port to an ephemeral host-loopback port. `--host-lo-to-ns-lo` is the
         // decisive pasta flag: it forwards the host-loopback-published port to the container's
         // loopback, where zellij binds; without it pasta forwards to the container's eth0 and the
@@ -344,8 +387,8 @@ impl SandboxBackend for PodmanCliBackend {
             .podman(&[
                 "create", "--pull=missing", "--tty", "--network",
                 "pasta:--host-lo-to-ns-lo", "--publish", &publish, "--publish", &publish_paseo,
-                "--volume", &volume, "--workdir", WORKSPACE_MOUNT, "--name", name, &image,
-                "/bin/sh",
+                "--volume", &volume, "--workdir", WORKSPACE_MOUNT, "--label", &label,
+                "--name", name, &image, "/bin/sh",
             ])
             .await?;
         let id = check(out)?.trim().to_string();
@@ -375,9 +418,15 @@ impl SandboxBackend for PodmanCliBackend {
                     .unwrap_or_default()
                     .trim_start_matches('/')
                     .to_string();
-                // Derived from the name, not the container's mount JSON, so it is set even
-                // for sandboxes created outside this app.
-                let workspace_path = workspace_path(&name).unwrap_or_default();
+                // Prefer the label written at `create` time, since an `existing_path` sandbox's
+                // workspace is not under `workspace_root()` and cannot be reconstructed from the
+                // name alone. Falls back to the name-derived path for containers created before
+                // this label existed, or outside this app.
+                let workspace_path = c["Labels"]
+                    .get(WORKSPACE_LABEL)
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| workspace_path(&name).unwrap_or_default());
                 let image_version =
                     parse_image_version(c["Image"].as_str().unwrap_or_default());
                 Sandbox {

@@ -15,6 +15,16 @@ pub enum BackendError {
     /// Creating the sandbox's local workspace directory failed.
     #[error("failed to create workspace {path}: {error}")]
     WorkspaceCreate { path: String, error: String },
+    /// An `existing_path` given to `create` does not resolve to a real path.
+    #[error("directory not found: {path}")]
+    PathNotFound { path: String },
+    /// An `existing_path` given to `create` resolves to a file, not a directory.
+    #[error("not a directory: {path}")]
+    PathNotADirectory { path: String },
+    /// An `existing_path` given to `create` is already a tracked sandbox workspace (inside
+    /// `workspace_root()`, or an exact match with another sandbox's workspace).
+    #[error("{path} is already a sandbox workspace")]
+    PathAlreadyTracked { path: String },
     /// A `podman` or `ssh` process failed to spawn, or exited with a non-zero status. The
     /// captured stderr (or the spawn error) is in the payload.
     #[error("{0}")]
@@ -119,10 +129,11 @@ pub trait SandboxBackend: Send + Sync {
     /// Pull the base image if absent, then create a stopped container named `name`.
     ///
     /// Also ensures the sandbox's host workspace directory exists and bind-mounts it at
-    /// `/root/work`. The directory is `<Documents>/sandbox-mio/<name>` (override the root
-    /// with `SANDBOX_WORKSPACE_ROOT`). Phase 1 is local-only: the workspace lives on the
-    /// laptop and `podman` translates the Windows path into the machine VM.
-    async fn create(&self, name: &str) -> Result<Sandbox, BackendError>;
+    /// `/root/work`. With `existing_path: None`, the directory is `<Documents>/sandbox-mio/<name>`
+    /// (override the root with `SANDBOX_WORKSPACE_ROOT`), created if absent. With
+    /// `existing_path: Some(p)`, `p` is validated (exists, is a directory, is not already a
+    /// tracked workspace) and bind-mounted directly, skipping directory creation.
+    async fn create(&self, name: &str, existing_path: Option<&str>) -> Result<Sandbox, BackendError>;
     /// Return all containers (running and stopped).
     async fn list(&self) -> Result<Vec<Sandbox>, BackendError>;
     /// Start a stopped container.
