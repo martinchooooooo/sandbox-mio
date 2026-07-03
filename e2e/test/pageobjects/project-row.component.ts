@@ -6,8 +6,10 @@ import { type Element } from "./app.page.js";
  * the status indicators) plus the waits that go with them, so specs operate a project by
  * name without knowing the row's markup.
  *
- * The row is resolved lazily on each access via `li*=<projectName>`, so the component keeps
- * working after the frontend re-renders the row in place.
+ * The row is resolved lazily on each access via the `data-sandbox` hook the SandboxItem `<li>`
+ * carries, so the component keeps working after the frontend re-renders the row in place. The
+ * attribute (not a text match) is required because the create row shows "Creating <name>…" while
+ * a sandbox is in flight, which a `li*=<name>` text selector would match instead of the real row.
  */
 export default class ProjectRow {
   readonly projectName: string;
@@ -17,7 +19,7 @@ export default class ProjectRow {
   }
 
   get root(): Element {
-    return $(`li*=${this.projectName}`);
+    return $(`li[data-sandbox="${this.projectName}"]`);
   }
 
   get startButton(): Element {

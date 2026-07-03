@@ -178,7 +178,7 @@
     });
 </script>
 
-<li class="flex flex-col gap-2 rounded-lg border p-3 text-sm">
+<li data-sandbox={project.name} class="flex flex-col gap-2 rounded-lg border p-3 text-sm">
     <div class="flex justify-between items-center gap-2">
         <span class="flex items-center gap-2 font-medium min-w-0">
             <span class={[
