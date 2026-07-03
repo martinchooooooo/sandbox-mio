@@ -4,6 +4,7 @@
     import { HugeiconsIcon } from "@hugeicons/svelte";
     import { SunIcon, MoonIcon } from "@hugeicons/core-free-icons";
     import { locales, getLocale, setLocale } from "$lib/paraglide/runtime.js";
+    import { m } from "$lib/paraglide/messages.js";
 
     function cycleLocale() {
         const current = getLocale();
@@ -13,6 +14,7 @@
 </script>
 
 <div class="flex gap-2">
+    <Button href="/credentials" variant="outline">{m.nav_credentials()}</Button>
     <Button onclick={toggleMode} variant="outline">
         <HugeiconsIcon icon={SunIcon}></HugeiconsIcon>
         /

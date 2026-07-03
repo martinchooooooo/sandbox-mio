@@ -26,6 +26,7 @@
     let packages = $state<string[]>([]);
 
     let agentStatuses = $state<Record<string, AgentAuthStatus>>({});
+    let credentialBundles = $state<Record<string, boolean>>({});
     let inferenceRunning = $state(false);
     let installingAgent = $state<string | null>(null);
     let installLog = $state<string[]>([]);
@@ -48,6 +49,15 @@
 
     async function loadPackages() {
         packages = await invoke<string[]>("list_packages", { workspacePath });
+    }
+
+    async function loadCredentialBundles() {
+        try {
+            const entries = await invoke<[string, unknown][]>("list_credential_bundles");
+            credentialBundles = Object.fromEntries(entries.map(([serviceId]) => [serviceId, true]));
+        } catch {
+            credentialBundles = {};
+        }
     }
 
     async function loadAgentStatuses() {
@@ -87,6 +97,7 @@
                 name: sandboxName,
                 packages: descriptor.misePackages,
                 postinstallNpm: npmStep ? [npmStep.package, npmStep.nodeVersion] : null,
+                credentialService: descriptor.credentialService ?? null,
                 onProgress: channel,
             });
             if (descriptor.provision) {
@@ -144,6 +155,18 @@
         });
     }
 
+    async function useSavedLogin(descriptor: AgentDescriptor) {
+        if (!descriptor.auth || !descriptor.credentialService) return;
+        const serviceId = descriptor.credentialService;
+        await action.run("auth", async () => {
+            await invoke("inject_agent_credentials", {
+                name: sandboxName,
+                serviceId,
+            });
+        });
+        await loadAgentStatuses();
+    }
+
     async function loadInferenceStatus() {
         try {
             const status = await invoke<InferenceStatus>("inference_status");
@@ -155,6 +178,7 @@
 
     onMount(async () => {
         await loadPackages();
+        await loadCredentialBundles();
         await loadAgentStatuses();
         await loadInferenceStatus();
     });
@@ -183,14 +207,26 @@
             {#if agent.auth}
                 {#if status?.authenticated}
                     <span class="text-muted-foreground">{status.accountEmail ?? "authenticated"}</span>
+                    <Button size="sm" variant="ghost"
+                        onclick={() => openAgentAuth(agent)}
+                        disabled={action.busy !== null}>
+                        {m.projects_agent_reauth()}
+                    </Button>
+                {:else if agent.credentialService && credentialBundles[agent.credentialService]}
+                    <span class="text-amber-600 dark:text-amber-400">{m.projects_agent_not_authed()}</span>
+                    <Button size="sm" variant="ghost"
+                        onclick={() => useSavedLogin(agent)}
+                        disabled={action.busy !== null}>
+                        {m.projects_agent_use_saved_login()}
+                    </Button>
                 {:else}
                     <span class="text-amber-600 dark:text-amber-400">{m.projects_agent_not_authed()}</span>
+                    <Button size="sm" variant="ghost"
+                        onclick={() => openAgentAuth(agent)}
+                        disabled={action.busy !== null}>
+                        {m.projects_agent_auth()}
+                    </Button>
                 {/if}
-                <Button size="sm" variant="ghost"
-                    onclick={() => openAgentAuth(agent)}
-                    disabled={action.busy !== null}>
-                    {status?.authenticated ? m.projects_agent_reauth() : m.projects_agent_auth()}
-                </Button>
             {:else if agent.provision}
                 {#if inferenceRunning}
                     <span class="text-muted-foreground">{m.projects_agent_provider_configured()}</span>

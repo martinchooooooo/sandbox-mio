@@ -1,6 +1,7 @@
 mod activity;
 mod agents;
 mod backends;
+mod credentials;
 mod error;
 mod inference;
 mod machine;
@@ -173,6 +174,10 @@ async fn prepare_terminal_webview(
         .map_err(|e| crate::runtime::types::RuntimeError::TerminalUnavailable(e.to_string()))?;
     let init_script = format!(
         r#"(async () => {{
+    // initialization_script re-runs on every navigation in this webview, so guard the reload
+    // with a one-time marker: without it, the reload below re-triggers this same script,
+    // which POSTs again and reloads again, forever, and the page never gets to paint.
+    if (sessionStorage.getItem('__mio_terminal_logged_in')) return;
     try {{
         const r = await fetch('/command/login', {{
             method: 'POST',
@@ -183,7 +188,10 @@ async fn prepare_terminal_webview(
         // so the frontend has already rendered its unauthenticated state by the time this POST
         // resolves. Gating the reload on pathname.startsWith('/auth') never fired on that path,
         // leaving the stale "security token required" screen up even after the cookie was set.
-        if (r.ok) location.replace(location.pathname + location.search);
+        if (r.ok) {{
+            sessionStorage.setItem('__mio_terminal_logged_in', '1');
+            location.replace(location.pathname + location.search);
+        }}
     }} catch (_) {{}}
 }})();"#
     );
@@ -303,9 +311,16 @@ async fn list_registry(
     Ok(runtime.registry(&name).await?)
 }
 
+/// List sandboxes, excluding ephemeral auth containers
+/// (`credentials::types::AUTH_CONTAINER_PREFIX`-named) so a login never appears as a project.
 #[tauri::command]
 async fn list_sandboxes(store: State<'_, Arc<dyn SandboxBackend>>) -> Result<Vec<Sandbox>, AppError> {
-    Ok(store.list().await?)
+    Ok(store
+        .list()
+        .await?
+        .into_iter()
+        .filter(|s| !s.name.starts_with(credentials::types::AUTH_CONTAINER_PREFIX))
+        .collect())
 }
 
 #[tauri::command]
@@ -550,17 +565,27 @@ async fn disable_sync(name: String, engine: State<'_, Arc<dyn SyncEngine>>) -> R
 /// Streams `AgentInstallEvent` JSON objects to `on_progress`.
 /// `postinstall_npm` is `(npm_package, node_tool)` — present only when the agent needs the
 /// npm postinstall workaround for mise's `--ignore-scripts=true` default.
+/// `credential_service` is the agent's catalogue `credentialService` (frontend passes `None` for
+/// agents with no `auth`). When given and the host store already holds a bundle for it,
+/// credentials are injected automatically after install so the user never sees a login step.
 #[tauri::command]
 async fn install_agent(
     name: String,
     packages: Vec<String>,
     postinstall_npm: Option<(String, String)>,
+    credential_service: Option<String>,
     on_progress: Channel<serde_json::Value>,
+    app: tauri::AppHandle,
     runtime: State<'_, Arc<dyn RuntimeManager>>,
 ) -> Result<(), AppError> {
     agents::install_packages(&name, &packages, &on_progress, &runtime).await?;
     if let Some((npm_package, node_tool)) = postinstall_npm {
         agents::run_postinstall_npm(&name, &npm_package, &node_tool, &on_progress, &runtime).await?;
+    }
+    if let Some(service_id) = credential_service {
+        if credentials::load_manifest(&app, &service_id).is_ok() {
+            credentials::inject(&app, &name, &service_id, &runtime).await?;
+        }
     }
     on_progress.send(serde_json::to_value(&agents::types::AgentInstallEvent::Done).unwrap()).ok();
     Ok(())
@@ -750,6 +775,74 @@ async fn get_agent_auth_status(
         &runtime,
     )
     .await?)
+}
+
+/// Create the ephemeral auth container `name` (expected to be `credentials::types::AUTH_CONTAINER_PREFIX`-prefixed)
+/// if it does not already exist. Idempotent, so the frontend can call it unconditionally before
+/// driving `install_agent`/`start_agent_auth` against the auth container.
+#[tauri::command]
+async fn ensure_auth_container(
+    name: String,
+    store: State<'_, Arc<dyn SandboxBackend>>,
+    runtime: State<'_, Arc<dyn RuntimeManager>>,
+) -> Result<(), AppError> {
+    Ok(credentials::ensure_auth_container(&name, &store, &runtime).await?)
+}
+
+/// Capture the agent's credential files out of container `name` into the host credential store
+/// for `service_id`. Used both for the auth-container login flow and for the "save credentials
+/// from this sandbox" secondary path — `name` is either shape, the function does not care which.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn capture_agent_credentials(
+    name: String,
+    service_id: String,
+    credential_path: String,
+    expires_at_json_key: String,
+    account_source_path: Option<String>,
+    account_email_json_key: Option<String>,
+    app: tauri::AppHandle,
+    runtime: State<'_, Arc<dyn RuntimeManager>>,
+) -> Result<credentials::types::CredentialManifest, AppError> {
+    Ok(credentials::capture(
+        &app,
+        &name,
+        &service_id,
+        &credential_path,
+        &expires_at_json_key,
+        account_source_path.as_deref(),
+        account_email_json_key.as_deref(),
+        &runtime,
+    )
+    .await?)
+}
+
+/// Inject the stored `service_id` bundle into container `name`. Exposed for the manual "use saved
+/// login" / "refresh credentials" action in `AgentManager.svelte`; `install_agent`'s auto-inject
+/// calls `credentials::inject` directly instead of this command.
+#[tauri::command]
+async fn inject_agent_credentials(
+    name: String,
+    service_id: String,
+    app: tauri::AppHandle,
+    runtime: State<'_, Arc<dyn RuntimeManager>>,
+) -> Result<(), AppError> {
+    Ok(credentials::inject(&app, &name, &service_id, &runtime).await?)
+}
+
+/// List every service with a persisted host credential bundle, for the `/credentials` page.
+#[tauri::command]
+fn list_credential_bundles(
+    app: tauri::AppHandle,
+) -> Result<Vec<(String, credentials::types::CredentialManifest)>, AppError> {
+    Ok(credentials::list(&app)?)
+}
+
+/// Delete the host credential bundle for `service_id`. Container copies already injected are
+/// untouched — the frontend states this explicitly on the `/credentials` page.
+#[tauri::command]
+fn delete_credential_bundle(service_id: String, app: tauri::AppHandle) -> Result<(), AppError> {
+    Ok(credentials::delete(&app, &service_id)?)
 }
 
 /// Allocate an ephemeral loopback port by binding and immediately releasing it. Same trick as
@@ -1063,6 +1156,11 @@ pub fn run() {
             send_agent_auth_input,
             cancel_agent_auth,
             get_agent_auth_status,
+            ensure_auth_container,
+            capture_agent_credentials,
+            inject_agent_credentials,
+            list_credential_bundles,
+            delete_credential_bundle,
             detect_machine_specs,
             redetect_machine_specs,
             download_model,

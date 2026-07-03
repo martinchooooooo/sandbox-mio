@@ -35,6 +35,9 @@ export interface AgentDescriptor {
   /** Absent for agents that configure a provider instead of authenticating (e.g. OpenCode). */
   auth?: AuthStrategy;
   provision?: ProviderProvisionConfig;
+  /** Service id (e.g. `"anthropic"`) the credential store keys bundles by. Absent for agents
+   * with no `auth` — see `docs/features/shared-agent-auth/02_dev.md`. */
+  credentialService?: string;
 }
 
 export type AgentInstallEvent =

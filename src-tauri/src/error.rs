@@ -1,5 +1,6 @@
 use crate::agents::types::AgentError;
 use crate::backends::types::BackendError;
+use crate::credentials::types::CredentialError;
 use crate::inference::types::InferenceError;
 use crate::runtime::types::RuntimeError;
 use crate::settings::types::SettingsError;
@@ -27,6 +28,8 @@ pub enum AppError {
     Settings(#[from] SettingsError),
     #[error(transparent)]
     Workspace(#[from] WorkspaceError),
+    #[error(transparent)]
+    Credential(#[from] CredentialError),
     /// The requested sandbox has no active sync session — it has not been deployed.
     #[error("sandbox {0:?} is not deployed")]
     NotDeployed(String),
@@ -51,6 +54,7 @@ impl AppError {
             AppError::Inference(_) => "Inference",
             AppError::Settings(_) => "Settings",
             AppError::Workspace(_) => "Workspace",
+            AppError::Credential(_) => "Credential",
             AppError::NotDeployed(_) => "NotDeployed",
             AppError::UnsyncedChanges { .. } => "UnsyncedChanges",
             AppError::PodmanUnavailable(_) => "PodmanUnavailable",

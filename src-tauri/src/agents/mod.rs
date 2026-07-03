@@ -6,7 +6,7 @@ pub mod types;
 use std::sync::Arc;
 
 use tauri::{ipc::Channel, Emitter};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::runtime::types::RuntimeManager;
 use types::{AgentAuthEvent, AgentAuthStatus, AgentError, AgentInstallEvent, AuthSession, AuthSessionMap};
@@ -23,8 +23,9 @@ fn new_session_id() -> String {
     format!("{ts}-{count}")
 }
 
-/// Walk a dot-separated path into a JSON value (e.g. "claudeAiOauth.expiresAt").
-fn json_path_get<'a>(val: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
+/// Walk a dot-separated path into a JSON value (e.g. "claudeAiOauth.expiresAt"). Also reused by
+/// `credentials::capture` to read the same fields out of a captured file.
+pub(crate) fn json_path_get<'a>(val: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
     path.split('.').fold(Some(val), |acc, key| acc?.get(key))
 }
 
@@ -84,6 +85,41 @@ pub async fn run_postinstall_npm(
     Ok(())
 }
 
+/// Reads raw bytes rather than `BufReader::lines()` and flushes on a short idle gap, not just on
+/// `\n`. Interactive prompts (e.g. `claude auth login`'s "Paste code here if prompted > ") write
+/// without a trailing newline, expecting input on the same line, so a strict line reader blocks
+/// forever and the prompt never reaches the frontend.
+async fn stream_output<R, F>(mut reader: R, mut emit: F)
+where
+    R: tokio::io::AsyncRead + Unpin,
+    F: FnMut(String),
+{
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        match tokio::time::timeout(std::time::Duration::from_millis(80), reader.read(&mut chunk)).await {
+            Ok(Ok(0)) => break,
+            Ok(Ok(n)) => {
+                buf.extend_from_slice(&chunk[..n]);
+                while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
+                    let line: Vec<u8> = buf.drain(..=pos).collect();
+                    emit(String::from_utf8_lossy(&line).trim_end_matches(['\r', '\n']).to_string());
+                }
+            }
+            Ok(Err(_)) => break,
+            Err(_) => {
+                if !buf.is_empty() {
+                    emit(String::from_utf8_lossy(&buf).to_string());
+                    buf.clear();
+                }
+            }
+        }
+    }
+    if !buf.is_empty() {
+        emit(String::from_utf8_lossy(&buf).to_string());
+    }
+}
+
 /// Spawn `mise exec -- <auth_command>` inside the container with piped stdin/stdout.
 /// Stores the stdin handle in `sessions` keyed by the returned session ID.
 /// Emits `AgentAuthEvent` to a Tauri app-wide event named `agent-auth-output-<session_id>`.
@@ -106,7 +142,7 @@ pub async fn start_auth(
 
     let mut cmd = tokio::process::Command::new("podman");
     cmd.arg("--connection").arg(&connection);
-    cmd.args(["exec", "--workdir", "/root/work", name, "mise", "exec", "--"]);
+    cmd.args(["exec", "-i", "--workdir", "/root/work", name, "mise", "exec", "--"]);
     for arg in auth_command {
         cmd.arg(arg);
     }
@@ -129,21 +165,19 @@ pub async fn start_auth(
     let app_out = app.clone();
     let ename_out = event_name.clone();
     let stdout_handle = tokio::spawn(async move {
-        use tokio::io::AsyncBufReadExt;
-        let mut lines = tokio::io::BufReader::new(stdout).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
+        stream_output(stdout, move |line| {
             app_out.emit(&ename_out, &AgentAuthEvent::Output { line }).ok();
-        }
+        })
+        .await;
     });
 
     let app_err = app.clone();
     let ename_err = event_name.clone();
     let stderr_handle = tokio::spawn(async move {
-        use tokio::io::AsyncBufReadExt;
-        let mut lines = tokio::io::BufReader::new(stderr).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
+        stream_output(stderr, move |line| {
             app_err.emit(&ename_err, &AgentAuthEvent::Output { line }).ok();
-        }
+        })
+        .await;
     });
 
     let app_wait = app.clone();

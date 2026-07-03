@@ -24,6 +24,7 @@ export const AGENTS: AgentDescriptor[] = [
       accountSourceFile: "/root/.claude.json",
       accountEmailJsonKey: "oauthAccount.emailAddress",
     },
+    credentialService: "anthropic",
   },
   {
     id: "opencode",

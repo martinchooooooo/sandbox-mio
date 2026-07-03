@@ -7,6 +7,7 @@ export type AppErrorKind =
     | "Inference"
     | "Settings"
     | "Workspace"
+    | "Credential"
     | "NotDeployed"
     | "UnsyncedChanges"
     | "PodmanUnavailable";
