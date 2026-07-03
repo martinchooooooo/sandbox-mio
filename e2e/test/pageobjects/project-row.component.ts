@@ -28,10 +28,6 @@ export default class ProjectRow {
     return this.root.$("button=stop");
   }
 
-  get terminalButton(): Element {
-    return this.root.$("button=terminal");
-  }
-
   get workspaceButton(): Element {
     return this.root.$("button=workspace");
   }
@@ -92,13 +88,6 @@ export default class ProjectRow {
 
   async stop(): Promise<void> {
     await this.#clickButton(this.stopButton);
-  }
-
-  // Clicks the "Terminal" button, invoking the open_terminal command. The terminal opens in a
-  // separate top-level WebviewWindow that tauri-driver cannot drive; the spec asserts the
-  // command's side effects (token file, server online, published port serving HTTP 200) instead.
-  async openTerminal(): Promise<void> {
-    await this.#clickButton(this.terminalButton);
   }
 
   // Clicks the "workspace" button, invoking open_workspace. The embedded terminal renders inside

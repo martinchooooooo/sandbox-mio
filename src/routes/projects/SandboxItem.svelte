@@ -10,7 +10,6 @@
     import { HugeiconsIcon } from "@hugeicons/svelte";
     import {
         Folder01Icon,
-        TerminalIcon,
         DashboardSquare01Icon,
         CloudUploadIcon,
         CloudDownloadIcon,
@@ -62,8 +61,8 @@
     let syncOn = $state(true);
 
     // Once this sandbox's workspace panes exist, package/agent management lives in the dashboard
-    // pane (docs/features/responsive-panel/02_dev.md Phase D) and the standalone terminal window
-    // is redundant with the embedded tab, so the row narrows to Folder/Sync/Workspace/Destroy.
+    // pane (docs/features/responsive-panel/02_dev.md Phase D), so the row narrows to
+    // Folder/Sync/Workspace/Destroy.
     const workspaceOpen = $derived(isSandboxOpen(project.name));
 
     function openPicker() {
@@ -142,17 +141,7 @@
         );
     }
 
-    async function openTerminal() {
-        await action.run("terminal", async () => {
-            await invoke("open_terminal", {
-                name: project.name,
-                workspacePath: project.workspace_path,
-            });
-        }, { message: m.projects_status_opening_terminal() });
-    }
-
-    // Primary action: the embedded multi-webview workspace. `openTerminal` above stays as the
-    // standalone-window fallback (Resolved Decision 7 in docs/features/embedded-windows/02_dev.md).
+    // Primary action: the embedded multi-webview workspace.
     // Once this sandbox's panes already exist, just bring its last-active pane forward instead of
     // round-tripping through `open_workspace`'s own exists-guard (Resolved Decision 1 in
     // docs/features/responsive-panel/02_dev.md).
@@ -223,13 +212,6 @@
                     <HugeiconsIcon icon={DashboardSquare01Icon} size={16} />
                     <span class="max-[420px]:hidden">{m.projects_workspace()}</span>
                 </Button>
-                {#if !workspaceOpen}
-                    <Button variant="ghost" size="sm" onclick={openTerminal} title={m.projects_terminal()}
-                        loading={action.busy === "terminal"} disabled={action.busy !== null}>
-                        <HugeiconsIcon icon={TerminalIcon} size={16} />
-                        <span class="max-[420px]:hidden">{m.projects_terminal()}</span>
-                    </Button>
-                {/if}
                 <Button variant="ghost" size="sm" onclick={undeploy} title={m.projects_undeploy()}
                     loading={action.busy === "undeploy"} disabled={action.busy !== null}>
                     <HugeiconsIcon icon={CloudDownloadIcon} size={16} />
@@ -254,13 +236,6 @@
                     <HugeiconsIcon icon={DashboardSquare01Icon} size={16} />
                     <span class="max-[420px]:hidden">{m.projects_workspace()}</span>
                 </Button>
-                {#if !workspaceOpen}
-                    <Button variant="ghost" size="sm" onclick={openTerminal} title={m.projects_terminal()}
-                        loading={action.busy === "terminal"} disabled={action.busy !== null}>
-                        <HugeiconsIcon icon={TerminalIcon} size={16} />
-                        <span class="max-[420px]:hidden">{m.projects_terminal()}</span>
-                    </Button>
-                {/if}
                 <Button variant="ghost" size="sm" onclick={openPicker} title={m.projects_deploy()} disabled={action.busy !== null}>
                     <HugeiconsIcon icon={CloudUploadIcon} size={16} />
                     <span class="max-[420px]:hidden">{m.projects_deploy()}</span>

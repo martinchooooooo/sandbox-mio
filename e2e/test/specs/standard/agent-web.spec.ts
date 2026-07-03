@@ -67,8 +67,7 @@ describe("Agent web UI (paseo)", function () {
     await workspaceSwitcher.switchToAppWebview().catch(() => {});
   });
 
-  // Capture the webview state on any failure (URL + page source + screenshot to e2e/.diag),
-  // mirroring web-terminal.spec.ts.
+  // Capture the webview state on any failure (URL + page source + screenshot to e2e/.diag).
   afterEach(async function () {
     if (this.currentTest?.state !== "failed") return;
     const diag = path.join(process.cwd(), ".diag");

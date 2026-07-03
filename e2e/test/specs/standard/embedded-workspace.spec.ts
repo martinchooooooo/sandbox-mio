@@ -25,8 +25,7 @@ const SWITCHER_H = 40;
 const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
 
 // Poll for the host-side token file open_workspace's shared prepare_terminal_webview helper writes
-// (docs/techdebt.md workaround), proving the real zellij daemonize + token mint ran — the same
-// proof web-terminal.spec.ts uses for the standalone open_terminal path.
+// (docs/techdebt.md workaround), proving the real zellij daemonize + token mint ran.
 async function waitForToken(name: string): Promise<void> {
   const tokenPath = path.join(WORKSPACE_ROOT!, name, ".mio", "zellij.json");
   await browser.waitUntil(() => fs.existsSync(tokenPath), {
@@ -56,8 +55,7 @@ describe("Embedded workspace (multi-webview container)", function () {
     podman(LOCAL_CONNECTION, ["rm", "-f", nameB], { check: false });
   });
 
-  // Capture the webview state on any failure (URL + page source + screenshot to e2e/.diag),
-  // mirroring web-terminal.spec.ts.
+  // Capture the webview state on any failure (URL + page source + screenshot to e2e/.diag).
   afterEach(async function () {
     if (this.currentTest?.state !== "failed") return;
     const diag = path.join(process.cwd(), ".diag");
@@ -156,14 +154,9 @@ describe("Embedded workspace (multi-webview container)", function () {
     );
 
     // The projects-list row narrows once nameA's workspace is open (Track 1 + Resolved Decision 3,
-    // docs/features/responsive-panel/02_dev.md): the standalone terminal button and the inline
-    // Package/Agent controls are gone, and the remaining buttons drop their text label at the
-    // panel's real 380px width (GLOBAL_EXPANDED_W, asserted above) — not a resized/simulated window.
-    assert.strictEqual(
-      await (await rowA.terminalButton).isExisting(),
-      false,
-      "The standalone terminal button must be removed from the row once a workspace is open.",
-    );
+    // docs/features/responsive-panel/02_dev.md): the inline Package/Agent controls are gone, and
+    // the remaining buttons drop their text label at the panel's real 380px width
+    // (GLOBAL_EXPANDED_W, asserted above) — not a resized/simulated window.
     assert.strictEqual(
       await (await rowA.root.$("input[placeholder='package name']")).isExisting(),
       false,
