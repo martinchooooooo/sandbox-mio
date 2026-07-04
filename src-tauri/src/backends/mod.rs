@@ -20,8 +20,9 @@ const BASE_IMAGE: &str = "sandbox-mio/base";
 // Bump whenever the Containerfile changes. `ensure_base_image` short-circuits on
 // `podman image exists <tag>`, so an unchanged tag would silently keep stale images.
 // History: "zellij" (flox/Nix era), "mise" (debian-slim rewrite), 2 (bash + mise activate),
-// 3 (procps for paseo's `ps` dependency; paseo itself is mise-installed per workspace).
-pub(crate) const BASE_IMAGE_VERSION: u32 = 3;
+// 3 (procps for paseo's `ps` dependency; paseo itself is mise-installed per workspace),
+// 4 (socat for the user-port-exposure relay, see crate::network).
+pub(crate) const BASE_IMAGE_VERSION: u32 = 4;
 
 /// The base-image recipe, baked into the binary so the build needs no resource-path resolution.
 /// Kept in sync with the spike reference at `docs/features/sandbox-runtime-management/spike/mise/Containerfile.glibc`.
@@ -380,16 +381,33 @@ impl SandboxBackend for PodmanCliBackend {
         // loopback, where zellij binds; without it pasta forwards to the container's eth0 and the
         // loopback-bound server is unreachable. The host side is pinned to 127.0.0.1 so nothing is
         // exposed on the local network. Both local and remote containers get these flags.
+        //
+        // Podman only forwards ports it is explicitly told about (confirmed: with no `--publish`
+        // it invokes pasta with `-t none -u none`, forwarding nothing) — there is no way to reach a
+        // container's port from outside its netns without publishing it first. `relay_publishes`
+        // pre-publishes a small pool of container-side ports (crate::network::RELAY_POOL_SIZE) that
+        // `NetworkManager::expose_port` can later bridge to an arbitrary user-chosen port via an
+        // in-container `socat` relay, without ever recreating the container.
         let publish = format!("127.0.0.1::{ZELLIJ_WEB_PORT}");
         let publish_paseo = format!("127.0.0.1::{PASEO_WEB_PORT}");
+        let relay_publishes = crate::network::relay_pool_publish_args();
+        let mut args = vec![
+            "create".to_string(), "--pull=missing".to_string(), "--tty".to_string(),
+            "--network".to_string(), "pasta:--host-lo-to-ns-lo".to_string(),
+            "--publish".to_string(), publish, "--publish".to_string(), publish_paseo,
+        ];
+        for p in &relay_publishes {
+            args.push("--publish".to_string());
+            args.push(p.clone());
+        }
+        args.extend([
+            "--volume".to_string(), volume, "--workdir".to_string(), WORKSPACE_MOUNT.to_string(),
+            "--label".to_string(), label, "--name".to_string(), name.to_string(),
+            image, "/bin/sh".to_string(),
+        ]);
         // `--pull=missing` satisfies the trait's "pull if absent, then create" contract.
         let out = self
-            .podman(&[
-                "create", "--pull=missing", "--tty", "--network",
-                "pasta:--host-lo-to-ns-lo", "--publish", &publish, "--publish", &publish_paseo,
-                "--volume", &volume, "--workdir", WORKSPACE_MOUNT, "--label", &label,
-                "--name", name, &image, "/bin/sh",
-            ])
+            .podman(&args.iter().map(String::as_str).collect::<Vec<_>>())
             .await?;
         let id = check(out)?.trim().to_string();
         Ok(Sandbox {
@@ -501,14 +519,24 @@ impl SandboxBackend for PodmanCliBackend {
         let volume = format!("{}:{WORKSPACE_MOUNT}", plan.bind_mount_source);
         let publish = format!("127.0.0.1::{ZELLIJ_WEB_PORT}");
         let publish_paseo = format!("127.0.0.1::{PASEO_WEB_PORT}");
+        let relay_publishes = crate::network::relay_pool_publish_args();
+        let mut create_args = vec![
+            "create".to_string(), "--tty".to_string(), "--network".to_string(),
+            "pasta:--host-lo-to-ns-lo".to_string(), "--publish".to_string(), publish,
+            "--publish".to_string(), publish_paseo,
+        ];
+        for p in &relay_publishes {
+            create_args.push("--publish".to_string());
+            create_args.push(p.clone());
+        }
+        create_args.extend([
+            "--volume".to_string(), volume, "--workdir".to_string(), WORKSPACE_MOUNT.to_string(),
+            "--name".to_string(), name.to_string(), image.clone(), "/bin/sh".to_string(),
+        ]);
         check(
             Self::podman_on(
                 target_connection,
-                &[
-                    "create", "--tty", "--network", "pasta:--host-lo-to-ns-lo",
-                    "--publish", &publish, "--publish", &publish_paseo, "--volume", &volume,
-                    "--workdir", WORKSPACE_MOUNT, "--name", name, &image, "/bin/sh",
-                ],
+                &create_args.iter().map(String::as_str).collect::<Vec<_>>(),
             )
             .await?,
         )?;

@@ -2,6 +2,7 @@ use crate::agents::types::AgentError;
 use crate::backends::types::BackendError;
 use crate::credentials::types::CredentialError;
 use crate::inference::types::InferenceError;
+use crate::network::types::NetworkError;
 use crate::runtime::types::RuntimeError;
 use crate::settings::types::SettingsError;
 use crate::sync::types::SyncError;
@@ -20,6 +21,8 @@ pub enum AppError {
     Sync(#[from] SyncError),
     #[error(transparent)]
     Runtime(#[from] RuntimeError),
+    #[error(transparent)]
+    Network(#[from] NetworkError),
     #[error(transparent)]
     Agent(#[from] AgentError),
     #[error(transparent)]
@@ -50,6 +53,7 @@ impl AppError {
             AppError::Backend(_) => "Backend",
             AppError::Sync(_) => "Sync",
             AppError::Runtime(_) => "Runtime",
+            AppError::Network(_) => "Network",
             AppError::Agent(_) => "Agent",
             AppError::Inference(_) => "Inference",
             AppError::Settings(_) => "Settings",

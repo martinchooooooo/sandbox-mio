@@ -201,6 +201,77 @@ class WorkspaceDashboardPage {
       { timeout: timeoutMs, interval: 500, timeoutMsg: `agent status for "${agentLabel}" did not become "${text}"` },
     );
   }
+
+  // ── Port management (PortsManager.svelte) ──────────────────────────────────
+  // Each open forward renders as a row keyed by its `kindLabel` text: the fixed port label
+  // (e.g. "Exposed :4000") for a manually-exposed port, or the `.mio/ports.json` label
+  // (e.g. "webapp") for a file-declared one. The row's link text is the host URL to dial.
+
+  get exposePortInput(): Element {
+    return $("input[placeholder='Expose a port (e.g. 3000)']");
+  }
+
+  get exposeButton(): Element {
+    return $("button=Expose");
+  }
+
+  get noPortsText(): Element {
+    return $("span=No ports open.");
+  }
+
+  // The row div wrapping a given kindLabel's span (see PortsManager.svelte's `{#each}` block).
+  portRow(kindLabel: string): Element {
+    return $(`span=${kindLabel}`).$("..");
+  }
+
+  async exposePort(port: number): Promise<void> {
+    const input = await this.exposePortInput;
+    await input.scrollIntoView();
+    await input.setValue(String(port));
+    await this.#clickButton(this.exposeButton);
+  }
+
+  async waitForPortRow(kindLabel: string, timeoutMs = 15000): Promise<void> {
+    await browser.waitUntil(async () => (await this.portRow(kindLabel)).isExisting(), {
+      timeout: timeoutMs,
+      interval: 500,
+      timeoutMsg: `port row "${kindLabel}" did not appear`,
+    });
+  }
+
+  async waitForPortRowGone(kindLabel: string, timeoutMs = 15000): Promise<void> {
+    // Check the label span directly, not `portRow()`'s `$("span=…").$("..")` parent chain: once the
+    // row is truly gone the base span no longer exists, and chaining `.$("..")` onto a missing
+    // element throws ("Can't call $ …") instead of yielding a not-existing element — which would
+    // make this negative wait fail on the very success it's waiting for.
+    await browser.waitUntil(async () => !(await $(`span=${kindLabel}`).isExisting()), {
+      timeout: timeoutMs,
+      interval: 500,
+      timeoutMsg: `port row "${kindLabel}" is still displayed`,
+    });
+  }
+
+  // The `http://127.0.0.1:<hostPort>/` link's href carries the host port to dial.
+  async portRowHostPort(kindLabel: string): Promise<number> {
+    const row = await this.portRow(kindLabel);
+    const link = await row.$("a");
+    const href = await link.getAttribute("href");
+    if (!href) throw new Error(`port row "${kindLabel}" link has no href`);
+    const port = new URL(href).port;
+    if (!port) throw new Error(`port row "${kindLabel}" link has no port in href "${href}"`);
+    return Number(port);
+  }
+
+  // Manually-exposed rows show a "Stop exposing" ✕ button; file-declared ones don't.
+  async hasCloseButton(kindLabel: string): Promise<boolean> {
+    const row = await this.portRow(kindLabel);
+    return (await row.$("button[title='Stop exposing']")).isExisting();
+  }
+
+  async closePortRow(kindLabel: string): Promise<void> {
+    const row = await this.portRow(kindLabel);
+    await this.#clickButton(row.$("button[title='Stop exposing']"));
+  }
 }
 
 export default new WorkspaceDashboardPage();

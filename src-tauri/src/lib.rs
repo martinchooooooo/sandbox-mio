@@ -5,13 +5,14 @@ mod credentials;
 mod error;
 mod inference;
 mod machine;
+mod network;
 mod runtime;
 mod settings;
 mod ssh;
 mod sync;
 mod workspace;
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use tauri::{ipc::Channel, Manager, State};
 
@@ -24,14 +25,11 @@ use crate::error::AppError;
 use crate::inference::types::{
     ActiveServer, EngineKind, InferenceStatus, MachineSpecs, MachineSpecsCache, SetupStep,
 };
+use crate::network::types::{ForwardInfo, NetworkManager, ServiceKind};
 use crate::runtime::types::RuntimeManager;
 use crate::settings::types::AppSettings;
 use crate::sync::types::{SessionInfo, SyncEngine, SyncStatus};
 use crate::workspace::types::{AppKind, TerminalPane, WorkspaceRegistry, WorkspaceState};
-
-/// Maps sandbox name → the Windows-host loopback port of its active Mutagen forwarding session.
-/// Held in Tauri state so undeploy/destroy can terminate the session and reclaim the port.
-pub(crate) type ForwardPortMap = Arc<Mutex<std::collections::HashMap<String, u16>>>;
 
 /// Name of the single app-wide reverse forward bridging container netns to the host inference
 /// server. Created in `start_inference`, torn down in `stop_inference` and on app exit.
@@ -113,8 +111,7 @@ async fn prepare_terminal_webview(
     workspace_path: &str,
     runtime: &Arc<dyn RuntimeManager>,
     engine: &Arc<dyn SyncEngine>,
-    forward_ports: &ForwardPortMap,
-    app: &tauri::AppHandle,
+    network: &Arc<dyn NetworkManager>,
 ) -> Result<TerminalPane, AppError> {
     // A sync session named after the sandbox means it is deployed to a remote host; use that
     // host's connection alias. Otherwise fall back to the local machine's default connection.
@@ -132,23 +129,12 @@ async fn prepare_terminal_webview(
 
     let (token, container_port) = runtime.prepare_terminal(name, &connection, workspace_path).await?;
 
-    // Allocate an ephemeral Windows-side port by binding and immediately releasing it before
-    // Mutagen binds it. The race window is negligible on loopback.
-    let windows_port = {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0")
-            .map_err(|e| crate::runtime::types::RuntimeError::TerminalUnavailable(e.to_string()))?;
-        listener
-            .local_addr()
-            .map_err(|e| crate::runtime::types::RuntimeError::TerminalUnavailable(e.to_string()))?
-            .port()
-    };
-
     let forward_name = format!("terminal-{name}");
-    let url = format!("http://127.0.0.1:{windows_port}/");
-    sync::forward_create(app, &forward_name, windows_port, &connection, container_port)
+    let windows_port = network
+        .open_forward(name, ServiceKind::Terminal, &connection, container_port)
         .await
         .map_err(|e| crate::runtime::types::RuntimeError::TerminalUnavailable(e.to_string()))?;
-    forward_ports.lock().unwrap().insert(name.to_string(), windows_port);
+    let url = format!("http://127.0.0.1:{windows_port}/");
 
     // Persist token + URL host-side (docs/techdebt.md workaround). Writing host-side avoids
     // shell-escaping JSON through `podman exec`; the workspace is bind-mounted into the container
@@ -263,7 +249,7 @@ async fn prepare_agent_web_pane(
     workspace_path: &str,
     runtime: &Arc<dyn RuntimeManager>,
     engine: &Arc<dyn SyncEngine>,
-    app: &tauri::AppHandle,
+    network: &Arc<dyn NetworkManager>,
 ) -> Result<TerminalPane, AppError> {
     let unavailable =
         |e: String| crate::runtime::types::RuntimeError::AgentWebUnavailable(e);
@@ -284,17 +270,12 @@ async fn prepare_agent_web_pane(
 
     let container_port = runtime.prepare_agent_web(name, &connection, &password).await?;
 
-    let windows_port = {
-        let listener =
-            std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| unavailable(e.to_string()))?;
-        listener.local_addr().map_err(|e| unavailable(e.to_string()))?.port()
-    };
-
     let forward_name = format!("agentweb-{name}");
-    let url = format!("http://127.0.0.1:{windows_port}/");
-    sync::forward_create(app, &forward_name, windows_port, &connection, container_port)
+    let windows_port = network
+        .open_forward(name, ServiceKind::AgentWeb, &connection, container_port)
         .await
         .map_err(|e| unavailable(e.to_string()))?;
+    let url = format!("http://127.0.0.1:{windows_port}/");
 
     // Persisted host-side next to zellij.json (docs/techdebt.md workaround: the workspace is
     // bind-mounted, so no JSON shell-escaping through `podman exec`). Lets a later open re-show
@@ -365,6 +346,7 @@ async fn open_agent_web(
     workspace_path: String,
     runtime: State<'_, Arc<dyn RuntimeManager>>,
     engine: State<'_, Arc<dyn SyncEngine>>,
+    network: State<'_, Arc<dyn NetworkManager>>,
     workspaces: State<'_, WorkspaceRegistry>,
     app: tauri::AppHandle,
 ) -> Result<(), AppError> {
@@ -378,7 +360,7 @@ async fn open_agent_web(
         return workspace::switch_pane(&app, &name, AppKind::AgentWeb).map_err(Into::into);
     }
 
-    let pane = prepare_agent_web_pane(&name, &workspace_path, &runtime, &engine, &app).await?;
+    let pane = prepare_agent_web_pane(&name, &workspace_path, &runtime, &engine, &network).await?;
     workspace::embed_agent_web(&app, &name, &workspace_path, pane)?;
     Ok(())
 }
@@ -391,7 +373,7 @@ async fn open_terminal(
     workspace_path: String,
     runtime: State<'_, Arc<dyn RuntimeManager>>,
     engine: State<'_, Arc<dyn SyncEngine>>,
-    forward_ports: State<'_, ForwardPortMap>,
+    network: State<'_, Arc<dyn NetworkManager>>,
     app: tauri::AppHandle,
 ) -> Result<(), AppError> {
     let label = format!("terminal-{name}");
@@ -405,8 +387,7 @@ async fn open_terminal(
     }
 
     let pane =
-        prepare_terminal_webview(&name, &workspace_path, &runtime, &engine, &forward_ports, &app)
-            .await?;
+        prepare_terminal_webview(&name, &workspace_path, &runtime, &engine, &network).await?;
     tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::External(pane.url))
         .title(format!("{name} — terminal"))
         .initialization_script(&pane.init_script)
@@ -426,10 +407,20 @@ async fn open_workspace(
     workspace_path: String,
     runtime: State<'_, Arc<dyn RuntimeManager>>,
     engine: State<'_, Arc<dyn SyncEngine>>,
-    forward_ports: State<'_, ForwardPortMap>,
+    network: State<'_, Arc<dyn NetworkManager>>,
     workspaces: State<'_, WorkspaceRegistry>,
     app: tauri::AppHandle,
 ) -> Result<(), AppError> {
+    // Idempotent, so it's fine to call this on every open (including the early-return
+    // already-embedded case below): keeps `.mio/ports.json` watched for as long as the sandbox is
+    // open, without a dedicated frontend-triggered command.
+    let connection = resolve_connection(&name, &runtime, &engine).await?;
+    network
+        .inner()
+        .clone()
+        .watch_ports_file(&name, &workspace_path, &connection)
+        .await;
+
     let exists = workspaces.lock().unwrap().apps.iter().any(|p| p.sandbox == name);
     if exists {
         workspace::switch_app(&app, &name)?;
@@ -437,8 +428,7 @@ async fn open_workspace(
     }
 
     let pane =
-        prepare_terminal_webview(&name, &workspace_path, &runtime, &engine, &forward_ports, &app)
-            .await?;
+        prepare_terminal_webview(&name, &workspace_path, &runtime, &engine, &network).await?;
     workspace::embed_terminal(&app, &name, &workspace_path, pane)?;
     workspace::embed_dashboard(&app, &name, &workspace_path)?;
     Ok(())
@@ -542,7 +532,7 @@ async fn undeploy_sandbox(
     name: String,
     store: State<'_, Arc<dyn SandboxBackend>>,
     engine: State<'_, Arc<dyn SyncEngine>>,
-    forward_ports: State<'_, ForwardPortMap>,
+    network: State<'_, Arc<dyn NetworkManager>>,
     app: tauri::AppHandle,
 ) -> Result<(), AppError> {
     let session = engine
@@ -557,9 +547,7 @@ async fn undeploy_sandbox(
     // Tear down any active forwarding sessions before the sync session closes its SSH channel.
     // Named explicitly (not via close_app) because a forward can outlive its pane — e.g. one
     // created in a previous app run that the in-memory pane registry no longer tracks.
-    sync::forward_terminate(&app, &format!("terminal-{name}")).await;
-    sync::forward_terminate(&app, &format!("agentweb-{name}")).await;
-    forward_ports.lock().unwrap().remove(&name);
+    network.close_sandbox(&name).await;
     // Flush before removing so any pending remote writes land locally first.
     // Remove the container before terminating the Mutagen session: terminating closes
     // Mutagen's SSH connections to the machine, which can briefly make it unresponsive
@@ -581,7 +569,7 @@ async fn destroy_sandbox(
     force: bool,
     store: State<'_, Arc<dyn SandboxBackend>>,
     engine: State<'_, Arc<dyn SyncEngine>>,
-    forward_ports: State<'_, ForwardPortMap>,
+    network: State<'_, Arc<dyn NetworkManager>>,
     app: tauri::AppHandle,
 ) -> Result<(), AppError> {
     // Absent session ⇒ purely local sandbox ⇒ no sync guard and no remote container.
@@ -595,9 +583,7 @@ async fn destroy_sandbox(
         // Still close any embedded workspace pane and clean up any forwarding sessions from a
         // local terminal or agents pane.
         workspace::close_app(&app, &name).await;
-        sync::forward_terminate(&app, &format!("terminal-{name}")).await;
-        sync::forward_terminate(&app, &format!("agentweb-{name}")).await;
-        forward_ports.lock().unwrap().remove(&name);
+        network.close_sandbox(&name).await;
         return Ok(store.destroy(&name).await?);
     };
     // Settle pending propagation, then refuse to drop unsynced remote work unless forced. The
@@ -610,9 +596,7 @@ async fn destroy_sandbox(
         });
     }
     workspace::close_app(&app, &name).await;
-    sync::forward_terminate(&app, &format!("terminal-{name}")).await;
-    sync::forward_terminate(&app, &format!("agentweb-{name}")).await;
-    forward_ports.lock().unwrap().remove(&name);
+    network.close_sandbox(&name).await;
     engine.terminate(&name).await?;
     store.remove_remote(&name, &session.host).await?;
     Ok(store.destroy(&name).await?)
@@ -625,6 +609,61 @@ async fn sandbox_deployments(
     engine: State<'_, Arc<dyn SyncEngine>>,
 ) -> Result<Vec<SessionInfo>, AppError> {
     Ok(engine.sessions().await?)
+}
+
+/// Snapshot of every Mutagen forward the app currently has open (terminal, agent-web, and any
+/// user-exposed sandbox ports), for a diagnostics view of "what ports are open right now".
+#[tauri::command]
+async fn list_open_forwards(
+    network: State<'_, Arc<dyn NetworkManager>>,
+) -> Result<Vec<ForwardInfo>, AppError> {
+    Ok(network.list_forwards().await)
+}
+
+/// Resolve `name`'s active Podman connection the same way `prepare_terminal_webview` does (its
+/// deployed-session host, or the local connection), for the standalone expose/unexpose commands.
+async fn resolve_connection(
+    name: &str,
+    runtime: &Arc<dyn RuntimeManager>,
+    engine: &Arc<dyn SyncEngine>,
+) -> Result<String, AppError> {
+    Ok(engine
+        .sessions()
+        .await?
+        .into_iter()
+        .find(|s| s.name == name)
+        .map(|s| s.host)
+        .unwrap_or_else(|| runtime.local_connection().to_string()))
+}
+
+/// Expose `target_port` (a port the user's own process bound inside sandbox `name`, e.g. a dev
+/// server) to a Windows-host loopback port over Mutagen, via an in-container `socat` relay bound
+/// to a free slot in the sandbox's pre-published relay pool. Returns the host port to browse to.
+#[tauri::command]
+async fn expose_port(
+    name: String,
+    workspace_path: String,
+    target_port: u16,
+    runtime: State<'_, Arc<dyn RuntimeManager>>,
+    engine: State<'_, Arc<dyn SyncEngine>>,
+    network: State<'_, Arc<dyn NetworkManager>>,
+) -> Result<u16, AppError> {
+    let connection = resolve_connection(&name, &runtime, &engine).await?;
+    Ok(network
+        .expose_port(&name, &connection, &workspace_path, target_port, None)
+        .await?)
+}
+
+/// Stop exposing `target_port` on sandbox `name`: tears down its relay and Mutagen forward and
+/// frees its relay-pool slot. Best-effort.
+#[tauri::command]
+async fn unexpose_port(
+    name: String,
+    target_port: u16,
+    network: State<'_, Arc<dyn NetworkManager>>,
+) -> Result<(), AppError> {
+    network.unexpose_port(&name, target_port).await;
+    Ok(())
 }
 
 /// Read-only probe for the projects page startup gate. Reports whether the default Podman machine
@@ -1290,7 +1329,7 @@ pub fn run() {
             // Constructed in setup because the sync engine needs the AppHandle to resolve the
             // bundled Mutagen sidecar.
             app.manage(sync::default_sync_engine(app.handle().clone()));
-            app.manage(ForwardPortMap::default());
+            app.manage(network::default_network_manager(app.handle().clone()));
             app.manage(WorkspaceRegistry::default());
             app.manage(AuthSessionMap::default());
             app.manage(ActiveServer::default());
@@ -1311,7 +1350,7 @@ pub fn run() {
                         // Podman not ready ⇒ can't tell what's live; leave the daemon untouched.
                         Err(_) => return,
                     };
-                    sync::sweep_stale_forwards(&handle, &live).await;
+                    handle.state::<Arc<dyn NetworkManager>>().sweep(&live).await;
                 });
             }
             Ok(())
@@ -1341,6 +1380,9 @@ pub fn run() {
             undeploy_sandbox,
             destroy_sandbox,
             sandbox_deployments,
+            list_open_forwards,
+            expose_port,
+            unexpose_port,
             check_podman_ready,
             start_podman_machine,
             listen_events,

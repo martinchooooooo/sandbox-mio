@@ -127,9 +127,11 @@ pub async fn forward_terminate<R: Runtime>(app: &AppHandle<R>, name: &str) {
 }
 
 /// Terminate forwarding sessions orphaned by a previous app run: any `terminal-<sandbox>` /
-/// `agentweb-<sandbox>` session whose sandbox is not in `live_sandboxes`. The Mutagen daemon is
-/// a background process that outlives the app, so these leak whenever the app exits without
-/// teardown (crash, kill, the e2e harness).
+/// `agentweb-<sandbox>` session whose sandbox is not in `live_sandboxes`, plus every `expose-*`
+/// session unconditionally (user-exposed ports are relay processes inside the container and never
+/// survive a process restart, so any surviving `expose-*` session is orphaned by definition — see
+/// `crate::network`). The Mutagen daemon is a background process that outlives the app, so these
+/// leak whenever the app exits without teardown (crash, kill, the e2e harness).
 pub async fn sweep_stale_forwards<R: Runtime>(app: &AppHandle<R>, live_sandboxes: &[String]) {
     let json = match run(app, &["forward", "list", "--template={{json .}}"]).await {
         Ok(j) if !j.is_empty() => j,
@@ -144,10 +146,15 @@ pub async fn sweep_stale_forwards<R: Runtime>(app: &AppHandle<R>, live_sandboxes
             .or_else(|| session.get("Name"))
             .and_then(|v| v.as_str());
         let Some(name) = name else { continue };
-        let sandbox = name
-            .strip_prefix("terminal-")
-            .or_else(|| name.strip_prefix("agentweb-"));
-        if sandbox.is_some_and(|s| !live_sandboxes.iter().any(|live| live == s)) {
+        let orphaned = if name.starts_with("expose-") {
+            true
+        } else {
+            let sandbox = name
+                .strip_prefix("terminal-")
+                .or_else(|| name.strip_prefix("agentweb-"));
+            sandbox.is_some_and(|s| !live_sandboxes.iter().any(|live| live == s))
+        };
+        if orphaned {
             tracing::info!(target: "sync", session = name, "sweeping stale forward");
             let _ = run(app, &["forward", "terminate", name]).await;
         }

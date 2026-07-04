@@ -12,6 +12,7 @@ Every subsystem that touches external processes is a trait injected into Tauri s
 | `RuntimeManager` | `runtime/types.rs` | `PodmanMiseRuntime` (mise + zellij inside the container) | `runtime/mock.rs` | `default_runtime()` in `runtime/mod.rs` |
 | `SyncEngine` | `sync/types.rs` | `MutagenCli` (bundled Mutagen sidecar) | `sync/mock.rs` | `default_sync_engine()` in `sync/mod.rs` |
 | `MachineManager` | `machine/types.rs` | podman machine / WSL lifecycle | `machine/mock.rs` | `default_machine_manager()` in `machine/mod.rs` |
+| `NetworkManager` | `network/types.rs` | `MutagenNetworkManager` (forward lifecycle, relay-pool port exposure) | `network/mock.rs` | `default_network_manager()` in `network/mod.rs` |
 
 Command handlers in `src-tauri/src/lib.rs` orchestrate across subsystems (e.g. deploy commands hold both `SandboxBackend` and `SyncEngine` state) so subsystems never depend on each other. When adding a new external-process capability, follow the trait + mock pattern rather than shelling out from `lib.rs` — otherwise the e2e `light` tier (see `e2e/AGENTS.md`) breaks for every flow touching the new capability.
 
@@ -21,7 +22,8 @@ Modules follow one layout: `types.rs` declares the public types/trait, `mod.rs` 
 
 - `backends/` — sandbox (container) lifecycle via podman; owns the base image (`BASE_IMAGE_VERSION`, embedded Containerfile from `src-tauri/resources/Containerfile`) and workspace-path derivation.
 - `runtime/` — in-container tooling: mise package install/uninstall, zellij web terminal preparation, agent web UI (paseo).
-- `sync/` — Mutagen file-sync and port-forwarding sessions for remote deploys and embedded panes.
+- `sync/` — Mutagen file-sync and low-level port-forwarding primitives (`forward_create`/`forward_terminate`/`sweep_stale_forwards`) for remote deploys and embedded panes.
+- `network/` — owns forward lifecycle/registry on top of `sync`'s primitives: terminal/agent-web forwards, and exposing an arbitrary user-chosen sandbox port to the host via a pre-published relay-pool slot + in-container `socat`, without recreating the container.
 - `machine/` — podman machine readiness/startup on the host (WSL on Windows).
 - `activity/` — `TaskRegistry`, the source of truth for long-running task state; pushes `activity://task-updated` events consumed by `src/lib/activity/activity.svelte.ts`.
 - `agents/` — AI agent install/provisioning and interactive auth sessions (`AuthSessionMap`).
@@ -45,7 +47,7 @@ Modules follow one layout: `types.rs` declares the public types/trait, `mod.rs` 
 | Gotcha | Cause | Fix |
 |---|---|---|
 | `invoke()` rejects with "command not found" for a compiled command | Command fn missing from `generate_handler![]` in `src-tauri/src/lib.rs` | Add the fn name to `generate_handler![]` in `src-tauri/src/lib.rs` |
-| e2e `light` tier hangs or errors on a new command | New command shells out directly instead of going through a mocked trait, so `MIO_MOCK_BACKEND=1` has no effect on the command | Route the external call through one of the four subsystem traits and implement the mock method |
+| e2e `light` tier hangs or errors on a new command | New command shells out directly instead of going through a mocked trait, so `MIO_MOCK_BACKEND=1` has no effect on the command | Route the external call through one of the subsystem traits and implement the mock method |
 | `podman -v` rejects the workspace mount path | Podman does not expand `~` or `$HOME`, and rejects backslash Windows paths | Use `WORKSPACE_MOUNT` (`/root/work`) and `workspace_path()` in `src-tauri/src/backends/mod.rs`, which forward-slashes the host path |
 | Container base-image change silently ignored | `ensure_base_image` short-circuits on `podman image exists <tag>` | Bump `BASE_IMAGE_VERSION` in `src-tauri/src/backends/mod.rs` together with any `src-tauri/resources/Containerfile` change |
 | Sandbox name accepted by UI but rejected by backend | `validate_name()` in `src-tauri/src/backends/mod.rs` bars non-ASCII-alphanumeric leading chars and path-unsafe chars because the name becomes a workspace path segment | Surface the `InvalidName` error via `parseError` on the frontend; do not loosen `validate_name()` without securing `workspace_path()` |

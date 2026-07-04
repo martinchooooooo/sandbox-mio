@@ -431,12 +431,17 @@ pub async fn close_app<R: Runtime>(app: &AppHandle<R>, name: &str) {
         close_app_on_main(&app_in, &pane_labels, next_active, collapsed, now_empty)
     });
 
+    let network = app.state::<std::sync::Arc<dyn crate::network::types::NetworkManager>>();
     for pane in &panes {
-        if matches!(pane.kind, AppKind::Terminal | AppKind::AgentWeb) {
-            crate::sync::forward_terminate(app, &pane.forward_name).await;
+        let kind = match pane.kind {
+            AppKind::Terminal => Some(crate::network::types::ServiceKind::Terminal),
+            AppKind::AgentWeb => Some(crate::network::types::ServiceKind::AgentWeb),
+            AppKind::Dashboard => None,
+        };
+        if let Some(kind) = kind {
+            network.close_forward(name, kind).await;
         }
     }
-    app.state::<crate::ForwardPortMap>().lock().unwrap().remove(name);
     emit_state(app);
 }
 

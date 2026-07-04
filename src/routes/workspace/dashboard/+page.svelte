@@ -6,6 +6,7 @@
     import StatusRow from "../../projects/StatusRow.svelte";
     import PackageManager from "../../projects/PackageManager.svelte";
     import AgentManager from "../../projects/AgentManager.svelte";
+    import PortsManager from "../../projects/PortsManager.svelte";
     import type { Project } from "$lib/sandbox";
 
     // Content pane for `AppKind::Dashboard` (docs/features/responsive-panel/02_dev.md Phase D):
@@ -32,6 +33,7 @@
         <div class="flex flex-col gap-6 max-w-2xl">
             <PackageManager {sandboxName} {workspacePath} {action} />
             <AgentManager {sandboxName} {workspacePath} {action} />
+            <PortsManager {sandboxName} {workspacePath} {action} />
         </div>
     {/if}
 </main>

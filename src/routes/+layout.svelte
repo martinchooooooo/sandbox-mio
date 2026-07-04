@@ -10,6 +10,7 @@
     import ActivityCenter from "$lib/activity/ActivityCenter.svelte";
     import { ensureActivity } from "$lib/activity/activity.svelte";
     import { ensureWorkspaceState, isCollapsed, hasTabs as hasTabsStore } from "$lib/workspace/state.svelte";
+    import { ensureNetworkState } from "$lib/network/state.svelte";
     import { m } from "$lib/paraglide/messages.js";
 
     // Start the global activity store once, above the router, so its subscription is established
@@ -48,6 +49,7 @@
                 // Plain-browser dev or another window (agent-auth): no workspace chrome.
             }
             await ensureWorkspaceState();
+            await ensureNetworkState();
         })();
     });
 </script>

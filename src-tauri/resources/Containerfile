@@ -6,8 +6,11 @@ FROM docker.io/library/debian:12-slim
 # workarounds compile from source. See docs/features/sandbox-runtime-management/02_dev.md.
 # procps provides the `ps` binary paseo's own `daemon status`/`stop` shell out to
 # (they crash with `spawn ps ENOENT` without it — docs/features/agent-web-ui/02_dev.md).
+# socat relays a pre-published pool slot to a user-exposed port on the sandbox's own loopback,
+# so the app can expose an arbitrary port (e.g. a dev server the user started) over Mutagen
+# without recreating the container — see src-tauri/src/network/mod.rs.
 RUN apt-get update -qq \
- && apt-get install -y -qq --no-install-recommends curl git ca-certificates xz-utils procps \
+ && apt-get install -y -qq --no-install-recommends curl git ca-certificates xz-utils procps socat \
  && rm -rf /var/lib/apt/lists/*
 
 # Bake the mise binary into the image so `create` pays no download. Pinned to an exact release so the
