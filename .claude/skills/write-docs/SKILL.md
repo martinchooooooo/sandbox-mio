@@ -7,8 +7,6 @@ description: >
   Use when asked to write or update documentation.
 ---
 
-Write documentation to `docs/<topic>.md`. Follow all rules below without exception.
-
 ## Audience
 
 Documents are read by future AI agents, not humans browsing a wiki. Optimise for

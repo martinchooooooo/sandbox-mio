@@ -25,8 +25,10 @@ and why, how was the approach validated, and what is still undecided.
 
 ## Running and Recording a spike
 
-If you are unsure about a decision to make, offer the user to run a spike. Try and keep the user in the loop so they are informed of where the tradeoffs may lie. When a spike is run by hand, record it as evidence: the date, each risk that
-cleared (with the command that cleared it), and any blocker with its verbatim
+- If you are unsure about a decision to make, offer the user to run a spike. 
+- Try and keep the user in the loop so they are informed of where the tradeoffs may lie. 
+- When a spike is run by hand, record it as evidence: the date, each risk that
+cleared , and any blocker with its verbatim
 error.
 
 ## Structure

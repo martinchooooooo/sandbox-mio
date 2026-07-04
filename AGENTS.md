@@ -95,26 +95,22 @@ All `invoke()` catch blocks use `parseError(e).message` for display. Branch on `
 
 # Code Comments
 
-Apply when writing or updating any code.
+If you are going to right comments to source code, STOP. 
 
 **Skip comments entirely when:**
 - Private helpers whose name states intent
 - Error enum variants that have a self-documenting `#[error("…")]` message
 - Trait/interface method implementations that delegate to an already-documented API
-- Trait and interface method *declarations*: one or two lines — non-obvious contract only (idempotency, ordering, what the return value means). Skip what the parameter names and return type already convey.
+- Trait and interface method *declarations*: one or two lines — non-obvious contract only (idempotency, ordering, what the return value means). 
 - Module-level docs: one or two lines — role and where it is wired in (e.g. Tauri state, registered in `lib.rs`). Not a table of contents.
-- Magic values / opaque selectors: one line stating what they represent.
-- Env vars: name the variable, its default, and any test harness that overrides it.
 
-**State the contract, not the implementation.** Describe what the function guarantees to the caller, not how it achieves it. Where the contract is non-obvious, state when the call returns or what it resolves to.
 
-**No source code in comments.** Reference other items by name and file path, never by quoting their body.
+If none of the above cases, here are rules to follow
 
-**One sentence per idea.** No filler, no restating the function name.
-
-**Trait and interface methods get one or two lines, not paragraphs.** State the non-obvious contract (idempotency, ordering constraints, what the return value represents). Skip anything the parameter names and return type already convey.
-
-**Module-level comments state role and wiring, not contents.** Name the public trait or entry point, where it is registered (e.g. Tauri state), and which file does the wiring. Do not list every function in the module.
+1. **one or two lines, not paragraphs.** State the non-obvious contract (idempotency, ordering constraints, what the return value represents). Skip anything the parameter names and return type already convey.
+2. **State the contract, not the implementation.** Describe what the function guarantees to the caller, not how it achieves it. Where the contract is non-obvious, state when the call returns or what it resolves to.
+3. **No source code in comments.** Reference other items by name and file path, never by quoting their body.
+4. **One sentence per idea.** No filler, no restating the function name.
 
 # Common Gotchas
 
