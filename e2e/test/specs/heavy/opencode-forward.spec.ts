@@ -6,6 +6,7 @@ import ProjectsPage from "../../pageobjects/projects.page.js";
 import ProjectRow from "../../pageobjects/project-row.component.js";
 import ModelsPage from "../../pageobjects/models.page.js";
 import { podman, podmanOk, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
+import { captureDiagOnFailure } from "../../../lib/diag.js";
 
 // HEAVY spec: realizes the dev plan's "assert the container reaches host.containers.internal:51199"
 // requirement (docs/features/opencode-agent/02_dev.md, Cross-Cutting Concerns). It is the only test
@@ -65,20 +66,7 @@ describe("OpenCode forward — container reaches host inference", function () {
     fs.rmSync(path.join(APP_DATA_MODELS, testModelId), { recursive: true, force: true });
   });
 
-  afterEach(async function () {
-    if (this.currentTest?.state !== "failed") return;
-    const diag = path.join(process.cwd(), ".diag");
-    fs.mkdirSync(diag, { recursive: true });
-    const stamp = (this.currentTest?.title ?? "test").replace(/[^a-z0-9]+/gi, "-").slice(0, 40);
-    try {
-      const url = await browser.getUrl();
-      fs.writeFileSync(path.join(diag, `${stamp}.html`), `<!-- url: ${url} -->\n${await browser.getPageSource()}`);
-      await browser.saveScreenshot(path.join(diag, `${stamp}.png`));
-      console.log(`[diag] url=${url} — dumped ${stamp}.html/.png to ${diag}`);
-    } catch (e) {
-      console.log(`[diag] could not capture page state: ${String(e)}`);
-    }
-  });
+  captureDiagOnFailure();
 
   it("bridges the container to the host inference server while a model runs, and tears down on stop", async () => {
     // ── A running sandbox container, the source of the in-container probe ─────────────────────

@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 
 import ModelsPage from "../../pageobjects/models.page.js";
+import { captureDiagOnFailure } from "../../../lib/diag.js";
 
 // HEAVY spec (Steps 1–5 of docs/features/local-llm/03_e2e.md). Lives under specs/heavy/ because it
 // is the most expensive spec in the suite: a cold run downloads a ~100 MB test GGUF and loads it
@@ -64,34 +65,17 @@ describe("Local LLM — llama engine", function () {
     fs.rmSync(path.join(APP_DATA_MODELS, model.id), { recursive: true, force: true });
   });
 
-  // Capture webview state on any failure (identical to runtime-management.spec.ts).
-  afterEach(async function () {
-    if (this.currentTest?.state !== "failed") return;
-    const diag = path.join(process.cwd(), ".diag");
-    fs.mkdirSync(diag, { recursive: true });
-    const stamp = (this.currentTest?.title ?? "test").replace(/[^a-z0-9]+/gi, "-").slice(0, 40);
-    try {
-      const url = await browser.getUrl();
-      const src = await browser.getPageSource();
-      fs.writeFileSync(path.join(diag, `${stamp}.html`), `<!-- url: ${url} -->\n${src}`);
-      await browser.saveScreenshot(path.join(diag, `${stamp}.png`));
-      console.log(`[diag] url=${url} — dumped ${stamp}.html/.png to ${diag}`);
-    } catch (e) {
-      console.log(`[diag] could not capture page state: ${String(e)}`);
-    }
-    // The bundled llama engine tees llama-server's stdout/stderr here (see inference/llama.rs). On a
-    // "server didn't start" failure (health timeout, bad GGUF, no Vulkan device) this log holds the
-    // real reason, so copy it next to the page dump.
-    try {
-      const serverLog = path.join(APP_DATA_MODELS, model.id, "llama-server.log");
-      if (fs.existsSync(serverLog)) {
-        fs.copyFileSync(serverLog, path.join(diag, `${stamp}.llama-server.log`));
-        console.log(`[diag] copied llama-server.log → ${stamp}.llama-server.log`);
-      } else {
-        console.log(`[diag] no llama-server.log at ${serverLog} — sidecar never spawned.`);
-      }
-    } catch (e) {
-      console.log(`[diag] could not capture server log: ${String(e)}`);
+  // Capture webview state on any failure, plus the llama-server log the other specs don't need. The
+  // bundled llama engine tees llama-server's stdout/stderr into the model dir (see inference/llama.rs);
+  // on a "server didn't start" failure (health timeout, bad GGUF, no Vulkan device) this log holds
+  // the real reason, so copy it next to the page dump.
+  captureDiagOnFailure((diag, stamp) => {
+    const serverLog = path.join(APP_DATA_MODELS, model.id, "llama-server.log");
+    if (fs.existsSync(serverLog)) {
+      fs.copyFileSync(serverLog, path.join(diag, `${stamp}.llama-server.log`));
+      console.log(`[diag] copied llama-server.log → ${stamp}.llama-server.log`);
+    } else {
+      console.log(`[diag] no llama-server.log at ${serverLog} — sidecar never spawned.`);
     }
   });
 

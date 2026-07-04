@@ -1,34 +1,20 @@
-import fs from "fs";
-import path from "path";
-
 import workspaceDashboard from "../test/pageobjects/workspace-dashboard.page.js";
+import { captureDiagOnFailure } from "./diag.js";
 
 // Every spec whose tests operate on a sandbox's dashboard webview (package-autocomplete,
 // expose-port, agent-setup, runtime-management, opencode-agent) copy-pasted the same pair of
 // afterEach hooks: leave the session on the app webview between tests - the global `before`
 // hook (e2e/wdio.conf.ts) only pins the session there once per session, and tests that don't touch
 // the dashboard (navigateHome-based reloads, row.deployTo, row.destroy) assume that default - and
-// dump page state to e2e/.diag on failure. Call this once per `describe` block.
+// dump page state to e2e/.diag on failure. The webview reset is dashboard-specific and stays here;
+// the failure dump is shared with the standalone specs via captureDiagOnFailure() (lib/diag.ts).
+// Call this once per `describe` block.
 export function useDashboardWebview(): void {
   afterEach(async () => {
     await workspaceDashboard.switchToAppWebview().catch(() => {});
   });
 
-  afterEach(async function () {
-    if (this.currentTest?.state !== "failed") return;
-    const diag = path.join(process.cwd(), ".diag");
-    fs.mkdirSync(diag, { recursive: true });
-    const stamp = (this.currentTest?.title ?? "test").replace(/[^a-z0-9]+/gi, "-").slice(0, 40);
-    try {
-      const url = await browser.getUrl();
-      const src = await browser.getPageSource();
-      fs.writeFileSync(path.join(diag, `${stamp}.html`), `<!-- url: ${url} -->\n${src}`);
-      await browser.saveScreenshot(path.join(diag, `${stamp}.png`));
-      console.log(`[diag] url=${url} - dumped ${stamp}.html/.png to ${diag}`);
-    } catch (e) {
-      console.log(`[diag] could not capture page state: ${String(e)}`);
-    }
-  });
+  captureDiagOnFailure();
 }
 
 // Wraps a test body that needs sandbox `sandbox()`'s dashboard webview: switches to it before

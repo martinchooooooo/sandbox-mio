@@ -94,3 +94,12 @@ test with `dashboardIt(title, () => sandboxName, fn)` so it re-attaches to the d
 automatically. A test forgetting to re-attach after the shared teardown
 resets the session produces a misleading "element wasn't found" error, not a useful one — that's
 the exact pitfall this helper exists to prevent.
+
+## Failure diagnostics: use `captureDiagOnFailure()` from `lib/diag.ts`
+
+Any spec that wants a page dump on failure (URL + page source + screenshot to `e2e/.diag`) should
+call `captureDiagOnFailure()` from `e2e/lib/diag.ts` rather than hand-rolling the `afterEach` — that
+block used to be copy-pasted verbatim across five places and is exactly the kind of drift-prone
+duplication this helper removes. `useDashboardWebview()` already calls it, so dashboard specs get it
+for free. For a spec that also needs a sidecar artifact (e.g. `heavy/local-llm.spec.ts` copies
+`llama-server.log`), pass an `extra(diagDir, stamp)` callback — it runs after the page dump, beside it.

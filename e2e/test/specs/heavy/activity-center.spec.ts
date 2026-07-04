@@ -5,6 +5,7 @@ import path from "path";
 import ModelsPage from "../../pageobjects/models.page.js";
 import ProjectsPage from "../../pageobjects/projects.page.js";
 import ActivityCenter from "../../pageobjects/activity.page.js";
+import { captureDiagOnFailure } from "../../../lib/diag.js";
 
 // HEAVY spec (docs/features/activity-center/03_e2e.md, Steps 1–8). A near-twin of local-llm.spec.ts:
 // it reuses the same staged llama sidecar and MIO_TEST_MODEL tiny GGUF as the work that *produces*
@@ -60,22 +61,8 @@ describe("Activity Center — global task tracking", function () {
     fs.rmSync(path.join(APP_DATA_MODELS, model.id), { recursive: true, force: true });
   });
 
-  // Capture webview state on any failure (identical to local-llm.spec.ts).
-  afterEach(async function () {
-    if (this.currentTest?.state !== "failed") return;
-    const diag = path.join(process.cwd(), ".diag");
-    fs.mkdirSync(diag, { recursive: true });
-    const stamp = (this.currentTest?.title ?? "test").replace(/[^a-z0-9]+/gi, "-").slice(0, 40);
-    try {
-      const url = await browser.getUrl();
-      const src = await browser.getPageSource();
-      fs.writeFileSync(path.join(diag, `${stamp}.html`), `<!-- url: ${url} -->\n${src}`);
-      await browser.saveScreenshot(path.join(diag, `${stamp}.png`));
-      console.log(`[diag] url=${url} — dumped ${stamp}.html/.png to ${diag}`);
-    } catch (e) {
-      console.log(`[diag] could not capture page state: ${String(e)}`);
-    }
-  });
+  // Capture webview state on any failure (shared with the other specs via lib/diag.ts).
+  captureDiagOnFailure();
 
   // Steps 2–6 are one ordered flow (download → cross-route → reload → event line) sharing the live
   // registry state, so a failure stops the chain rather than cascading into confusing low-level
