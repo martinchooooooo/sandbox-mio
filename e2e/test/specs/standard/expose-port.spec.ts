@@ -8,6 +8,7 @@ import ProjectRow from "../../pageobjects/project-row.component.js";
 import workspaceDashboard from "../../pageobjects/workspace-dashboard.page.js";
 import { podman, podmanOk, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
 import { forwardList, forwardTerminate } from "../../../lib/mutagen.js";
+import { useDashboardWebview, dashboardIt } from "../../../lib/dashboard-suite.js";
 
 const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
 
@@ -75,25 +76,7 @@ describe("Exposing sandbox ports (network::expose_port / unexpose_port / watch_p
     podman(LOCAL_CONNECTION, ["rm", "-f", projectName], { check: false });
   });
 
-  afterEach(async () => {
-    await workspaceDashboard.switchToAppWebview().catch(() => {});
-  });
-
-  afterEach(async function () {
-    if (this.currentTest?.state !== "failed") return;
-    const diag = path.join(process.cwd(), ".diag");
-    fs.mkdirSync(diag, { recursive: true });
-    const stamp = (this.currentTest?.title ?? "test").replace(/[^a-z0-9]+/gi, "-").slice(0, 40);
-    try {
-      const url = await browser.getUrl();
-      const src = await browser.getPageSource();
-      fs.writeFileSync(path.join(diag, `${stamp}.html`), `<!-- url: ${url} -->\n${src}`);
-      await browser.saveScreenshot(path.join(diag, `${stamp}.png`));
-      console.log(`[diag] url=${url} — dumped ${stamp}.html/.png to ${diag}`);
-    } catch (e) {
-      console.log(`[diag] could not capture page state: ${String(e)}`);
-    }
-  });
+  useDashboardWebview();
 
   it("creates and starts a local sandbox, then opens its dashboard", async () => {
     await ProjectsPage.open();
@@ -106,10 +89,7 @@ describe("Exposing sandbox ports (network::expose_port / unexpose_port / watch_p
     await (await workspaceDashboard.noPortsText).waitForDisplayed({ timeout: 10000 });
   });
 
-  it("exposes a port via the UI and reaches the real service through the forward", async () => {
-    // The afterEach hook returns the session to main-global, so re-target the dashboard pane
-    // before touching its getters (the contract documented on WorkspaceDashboardPage).
-    await workspaceDashboard.switchToDashboard(projectName);
+  dashboardIt("exposes a port via the UI and reaches the real service through the forward", () => projectName, async () => {
     startFakeService(projectName, MANUAL_PORT, MANUAL_TOKEN);
 
     await workspaceDashboard.exposePort(MANUAL_PORT);
@@ -143,8 +123,7 @@ describe("Exposing sandbox ports (network::expose_port / unexpose_port / watch_p
     );
   });
 
-  it("declaring a port in .mio/ports.json auto-exposes it (watch_ports_file)", async () => {
-    await workspaceDashboard.switchToDashboard(projectName);
+  dashboardIt("declaring a port in .mio/ports.json auto-exposes it (watch_ports_file)", () => projectName, async () => {
     startFakeService(projectName, FILE_PORT, FILE_TOKEN);
 
     const existing = JSON.parse(fs.readFileSync(portsJsonPath, "utf8")) as Record<string, string>;
@@ -168,8 +147,7 @@ describe("Exposing sandbox ports (network::expose_port / unexpose_port / watch_p
     );
   });
 
-  it("removing the ports.json entry auto-unexposes it", async () => {
-    await workspaceDashboard.switchToDashboard(projectName);
+  dashboardIt("removing the ports.json entry auto-unexposes it", () => projectName, async () => {
     const existing = JSON.parse(fs.readFileSync(portsJsonPath, "utf8")) as Record<string, string>;
     delete existing[String(FILE_PORT)];
     fs.writeFileSync(portsJsonPath, JSON.stringify(existing));
@@ -183,8 +161,7 @@ describe("Exposing sandbox ports (network::expose_port / unexpose_port / watch_p
     });
   });
 
-  it("clicking the close button unexposes the manually-opened port", async () => {
-    await workspaceDashboard.switchToDashboard(projectName);
+  dashboardIt("clicking the close button unexposes the manually-opened port", () => projectName, async () => {
     const label = `Exposed :${MANUAL_PORT}`;
     await workspaceDashboard.closePortRow(label);
     await workspaceDashboard.waitForPortRowGone(label);

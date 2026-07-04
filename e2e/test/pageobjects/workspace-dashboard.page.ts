@@ -50,6 +50,16 @@ class WorkspaceDashboardPage {
         timeoutMsg: `dashboard webview for "${sandbox}" never appeared among the window handles`,
       },
     );
+
+    // The route match above only proves the window exists; the page's own onMount still needs to
+    // resolve `invoke("list_sandboxes")` and populate `workspacePath` before PackageManager/
+    // AgentManager/PortsManager mount into the DOM (src/routes/workspace/dashboard/+page.svelte).
+    // Wait for the package input — the first element of that gated block — so callers don't race
+    // ahead of it.
+    await this.packageInput.waitForExist({
+      timeout: 15000,
+      timeoutMsg: `dashboard content for "${sandbox}" never rendered (workspacePath likely never resolved)`,
+    });
   }
 
   // Switch back to the app webview (main-global) — the same handle the global `before` hook picks.
@@ -78,10 +88,32 @@ class WorkspaceDashboardPage {
     await el.click();
   }
 
+  // The dashboard is its own top-level WebView2 surface (not a DOM subtree of main-global), shown
+  // via the Rust side's `switch_pane`/`activate_pane`. A single WebDriver `click()` issued right
+  // after that pane becomes the active window can land before WebView2 has actually routed input
+  // focus into it — the click "succeeds" with no error, but the element never becomes
+  // `document.activeElement`, so the Svelte `onfocus` handler (which fetches suggestions) never
+  // fires. Retry the click until focus actually lands instead of trusting the first one.
+  async #focusInput(input: Element): Promise<void> {
+    const el = await input;
+    await el.scrollIntoView();
+
+    await browser.waitUntil(
+      async () => {
+        await el.click();
+        return browser.execute((node) => document.activeElement === node, el);
+      },
+      {
+        timeout: 10000,
+        interval: 300,
+        timeoutMsg: "input never gained document focus after switching to the dashboard webview",
+      },
+    );
+  }
+
   async installPackage(pkg: string, { timeout = 180000 }: { timeout?: number } = {}): Promise<void> {
-    const input = await this.packageInput;
-    await input.scrollIntoView();
-    await input.setValue(pkg);
+    await this.#focusInput(this.packageInput);
+    await (await this.packageInput).setValue(pkg);
     await this.#clickButton(this.installButton);
     await this.waitForPackage(pkg, timeout);
   }
@@ -105,10 +137,8 @@ class WorkspaceDashboardPage {
   // The suggestion dropdown is mounted to document.body via a Svelte portal action.
 
   async typeInPackageInput(text: string): Promise<void> {
-    const input = await this.packageInput;
-    await input.scrollIntoView();
-    await input.click();
-    await input.setValue(text);
+    await this.#focusInput(this.packageInput);
+    await (await this.packageInput).setValue(text);
   }
 
   async visibleSuggestions(): Promise<string[]> {

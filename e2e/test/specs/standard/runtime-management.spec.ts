@@ -6,6 +6,7 @@ import ProjectsPage from "../../pageobjects/projects.page.js";
 import ProjectRow from "../../pageobjects/project-row.component.js";
 import workspaceDashboard from "../../pageobjects/workspace-dashboard.page.js";
 import { podman, podmanOk, LOCAL_CONNECTION, REMOTE_CONNECTION } from "../../../lib/podman-connection.js";
+import { useDashboardWebview } from "../../../lib/dashboard-suite.js";
 
 const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
 
@@ -49,27 +50,7 @@ describe("Sandbox runtime management (mise)", function () {
 
   // Capture the webview state on any failure: the "row vanished" symptom points at an app crash or
   // navigation, so dump the URL + page source + a screenshot to e2e/.diag for inspection.
-  // Safety net: if a test above throws while still attached to the dashboard webview, later
-  // tests must not inherit that attachment — the global `before` hook only pins the session once.
-  afterEach(async () => {
-    await workspaceDashboard.switchToAppWebview().catch(() => {});
-  });
-
-  afterEach(async function () {
-    if (this.currentTest?.state !== "failed") return;
-    const diag = path.join(process.cwd(), ".diag");
-    fs.mkdirSync(diag, { recursive: true });
-    const stamp = (this.currentTest?.title ?? "test").replace(/[^a-z0-9]+/gi, "-").slice(0, 40);
-    try {
-      const url = await browser.getUrl();
-      const src = await browser.getPageSource();
-      fs.writeFileSync(path.join(diag, `${stamp}.html`), `<!-- url: ${url} -->\n${src}`);
-      await browser.saveScreenshot(path.join(diag, `${stamp}.png`));
-      console.log(`[diag] url=${url} — dumped ${stamp}.html/.png to ${diag}`);
-    } catch (e) {
-      console.log(`[diag] could not capture page state: ${String(e)}`);
-    }
-  });
+  useDashboardWebview();
 
   it("creates a project whose workspace gets a mise environment", async () => {
     await ProjectsPage.open();

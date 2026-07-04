@@ -585,6 +585,11 @@ fn show_webview<R: Runtime>(
 ) -> Result<(), WorkspaceError> {
     if let Some(webview) = window.webviews().into_iter().find(|w| w.label() == label) {
         webview.show().map_err(|e| WorkspaceError::Window(e.to_string()))?;
+        // `.show()` alone makes the pane visible but leaves OS input focus wherever it was before
+        // (often the previously-active pane, now hidden) — clicks/keystrokes sent to this pane
+        // then land without ever firing its elements' focus handlers. `set_focus` here is what
+        // makes a freshly-activated pane actually receive input.
+        webview.set_focus().map_err(|e| WorkspaceError::Window(e.to_string()))?;
     }
     Ok(())
 }

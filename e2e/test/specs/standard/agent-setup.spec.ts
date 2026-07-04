@@ -6,6 +6,7 @@ import ProjectsPage from "../../pageobjects/projects.page.js";
 import ProjectRow from "../../pageobjects/project-row.component.js";
 import workspaceDashboard from "../../pageobjects/workspace-dashboard.page.js";
 import { podman, podmanOk, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
+import { useDashboardWebview, dashboardIt } from "../../../lib/dashboard-suite.js";
 
 const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
 
@@ -38,28 +39,7 @@ describe("Agent setup — Claude Code", function () {
     podman(LOCAL_CONNECTION, ["rm", "-f", projectName], { check: false });
   });
 
-  // Safety net: if a test above throws while still attached to the dashboard webview (an
-  // assertion failure between switchToDashboard and switchToAppWebview), later tests must not
-  // inherit that attachment — the global `before` hook only pins the session once per session.
-  afterEach(async () => {
-    await workspaceDashboard.switchToAppWebview().catch(() => {});
-  });
-
-  afterEach(async function () {
-    if (this.currentTest?.state !== "failed") return;
-    const diag = path.join(process.cwd(), ".diag");
-    fs.mkdirSync(diag, { recursive: true });
-    const stamp = (this.currentTest?.title ?? "test").replace(/[^a-z0-9]+/gi, "-").slice(0, 40);
-    try {
-      const url = await browser.getUrl();
-      const src = await browser.getPageSource();
-      fs.writeFileSync(path.join(diag, `${stamp}.html`), `<!-- url: ${url} -->\n${src}`);
-      await browser.saveScreenshot(path.join(diag, `${stamp}.png`));
-      console.log(`[diag] url=${url} — dumped ${stamp}.html/.png to ${diag}`);
-    } catch (e) {
-      console.log(`[diag] could not capture page state: ${String(e)}`);
-    }
-  });
+  useDashboardWebview();
 
   it("creates a project, opens its workspace, and shows an Agents section with no agents in the dashboard pane", async () => {
     await ProjectsPage.open();
@@ -80,12 +60,9 @@ describe("Agent setup — Claude Code", function () {
       timeout: 5000,
       timeoutMsg: "Agents section with 'No agents installed.' did not appear in the dashboard pane",
     });
-
-    await workspaceDashboard.switchToAppWebview();
   });
 
-  it("installs Claude Code through the UI including the npm postinstall step", async () => {
-    await workspaceDashboard.switchToDashboard(projectName);
+  dashboardIt("installs Claude Code through the UI including the npm postinstall step", () => projectName, async () => {
     await workspaceDashboard.startAgentInstall("Claude Code");
 
     // Wait for the agent row to appear — install downloads node@lts + claude-code + native binary.
@@ -114,7 +91,6 @@ describe("Agent setup — Claude Code", function () {
     );
 
     await workspaceDashboard.waitForAgentStatus("Claude Code", "not authenticated");
-    await workspaceDashboard.switchToAppWebview();
   });
 
   it("shows authenticated status when credential files are pre-seeded", async () => {
@@ -141,8 +117,6 @@ describe("Agent setup — Claude Code", function () {
 
     const btn = await workspaceDashboard.agentAuthButton("Claude Code");
     await expect(btn).toHaveText(/re-authenticate/i);
-
-    await workspaceDashboard.switchToAppWebview();
   });
 
   it("clicking Authenticate starts the auth process in the container", async () => {
@@ -175,8 +149,6 @@ describe("Agent setup — Claude Code", function () {
         `/proc scan:\n${procs}\n` +
         "This can happen when start_agent_auth did not spawn the process or the binary path is wrong."
     );
-
-    await workspaceDashboard.switchToAppWebview();
   });
 
   it("destroy removes the container even with a running auth process", async () => {

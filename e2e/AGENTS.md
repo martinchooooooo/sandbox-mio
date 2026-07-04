@@ -83,3 +83,14 @@ the UI's podman-startup activity card behaves the same.
 - `pnpm test` / `test:standard` → `test/specs/standard/**` — real podman, unchanged behaviour.
 - `pnpm run test:light` → `wdio run wdio.conf.ts --suite light` — no podman, mock backend.
 - `pnpm run test:heavy` → unchanged.
+
+## Dashboard webview specs: always use `lib/dashboard-suite.ts`
+
+Any `standard` spec whose tests interact with a sandbox's dashboard pane (a separate WebDriver
+window handle from the main app webview) **must** use `useDashboardWebview()` and `dashboardIt()`
+from `e2e/lib/dashboard-suite.ts` rather than hand-rolling `afterEach`/`switchToDashboard` calls.
+Call `useDashboardWebview()` once per `describe` block for the shared teardown and wrap every test after the suite's first dashboard-opening
+test with `dashboardIt(title, () => sandboxName, fn)` so it re-attaches to the dashboard
+automatically. A test forgetting to re-attach after the shared teardown
+resets the session produces a misleading "element wasn't found" error, not a useful one — that's
+the exact pitfall this helper exists to prevent.

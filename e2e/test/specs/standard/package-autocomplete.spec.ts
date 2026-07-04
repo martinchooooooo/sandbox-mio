@@ -6,6 +6,7 @@ import ProjectsPage from "../../pageobjects/projects.page.js";
 import ProjectRow from "../../pageobjects/project-row.component.js";
 import workspaceDashboard from "../../pageobjects/workspace-dashboard.page.js";
 import { podman, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
+import { useDashboardWebview, dashboardIt } from "../../../lib/dashboard-suite.js";
 
 const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
 
@@ -26,27 +27,7 @@ describe("Package autocomplete", function () {
     podman(LOCAL_CONNECTION, ["rm", "-f", projectName], { check: false });
   });
 
-  // Safety net: if a test above throws while still attached to the dashboard webview, later
-  // tests must not inherit that attachment — the global `before` hook only pins the session once.
-  afterEach(async () => {
-    await workspaceDashboard.switchToAppWebview().catch(() => {});
-  });
-
-  afterEach(async function () {
-    if (this.currentTest?.state !== "failed") return;
-    const diag = path.join(process.cwd(), ".diag");
-    fs.mkdirSync(diag, { recursive: true });
-    const stamp = (this.currentTest?.title ?? "test").replace(/[^a-z0-9]+/gi, "-").slice(0, 40);
-    try {
-      const url = await browser.getUrl();
-      const src = await browser.getPageSource();
-      fs.writeFileSync(path.join(diag, `${stamp}.html`), `<!-- url: ${url} -->\n${src}`);
-      await browser.saveScreenshot(path.join(diag, `${stamp}.png`));
-      console.log(`[diag] url=${url} — dumped ${stamp}.html/.png to ${diag}`);
-    } catch (e) {
-      console.log(`[diag] could not capture page state: ${String(e)}`);
-    }
-  });
+  useDashboardWebview();
 
   it("creates a project and opens its workspace's dashboard pane", async () => {
     await ProjectsPage.open();
@@ -59,7 +40,7 @@ describe("Package autocomplete", function () {
     await workspaceDashboard.switchToDashboard(projectName);
   });
 
-  it("shows suggestions after typing a search prefix", async () => {
+  dashboardIt("shows suggestions after typing a search prefix", () => projectName, async () => {
     // Focus triggers ensureRegistry → invoke("list_registry") → mise registry --json in the container.
     await workspaceDashboard.typeInPackageInput(PKG);
 
@@ -83,7 +64,7 @@ describe("Package autocomplete", function () {
     );
   });
 
-  it("shows a description for the jq suggestion", async () => {
+  dashboardIt("shows a description for the jq suggestion", () => projectName, async () => {
     // A non-empty description proves mise registry --json (not the plain-text format) was used,
     // and that the description field survived the Rust→frontend serialisation round trip.
     const desc = await workspaceDashboard.suggestionDescription(PKG);
@@ -95,7 +76,7 @@ describe("Package autocomplete", function () {
     );
   });
 
-  it("populates the input when a suggestion is selected", async () => {
+  dashboardIt("populates the input when a suggestion is selected", () => projectName, async () => {
     // The onmousedown handler on each suggestion button calls e.preventDefault(), which prevents
     // the blur event from stealing focus away from the input before the handler sets packageInput.
     await workspaceDashboard.selectSuggestion(PKG);
@@ -119,7 +100,7 @@ describe("Package autocomplete", function () {
     );
   });
 
-  it("installs successfully after autocomplete selection", async () => {
+  dashboardIt("installs successfully after autocomplete selection", () => projectName, async () => {
     // The input already contains PKG from the previous step; installPackage calls setValue(PKG)
     // (idempotent) then clicks Install and waits for the package chip to appear.
     await workspaceDashboard.installPackage(PKG);
@@ -138,7 +119,5 @@ describe("Package autocomplete", function () {
         `mise.toml does not list "${PKG}" after install via autocomplete. Contents:\n${manifest}`
       );
     }
-
-    await workspaceDashboard.switchToAppWebview();
   });
 });
