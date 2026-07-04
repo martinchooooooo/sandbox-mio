@@ -110,6 +110,35 @@ pub(crate) fn mock_backend_enabled() -> bool {
     std::env::var("MIO_MOCK_BACKEND").ok().as_deref() == Some("1")
 }
 
+/// Bundled Podman resource directory (`<resources>/podman`, holding `podman.exe`, `gvproxy.exe`,
+/// `win-sshproxy.exe`), set once from `run()`'s `.setup()` via [`set_podman_resource_dir`]. Absent
+/// under `cargo test`/`cargo check` and the e2e mock tier, where [`podman_command`] falls back to
+/// resolving a system `podman` from `PATH`.
+static PODMAN_RESOURCE_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// Record the bundled Podman resource directory for [`podman_command`] to use. Called exactly
+/// once, at startup, before any subsystem shells out to podman.
+pub fn set_podman_resource_dir(dir: std::path::PathBuf) {
+    let _ = PODMAN_RESOURCE_DIR.set(dir);
+}
+
+/// Build a `Command` for the resolved podman binary: the bundled `podman.exe` when
+/// [`set_podman_resource_dir`] has run, otherwise the bare `"podman"` (PATH resolution). Also
+/// points `CONTAINERS_HELPER_BINARY_DIR` at the resource dir so podman finds its bundled
+/// `gvproxy`/`win-sshproxy` helpers without them being installed on PATH. Used by every subsystem
+/// that shells out to podman (`backends`, `runtime`, `machine`) instead of a bare
+/// `Command::new("podman")`, so packaging never depends on a system-installed Podman.
+pub(crate) fn podman_command() -> Command {
+    match PODMAN_RESOURCE_DIR.get() {
+        Some(dir) => {
+            let mut cmd = Command::new(dir.join("podman.exe"));
+            cmd.env("CONTAINERS_HELPER_BINARY_DIR", dir);
+            cmd
+        }
+        None => Command::new("podman"),
+    }
+}
+
 /// Returns stdout on success, or the captured stderr as `Err` on a non-zero exit.
 /// Podman writes lifecycle errors (no such image, no such container, ...) to stderr.
 fn check(out: Output) -> Result<String, BackendError> {
@@ -179,7 +208,7 @@ impl PodmanCliBackend {
     }
 
     async fn podman(&self, args: &[&str]) -> Result<Output, BackendError> {
-        Command::new("podman")
+        podman_command()
             .arg("--connection")
             .arg(&self.connection)
             .args(args)
@@ -191,7 +220,7 @@ impl PodmanCliBackend {
     /// Runs `podman` without `--connection`, for system-connection registry operations
     /// that are not bound to the backend's active connection.
     async fn podman_global(args: &[&str]) -> Result<Output, BackendError> {
-        Command::new("podman")
+        podman_command()
             .args(args)
             .output()
             .await
@@ -553,7 +582,7 @@ impl SandboxBackend for PodmanCliBackend {
     }
 
     async fn listen_events(&self, on_event: Channel<serde_json::Value>) -> Result<(), BackendError> {
-        let mut child = Command::new("podman")
+        let mut child = podman_command()
             .arg("--connection")
             .arg(&self.connection)
             .args(["events", "--format", "json"])

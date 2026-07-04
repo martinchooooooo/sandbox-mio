@@ -25,7 +25,21 @@
     // (polling a down Podman floods the backend with failing invocations).
     let podmanUnavailable = $state(false);
 
+    // First-run gate: set when the default Podman machine has never been created (`machine_needs_init`
+    // returns true). Takes priority over `podmanUnavailable`'s plain "Start Podman" screen, since
+    // starting a machine that was never initialized cannot succeed.
+    let podmanNeedsSetup = $state(false);
+
+    // Set when `provision_podman` reports a fresh WSL2 install needs a Windows restart before it can
+    // continue. Shown instead of a generic setup failure so the user knows to reboot, not retry blindly.
+    let podmanRebootRequired = $state(false);
+
     const startAction = createActionRunner();
+
+    // Not `createActionRunner`-driven: that helper only keeps the error message, but this flow
+    // needs the structured `kind` to tell a reboot requirement apart from a generic failure.
+    let setupBusy = $state(false);
+    let setupError = $state("");
 
     async function loadProjects() {
         try {
@@ -88,6 +102,13 @@
             await invoke("check_podman_ready");
         } catch (e) {
             if (parseError(e).kind === "PodmanUnavailable") {
+                // Distinguish "never initialized" (first run) from "just stopped": starting a
+                // machine that was never created cannot succeed, so route to the setup flow instead.
+                try {
+                    podmanNeedsSetup = await invoke<boolean>("machine_needs_init");
+                } catch {
+                    podmanNeedsSetup = false;
+                }
                 podmanUnavailable = true;
                 return; // skip the load sequence; the deployment poll stays unstarted
             }
@@ -110,6 +131,27 @@
             podmanUnavailable = false;
             loadAll();
             pollId = setInterval(loadDeployments, 3000);
+        }
+    }
+
+    // Drive first-run provisioning (WSL2 + `podman machine init` + start) from the setup screen.
+    // A `PodmanRebootRequired` error keeps the screen up with a reboot prompt instead of a bare retry.
+    async function setupPodman() {
+        podmanRebootRequired = false;
+        setupError = "";
+        setupBusy = true;
+        try {
+            await invoke("provision_podman");
+            podmanNeedsSetup = false;
+            podmanUnavailable = false;
+            loadAll();
+            pollId = setInterval(loadDeployments, 3000);
+        } catch (e) {
+            const err = parseError(e);
+            podmanRebootRequired = err.kind === "PodmanRebootRequired";
+            setupError = err.message;
+        } finally {
+            setupBusy = false;
         }
     }
 
@@ -142,7 +184,24 @@
             <p class="text-destructive mt-4 text-sm">{error}</p>
         {/if}
 
-        {#if podmanUnavailable}
+        {#if podmanUnavailable && podmanNeedsSetup}
+            <div class="mt-8 text-center space-y-4">
+                <h2 class="text-lg font-medium">{m.podman_setup_title()}</h2>
+                <p class="text-muted-foreground">{m.podman_setup_description()}</p>
+                {#if podmanRebootRequired}
+                    <p class="text-destructive text-sm">{m.podman_reboot_required()}</p>
+                    <Button onclick={setupPodman}>{m.podman_reboot_retry()}</Button>
+                {:else}
+                    <Button loading={setupBusy} disabled={setupBusy} onclick={setupPodman}
+                        >{m.podman_setup_button()}</Button
+                    >
+                    {#if setupError}
+                        <p class="text-destructive text-sm">{setupError}</p>
+                        <Button variant="outline" onclick={setupPodman}>{m.retry()}</Button>
+                    {/if}
+                {/if}
+            </div>
+        {:else if podmanUnavailable}
             <div class="mt-8 text-center space-y-4">
                 <p class="text-muted-foreground">{m.podman_not_running()}</p>
                 <Button

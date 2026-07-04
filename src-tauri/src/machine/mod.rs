@@ -12,10 +12,8 @@ mod mock;
 
 use std::process::Output;
 
-use tokio::process::Command;
-
 use crate::backends::types::BackendError;
-use crate::backends::{mock_backend_enabled, DEFAULT_CONNECTION};
+use crate::backends::{mock_backend_enabled, podman_command, DEFAULT_CONNECTION};
 
 use mock::MockMachineManager;
 use types::{MachineManager, PodmanMachineManager};
@@ -49,7 +47,7 @@ fn check(out: Output) -> Result<String, BackendError> {
 /// Runs `podman <args>` without `--connection`, for machine-lifecycle and system-registry
 /// operations that are not bound to any single connection.
 async fn podman(args: &[&str]) -> Result<Output, BackendError> {
-    Command::new("podman")
+    podman_command()
         .args(args)
         .output()
         .await
@@ -118,7 +116,7 @@ impl MachineManager for PodmanMachineManager {
             "test -S {sock} || {{ mkdir -p $(dirname {sock}) && setsid env XDG_RUNTIME_DIR=/run/user/1000 podman system service --time=0 </dev/null >/tmp/podman-svc.log 2>&1 & }}",
             sock = PODMAN_SOCKET,
         );
-        let Ok(mut child) = Command::new("podman")
+        let Ok(mut child) = podman_command()
             .args(["machine", "ssh", DEFAULT_CONNECTION])
             .arg(&script)
             .spawn()
@@ -146,5 +144,51 @@ impl MachineManager for PodmanMachineManager {
             }
         }
         Err(last)
+    }
+
+    async fn wsl_is_ready(&self) -> bool {
+        // `wsl --status` exits non-zero when WSL is not installed, and its stdout reports the
+        // default version even when no distribution is installed yet (which is all Podman needs:
+        // it brings its own Fedora CoreOS distribution via `machine init`).
+        tokio::task::spawn_blocking(|| {
+            std::process::Command::new("wsl").arg("--status").output()
+        })
+        .await
+        .map(|r| r.map(|o| o.status.success()).unwrap_or(false))
+        .unwrap_or(false)
+    }
+
+    async fn install_wsl(&self) -> Result<bool, BackendError> {
+        // `--no-distribution` installs just the WSL2 platform (kernel + virtualization stack),
+        // leaving distribution provisioning to `podman machine init`. A fresh install typically
+        // needs a reboot before the kernel component is usable, so the reboot requirement is
+        // assumed rather than probed — Windows gives no reliable signal short of trying and
+        // failing, which would surface as a confusing `machine init` error instead.
+        let out = tokio::task::spawn_blocking(|| {
+            std::process::Command::new("wsl")
+                .args(["--install", "--no-distribution"])
+                .output()
+        })
+        .await
+        .map_err(|e| BackendError::CommandFailed(e.to_string()))?
+        .map_err(|e| BackendError::CommandFailed(e.to_string()))?;
+        if !out.status.success() {
+            return Err(BackendError::CommandFailed(
+                String::from_utf8_lossy(&out.stderr).trim().to_string(),
+            ));
+        }
+        Ok(true)
+    }
+
+    async fn machine_exists(&self) -> Result<bool, BackendError> {
+        let out = podman(&["machine", "list", "--format", "json"]).await?;
+        let stdout = check(out)?;
+        let machines: Vec<serde_json::Value> =
+            serde_json::from_str(&stdout).map_err(|e| BackendError::ParseError(e.to_string()))?;
+        Ok(machines.iter().any(|m| m["Name"].as_str() == Some(DEFAULT_CONNECTION)))
+    }
+
+    async fn init_machine(&self) -> Result<(), BackendError> {
+        check(podman(&["machine", "init", DEFAULT_CONNECTION]).await?).map(|_| ())
     }
 }

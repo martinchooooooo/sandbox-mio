@@ -10,7 +10,8 @@ export type AppErrorKind =
     | "Credential"
     | "NotDeployed"
     | "UnsyncedChanges"
-    | "PodmanUnavailable";
+    | "PodmanUnavailable"
+    | "PodmanRebootRequired";
 
 /** Structured error sent over the Tauri IPC boundary from every `#[tauri::command]`. */
 export interface AppError {

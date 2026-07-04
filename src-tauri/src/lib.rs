@@ -682,6 +682,17 @@ async fn check_podman_ready(
         .map_err(|_| AppError::PodmanUnavailable("Podman socket is not ready".into()))
 }
 
+/// Read-only probe for the first-run setup screen: true once the default Podman machine has been
+/// created (`podman machine init` has run), regardless of whether it is currently running. `false`
+/// routes the frontend to the `provision_podman` setup flow instead of the plain "Start Podman"
+/// screen, which assumes the machine already exists.
+#[tauri::command]
+async fn machine_needs_init(
+    machine: State<'_, Arc<dyn MachineManager>>,
+) -> Result<bool, AppError> {
+    Ok(!machine.machine_exists().await.map_err(|e| AppError::PodmanUnavailable(e.to_string()))?)
+}
+
 /// Full startup sequence for the default Podman machine, driven from the "Start Podman" button.
 /// Drives the activity center task `"podman-startup"` so the global panel shows live progress.
 /// Every `Err` return path first calls `activity::fail` — the registry has no view of the command's
@@ -722,6 +733,62 @@ async fn start_podman_machine(
 
     activity::succeed(&app, "podman-startup", None);
     Ok(())
+}
+
+/// First-run setup ladder, driven from the setup screen `machine_needs_init` routes the frontend
+/// to: ensure WSL2 → `podman machine init` if the machine has never been created → then the same
+/// start/activate/poll sequence as `start_podman_machine`. Drives the same `"podman-startup"`
+/// activity task, so the existing progress panel covers both flows.
+///
+/// Returns [`AppError::PodmanRebootRequired`] when WSL2 was just installed and Windows needs a
+/// restart before `podman machine init` can succeed — the frontend must show a reboot prompt and
+/// let the user retry after restarting, not treat this as a generic failure.
+#[tauri::command]
+async fn provision_podman(
+    app: tauri::AppHandle,
+    machine: State<'_, Arc<dyn MachineManager>>,
+) -> Result<(), AppError> {
+    activity::open(&app, "podman-startup", TaskKind::PodmanStartup, None);
+
+    activity::progress(&app, "podman-startup", None, Some("Checking WSL2…".into()));
+    if !machine.wsl_is_ready().await {
+        activity::progress(&app, "podman-startup", None, Some("Installing WSL2…".into()));
+        match machine.install_wsl().await {
+            Ok(true) => {
+                let msg = "WSL2 was installed and needs a restart to finish. Restart Windows, \
+                           then try again."
+                    .to_string();
+                activity::fail(&app, "podman-startup", msg.clone());
+                return Err(AppError::PodmanRebootRequired(msg));
+            }
+            Ok(false) => {}
+            Err(e) => {
+                let err = format!("Failed to install WSL2: {e}");
+                activity::fail(&app, "podman-startup", err.clone());
+                return Err(AppError::PodmanUnavailable(err));
+            }
+        }
+    }
+
+    activity::progress(&app, "podman-startup", None, Some("Checking Podman machine…".into()));
+    match machine.machine_exists().await {
+        Ok(true) => {}
+        Ok(false) => {
+            activity::progress(&app, "podman-startup", None, Some("Creating Podman machine…".into()));
+            if let Err(e) = machine.init_machine().await {
+                let err = format!("Failed to create Podman machine: {e}");
+                activity::fail(&app, "podman-startup", err.clone());
+                return Err(AppError::PodmanUnavailable(err));
+            }
+        }
+        Err(e) => {
+            let err = format!("Failed to inspect Podman machines: {e}");
+            activity::fail(&app, "podman-startup", err.clone());
+            return Err(AppError::PodmanUnavailable(err));
+        }
+    }
+
+    start_podman_machine(app, machine).await
 }
 
 #[tauri::command]
@@ -1304,7 +1371,7 @@ fn set_settings(settings: AppSettings, app: tauri::AppHandle) -> Result<(), AppE
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    #[cfg(debug_assertions)]
+    #[cfg(all(debug_assertions, feature = "devtools"))]
     let devtools = tauri_plugin_devtools::Builder::default().init();
 
     let backend = backends::default_backend();
@@ -1313,7 +1380,7 @@ pub fn run() {
 
     let mut builder = tauri::Builder::default();
 
-    #[cfg(debug_assertions)]
+    #[cfg(all(debug_assertions, feature = "devtools"))]
     {
         builder = builder.plugin(devtools);
     }
@@ -1322,10 +1389,20 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(backend)
         .manage(runtime)
         .manage(machine)
         .setup(|app| {
+            // Point every podman invocation at the bundled `<resources>/podman/podman.exe` instead
+            // of a system-PATH install; skipped under the mock backend, where nothing shells out to
+            // podman anyway and the `resources/podman` dir need not exist (e.g. `cargo test`).
+            if !backends::mock_backend_enabled() {
+                if let Ok(resource_dir) = app.path().resource_dir() {
+                    backends::set_podman_resource_dir(resource_dir.join("podman"));
+                }
+            }
             // Constructed in setup because the sync engine needs the AppHandle to resolve the
             // bundled Mutagen sidecar.
             app.manage(sync::default_sync_engine(app.handle().clone()));
@@ -1384,7 +1461,9 @@ pub fn run() {
             expose_port,
             unexpose_port,
             check_podman_ready,
+            machine_needs_init,
             start_podman_machine,
+            provision_podman,
             listen_events,
             list_sandbox_hosts,
             add_sandbox_host,

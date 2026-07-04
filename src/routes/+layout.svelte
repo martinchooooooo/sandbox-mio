@@ -3,6 +3,7 @@
     import { onMount } from "svelte";
     import { page } from "$app/state";
     import { invoke } from "@tauri-apps/api/core";
+    import { toast } from "svelte-sonner";
     import { ModeWatcher } from "mode-watcher";
     import { Toaster } from "$lib/components/ui/sonner";
     import Button from "$lib/components/ui/button/button.svelte";
@@ -43,6 +44,35 @@
         }
     }
 
+    // Checked once, from the main-global webview only (every other webview would otherwise
+    // duplicate the same check). Downloads and installs silently on accept, then relaunches —
+    // the NSIS `currentUser` install mode needs no elevation for either step.
+    async function checkForUpdate() {
+        try {
+            const { check } = await import("@tauri-apps/plugin-updater");
+            const update = await check();
+            if (!update) return;
+            toast(m.update_available(), {
+                action: {
+                    label: m.update_restart_button(),
+                    onClick: async () => {
+                        try {
+                            toast(m.update_downloading());
+                            await update.downloadAndInstall();
+                            const { relaunch } = await import("@tauri-apps/plugin-process");
+                            await relaunch();
+                        } catch (e) {
+                            console.error(e);
+                            toast.error(m.update_install_failed());
+                        }
+                    },
+                },
+            });
+        } catch (e) {
+            console.error(e);
+        }
+    }
+
     onMount(() => {
         (async () => {
             try {
@@ -53,6 +83,7 @@
             }
             await ensureWorkspaceState();
             await ensureNetworkState();
+            if (isGlobalPanel) checkForUpdate();
         })();
     });
 </script>

@@ -30,6 +30,19 @@ pub trait MachineManager: Send + Sync {
     /// Poll the default machine's socket up to `attempts` times, 500 ms apart. The authoritative
     /// readiness gate — `machine_is_running` and `activate_podman_socket` are insufficient alone.
     async fn poll_ready(&self, attempts: usize) -> Result<(), BackendError>;
+    /// True if WSL2 is installed and its kernel service answers (`wsl --status`). First-run
+    /// provisioning gate: `podman machine init` cannot succeed without it.
+    async fn wsl_is_ready(&self) -> bool;
+    /// Run `wsl --install --no-distribution`. Returns `Ok(true)` when the install requires a
+    /// reboot before Podman can proceed (the common case for a fresh install), `Ok(false)` if WSL
+    /// was already usable.
+    async fn install_wsl(&self) -> Result<bool, BackendError>;
+    /// True if `podman machine list` already has an entry named
+    /// [`crate::backends::DEFAULT_CONNECTION`], regardless of its running state.
+    async fn machine_exists(&self) -> Result<bool, BackendError>;
+    /// Run `podman machine init` for the default machine. Downloads the machine image on first
+    /// call, so this can take minutes and needs network access.
+    async fn init_machine(&self) -> Result<(), BackendError>;
 }
 
 /// The real [`MachineManager`], driving the global `podman machine` CLI, `wsl`, and the rootless

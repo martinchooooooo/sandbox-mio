@@ -7,8 +7,6 @@ mod mock;
 
 use std::process::Output;
 
-use tokio::process::Command;
-
 use mock::MockRuntime;
 use types::{PodmanMiseRuntime, RuntimeError, RuntimeManager};
 
@@ -106,7 +104,7 @@ impl PodmanMiseRuntime {
     async fn podman_on(connection: &str, args: &[&str]) -> Result<Output, RuntimeError> {
         let mut full = vec!["--connection", connection];
         full.extend_from_slice(args);
-        Command::new("podman")
+        crate::backends::podman_command()
             .args(&full)
             .output()
             .await

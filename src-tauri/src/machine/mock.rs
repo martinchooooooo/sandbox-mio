@@ -34,4 +34,20 @@ impl MachineManager for MockMachineManager {
     async fn poll_ready(&self, _attempts: usize) -> Result<(), BackendError> {
         Ok(())
     }
+
+    async fn wsl_is_ready(&self) -> bool {
+        true
+    }
+
+    async fn install_wsl(&self) -> Result<bool, BackendError> {
+        Ok(false)
+    }
+
+    async fn machine_exists(&self) -> Result<bool, BackendError> {
+        Ok(true)
+    }
+
+    async fn init_machine(&self) -> Result<(), BackendError> {
+        Ok(())
+    }
 }

@@ -1,0 +1,50 @@
+name: release
+
+# Triggered by pushing a `v*` tag (e.g. `v0.2.0`). Builds the signed NSIS installer + updater
+# artifacts and publishes them, plus `latest.json`, to a GitHub Release — the endpoint configured
+# in `src-tauri/tauri.conf.json` (`plugins.updater.endpoints`) points here.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # Stages the bundled Mutagen sidecar + llama.cpp engine + Podman binaries into
+      # src-tauri/binaries before the bundler runs (see build.rs, `dev --setup` arm).
+      - name: Stage bundled binaries
+        run: |
+          rustc build.rs -o build.exe
+          ./build.exe dev --setup
+
+      - name: Build and publish
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "sandbox-mio ${{ github.ref_name }}"
+          releaseDraft: true
+          args: --no-default-features

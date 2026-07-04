@@ -7,6 +7,11 @@ const MUTAGEN_VERSION: &str = "v0.18.1";
 /// engine (`src-tauri/binaries/llama`). Pinned so every checkout stages the same `llama-server`.
 const LLAMA_VERSION: &str = "b9835";
 
+/// Podman release whose Windows remote-client archive is staged as the bundled container engine
+/// (`src-tauri/binaries/podman`). Pinned so every checkout stages the same `podman`/`gvproxy`/
+/// `win-sshproxy` that `backends::podman_command()` resolves at runtime.
+const PODMAN_VERSION: &str = "v5.6.2";
+
 static CHILD_PID: AtomicU32 = AtomicU32::new(0);
 
 fn e2e_dir() -> PathBuf { PathBuf::from(env::current_dir().unwrap()).join("e2e") }
@@ -34,9 +39,11 @@ fn main() {
             run(root_dir(), "pnpm", &["install"]);
             fetch_mutagen();
             fetch_llama();
+            fetch_podman();
         }
         Some("dev") => {
             stage_llama();
+            stage_podman();
             run(root_dir(), "pnpm", &["run", "tauri", "dev"]);
         }
         Some("e2e") if args.get(2).map(String::as_str) == Some("--setup") => {
@@ -45,12 +52,23 @@ fn main() {
         Some("e2e") => {
             run(e2e_dir(), "pnpm", &["test"]);
         }
+        Some("package") => {
+            // Bundling copies from src-tauri/binaries at build time (unlike `dev`, which needs
+            // `stage_*` to mirror them into target/debug); make sure they're present first.
+            fetch_mutagen();
+            fetch_llama();
+            fetch_podman();
+            // `--no-default-features` drops the `devtools` feature (see src-tauri/Cargo.toml) so
+            // the shipped binary carries no devtools code.
+            run(root_dir(), "pnpm", &["tauri", "build", "--no-default-features"]);
+        }
         _ => {
             eprintln!("Usage:");
             eprintln!("  build dev          - run `pnpm run tauri dev`");
-            eprintln!("  build dev --setup  - install app dependencies and stage the Mutagen sidecar + llama.cpp engine");
+            eprintln!("  build dev --setup  - install app dependencies and stage the Mutagen sidecar + llama.cpp engine + Podman");
             eprintln!("  build e2e          - run `pnpm test` in the e2e folder");
             eprintln!("  build e2e --setup  - install e2e test dependencies");
+            eprintln!("  build package      - stage bundled binaries and build the release NSIS installer");
             std::process::exit(1);
         }
     }
@@ -160,6 +178,86 @@ fn fetch_llama() {
     );
     let _ = fs::remove_file(&zip);
     println!("Staged llama.cpp engine: {}", dest_dir.display());
+}
+
+/// Download the official Podman Windows remote-client archive and stage `podman.exe`,
+/// `gvproxy.exe`, and `win-sshproxy.exe` flat into `src-tauri/binaries/podman` (see
+/// `src-tauri/binaries/podman/README.md`). `backends::podman_command()` resolves these from the
+/// bundled resource dir at runtime instead of PATH.
+fn fetch_podman() {
+    if !cfg!(windows) {
+        todo!("Podman fetch is implemented for Windows only");
+    }
+    let dest_dir = binaries_dir().join("podman");
+    let podman_exe = dest_dir.join("podman.exe");
+    if podman_exe.exists() {
+        println!("Podman already staged: {}", podman_exe.display());
+        return;
+    }
+    fs::create_dir_all(&dest_dir).unwrap();
+
+    let asset = "podman-remote-release-windows_amd64.zip";
+    let url = format!(
+        "https://github.com/containers/podman/releases/download/{PODMAN_VERSION}/{asset}"
+    );
+    let zip = env::temp_dir().join(asset);
+    let extract = env::temp_dir().join(format!("podman-{PODMAN_VERSION}"));
+    let _ = fs::remove_dir_all(&extract);
+    fs::create_dir_all(&extract).unwrap();
+
+    let zip_arg = zip.to_string_lossy();
+    let extract_arg = extract.to_string_lossy();
+    println!("Downloading Podman {PODMAN_VERSION} for Windows...");
+    run(root_dir(), "curl", &["-fsSL", "-o", &zip_arg, &url]);
+    run(root_dir(), &windows_tar(), &["-xf", &zip_arg, "-C", &extract_arg]);
+
+    // The archive nests these three under varying subdirectories across releases (e.g.
+    // `usr/bin/`); search recursively rather than hardcode a path.
+    for name in ["podman.exe", "gvproxy.exe", "win-sshproxy.exe"] {
+        let found = find_file(&extract, name).unwrap_or_else(|| {
+            panic!("expected {} in extracted Podman archive at {}", name, extract.display())
+        });
+        fs::copy(&found, dest_dir.join(name)).unwrap();
+    }
+    let _ = fs::remove_dir_all(&extract);
+    let _ = fs::remove_file(&zip);
+    println!("Staged Podman: {}", dest_dir.display());
+}
+
+/// Recursively search `dir` for a file named `name`, returning its path if found.
+fn find_file(dir: &Path, name: &str) -> Option<PathBuf> {
+    for entry in fs::read_dir(dir).ok()? {
+        let entry = entry.ok()?;
+        let path = entry.path();
+        if entry.file_type().ok()?.is_dir() {
+            if let Some(found) = find_file(&path, name) {
+                return Some(found);
+            }
+        } else if path.file_name().map(|f| f == name).unwrap_or(false) {
+            return Some(path);
+        }
+    }
+    None
+}
+
+/// Stage the bundled Podman binaries next to the debug exe so `resource_dir()/podman` resolves
+/// under `tauri dev`, mirroring `stage_llama`. Skipped with a warning when not staged in the repo
+/// (see `src-tauri/binaries/podman/README.md`).
+fn stage_podman() {
+    let src = binaries_dir().join("podman");
+    if !src.join("podman.exe").exists() {
+        println!(
+            "podman not staged at {}; Podman-backed sandboxes will fail at binary resolution. \
+             Stage it there per src-tauri/binaries/podman/README.md (or run `cargo run --bin build \
+             -- dev --setup`).",
+            src.display()
+        );
+        return;
+    }
+    let dst = root_dir().join("src-tauri").join("target").join("debug").join("podman");
+    copy_dir(&src, &dst)
+        .unwrap_or_else(|e| panic!("failed to stage podman to {}: {}", dst.display(), e));
+    println!("Staged Podman: {}", dst.display());
 }
 
 /// Stage the bundled llama.cpp Vulkan engine next to the debug exe so `resource_dir()/llama`

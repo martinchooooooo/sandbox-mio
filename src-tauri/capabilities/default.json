@@ -10,6 +10,8 @@
     "dialog:allow-open",
     "core:webview:allow-create-webview-window",
     "core:window:allow-set-focus",
+    "updater:default",
+    "process:allow-restart",
     {
       "identifier": "shell:allow-execute",
       "allow": [{ "name": "binaries/mutagen", "sidecar": true, "args": true }]

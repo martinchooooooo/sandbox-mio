@@ -43,6 +43,10 @@ pub enum AppError {
     /// Podman machine is stopped or its rootless socket is not ready.
     #[error("Podman is not ready: {0}")]
     PodmanUnavailable(String),
+    /// `provision_podman` installed WSL2 and the platform component needs a reboot before
+    /// `podman machine init` can proceed.
+    #[error("Windows must be restarted to finish installing WSL2: {0}")]
+    PodmanRebootRequired(String),
 }
 
 impl AppError {
@@ -62,6 +66,7 @@ impl AppError {
             AppError::NotDeployed(_) => "NotDeployed",
             AppError::UnsyncedChanges { .. } => "UnsyncedChanges",
             AppError::PodmanUnavailable(_) => "PodmanUnavailable",
+            AppError::PodmanRebootRequired(_) => "PodmanRebootRequired",
         }
     }
 }
