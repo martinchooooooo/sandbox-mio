@@ -3,12 +3,10 @@ import fs from "fs";
 import path from "path";
 
 import ProjectsPage from "../../pageobjects/projects.page.js";
-import ProjectRow from "../../pageobjects/project-row.component.js";
 import workspaceDashboard from "../../pageobjects/workspace-dashboard.page.js";
 import { podman, podmanOk, LOCAL_CONNECTION, REMOTE_CONNECTION } from "../../../lib/podman-connection.js";
 import { useDashboardWebview } from "../../../lib/dashboard-suite.js";
-
-const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
+import { useSandboxWorkspace } from "../../../lib/sandbox-suite.js";
 
 // The test tool: `jq` is a tiny static single-binary CLI (no runtime deps, so it runs on the glibc
 // base unmodified), resolves through mise's aqua backend, and `jq --version` prints a stable
@@ -28,23 +26,14 @@ const PKG_OUTPUT = "jq-";
 describe("Sandbox runtime management (mise)", function () {
   this.timeout(600000);
 
-  const projectName = `e2e-runtime-${Date.now()}`;
-  const row: ProjectRow = ProjectsPage.row(projectName);
-  let workspaceDir: string;
+  const { projectName, row, workspaceDir } = useSandboxWorkspace("e2e-runtime");
   // mise writes the manifest and lockfile at the workspace root (not a hidden directory).
-  let manifestPath: string;
-  let lockfilePath: string;
-
-  before(() => {
-    expect(WORKSPACE_ROOT).toBeTruthy();
-    workspaceDir = path.join(WORKSPACE_ROOT!, projectName);
-    manifestPath = path.join(workspaceDir, "mise.toml");
-    lockfilePath = path.join(workspaceDir, "mise.lock");
-  });
+  const manifestPath = path.join(workspaceDir, "mise.toml");
+  const lockfilePath = path.join(workspaceDir, "mise.lock");
 
   after(() => {
-    // Best-effort cleanup so a failed run leaves no containers behind.
-    podman(LOCAL_CONNECTION, ["rm", "-f", projectName], { check: false });
+    // Best-effort cleanup so a failed run leaves no remote container behind (the local one is
+    // already handled by useSandboxWorkspace's teardown).
     podman(REMOTE_CONNECTION, ["rm", "-f", projectName], { check: false });
   });
 

@@ -4,13 +4,11 @@ import fs from "fs";
 import path from "path";
 
 import ProjectsPage from "../../pageobjects/projects.page.js";
-import ProjectRow from "../../pageobjects/project-row.component.js";
 import workspaceDashboard from "../../pageobjects/workspace-dashboard.page.js";
 import { podman, podmanOk, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
 import { forwardList, forwardTerminate } from "../../../lib/mutagen.js";
 import { useDashboardWebview, dashboardIt } from "../../../lib/dashboard-suite.js";
-
-const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
+import { useSandboxWorkspace } from "../../../lib/sandbox-suite.js";
 
 // Two distinct sandbox-side ports: one exposed manually via the "Expose a port" UI, one declared
 // through `.mio/ports.json` to exercise the `watch_ports_file` auto-expose/auto-unexpose path.
@@ -59,21 +57,12 @@ function readOnce(hostPort: number, timeoutMs = 10000): Promise<string> {
 describe("Exposing sandbox ports (network::expose_port / unexpose_port / watch_ports_file)", function () {
   this.timeout(300000);
 
-  const projectName = `e2e-exposeport-${Date.now()}`;
-  const row: ProjectRow = ProjectsPage.row(projectName);
-  let workspaceDir: string;
-  let portsJsonPath: string;
-
-  before(() => {
-    expect(WORKSPACE_ROOT).toBeTruthy();
-    workspaceDir = path.join(WORKSPACE_ROOT!, projectName);
-    portsJsonPath = path.join(workspaceDir, ".mio", "ports.json");
-  });
+  const { projectName, row, workspaceDir } = useSandboxWorkspace("e2e-exposeport");
+  const portsJsonPath = path.join(workspaceDir, ".mio", "ports.json");
 
   after(() => {
     forwardTerminate(`expose-${projectName}-${MANUAL_PORT}`);
     forwardTerminate(`expose-${projectName}-${FILE_PORT}`);
-    podman(LOCAL_CONNECTION, ["rm", "-f", projectName], { check: false });
   });
 
   useDashboardWebview();

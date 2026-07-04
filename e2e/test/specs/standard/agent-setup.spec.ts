@@ -3,12 +3,10 @@ import fs from "fs";
 import path from "path";
 
 import ProjectsPage from "../../pageobjects/projects.page.js";
-import ProjectRow from "../../pageobjects/project-row.component.js";
 import workspaceDashboard from "../../pageobjects/workspace-dashboard.page.js";
 import { podman, podmanOk, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
 import { useDashboardWebview, dashboardIt } from "../../../lib/dashboard-suite.js";
-
-const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
+import { useSandboxWorkspace } from "../../../lib/sandbox-suite.js";
 
 // `browser.url` rejects relative paths, and there is no wdio `baseUrl`: the app is served from a
 // Tauri custom-protocol origin (e.g. http://tauri.localhost). Resolve "/" against the live origin
@@ -24,20 +22,8 @@ async function navigateHome(): Promise<void> {
 describe("Agent setup — Claude Code", function () {
   this.timeout(900000);
 
-  const projectName = `e2e-agents-${Date.now()}`;
-  const row: ProjectRow = ProjectsPage.row(projectName);
-  let workspaceDir: string;
-  let manifestPath: string;
-
-  before(() => {
-    expect(WORKSPACE_ROOT).toBeTruthy();
-    workspaceDir = path.join(WORKSPACE_ROOT!, projectName);
-    manifestPath = path.join(workspaceDir, "mise.toml");
-  });
-
-  after(() => {
-    podman(LOCAL_CONNECTION, ["rm", "-f", projectName], { check: false });
-  });
+  const { projectName, row, workspaceDir } = useSandboxWorkspace("e2e-agents");
+  const manifestPath = path.join(workspaceDir, "mise.toml");
 
   useDashboardWebview();
 

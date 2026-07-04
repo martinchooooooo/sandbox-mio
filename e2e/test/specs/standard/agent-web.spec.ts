@@ -3,9 +3,9 @@ import fs from "fs";
 import path from "path";
 
 import ProjectsPage from "../../pageobjects/projects.page.js";
-import ProjectRow from "../../pageobjects/project-row.component.js";
 import workspaceDashboard from "../../pageobjects/workspace-dashboard.page.js";
 import { useDashboardWebview } from "../../../lib/dashboard-suite.js";
+import { useSandboxWorkspace } from "../../../lib/sandbox-suite.js";
 import { podman, podmanOk, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
 import { forwardList } from "../../../lib/mutagen.js";
 import {
@@ -16,8 +16,6 @@ import {
   closeWorkspace,
   switchPane,
 } from "../../../lib/workspace.js";
-
-const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
 
 const PASEO_WEB_PORT = "6767";
 
@@ -46,23 +44,11 @@ async function fetchServerId(port: string, password: string): Promise<string | u
 describe("Agent web UI (paseo)", function () {
   this.timeout(900000);
 
-  const projectName = `e2e-agentweb-${Date.now()}`;
-  const row: ProjectRow = ProjectsPage.row(projectName);
-  let workspaceDir: string;
+  const { projectName, row, workspaceDir } = useSandboxWorkspace("e2e-agentweb");
   // prepare_agent_web_pane persists the minted password host-side here (next to zellij.json).
-  let passwordPath: string;
+  const passwordPath = path.join(workspaceDir, ".mio", "paseo.json");
   let serverId: string;
   let password: string;
-
-  before(() => {
-    expect(WORKSPACE_ROOT).toBeTruthy();
-    workspaceDir = path.join(WORKSPACE_ROOT!, projectName);
-    passwordPath = path.join(workspaceDir, ".mio", "paseo.json");
-  });
-
-  after(() => {
-    podman(LOCAL_CONNECTION, ["rm", "-f", projectName], { check: false });
-  });
 
   useDashboardWebview();
 

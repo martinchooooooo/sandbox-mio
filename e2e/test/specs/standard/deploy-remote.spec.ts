@@ -3,28 +3,19 @@ import fs from "fs";
 import path from "path";
 
 import ProjectsPage from "../../pageobjects/projects.page.js";
-import ProjectRow from "../../pageobjects/project-row.component.js";
 import { podman, podmanOk, LOCAL_CONNECTION, REMOTE_CONNECTION } from "../../../lib/podman-connection.js";
-
-const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
+import { useSandboxWorkspace } from "../../../lib/sandbox-suite.js";
 
 // node:assert is used instead of expect().toBe(true) because expect-webdriverio's withMessage()
 // is only supported on async element matchers, not on plain JS value assertions — node:assert's
 // second argument carries the diagnostic message for free.
 
 describe("Deploy sandbox to remote machine", () => {
-  const projectName = `e2e-deploy-${Date.now()}`;
-  const row: ProjectRow = ProjectsPage.row(projectName);
-  let workspaceDir: string;
-
-  before(() => {
-    expect(WORKSPACE_ROOT).toBeTruthy();
-    workspaceDir = path.join(WORKSPACE_ROOT!, projectName);
-  });
+  const { projectName, row, workspaceDir } = useSandboxWorkspace("e2e-deploy");
 
   after(() => {
-    // Best-effort cleanup so a failed run does not leave containers behind.
-    podman(LOCAL_CONNECTION, ["rm", "-f", projectName], { check: false });
+    // Best-effort cleanup so a failed run does not leave the remote container behind (the local
+    // one is already handled by useSandboxWorkspace's teardown).
     podman(REMOTE_CONNECTION, ["rm", "-f", projectName], { check: false });
   });
 

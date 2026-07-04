@@ -3,12 +3,10 @@ import fs from "fs";
 import path from "path";
 
 import ProjectsPage from "../../pageobjects/projects.page.js";
-import ProjectRow from "../../pageobjects/project-row.component.js";
 import workspaceDashboard from "../../pageobjects/workspace-dashboard.page.js";
-import { podman, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
+import { LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
 import { useDashboardWebview, dashboardIt } from "../../../lib/dashboard-suite.js";
-
-const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
+import { useSandboxWorkspace } from "../../../lib/sandbox-suite.js";
 
 // `jq` is a static binary with no runtime deps, resolves quickly via mise's aqua backend,
 // and its name prefix matches a small bounded set ("jq", "jq-lsp", "jqp") — easy to assert.
@@ -20,12 +18,7 @@ const PKG = "jq";
 describe("Package autocomplete", function () {
   this.timeout(300000);
 
-  const projectName = `e2e-autocomplete-${Date.now()}`;
-  const row: ProjectRow = ProjectsPage.row(projectName);
-
-  after(() => {
-    podman(LOCAL_CONNECTION, ["rm", "-f", projectName], { check: false });
-  });
+  const { projectName, row, workspaceDir } = useSandboxWorkspace("e2e-autocomplete");
 
   useDashboardWebview();
 
@@ -111,13 +104,11 @@ describe("Package autocomplete", function () {
         "This can happen when install_package errored or list_packages did not re-read mise.toml."
     );
 
-    if (WORKSPACE_ROOT) {
-      const manifestPath = path.join(WORKSPACE_ROOT, projectName, "mise.toml");
-      const manifest = fs.readFileSync(manifestPath, "utf8");
-      assert(
-        manifest.includes(PKG),
-        `mise.toml does not list "${PKG}" after install via autocomplete. Contents:\n${manifest}`
-      );
-    }
+    const manifestPath = path.join(workspaceDir, "mise.toml");
+    const manifest = fs.readFileSync(manifestPath, "utf8");
+    assert(
+      manifest.includes(PKG),
+      `mise.toml does not list "${PKG}" after install via autocomplete. Contents:\n${manifest}`
+    );
   });
 });

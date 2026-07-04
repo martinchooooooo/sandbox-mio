@@ -3,12 +3,10 @@ import fs from "fs";
 import path from "path";
 
 import ProjectsPage from "../../pageobjects/projects.page.js";
-import ProjectRow from "../../pageobjects/project-row.component.js";
 import workspaceDashboard from "../../pageobjects/workspace-dashboard.page.js";
 import { podman, podmanOk, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
 import { useDashboardWebview, dashboardIt } from "../../../lib/dashboard-suite.js";
-
-const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
+import { useSandboxWorkspace } from "../../../lib/sandbox-suite.js";
 
 // Must equal INFERENCE_VM_PORT in src/lib/agents/opencode.ts and src-tauri/src/sync/mod.rs. The
 // constant is asserted in the written config below so a drift between the two languages is caught.
@@ -32,22 +30,9 @@ async function invoke<T>(cmd: string, args: Record<string, unknown>): Promise<T>
 describe("OpenCode agent — install, provision, merge", function () {
   this.timeout(900000);
 
-  const projectName = `e2e-opencode-${Date.now()}`;
-  const row: ProjectRow = ProjectsPage.row(projectName);
-  let workspaceDir: string;
-  let manifestPath: string;
-  let configPath: string;
-
-  before(() => {
-    expect(WORKSPACE_ROOT).toBeTruthy();
-    workspaceDir = path.join(WORKSPACE_ROOT!, projectName);
-    manifestPath = path.join(workspaceDir, "mise.toml");
-    configPath = path.join(workspaceDir, "opencode.json");
-  });
-
-  after(() => {
-    podman(LOCAL_CONNECTION, ["rm", "-f", projectName], { check: false });
-  });
+  const { projectName, row, workspaceDir } = useSandboxWorkspace("e2e-opencode");
+  const manifestPath = path.join(workspaceDir, "mise.toml");
+  const configPath = path.join(workspaceDir, "opencode.json");
 
   useDashboardWebview();
 
