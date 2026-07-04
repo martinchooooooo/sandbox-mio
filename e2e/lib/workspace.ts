@@ -65,8 +65,16 @@ export async function openAgentWeb(name: string, workspacePath: string): Promise
   await invoke("open_agent_web", { name, workspacePath });
 }
 
+export async function openTerminalPane(name: string, workspacePath: string): Promise<void> {
+  await invoke("open_terminal_pane", { name, workspacePath });
+}
+
 export async function closeWorkspace(name: string): Promise<void> {
   await invoke("close_workspace", { name });
+}
+
+export async function closePane(name: string, kind: AppKind): Promise<void> {
+  await invoke("close_pane", { name, kind });
 }
 
 export function panesFor(state: WorkspaceState, sandbox: string): AppPane[] {

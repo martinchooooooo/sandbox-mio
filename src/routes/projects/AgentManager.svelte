@@ -167,12 +167,6 @@
         await loadAgentStatuses();
     }
 
-    async function openAgentsUi() {
-        await action.run("agents-ui", async () => {
-            await invoke("open_agent_web", { name: sandboxName, workspacePath });
-        });
-    }
-
     async function loadInferenceStatus() {
         try {
             const status = await invoke<InferenceStatus>("inference_status");
@@ -244,16 +238,6 @@
             {/if}
         </div>
     {/each}
-
-    {#if installedAgents.length > 0}
-        <div class="flex flex-wrap items-center gap-2 text-xs">
-            <Button size="sm" variant="outline"
-                onclick={openAgentsUi}
-                disabled={action.busy !== null}>
-                Open Agents UI<!-- TODO(i18n) -->
-            </Button>
-        </div>
-    {/if}
 
     {#if installingAgent !== null}
         <div class="text-xs text-muted-foreground space-y-0.5">

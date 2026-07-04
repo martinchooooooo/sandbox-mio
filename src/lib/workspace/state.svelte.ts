@@ -48,6 +48,11 @@ export function isSandboxOpen(name: string): boolean {
     return apps.some((p) => p.sandbox === name);
 }
 
+/** True if sandbox `name` currently has a pane of `kind` open, for the launcher's open-vs-switch state. */
+export function sandboxHasPane(name: string, kind: AppKind): boolean {
+    return apps.some((p) => p.sandbox === name && p.kind === kind);
+}
+
 /**
  * Hydrate the store and keep it live. Idempotent (guarded by `started`), safe to call from any
  * webview or plain-browser dev context: a failed subscribe/hydrate (no Tauri runtime) is caught

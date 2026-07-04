@@ -2,15 +2,11 @@
     import { onMount } from "svelte";
     import { invoke } from "@tauri-apps/api/core";
     import { listen } from "@tauri-apps/api/event";
+    import { HugeiconsIcon } from "@hugeicons/svelte";
+    import { m } from "$lib/paraglide/messages.js";
+    import { HOME_APP, LAUNCHABLE_APPS } from "$lib/workspace/apps";
+    import type { AppKind, AppPane } from "$lib/workspace/state.svelte";
 
-    type AppKind = "terminal" | "dashboard" | "agentweb";
-    type AppPane = {
-        label: string;
-        sandbox: string;
-        workspace_path: string;
-        kind: AppKind;
-        url: string;
-    };
     type WorkspaceState = { apps: AppPane[]; active_app: string | null };
 
     let apps = $state<AppPane[]>([]);
@@ -40,17 +36,12 @@
         }
     }
 
-    async function openAgents(sandbox: string, workspacePath: string) {
+    async function closePane(pane: AppPane) {
         try {
-            await invoke("open_agent_web", { name: sandbox, workspacePath });
+            await invoke("close_pane", { name: pane.sandbox, kind: pane.kind });
         } catch (e) {
             console.error(e);
         }
-    }
-
-    function paneTitle(kind: AppKind): string {
-        // TODO(i18n)
-        return kind === "dashboard" ? "Manage" : kind === "agentweb" ? "Agents" : "Terminal";
     }
 
     async function close(sandbox: string) {
@@ -59,6 +50,10 @@
         } catch (e) {
             console.error(e);
         }
+    }
+
+    function paneFor(panes: AppPane[], kind: AppKind): AppPane | undefined {
+        return panes.find((p) => p.kind === kind);
     }
 
     onMount(() => {
@@ -77,37 +72,69 @@
     });
 </script>
 
-<div class="flex h-screen items-center gap-1 border-b bg-background px-2 text-xs">
+<div class="flex h-screen items-start gap-3 overflow-x-auto border-b bg-background px-2 py-1 text-xs">
     {#each bySandbox as [sandbox, panes] (sandbox)}
-        <div class="flex items-center rounded">
-            {#each panes as pane (pane.label)}
+        {@const dashboard = paneFor(panes, "dashboard")}
+        <div class="flex flex-col gap-0.5" data-sandbox={sandbox}>
+            <div class="flex items-center justify-between gap-2 px-1">
+                <span class="truncate font-medium">{sandbox}</span>
                 <button
-                    class={[
-                        "px-3 py-1 rounded",
-                        pane.label === activeApp
-                            ? "bg-accent font-medium text-accent-foreground"
-                            : "text-muted-foreground hover:text-foreground",
-                    ].join(" ")}
-                    onclick={() => activate(pane)}
+                    class="text-muted-foreground hover:text-foreground"
+                    data-close-sandbox
+                    aria-label={m.workspace_close_sandbox_label({ sandbox })}
+                    onclick={() => close(sandbox)}
                 >
-                    {sandbox} — {paneTitle(pane.kind)}
+                    ×
                 </button>
-            {/each}
-            {#if !panes.some((p) => p.kind === "agentweb")}
-                <button
-                    class="px-3 py-1 rounded text-muted-foreground hover:text-foreground"
-                    onclick={() => openAgents(sandbox, panes[0].workspace_path)}
-                >
-                    {sandbox} — Agents<!-- TODO(i18n) -->
-                </button>
-            {/if}
-            <button
-                class="pr-2 text-muted-foreground hover:text-foreground"
-                aria-label={`close ${sandbox}`}
-                onclick={() => close(sandbox)}
-            >
-                ×
-            </button>
+            </div>
+            <div class="flex items-center gap-1">
+                {#if dashboard}
+                    <button
+                        class={[
+                            "flex items-center rounded px-2 py-1",
+                            dashboard.label === activeApp
+                                ? "bg-accent text-accent-foreground"
+                                : "text-muted-foreground hover:text-foreground",
+                        ].join(" ")}
+                        data-app="dashboard"
+                        aria-label={HOME_APP.title()}
+                        title={HOME_APP.title()}
+                        onclick={() => activate(dashboard)}
+                    >
+                        <HugeiconsIcon icon={HOME_APP.icon} size={14} />
+                    </button>
+                {/if}
+                {#each LAUNCHABLE_APPS as app (app.kind)}
+                    {@const pane = paneFor(panes, app.kind)}
+                    {#if pane}
+                        <div
+                            class={[
+                                "flex items-center rounded",
+                                pane.label === activeApp
+                                    ? "bg-accent text-accent-foreground"
+                                    : "text-muted-foreground hover:text-foreground",
+                            ].join(" ")}
+                        >
+                            <button
+                                class="flex items-center gap-1 rounded-l px-2 py-1"
+                                data-app={app.kind}
+                                onclick={() => activate(pane)}
+                            >
+                                <HugeiconsIcon icon={app.icon} size={14} />
+                                {app.title()}
+                            </button>
+                            <button
+                                class="pr-1.5 hover:text-foreground"
+                                data-close-tab={app.kind}
+                                aria-label={m.workspace_close_tab_label({ title: app.title() })}
+                                onclick={() => closePane(pane)}
+                            >
+                                ×
+                            </button>
+                        </div>
+                    {/if}
+                {/each}
+            </div>
         </div>
     {/each}
 </div>

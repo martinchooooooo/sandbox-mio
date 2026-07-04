@@ -4,7 +4,8 @@ import path from "path";
 
 import ProjectsPage from "../../pageobjects/projects.page.js";
 import ProjectRow from "../../pageobjects/project-row.component.js";
-import workspaceSwitcher from "../../pageobjects/workspace-switcher.page.js";
+import workspaceDashboard from "../../pageobjects/workspace-dashboard.page.js";
+import { useDashboardWebview } from "../../../lib/dashboard-suite.js";
 import { podman, podmanOk, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
 import { forwardList } from "../../../lib/mutagen.js";
 import {
@@ -63,26 +64,7 @@ describe("Agent web UI (paseo)", function () {
     podman(LOCAL_CONNECTION, ["rm", "-f", projectName], { check: false });
   });
 
-  afterEach(async () => {
-    await workspaceSwitcher.switchToAppWebview().catch(() => {});
-  });
-
-  // Capture the webview state on any failure (URL + page source + screenshot to e2e/.diag).
-  afterEach(async function () {
-    if (this.currentTest?.state !== "failed") return;
-    const diag = path.join(process.cwd(), ".diag");
-    fs.mkdirSync(diag, { recursive: true });
-    const stamp = (this.currentTest?.title ?? "test").replace(/[^a-z0-9]+/gi, "-").slice(0, 40);
-    try {
-      const url = await browser.getUrl();
-      const src = await browser.getPageSource();
-      fs.writeFileSync(path.join(diag, `${stamp}.html`), `<!-- url: ${url} -->\n${src}`);
-      await browser.saveScreenshot(path.join(diag, `${stamp}.png`));
-      console.log(`[diag] url=${url} — dumped ${stamp}.html/.png to ${diag}`);
-    } catch (e) {
-      console.log(`[diag] could not capture page state: ${String(e)}`);
-    }
-  });
+  useDashboardWebview();
 
   it("creates a local sandbox with the paseo port published", async () => {
     await ProjectsPage.open();
@@ -115,41 +97,36 @@ describe("Agent web UI (paseo)", function () {
     await expect(row.statusText).toHaveText(/running/);
   });
 
-  it("opens the workspace with Terminal and Dashboard panes but no AgentWeb pane yet", async () => {
+  it("opens the workspace with only a Dashboard pane — no AgentWeb pane yet, no Terminal pane yet", async () => {
     await row.openWorkspace();
 
-    // open_workspace registers the panes asynchronously; poll until both exist.
+    // open_workspace registers the pane asynchronously; poll until it exists.
     await browser.waitUntil(
-      async () => panesFor(await workspaceState(), projectName).length === 2,
+      async () => panesFor(await workspaceState(), projectName).length === 1,
       {
         timeout: 60000,
         interval: 1000,
-        timeoutMsg: `sandbox "${projectName}" never registered its Terminal + Dashboard panes`,
+        timeoutMsg: `sandbox "${projectName}" never registered its Dashboard pane`,
       }
     );
 
     const state = await workspaceState();
     const panes = panesFor(state, projectName);
-    const kinds = panes.map((p) => p.kind).sort();
     assert.deepStrictEqual(
-      kinds,
-      ["dashboard", "terminal"],
-      `Expected exactly a Terminal and a Dashboard pane, got: ${JSON.stringify(panes.map((p) => p.label))}`
+      panes.map((p) => p.kind),
+      ["dashboard"],
+      `Expected exactly a Dashboard pane, got: ${JSON.stringify(panes.map((p) => p.label))}`
     );
-    for (const pane of panes) {
-      assert(
-        samePath(pane.workspace_path, workspaceDir),
-        `Pane ${pane.label} carries workspace_path "${pane.workspace_path}", expected "${workspaceDir}". ` +
-          "The switcher needs it to invoke open_agent_web without a sandbox lookup."
-      );
-    }
+    assert(
+      samePath(panes[0].workspace_path, workspaceDir),
+      `Pane ${panes[0].label} carries workspace_path "${panes[0].workspace_path}", expected "${workspaceDir}". ` +
+        "The dashboard launcher needs it to invoke open_agent_web without a sandbox lookup."
+    );
   });
 
-  it("first click of the synthetic Agents tab creates the AgentWeb pane (paseo install + daemon + forward)", async function () {
-    // The switcher webview is never hidden, so it can be clicked directly by window handle —
-    await workspaceSwitcher.switchToSwitcher();
-    await workspaceSwitcher.clickAgentsTab(projectName);
-    await workspaceSwitcher.switchToAppWebview();
+  it("clicking the Manage tab's Agents launcher button creates the AgentWeb pane (paseo install + daemon + forward)", async function () {
+    await workspaceDashboard.switchToDashboard(projectName);
+    await workspaceDashboard.launchApp("agentweb");
 
     await browser.waitUntil(
       async () => paneFor(await workspaceState(), projectName, "agentweb") !== undefined,
@@ -157,9 +134,9 @@ describe("Agent web UI (paseo)", function () {
         timeout: 840000,
         interval: 3000,
         timeoutMsg:
-          "no agentweb pane appeared after clicking the Agents tab. This can happen when " +
-          "open_agent_web failed (check AgentWebUnavailable in the app log) or the tab click " +
-          "did not reach the switcher webview.",
+          "no agentweb pane appeared after clicking the Agents launcher button. This can happen " +
+          "when open_agent_web failed (check AgentWebUnavailable in the app log) or the click " +
+          "did not reach the dashboard webview.",
       }
     );
 
@@ -231,7 +208,9 @@ describe("Agent web UI (paseo)", function () {
   });
 
   it("re-opening is switch-not-duplicate and keeps the password", async () => {
-    await switchPane(projectName, "terminal");
+    // Terminal is never opened in this spec (it's a separate lazy pane); switch off Agents onto
+    // the always-present Dashboard pane so the re-open below has something to switch away from.
+    await switchPane(projectName, "dashboard");
     await openAgentWeb(projectName, workspaceDir);
 
     const state = await workspaceState();

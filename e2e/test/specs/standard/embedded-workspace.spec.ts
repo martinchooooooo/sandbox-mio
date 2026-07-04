@@ -13,6 +13,8 @@ import {
   switchPane,
   paneFor,
   panesFor,
+  openTerminalPane,
+  closePane,
   type WorkspaceState,
 } from "../../../lib/workspace.js";
 
@@ -20,18 +22,18 @@ import {
 // re-derived) so a spec failure points at either side changing without the other.
 const GLOBAL_EXPANDED_W = 380;
 const GLOBAL_RAIL_W = 48;
-const SWITCHER_H = 40;
+const SWITCHER_H = 64;
 
 const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
 
-// Poll for the host-side token file open_workspace's shared prepare_terminal_webview helper writes
-// (docs/techdebt.md workaround), proving the real zellij daemonize + token mint ran.
+// Poll for the host-side token file open_terminal_pane's shared prepare_terminal_webview helper
+// writes (docs/techdebt.md workaround), proving the real zellij daemonize + token mint ran.
 async function waitForToken(name: string): Promise<void> {
   const tokenPath = path.join(WORKSPACE_ROOT!, name, ".mio", "zellij.json");
   await browser.waitUntil(() => fs.existsSync(tokenPath), {
     timeout: 60000,
     interval: 1000,
-    timeoutMsg: `token file ${tokenPath} did not appear after openWorkspace`,
+    timeoutMsg: `token file ${tokenPath} did not appear after open_terminal_pane`,
   });
 }
 
@@ -44,9 +46,11 @@ describe("Embedded workspace (multi-webview container)", function () {
   const nameB = `e2e-workspace-b-${Date.now()}`;
   const rowA: ProjectRow = ProjectsPage.row(nameA);
   const rowB: ProjectRow = ProjectsPage.row(nameB);
+  let workspaceDirA: string;
 
   before(() => {
     expect(WORKSPACE_ROOT).toBeTruthy();
+    workspaceDirA = path.join(WORKSPACE_ROOT!, nameA);
   });
 
   after(() => {
@@ -80,64 +84,89 @@ describe("Embedded workspace (multi-webview container)", function () {
     await rowA.waitForRunning();
   });
 
-  it("opening the workspace embeds the terminal as the active pane", async () => {
+  it("opening the workspace embeds and activates only the Manage/Dashboard pane (Terminal is not started)", async () => {
     await rowA.openWorkspace();
-    await waitForToken(nameA);
+
+    await browser.waitUntil(async () => panesFor(await workspaceState(), nameA).length === 1, {
+      timeout: 30000,
+      interval: 500,
+      timeoutMsg: `sandbox "${nameA}" never registered its Dashboard pane after openWorkspace`,
+    });
 
     const state = await workspaceState();
-    const pane = paneFor(state, nameA, "terminal");
-    assert(
-      pane,
-      `workspace_state() has no terminal pane for "${nameA}" after openWorkspace. ` +
-        "This can happen when open_workspace did not call workspace::embed_terminal.",
+    const panes = panesFor(state, nameA);
+    assert.strictEqual(
+      panes.length,
+      1,
+      `Expected exactly one pane (Dashboard) for "${nameA}" right after openWorkspace, got ${panes.length}: ` +
+        `${panes.map((p) => p.kind).join(", ")}. This can happen when open_workspace still calls embed_terminal.`,
     );
-    assert.strictEqual(pane!.kind, "terminal");
+
+    const dashboard = paneFor(state, nameA, "dashboard")!;
+    assert.strictEqual(dashboard.kind, "dashboard");
     assert(
-      pane!.url.startsWith("http://127.0.0.1:"),
-      `Pane url "${pane!.url}" is not a loopback forward — embed_terminal must use the ` +
-        "Mutagen-forwarded Windows-host url, not the container-side address.",
+      dashboard.url.includes("/workspace/dashboard"),
+      `Dashboard pane url "${dashboard.url}" is not the internal /workspace/dashboard route.`,
+    );
+    assert.strictEqual(
+      dashboard.forward_name,
+      "",
+      "The Dashboard pane has no Mutagen forward (it is pure Tauri IPC); forward_name must stay empty.",
     );
     assert.strictEqual(
       state.active_app,
-      pane!.label,
-      "The freshly embedded pane must become the active tab.",
+      dashboard.label,
+      "The Dashboard pane must be active immediately on creation — open_workspace no longer embeds " +
+        "Terminal first, so embed_dashboard must activate the pane it creates instead of hiding it.",
+    );
+    assert(
+      !fs.existsSync(path.join(workspaceDirA, ".mio", "zellij.json")),
+      "zellij.json exists before any Terminal pane was requested — prepare_terminal_webview ran " +
+        "eagerly during open_workspace, defeating the lazy-Terminal goal.",
     );
 
     // Structural layout proof (mirrors the Rust unit tests in workspace/mod.rs): the global panel
     // is fixed-width regardless of window size, and the switcher/content regions start exactly
-    // where it ends — the same non-overlap invariant `workspace_layout` guarantees.
+    // where it ends — the same non-overlap invariant `workspace_layout` guarantees. SWITCHER_H is
+    // 64 (grown from 40) to fit the two-level switcher's name row + tab row.
     assert.strictEqual(state.rects.global.width, GLOBAL_EXPANDED_W);
     assert.strictEqual(state.rects.switcher.height, SWITCHER_H);
     assert.strictEqual(state.rects.switcher.x, GLOBAL_EXPANDED_W);
     assert.strictEqual(state.rects.content.x, GLOBAL_EXPANDED_W);
   });
 
-  it("open_workspace also eagerly embeds a Dashboard pane, transported over an internal route (not a loopback forward)", async () => {
+  it("open_terminal_pane lazily embeds the Terminal pane and makes it active", async () => {
+    await openTerminalPane(nameA, workspaceDirA);
+    await waitForToken(nameA);
+
     const state = await workspaceState();
     const panes = panesFor(state, nameA);
     assert.strictEqual(
       panes.length,
       2,
-      `Expected exactly two panes for "${nameA}" (Terminal + Dashboard) after openWorkspace, got ${panes.length}: ` +
-        `${panes.map((p) => p.kind).join(", ")}. This can happen when open_workspace did not also call workspace::embed_dashboard.`,
+      `Expected exactly two panes (Dashboard + Terminal) for "${nameA}" after open_terminal_pane, got ${panes.length}.`,
     );
 
-    const dashboard = paneFor(state, nameA, "dashboard");
-    assert(dashboard, `workspace_state() has no dashboard pane for "${nameA}".`);
+    const pane = paneFor(state, nameA, "terminal")!;
+    assert.strictEqual(pane.kind, "terminal");
     assert(
-      dashboard!.url.includes("/workspace/dashboard"),
-      `Dashboard pane url "${dashboard!.url}" is not the internal /workspace/dashboard route — ` +
-        "embed_dashboard must use WebviewUrl::App, not an external loopback URL.",
+      pane.url.startsWith("http://127.0.0.1:"),
+      `Pane url "${pane.url}" is not a loopback forward — embed_terminal must use the ` +
+        "Mutagen-forwarded Windows-host url, not the container-side address.",
+    );
+    // Phase C: the URL path pins a stable per-sandbox session name (the sandbox name itself) so a
+    // later close+reopen reattaches to the same Zellij session instead of spawning a new one.
+    assert.strictEqual(
+      new URL(pane.url).pathname,
+      `/${nameA}`,
+      `Terminal pane url "${pane.url}" does not carry "/${nameA}" as its session path — ` +
+        "prepare_terminal_webview must build the url as http://127.0.0.1:<port>/<sandbox-name>.",
     );
     assert.strictEqual(
-      dashboard!.forward_name,
-      "",
-      "The Dashboard pane has no Mutagen forward (it is pure Tauri IPC); forward_name must stay empty.",
+      state.active_app,
+      pane.label,
+      "The freshly embedded Terminal pane must become the active tab.",
     );
-
-    // Freshly created, the Dashboard pane must not steal focus from the just-embedded Terminal pane.
-    const terminal = paneFor(state, nameA, "terminal")!;
-    assert.strictEqual(state.active_app, terminal.label, "Dashboard pane creation must not change the active pane.");
   });
 
   it("switch_pane brings the Dashboard pane forward and records it as the sandbox's last-active pane", async () => {
@@ -231,13 +260,67 @@ describe("Embedded workspace (multi-webview container)", function () {
     assert.strictEqual(expanded.rects.content.x, beforeContentX);
   });
 
+  it("close_pane closes only the Terminal tab, leaving Dashboard open and active", async () => {
+    const before = await workspaceState();
+    const terminalBefore = paneFor(before, nameA, "terminal")!;
+    const dashboard = paneFor(before, nameA, "dashboard")!;
+
+    await closePane(nameA, "terminal");
+
+    await browser.waitUntil(
+      async () => !forwardList(`terminal-${nameA}`).includes("Connected"),
+      {
+        timeout: 30000,
+        interval: 1000,
+        timeoutMsg: `terminal-${nameA} forward still shows Connected after close_pane.`,
+      },
+    );
+
+    const state = await workspaceState();
+    const panes = panesFor(state, nameA);
+    assert.strictEqual(
+      panes.length,
+      1,
+      `Expected only the Dashboard pane for "${nameA}" after closing Terminal, got ${panes.length}: ` +
+        `${panes.map((p) => p.kind).join(", ")}.`,
+    );
+    assert.strictEqual(panes[0].kind, "dashboard");
+    assert.strictEqual(
+      state.active_app,
+      dashboard.label,
+      "close_pane must re-activate the sandbox's Dashboard pane once its Terminal pane closes.",
+    );
+    // The sandbox is not empty (Dashboard remains), so the global panel must stay narrow, not
+    // return to full-bleed — that is close_workspace's contract, not close_pane's.
+    assert.strictEqual(state.rects.global.width, GLOBAL_EXPANDED_W);
+
+    // close_pane must never accept AppKind::Dashboard (Resolved Decision 2): a no-op, not a crash.
+    await closePane(nameA, "dashboard");
+    const afterNoop = await workspaceState();
+    assert.strictEqual(
+      panesFor(afterNoop, nameA).length,
+      1,
+      "close_pane(kind: dashboard) must be a no-op — the Manage/Home tab is not closable.",
+    );
+
+    // Reopening reattaches to the same Zellij session: the URL's stable session-name path
+    // (Phase C) is unchanged across close + reopen.
+    await openTerminalPane(nameA, workspaceDirA);
+    const reopened = paneFor(await workspaceState(), nameA, "terminal")!;
+    assert.strictEqual(
+      new URL(reopened.url).pathname,
+      new URL(terminalBefore.url).pathname,
+      "Reopening the Terminal pane must reuse the same session-name URL path as before closing it.",
+    );
+  });
+
   it("re-opening an already-embedded sandbox is idempotent (switches, does not re-embed)", async () => {
     await rowA.openWorkspace();
     const state = await workspaceState();
     assert.strictEqual(
       panesFor(state, nameA).length,
       2,
-      "Re-opening must not push additional panes for the same sandbox (still exactly Terminal + Dashboard).",
+      "Re-opening must not push additional panes for the same sandbox (still exactly Dashboard + Terminal).",
     );
     const fwdOut = forwardList(`terminal-${nameA}`);
     assert(
@@ -252,25 +335,20 @@ describe("Embedded workspace (multi-webview container)", function () {
     await rowB.start();
     await rowB.waitForRunning();
     await rowB.openWorkspace();
-    await waitForToken(nameB);
 
     const state = await workspaceState();
     const paneA = paneFor(state, nameA, "terminal");
-    const paneB = paneFor(state, nameB, "terminal");
+    const paneB = paneFor(state, nameB, "dashboard");
     assert(paneA, `sandbox A's terminal pane disappeared once B's workspace opened.`);
-    assert(paneB, `workspace_state() has no terminal pane for "${nameB}".`);
+    assert(paneB, `workspace_state() has no dashboard pane for "${nameB}".`);
     assert.strictEqual(
       state.active_app,
       paneB!.label,
-      "Opening B's workspace must make B the active tab, leaving A embedded but hidden.",
+      "Opening B's workspace must make its Dashboard pane the active tab, leaving A embedded but hidden.",
     );
     assert(
       forwardList(`terminal-${nameA}`).includes("Connected"),
       "Sandbox A's forward must stay connected while B's workspace opens.",
-    );
-    assert(
-      forwardList(`terminal-${nameB}`).includes("Connected"),
-      `mutagen forward list terminal-${nameB} did not show Connected.`,
     );
   });
 
@@ -285,7 +363,7 @@ describe("Embedded workspace (multi-webview container)", function () {
 
   it("destroying one sandbox tears down every one of its panes and its forward", async () => {
     const beforeState = await workspaceState();
-    const paneB = paneFor(beforeState, nameB, "terminal")!;
+    const paneB = paneFor(beforeState, nameB, "dashboard")!;
 
     await rowA.destroy();
 
@@ -308,14 +386,10 @@ describe("Embedded workspace (multi-webview container)", function () {
       `terminal-${nameA} forward still shows Connected after destroy.`,
     );
 
-    // Sandbox B's workspace must be untouched: same pane, forward still live.
-    const paneBAfter = paneFor(afterState, nameB, "terminal");
+    // Sandbox B's workspace must be untouched: same pane, no forward to check (Dashboard has none).
+    const paneBAfter = paneFor(afterState, nameB, "dashboard");
     assert(paneBAfter, "Sandbox B's pane disappeared after sandbox A was destroyed.");
     assert.strictEqual(paneBAfter!.label, paneB.label);
-    assert(
-      forwardList(`terminal-${nameB}`).includes("Connected"),
-      "Destroying sandbox A must not touch sandbox B's forward.",
-    );
   });
 
   it("destroying the last sandbox returns the global panel to full-bleed", async () => {
@@ -330,9 +404,5 @@ describe("Embedded workspace (multi-webview container)", function () {
     // and the global panel fills the window (see workspace/mod.rs's without_content unit test).
     assert.strictEqual(state.rects.switcher.width, 0);
     assert.strictEqual(state.rects.content.width, 0);
-    assert(
-      !forwardList(`terminal-${nameB}`).includes("Connected"),
-      `terminal-${nameB} forward still shows Connected after destroy.`,
-    );
   });
 });

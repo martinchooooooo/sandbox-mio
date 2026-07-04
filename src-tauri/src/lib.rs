@@ -134,7 +134,17 @@ async fn prepare_terminal_webview(
         .open_forward(name, ServiceKind::Terminal, &connection, container_port)
         .await
         .map_err(|e| crate::runtime::types::RuntimeError::TerminalUnavailable(e.to_string()))?;
-    let url = format!("http://127.0.0.1:{windows_port}/");
+    // Session name pinned to the sandbox name so a closed-and-reopened Terminal tab reattaches to
+    // the same Zellij session instead of spawning a fresh one (root URL `/` mints a new random
+    // session per connect; spike in docs/features/workspace-app-tabs/01_ideas.md).
+    let mut url = tauri::Url::parse(&format!("http://127.0.0.1:{windows_port}/"))
+        .map_err(|e| crate::runtime::types::RuntimeError::TerminalUnavailable(e.to_string()))?;
+    url.path_segments_mut()
+        .map_err(|_| {
+            crate::runtime::types::RuntimeError::TerminalUnavailable("cannot-be-a-base URL".into())
+        })?
+        .push(name);
+    let url = url.to_string();
 
     // Persist token + URL host-side (docs/techdebt.md workaround). Writing host-side avoids
     // shell-escaping JSON through `podman exec`; the workspace is bind-mounted into the container
@@ -397,10 +407,8 @@ async fn open_terminal(
     Ok(())
 }
 
-/// Embed sandbox `name`'s terminal and dashboard as a pair of tabs in the main workspace window's
-/// content area (eager creation, Resolved Decision 2 in
-/// `docs/features/responsive-panel/02_dev.md`). Second click on an already-embedded sandbox
-/// switches to its last-active pane instead of re-preparing the terminal.
+/// Embed and activate sandbox `name`'s Manage/Dashboard pane, the sole pane every open sandbox
+/// starts with; Terminal and Agents launch later via `open_terminal_pane`/`open_agent_web`.
 #[tauri::command]
 async fn open_workspace(
     name: String,
@@ -427,10 +435,35 @@ async fn open_workspace(
         return Ok(());
     }
 
+    workspace::embed_dashboard(&app, &name, &workspace_path)?;
+    Ok(())
+}
+
+/// Open (or switch to) sandbox `name`'s embedded Terminal pane. Embedded lazily on first call,
+/// structurally mirroring `open_agent_web` — `open_workspace` no longer embeds Terminal eagerly.
+#[tauri::command]
+async fn open_terminal_pane(
+    name: String,
+    workspace_path: String,
+    runtime: State<'_, Arc<dyn RuntimeManager>>,
+    engine: State<'_, Arc<dyn SyncEngine>>,
+    network: State<'_, Arc<dyn NetworkManager>>,
+    workspaces: State<'_, WorkspaceRegistry>,
+    app: tauri::AppHandle,
+) -> Result<(), AppError> {
+    let exists = workspaces
+        .lock()
+        .unwrap()
+        .apps
+        .iter()
+        .any(|p| p.sandbox == name && p.kind == AppKind::Terminal);
+    if exists {
+        return workspace::switch_pane(&app, &name, AppKind::Terminal).map_err(Into::into);
+    }
+
     let pane =
         prepare_terminal_webview(&name, &workspace_path, &runtime, &engine, &network).await?;
     workspace::embed_terminal(&app, &name, &workspace_path, pane)?;
-    workspace::embed_dashboard(&app, &name, &workspace_path)?;
     Ok(())
 }
 
@@ -453,10 +486,19 @@ fn set_panel_collapsed(collapsed: bool, app: tauri::AppHandle) -> Result<(), App
     Ok(workspace::set_collapsed(&app, collapsed)?)
 }
 
-/// Close sandbox `name`'s embedded pane and reclaim its forward. No-op if none is open.
+/// Close every embedded pane of sandbox `name` and reclaim their forwards. No-op if none is open.
 #[tauri::command]
 async fn close_workspace(name: String, app: tauri::AppHandle) -> Result<(), AppError> {
     workspace::close_app(&app, &name).await;
+    Ok(())
+}
+
+/// Close exactly one app tab (`kind`) of sandbox `name`, leaving its siblings and the Manage tab
+/// open. No-op if `kind` is `AppKind::Dashboard` (the Home tab is not closable) or no such pane is
+/// open.
+#[tauri::command]
+async fn close_pane(name: String, kind: AppKind, app: tauri::AppHandle) -> Result<(), AppError> {
+    workspace::close_pane(&app, &name, kind).await;
     Ok(())
 }
 
@@ -1443,11 +1485,13 @@ pub fn run() {
             uninstall_package,
             open_terminal,
             open_workspace,
+            open_terminal_pane,
             open_agent_web,
             switch_app,
             switch_pane,
             set_panel_collapsed,
             close_workspace,
+            close_pane,
             workspace_state,
             list_packages,
             list_sandboxes,

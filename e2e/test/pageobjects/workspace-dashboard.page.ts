@@ -72,6 +72,17 @@ class WorkspaceDashboardPage {
     throw new Error("[e2e] no app webview found among the window handles");
   }
 
+  // ── App launcher (docs/features/workspace-app-tabs/02_dev.md Phase D) ──────
+  // Each launchable app renders a `button[data-app="<kind>"]` above PackageManager/AgentManager.
+
+  launcherButton(kind: "terminal" | "agentweb"): Element {
+    return $(`button[data-app="${kind}"]`);
+  }
+
+  async launchApp(kind: "terminal" | "agentweb"): Promise<void> {
+    await this.#clickButton(this.launcherButton(kind));
+  }
+
   // ── Package management ─────────────────────────────────────────────────────
 
   get packageInput(): Element {

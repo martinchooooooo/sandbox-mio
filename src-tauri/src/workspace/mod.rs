@@ -29,8 +29,10 @@ pub const GLOBAL_EXPANDED_W: f64 = 380.0;
 /// Global panel width when collapsed to the thin rail (never zero: the rail keeps the expand
 /// button reachable), logical px.
 pub const GLOBAL_RAIL_W: f64 = 48.0;
-/// Switcher bar height across the top of the content area, logical px.
-pub const SWITCHER_H: f64 = 40.0;
+/// Switcher bar height across the top of the content area, logical px. 64 fits the two-level
+/// per-sandbox block (name row over app-tab row, `src/routes/workspace/switcher/+page.svelte`)
+/// without clipping (`docs/features/workspace-app-tabs/02_dev.md` Resolved Decision 5).
+pub const SWITCHER_H: f64 = 64.0;
 
 /// Compute the three child-webview rectangles from the container's logical size, the collapse
 /// flag, and whether any app is embedded. With no content the global panel takes the whole window
@@ -121,8 +123,7 @@ pub fn create_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), Workspac
 }
 
 /// Embed sandbox `name`'s terminal as a new content pane and make it the active tab. Caller
-/// guarantees no pane exists for `name` (the switch-or-embed guard in the `open_workspace`
-/// command). The first pane shrinks the global panel from full-bleed to `GLOBAL_EXPANDED_W`.
+/// guarantees no Terminal pane exists yet for `name` (the switch-or-embed guard in `open_terminal_pane`).
 pub fn embed_terminal<R: Runtime>(
     app: &AppHandle<R>,
     name: &str,
@@ -191,25 +192,19 @@ fn embed_external_on_main<R: Runtime>(
         )
         .map_err(win)?;
 
-    let previous = {
-        let mut state = registry.lock().unwrap();
-        let previous = state.active_app.take();
-        state.apps.push(AppPane {
-            label: label.clone(),
+    activate_new_pane(
+        &window,
+        &registry,
+        AppPane {
+            label,
             sandbox: name.to_string(),
             workspace_path: workspace_path.to_string(),
             forward_name: pane.forward_name,
             kind,
             url: pane.url.to_string(),
-        });
-        state.active_app = Some(label.clone());
-        state.sandbox_last_pane.insert(name.to_string(), label);
-        state.rects = rects;
-        previous
-    };
-    if let Some(previous) = previous {
-        hide_webview(&window, &previous);
-    }
+        },
+        rects,
+    );
 
     let state = registry.lock().unwrap().clone();
     apply_layout(&window, &state, &rects)?;
@@ -217,11 +212,33 @@ fn embed_external_on_main<R: Runtime>(
     Ok(())
 }
 
-/// Embed sandbox `name`'s package/agent management dashboard as a second content pane alongside
-/// its terminal (`docs/features/responsive-panel/02_dev.md` Phase C, eager creation). Unlike
-/// `embed_terminal`, this never becomes the active pane on creation: `open_workspace` always
-/// embeds Terminal first, so Dashboard starts hidden until `switch_pane` brings it forward. No
-/// Mutagen forward backs it, since the dashboard is pure Tauri IPC, not an external process.
+/// Push a newly created pane into the registry, make it the sandbox's active tab, and hide
+/// whichever pane was active before. Shared by `embed_external_on_main` and
+/// `embed_dashboard_on_main` — every pane becomes active on creation.
+fn activate_new_pane<R: Runtime>(
+    window: &tauri::window::Window<R>,
+    registry: &WorkspaceRegistry,
+    pane: AppPane,
+    rects: WorkspaceRects,
+) {
+    let name = pane.sandbox.clone();
+    let label = pane.label.clone();
+    let previous = {
+        let mut state = registry.lock().unwrap();
+        let previous = state.active_app.take();
+        state.apps.push(pane);
+        state.active_app = Some(label.clone());
+        state.sandbox_last_pane.insert(name, label);
+        state.rects = rects;
+        previous
+    };
+    if let Some(previous) = previous {
+        hide_webview(window, &previous);
+    }
+}
+
+/// Embed sandbox `name`'s package/agent management dashboard (the Manage/Home tab) and make it the
+/// active pane. No Mutagen forward backs it, since the dashboard is pure Tauri IPC, not an external process.
 ///
 /// Must only ever be called from an `async` Tauri command: `add_child` deadlocks the whole app
 /// when reached from a synchronous command, because `run_on_main`'s blocking wait never returns
@@ -261,19 +278,19 @@ fn embed_dashboard_on_main<R: Runtime>(
         )
         .map_err(win)?;
 
-    {
-        let mut state = registry.lock().unwrap();
-        state.apps.push(AppPane {
-            label: label.clone(),
+    activate_new_pane(
+        &window,
+        &registry,
+        AppPane {
+            label,
             sandbox: name.to_string(),
             workspace_path: workspace_path.to_string(),
             forward_name: String::new(),
             kind: AppKind::Dashboard,
             url: format!("/{route}"),
-        });
-        state.rects = rects;
-    }
-    hide_webview(&window, &label);
+        },
+        rects,
+    );
 
     let state = registry.lock().unwrap().clone();
     apply_layout(&window, &state, &rects)?;
@@ -281,8 +298,9 @@ fn embed_dashboard_on_main<R: Runtime>(
     Ok(())
 }
 
-/// Bring sandbox `name`'s last-active pane to the front, defaulting to its Terminal pane if none
-/// is recorded yet. Used by the projects-list "Open workspace" button when panes already exist.
+/// Bring sandbox `name`'s last-active pane to the front, defaulting to its Manage/Dashboard pane
+/// if none is recorded yet (the one pane every open sandbox is guaranteed to have). Used by the
+/// projects-list "Open workspace" button when panes already exist.
 pub fn switch_app<R: Runtime>(app: &AppHandle<R>, name: &str) -> Result<(), WorkspaceError> {
     let app_in = app.clone();
     let name = name.to_string();
@@ -303,7 +321,7 @@ fn switch_app_on_main<R: Runtime>(app: &AppHandle<R>, name: &str) -> Result<(), 
                 state
                     .apps
                     .iter()
-                    .find(|p| p.sandbox == name && p.kind == AppKind::Terminal)
+                    .find(|p| p.sandbox == name && p.kind == AppKind::Dashboard)
                     .map(|p| p.label.clone())
             })
             .ok_or_else(|| WorkspaceError::NotOpen(name.to_string()))?
@@ -431,8 +449,52 @@ pub async fn close_app<R: Runtime>(app: &AppHandle<R>, name: &str) {
         close_app_on_main(&app_in, &pane_labels, next_active, collapsed, now_empty)
     });
 
+    teardown_forwards(app, name, &panes).await;
+    emit_state(app);
+}
+
+/// Close one pane of sandbox `name`, leaving its siblings open; no-op on `AppKind::Dashboard` or an
+/// already-closed pane. Re-activates the sandbox's Dashboard pane if the removed one was active.
+pub async fn close_pane<R: Runtime>(app: &AppHandle<R>, name: &str, kind: AppKind) {
+    if kind == AppKind::Dashboard {
+        return;
+    }
+    let registry = app.state::<WorkspaceRegistry>();
+    let removed = {
+        let mut state = registry.lock().unwrap();
+        let Some(index) = state.apps.iter().position(|p| p.sandbox == name && p.kind == kind)
+        else {
+            return;
+        };
+        let pane = state.apps.remove(index);
+        if state.active_app.as_deref() == Some(pane.label.as_str()) {
+            let dashboard_label = state
+                .apps
+                .iter()
+                .find(|p| p.sandbox == name && p.kind == AppKind::Dashboard)
+                .map(|p| p.label.clone());
+            state.active_app = dashboard_label.clone();
+            if let Some(label) = dashboard_label {
+                state.sandbox_last_pane.insert(name.to_string(), label);
+            }
+        }
+        (pane, state.active_app.clone(), state.collapsed, state.apps.is_empty())
+    };
+    let (pane, next_active, collapsed, now_empty) = removed;
+
+    let app_in = app.clone();
+    let pane_labels = vec![pane.label.clone()];
+    let _ = run_on_main(app, move || {
+        close_app_on_main(&app_in, &pane_labels, next_active, collapsed, now_empty)
+    });
+
+    teardown_forwards(app, name, std::slice::from_ref(&pane)).await;
+    emit_state(app);
+}
+
+async fn teardown_forwards<R: Runtime>(app: &AppHandle<R>, name: &str, panes: &[AppPane]) {
     let network = app.state::<std::sync::Arc<dyn crate::network::types::NetworkManager>>();
-    for pane in &panes {
+    for pane in panes {
         let kind = match pane.kind {
             AppKind::Terminal => Some(crate::network::types::ServiceKind::Terminal),
             AppKind::AgentWeb => Some(crate::network::types::ServiceKind::AgentWeb),
@@ -442,7 +504,6 @@ pub async fn close_app<R: Runtime>(app: &AppHandle<R>, name: &str) {
             network.close_forward(name, kind).await;
         }
     }
-    emit_state(app);
 }
 
 /// The window/webview-mutating half of [`close_app`], run on the main thread: close every pane's
