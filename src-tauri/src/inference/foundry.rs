@@ -99,10 +99,6 @@ fn parse_endpoint(text: &str) -> Option<(String, u16)> {
 
 #[async_trait::async_trait]
 impl InferenceEngine for FoundryLocalEngine {
-    fn kind(&self) -> EngineKind {
-        EngineKind::Foundry
-    }
-
     fn setup_steps(&self) -> Vec<SetupStep> {
         ["check-foundry", "register-eps", "start-service", "model-ready", "load-model", "resolve-id"]
             .iter()

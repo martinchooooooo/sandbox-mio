@@ -145,8 +145,6 @@ impl RuntimeSetupEvent {
 
 #[async_trait::async_trait]
 pub trait InferenceEngine: Send + Sync {
-    fn kind(&self) -> EngineKind;
-
     /// The ordered list of step ids this engine walks through on start. Pure metadata (no side
     /// effects) so the UI can render the full plan before `start` runs the first step.
     fn setup_steps(&self) -> Vec<SetupStep>;

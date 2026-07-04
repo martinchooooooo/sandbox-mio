@@ -10,7 +10,11 @@ pub type TaskId = String;
 pub enum TaskKind {
     ModelDownload,
     InferenceSetup,
+    /// Not yet emitted by any backend flow; frontend labels already exist in
+    /// `src/lib/activity/activity.svelte.ts` awaiting this wiring.
+    #[allow(dead_code)]
     HostProvision,
+    #[allow(dead_code)]
     AgentInstall,
     PodmanStartup,
 }

@@ -88,10 +88,6 @@ impl LlamaServerEngine {
 
 #[async_trait::async_trait]
 impl InferenceEngine for LlamaServerEngine {
-    fn kind(&self) -> EngineKind {
-        EngineKind::Llama
-    }
-
     fn setup_steps(&self) -> Vec<SetupStep> {
         ["detect-device", "engine-ready", "model-ready", "launch-server", "health-check"]
             .iter()

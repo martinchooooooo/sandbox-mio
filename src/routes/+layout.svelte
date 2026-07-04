@@ -12,6 +12,9 @@
     import { ensureWorkspaceState, isCollapsed, hasTabs as hasTabsStore } from "$lib/workspace/state.svelte";
     import { ensureNetworkState } from "$lib/network/state.svelte";
     import { m } from "$lib/paraglide/messages.js";
+    import type { Snippet } from "svelte";
+
+    let { children }: { children?: Snippet } = $props();
 
     // Start the global activity store once, above the router, so its subscription is established
     // before any route mounts and is never torn down for the life of the webview.
@@ -80,7 +83,7 @@
             {/if}
         </div>
     {/if}
-    <slot />
+    {@render children?.()}
     {#if !isWorkspaceChrome}
         <ActivityCenter />
     {/if}
