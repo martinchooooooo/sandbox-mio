@@ -22,7 +22,6 @@ pub enum WorkspaceError {
 #[serde(rename_all = "lowercase")]
 pub enum AppKind {
     Terminal,
-    Dashboard,
     AgentWeb,
 }
 
@@ -55,25 +54,18 @@ pub struct Rect {
     pub height: f64,
 }
 
-/// The three child-webview rectangles computed by [`super::workspace_layout`].
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize)]
-pub struct WorkspaceRects {
-    pub navigation_panel: Rect,
-    pub switcher: Rect,
-    pub content: Rect,
-}
-
-/// AppContainer state bookkeeping. `rects` holds the last-*applied* logical rectangles, not
-/// live physical bounds, so `workspace_state` reports deterministic DPI-independent geometry to
-/// the e2e read-back seam (docs/features/embedded-windows/03_e2e.md). Broadcast to the chrome
-/// webviews as the `workspace://state` event after every mutation.
+/// AppContainer state bookkeeping. `overlay` holds the last-*applied* logical rectangle for the
+/// Terminal/AgentWeb overlay webview, not live physical bounds, so `workspace_state` reports
+/// deterministic DPI-independent geometry to the e2e read-back seam
+/// (docs/features/embedded-windows/03_e2e.md). Broadcast to the merged webview as the
+/// `workspace://state` event after every mutation.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct WorkspaceState {
     pub apps: Vec<AppPane>,
     pub active_app: Option<String>,
     pub collapsed: bool,
-    pub rects: WorkspaceRects,
-    /// Sandbox name -> label of that sandbox's own last-active pane (Terminal or Dashboard), so
+    pub overlay: Rect,
+    /// Sandbox name -> label of that sandbox's own last-active pane (Terminal or AgentWeb), so
     /// switching back to a sandbox restores whichever pane the user had open instead of always
     /// defaulting to Terminal.
     pub sandbox_last_pane: HashMap<String, String>,

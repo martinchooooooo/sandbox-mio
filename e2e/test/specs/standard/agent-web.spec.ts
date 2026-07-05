@@ -4,7 +4,7 @@ import path from "path";
 
 import ProjectsPage from "../../pageobjects/projects.page.js";
 import workspaceDashboard from "../../pageobjects/workspace-dashboard.page.js";
-import { useDashboardWebview } from "../../../lib/dashboard-suite.js";
+import { captureDiagOnFailure } from "../../../lib/diag.js";
 import { useSandboxWorkspace } from "../../../lib/sandbox-suite.js";
 import { podman, podmanOk, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
 import { forwardList } from "../../../lib/mutagen.js";
@@ -14,16 +14,10 @@ import {
   paneFor,
   openAgentWeb,
   closeWorkspace,
-  switchPane,
+  hideActivePane,
 } from "../../../lib/workspace.js";
 
 const PASEO_WEB_PORT = "6767";
-
-// Normalize a host path for equality: the Rust registry stores whatever separators the frontend
-// passed, so compare resolved, lower-cased forms.
-function samePath(a: string, b: string): boolean {
-  return path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
-}
 
 // Authenticated status probe — the exact request fetch_paseo_server_info (src-tauri/src/lib.rs)
 // must have already succeeded at for the pane to exist. Returns the serverId on HTTP 200, or
@@ -50,7 +44,7 @@ describe("Agent web UI (paseo)", function () {
   let serverId: string;
   let password: string;
 
-  useDashboardWebview();
+  captureDiagOnFailure();
 
   it("creates a local sandbox with the paseo port published", async () => {
     await ProjectsPage.open();
@@ -83,35 +77,32 @@ describe("Agent web UI (paseo)", function () {
     await expect(row.statusText).toHaveText(/running/);
   });
 
-  it("opens the workspace with only a Dashboard pane — no AgentWeb pane yet, no Terminal pane yet", async () => {
+  it("opens the workspace showing only the Dashboard — no pane registered yet, no Terminal pane yet", async () => {
     await row.openWorkspace();
-
-    // open_workspace registers the pane asynchronously; poll until it exists.
-    await browser.waitUntil(
-      async () => panesFor(await workspaceState(), projectName).length === 1,
-      {
-        timeout: 60000,
-        interval: 1000,
-        timeoutMsg: `sandbox "${projectName}" never registered its Dashboard pane`,
-      }
-    );
+    await workspaceDashboard.waitForRendered(projectName);
 
     const state = await workspaceState();
-    const panes = panesFor(state, projectName);
-    assert.deepStrictEqual(
-      panes.map((p) => p.kind),
-      ["dashboard"],
-      `Expected exactly a Dashboard pane, got: ${JSON.stringify(panes.map((p) => p.label))}`
+    assert.strictEqual(
+      panesFor(state, projectName).length,
+      0,
+      "No AppPane should exist yet — Dashboard is client-side view state, not a Rust-tracked pane " +
+        "(docs/features/consolidate-app-container/02_dev.md Resolved Decision 2).",
     );
-    assert(
-      samePath(panes[0].workspace_path, workspaceDir),
-      `Pane ${panes[0].label} carries workspace_path "${panes[0].workspace_path}", expected "${workspaceDir}". ` +
-        "The dashboard launcher needs it to invoke open_agent_web without a sandbox lookup."
-    );
+    assert.strictEqual(state.active_app, null);
+  });
+
+  it("installs the Pi agent so the Manage tab's Agents launcher becomes available", async () => {
+    // LAUNCHABLE_APPS gates "agentweb" on installedAgents.length > 0 (src/lib/workspace/apps.ts,
+    // matching AgentManager.svelte's own predicate, docs/features/workspace-app-tabs/02_dev.md
+    // Decision 1) — the paseo web UI has nothing to show for a sandbox with no agent installed, so
+    // the launcher button does not render at all until one exists. Pi is the lightest catalogue
+    // entry (a single mise package, no postinstall steps, no auth flow), so it is installed here
+    // purely to satisfy the gate, not because this spec cares about Pi itself.
+    await workspaceDashboard.startAgentInstall("Pi");
+    await workspaceDashboard.waitForAgentRow("Pi", 300000);
   });
 
   it("clicking the Manage tab's Agents launcher button creates the AgentWeb pane (paseo install + daemon + forward)", async function () {
-    await workspaceDashboard.switchToDashboard(projectName);
     await workspaceDashboard.launchApp("agentweb");
 
     await browser.waitUntil(
@@ -194,9 +185,9 @@ describe("Agent web UI (paseo)", function () {
   });
 
   it("re-opening is switch-not-duplicate and keeps the password", async () => {
-    // Terminal is never opened in this spec (it's a separate lazy pane); switch off Agents onto
-    // the always-present Dashboard pane so the re-open below has something to switch away from.
-    await switchPane(projectName, "dashboard");
+    // Terminal is never opened in this spec (it's a separate lazy pane); hide the AgentWeb overlay
+    // and fall back to Dashboard so the re-open below has something to switch away from.
+    await hideActivePane();
     await openAgentWeb(projectName, workspaceDir);
 
     const state = await workspaceState();

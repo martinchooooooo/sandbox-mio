@@ -1,16 +1,20 @@
 <script lang="ts">
     import "../app.css";
     import { onMount } from "svelte";
-    import { page } from "$app/state";
     import { invoke } from "@tauri-apps/api/core";
     import { toast } from "svelte-sonner";
     import { ModeWatcher } from "mode-watcher";
     import { Toaster } from "$lib/components/ui/sonner";
-    import Button from "$lib/components/ui/button/button.svelte";
-    import GlobalNav from "$lib/components/GlobalNav.svelte";
-    import ActivityCenter from "$lib/activity/ActivityCenter.svelte";
     import { ensureActivity } from "$lib/activity/activity.svelte";
-    import { ensureWorkspaceState, isCollapsed, hasTabs as hasTabsStore } from "$lib/workspace/state.svelte";
+    import {
+        ensureWorkspaceState,
+        isCollapsed,
+        hasTabs as hasTabsStore,
+        activeSandboxName,
+        activeAppLabel,
+    } from "$lib/workspace/state.svelte";
+    import NavigationColumn from "$lib/workspace/NavigationColumn.svelte";
+    import WorkspaceContent from "$lib/workspace/WorkspaceContent.svelte";
     import { ensureNetworkState } from "$lib/network/state.svelte";
     import { m } from "$lib/paraglide/messages.js";
     import type { Snippet } from "svelte";
@@ -21,18 +25,25 @@
     // before any route mounts and is never torn down for the life of the webview.
     ensureActivity();
 
-    // The /workspace/* routes load inside other chrome child webviews (the switcher tab bar),
-    // which draw their own chrome; suppress the panel nav and activity center there.
-    const isWorkspaceChrome = $derived(page.url.pathname.startsWith("/workspace"));
-
-    // This layout is the app's home: the `main-navigation-panel` child webview, i.e. the left collapsible
-    // NavigationPanel of the AppContainer. Rust owns the native geometry; `collapsed` and
-    // `hasTabs` mirror the shared workspace store (src/lib/workspace/state.svelte.ts) so the DOM
-    // tracks what Rust actually applied (with no embedded tab the panel is full-bleed and the
-    // collapse control is meaningless, so it is hidden).
+    // This layout is the app's home: the `main-navigation-panel` child webview, i.e. the merged
+    // NavigationPanel/Switcher/Dashboard document (docs/features/consolidate-app-container/02_dev.md).
+    // Rust owns the native geometry; `collapsed`/`hasTabs`/`activeAppLabel` mirror the shared
+    // workspace store (src/lib/workspace/state.svelte.ts) so the DOM tracks what Rust actually
+    // applied (with no embedded tab the panel is full-bleed and the collapse control is
+    // meaningless, so it is hidden). Dashboard visibility is *derived* from `activeAppLabel()`
+    // being null (no Terminal/AgentWeb overlay confirmed active) rather than tracked as its own
+    // client-side "current view" — see the comment on `activeSandbox` in state.svelte.ts for why
+    // that distinction matters (a prior version hid the Dashboard optimistically before the
+    // `invoke` that opens a pane resolved, leaving nothing shown if it was slow or failed).
     let isNavigationPanel = $state(false);
     const collapsed = $derived(isCollapsed());
     const hasTabs = $derived(hasTabsStore());
+    const dashboardSandbox = $derived(activeAppLabel() === null ? activeSandboxName() : null);
+    // Whether the switcher/content column exists at all: either a Terminal/AgentWeb pane is open
+    // somewhere, or the user has navigated to a sandbox's Dashboard. With neither, the nav column
+    // is the whole window, same as before any workspace existed.
+    const hasWorkspaceContent = $derived(hasTabs || dashboardSandbox !== null);
+    const showWorkspaceChrome = $derived(isNavigationPanel && hasWorkspaceContent);
 
     async function toggleCollapsed() {
         try {
@@ -91,31 +102,11 @@
 <ModeWatcher />
 <Toaster />
 
-{#if isNavigationPanel && collapsed && hasTabs}
-    <!-- Thin-rail state: the panel is 48 logical px wide; only the expand button fits. -->
-    <div class="flex h-screen flex-col items-center bg-background p-1">
-        <Button variant="ghost" size="sm" onclick={toggleCollapsed} title={m.workspace_expand()}>
-            »
-        </Button>
-    </div>
-{:else}
-    {#if !isWorkspaceChrome}
-        <div class="flex items-center justify-between gap-2">
-            <GlobalNav />
-            {#if isNavigationPanel && hasTabs}
-                <Button
-                    variant="ghost"
-                    size="sm"
-                    onclick={toggleCollapsed}
-                    title={m.workspace_collapse()}
-                >
-                    «
-                </Button>
-            {/if}
-        </div>
+<div class="flex h-screen overflow-hidden">
+    <NavigationColumn {collapsed} showControls={showWorkspaceChrome} onToggleCollapsed={toggleCollapsed}>
+        {@render children?.()}
+    </NavigationColumn>
+    {#if showWorkspaceChrome}
+        <WorkspaceContent {hasTabs} {dashboardSandbox} />
     {/if}
-    {@render children?.()}
-    {#if !isWorkspaceChrome}
-        <ActivityCenter />
-    {/if}
-{/if}
+</div>

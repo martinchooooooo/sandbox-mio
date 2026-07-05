@@ -407,8 +407,11 @@ async fn open_terminal(
     Ok(())
 }
 
-/// Embed and activate sandbox `name`'s Manage/Dashboard pane, the sole pane every open sandbox
-/// starts with; Terminal and Agents launch later via `open_terminal_pane`/`open_agent_web`.
+/// Start (or keep alive) sandbox `name`'s `.mio/ports.json` watch. Viewing a sandbox's Dashboard is
+/// otherwise pure client-side navigation with no command call (Resolved Decision 2,
+/// docs/features/consolidate-app-container/02_dev.md); this is the one piece of real backend work
+/// that still needs to happen when a sandbox's Dashboard is first viewed. Idempotent, so it's fine
+/// to call this on every view, not just the first.
 #[tauri::command]
 async fn open_workspace(
     name: String,
@@ -416,26 +419,13 @@ async fn open_workspace(
     runtime: State<'_, Arc<dyn RuntimeManager>>,
     engine: State<'_, Arc<dyn SyncEngine>>,
     network: State<'_, Arc<dyn NetworkManager>>,
-    workspaces: State<'_, WorkspaceRegistry>,
-    app: tauri::AppHandle,
 ) -> Result<(), AppError> {
-    // Idempotent, so it's fine to call this on every open (including the early-return
-    // already-embedded case below): keeps `.mio/ports.json` watched for as long as the sandbox is
-    // open, without a dedicated frontend-triggered command.
     let connection = resolve_connection(&name, &runtime, &engine).await?;
     network
         .inner()
         .clone()
         .watch_ports_file(&name, &workspace_path, &connection)
         .await;
-
-    let exists = workspaces.lock().unwrap().apps.iter().any(|p| p.sandbox == name);
-    if exists {
-        workspace::switch_app(&app, &name)?;
-        return Ok(());
-    }
-
-    workspace::embed_dashboard(&app, &name, &workspace_path)?;
     Ok(())
 }
 
@@ -467,8 +457,8 @@ async fn open_terminal_pane(
     Ok(())
 }
 
-/// Bring sandbox `name`'s last-active embedded pane to the front (e.g. re-clicking "Open
-/// workspace" once its panes already exist).
+/// Bring sandbox `name`'s last-active Terminal/AgentWeb pane to the front (e.g. re-clicking "Open
+/// workspace" once such a pane already exists). No-op if the sandbox has no such pane open.
 #[tauri::command]
 fn switch_app(name: String, app: tauri::AppHandle) -> Result<(), AppError> {
     Ok(workspace::switch_app(&app, &name)?)
@@ -478,6 +468,15 @@ fn switch_app(name: String, app: tauri::AppHandle) -> Result<(), AppError> {
 #[tauri::command]
 fn switch_pane(name: String, kind: AppKind, app: tauri::AppHandle) -> Result<(), AppError> {
     Ok(workspace::switch_pane(&app, &name, kind)?)
+}
+
+/// Hide whichever Terminal/AgentWeb overlay is currently shown, with no replacement pane
+/// activated. Called by the merged webview when the client-side view navigates to a sandbox's
+/// Dashboard (or away from any sandbox) while an overlay is still visible — there is no Dashboard
+/// pane for `switch_pane` to target any more (docs/features/consolidate-app-container/02_dev.md).
+#[tauri::command]
+fn hide_active_pane(app: tauri::AppHandle) -> Result<(), AppError> {
+    Ok(workspace::hide_active_pane(&app)?)
 }
 
 /// Collapse or expand the main window's global panel between `GLOBAL_EXPANDED_W` and the thin rail.
@@ -494,8 +493,7 @@ async fn close_workspace(name: String, app: tauri::AppHandle) -> Result<(), AppE
 }
 
 /// Close exactly one app tab (`kind`) of sandbox `name`, leaving its siblings and the Manage tab
-/// open. No-op if `kind` is `AppKind::Dashboard` (the Home tab is not closable) or no such pane is
-/// open.
+/// open. No-op if no such pane is open.
 #[tauri::command]
 async fn close_pane(name: String, kind: AppKind, app: tauri::AppHandle) -> Result<(), AppError> {
     workspace::close_pane(&app, &name, kind).await;
@@ -503,7 +501,7 @@ async fn close_pane(name: String, kind: AppKind, app: tauri::AppHandle) -> Resul
 }
 
 /// Read-back of the main workspace state (panes, active tab, collapse flag, last-applied logical
-/// rects). Backs the chrome webviews and the e2e introspection seam; infallible like `list_tasks`.
+/// overlay rect). Backs the chrome and the e2e introspection seam; infallible like `list_tasks`.
 #[tauri::command]
 fn workspace_state(workspaces: State<'_, WorkspaceRegistry>) -> WorkspaceState {
     workspaces.lock().unwrap().clone()
@@ -1489,6 +1487,7 @@ pub fn run() {
             open_agent_web,
             switch_app,
             switch_pane,
+            hide_active_pane,
             set_panel_collapsed,
             close_workspace,
             close_pane,

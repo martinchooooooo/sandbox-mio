@@ -163,7 +163,11 @@
 
     <h1 class="text-center text-3xl mb-8">{m.projects_title()}</h1>
 
-    <div class="max-w-2xl mx-auto max-[420px]:max-w-none max-[420px]:mx-0">
+    <!-- @max-[420px]: a container query against NavigationColumn.svelte's `@container` ancestor
+         (see the comment on SandboxItem.svelte's @max-[420px] usage) — a plain viewport media query
+         would never fire once main-navigation-panel became the full app window (Phase C,
+         docs/features/consolidate-app-container/02_dev.md). -->
+    <div class="max-w-2xl mx-auto @max-[420px]:max-w-none @max-[420px]:mx-0">
         <!-- <Field.Set class="w-full">
             <Field.Group>
                 <Field.Field>

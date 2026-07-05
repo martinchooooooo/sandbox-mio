@@ -5,7 +5,7 @@ import path from "path";
 import ProjectsPage from "../../pageobjects/projects.page.js";
 import workspaceDashboard from "../../pageobjects/workspace-dashboard.page.js";
 import { podman, podmanOk, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
-import { useDashboardWebview, dashboardIt } from "../../../lib/dashboard-suite.js";
+import { captureDiagOnFailure } from "../../../lib/diag.js";
 import { useSandboxWorkspace } from "../../../lib/sandbox-suite.js";
 
 // Must equal INFERENCE_VM_PORT in src/lib/agents/opencode.ts and src-tauri/src/sync/mod.rs. The
@@ -34,7 +34,7 @@ describe("OpenCode agent — install, provision, merge", function () {
   const manifestPath = path.join(workspaceDir, "mise.toml");
   const configPath = path.join(workspaceDir, "opencode.json");
 
-  useDashboardWebview();
+  captureDiagOnFailure();
 
   it("creates a project with an Agents section showing no agents", async () => {
     await ProjectsPage.open();
@@ -50,7 +50,7 @@ describe("OpenCode agent — install, provision, merge", function () {
     // Package/agent management now requires a workspace to be open (Resolved Decision 3,
     // docs/features/responsive-panel/02_dev.md) — there is no inline fallback in the row anymore.
     await row.openWorkspace();
-    await workspaceDashboard.switchToDashboard(projectName);
+    await workspaceDashboard.waitForRendered(projectName);
 
     await workspaceDashboard.noAgentsText.waitForExist({
       timeout: 5000,
@@ -58,7 +58,7 @@ describe("OpenCode agent — install, provision, merge", function () {
     });
   });
 
-  dashboardIt("installs OpenCode through the UI and provisions opencode.json", () => projectName, async () => {
+  it("installs OpenCode through the UI and provisions opencode.json", async () => {
     await workspaceDashboard.startAgentInstall("OpenCode");
 
     // The agent row appears once `mise use opencode` writes the tool to mise.toml; the binary is a
@@ -128,7 +128,7 @@ describe("OpenCode agent — install, provision, merge", function () {
     );
   });
 
-  dashboardIt("shows a 'start a model' hint while no inference server is running", () => projectName, async () => {
+  it("shows a 'start a model' hint while no inference server is running", async () => {
     // No inference server is started in this spec, so the provisioned-but-endpoint-down state must
     // render the /models hint rather than the provider-configured line or an error.
     const hint = await workspaceDashboard.agentProviderHint("OpenCode");

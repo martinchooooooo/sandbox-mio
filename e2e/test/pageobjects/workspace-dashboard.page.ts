@@ -1,75 +1,22 @@
 import { type Element } from "./app.page.js";
-import { switchPane } from "../../lib/workspace.js";
 
-// Page object for the AppKind::Dashboard content pane (docs/features/responsive-panel/02_dev.md
-// Phase D / 03_e2e.md): a `workspace-<sandbox>-dashboard` child webview, a separate top-level
-// document from `main-navigation-panel` hosting PackageManager.svelte/AgentManager.svelte moved out of the
-// projects-list row. Every getter here is scoped to that document's root (no wrapping `<li>`
-// unlike project-row.component.ts, since the whole pane belongs to one sandbox).
-//
-// Specs must call switchToDashboard(sandbox) before using these getters, and switchToAppWebview()
-// afterward — the global `before` hook (e2e/wdio.conf.ts) only pins the session to `main-navigation-panel`
-// once per session, not per test, so a spec that switches away must switch back itself.
+// Page object for a sandbox's Dashboard content (docs/features/consolidate-app-container/02_dev.md
+// Phase C): a DOM region of the single `main-navigation-panel` webview (WorkspaceDashboard.svelte),
+// not a separate webview any more — every getter here just queries that one document. WebDriver's
+// session never needs to switch windows to reach it.
 class WorkspaceDashboardPage {
-  // ── Window/document switching ──────────────────────────────────────────────
-
-  // Poll every window handle until one is this sandbox's dashboard route (mirrors the technique
-  // e2e/wdio.conf.ts's global `before` hook uses to find `main-navigation-panel`, extended to also match the
-  // `sandbox` query param since multiple sandboxes' dashboards can coexist).
-  async switchToDashboard(sandbox: string, timeoutMs = 15000): Promise<void> {
-    await browser.waitUntil(
-      async () => {
-        // Bring the pane to the front in the Tauri app: `embed_dashboard`/`switch_pane` on the Rust
-        // side call WebView2's `hide()` on every pane but the active one, which stops it from
-        // painting, so retargeting only the WebDriver window handle (below) leaves it hidden and
-        // devtools operations needing layout (scrollIntoView, click) hang until wdio's own timeout.
-        // Retried inside this loop (not called once upfront) because callers race
-        // `row.openWorkspace()`, which only clicks the button and returns before the backend's
-        // async `open_workspace` command has necessarily registered the dashboard pane yet — an
-        // early call throws WorkspaceError::NotOpen rather than a pane that just isn't shown.
-        try {
-          await switchPane(sandbox, "dashboard");
-        } catch {
-          return false;
-        }
-        for (const handle of await browser.getWindowHandles()) {
-          await browser.switchToWindow(handle);
-          const { pathname, search } = await browser.execute(() => ({
-            pathname: window.location.pathname,
-            search: window.location.search,
-          }));
-          if (pathname === "/workspace/dashboard" && new URLSearchParams(search).get("sandbox") === sandbox) {
-            return true;
-          }
-        }
-        return false;
-      },
-      {
-        timeout: timeoutMs,
-        interval: 500,
-        timeoutMsg: `dashboard webview for "${sandbox}" never appeared among the window handles`,
-      },
-    );
-
-    // The route match above only proves the window exists; the page's own onMount still needs to
-    // resolve `invoke("list_sandboxes")` and populate `workspacePath` before PackageManager/
-    // AgentManager/PortsManager mount into the DOM (src/routes/workspace/dashboard/+page.svelte).
-    // Wait for the package input — the first element of that gated block — so callers don't race
-    // ahead of it.
+  // Wait for this sandbox's Dashboard content to actually be rendered. Dashboard visibility is
+  // derived client-side state (activeAppLabel() === null && activeSandbox === sandbox,
+  // src/routes/+layout.svelte), and even once shown, WorkspaceDashboard.svelte's own onMount still
+  // needs to resolve `invoke("list_sandboxes")` and populate `workspacePath` before PackageManager/
+  // AgentManager/PortsManager mount. Wait for the package input — the first element of that gated
+  // block — so callers don't race ahead of it. `sandbox` is accepted (not read from the DOM) purely
+  // for the error message; callers are responsible for having navigated to the right sandbox first.
+  async waitForRendered(sandbox: string): Promise<void> {
     await this.packageInput.waitForExist({
       timeout: 15000,
       timeoutMsg: `dashboard content for "${sandbox}" never rendered (workspacePath likely never resolved)`,
     });
-  }
-
-  // Switch back to the app webview (main-navigation-panel) — the same handle the global `before` hook picks.
-  async switchToAppWebview(): Promise<void> {
-    for (const handle of await browser.getWindowHandles()) {
-      await browser.switchToWindow(handle);
-      const pagePath = await browser.execute(() => window.location.pathname);
-      if (!pagePath.startsWith("/workspace")) return;
-    }
-    throw new Error("[e2e] no app webview found among the window handles");
   }
 
   // ── App launcher (docs/features/workspace-app-tabs/02_dev.md Phase D) ──────

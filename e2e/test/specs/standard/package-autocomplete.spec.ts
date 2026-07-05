@@ -5,7 +5,7 @@ import path from "path";
 import ProjectsPage from "../../pageobjects/projects.page.js";
 import workspaceDashboard from "../../pageobjects/workspace-dashboard.page.js";
 import { LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
-import { useDashboardWebview, dashboardIt } from "../../../lib/dashboard-suite.js";
+import { captureDiagOnFailure } from "../../../lib/diag.js";
 import { useSandboxWorkspace } from "../../../lib/sandbox-suite.js";
 
 // `jq` is a static binary with no runtime deps, resolves quickly via mise's aqua backend,
@@ -20,7 +20,7 @@ describe("Package autocomplete", function () {
 
   const { projectName, row, workspaceDir } = useSandboxWorkspace("e2e-autocomplete");
 
-  useDashboardWebview();
+  captureDiagOnFailure();
 
   it("creates a project and opens its workspace's dashboard pane", async () => {
     await ProjectsPage.open();
@@ -30,10 +30,10 @@ describe("Package autocomplete", function () {
     // Package management now requires a workspace to be open (Resolved Decision 3,
     // docs/features/responsive-panel/02_dev.md) — there is no inline fallback in the row anymore.
     await row.openWorkspace();
-    await workspaceDashboard.switchToDashboard(projectName);
+    await workspaceDashboard.waitForRendered(projectName);
   });
 
-  dashboardIt("shows suggestions after typing a search prefix", () => projectName, async () => {
+  it("shows suggestions after typing a search prefix", async () => {
     // Focus triggers ensureRegistry → invoke("list_registry") → mise registry --json in the container.
     await workspaceDashboard.typeInPackageInput(PKG);
 
@@ -57,7 +57,7 @@ describe("Package autocomplete", function () {
     );
   });
 
-  dashboardIt("shows a description for the jq suggestion", () => projectName, async () => {
+  it("shows a description for the jq suggestion", async () => {
     // A non-empty description proves mise registry --json (not the plain-text format) was used,
     // and that the description field survived the Rust→frontend serialisation round trip.
     const desc = await workspaceDashboard.suggestionDescription(PKG);
@@ -69,7 +69,7 @@ describe("Package autocomplete", function () {
     );
   });
 
-  dashboardIt("populates the input when a suggestion is selected", () => projectName, async () => {
+  it("populates the input when a suggestion is selected", async () => {
     // The onmousedown handler on each suggestion button calls e.preventDefault(), which prevents
     // the blur event from stealing focus away from the input before the handler sets packageInput.
     await workspaceDashboard.selectSuggestion(PKG);
@@ -93,7 +93,7 @@ describe("Package autocomplete", function () {
     );
   });
 
-  dashboardIt("installs successfully after autocomplete selection", () => projectName, async () => {
+  it("installs successfully after autocomplete selection", async () => {
     // The input already contains PKG from the previous step; installPackage calls setValue(PKG)
     // (idempotent) then clicks Install and waits for the package chip to appear.
     await workspaceDashboard.installPackage(PKG);

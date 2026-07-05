@@ -1,38 +1,12 @@
 import { type Element } from "./app.page.js";
 
+// Page object for the switcher tab bar (SandboxSwitcherGroup.svelte), a DOM region of the single
+// `main-navigation-panel` webview (docs/features/consolidate-app-container/02_dev.md Phase C) —
+// not a separate `/workspace/switcher` webview any more.
 class WorkspaceSwitcherPage {
-  // Poll every window handle until one is the switcher route (mirrors switchToDashboard in
-  // workspace-dashboard.page.ts). The switcher webview exists from app startup, but polling
-  // tolerates slow handle registration under tauri-driver.
-  async switchToSwitcher(timeoutMs = 15000): Promise<void> {
-    await browser.waitUntil(
-      async () => {
-        for (const handle of await browser.getWindowHandles()) {
-          await browser.switchToWindow(handle);
-          const pagePath = await browser.execute(() => window.location.pathname);
-          if (pagePath === "/workspace/switcher") return true;
-        }
-        return false;
-      },
-      {
-        timeout: timeoutMs,
-        interval: 500,
-        timeoutMsg: "the /workspace/switcher webview never appeared among the window handles",
-      },
-    );
-  }
-
-  async switchToAppWebview(): Promise<void> {
-    for (const handle of await browser.getWindowHandles()) {
-      await browser.switchToWindow(handle);
-      const pagePath = await browser.execute(() => window.location.pathname);
-      if (!pagePath.startsWith("/workspace")) return;
-    }
-    throw new Error("[e2e] no app webview found among the window handles");
-  }
-
   // Each sandbox is a `div[data-sandbox]` group carrying `button[data-app]` per open pane
-  // ("dashboard" for the home tab) and, per non-home tab, a sibling `button[data-close-tab]`.
+  // ("dashboard" for the home tab, which always renders) and, per non-home tab, a sibling
+  // `button[data-close-tab]`.
   sandboxGroup(sandbox: string): Element {
     return $(`div[data-sandbox="${sandbox}"]`);
   }

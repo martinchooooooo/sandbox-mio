@@ -7,7 +7,7 @@ import ProjectsPage from "../../pageobjects/projects.page.js";
 import workspaceDashboard from "../../pageobjects/workspace-dashboard.page.js";
 import { podman, podmanOk, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
 import { forwardList, forwardTerminate } from "../../../lib/mutagen.js";
-import { useDashboardWebview, dashboardIt } from "../../../lib/dashboard-suite.js";
+import { captureDiagOnFailure } from "../../../lib/diag.js";
 import { useSandboxWorkspace } from "../../../lib/sandbox-suite.js";
 
 // Two distinct sandbox-side ports: one exposed manually via the "Expose a port" UI, one declared
@@ -65,7 +65,7 @@ describe("Exposing sandbox ports (network::expose_port / unexpose_port / watch_p
     forwardTerminate(`expose-${projectName}-${FILE_PORT}`);
   });
 
-  useDashboardWebview();
+  captureDiagOnFailure();
 
   it("creates and starts a local sandbox, then opens its dashboard", async () => {
     await ProjectsPage.open();
@@ -74,11 +74,11 @@ describe("Exposing sandbox ports (network::expose_port / unexpose_port / watch_p
     await row.waitForRunning();
 
     await row.openWorkspace();
-    await workspaceDashboard.switchToDashboard(projectName);
+    await workspaceDashboard.waitForRendered(projectName);
     await (await workspaceDashboard.noPortsText).waitForDisplayed({ timeout: 10000 });
   });
 
-  dashboardIt("exposes a port via the UI and reaches the real service through the forward", () => projectName, async () => {
+  it("exposes a port via the UI and reaches the real service through the forward", async () => {
     startFakeService(projectName, MANUAL_PORT, MANUAL_TOKEN);
 
     await workspaceDashboard.exposePort(MANUAL_PORT);
@@ -112,7 +112,7 @@ describe("Exposing sandbox ports (network::expose_port / unexpose_port / watch_p
     );
   });
 
-  dashboardIt("declaring a port in .mio/ports.json auto-exposes it (watch_ports_file)", () => projectName, async () => {
+  it("declaring a port in .mio/ports.json auto-exposes it (watch_ports_file)", async () => {
     startFakeService(projectName, FILE_PORT, FILE_TOKEN);
 
     const existing = JSON.parse(fs.readFileSync(portsJsonPath, "utf8")) as Record<string, string>;
@@ -136,7 +136,7 @@ describe("Exposing sandbox ports (network::expose_port / unexpose_port / watch_p
     );
   });
 
-  dashboardIt("removing the ports.json entry auto-unexposes it", () => projectName, async () => {
+  it("removing the ports.json entry auto-unexposes it", async () => {
     const existing = JSON.parse(fs.readFileSync(portsJsonPath, "utf8")) as Record<string, string>;
     delete existing[String(FILE_PORT)];
     fs.writeFileSync(portsJsonPath, JSON.stringify(existing));
@@ -150,7 +150,7 @@ describe("Exposing sandbox ports (network::expose_port / unexpose_port / watch_p
     });
   });
 
-  dashboardIt("clicking the close button unexposes the manually-opened port", () => projectName, async () => {
+  it("clicking the close button unexposes the manually-opened port", async () => {
     const label = `Exposed :${MANUAL_PORT}`;
     await workspaceDashboard.closePortRow(label);
     await workspaceDashboard.waitForPortRowGone(label);
@@ -165,7 +165,6 @@ describe("Exposing sandbox ports (network::expose_port / unexpose_port / watch_p
   });
 
   it("destroy removes the container and its forwards stay gone", async () => {
-    await workspaceDashboard.switchToAppWebview();
     await row.destroy();
     assert(
       !podmanOk(LOCAL_CONNECTION, ["inspect", projectName]),

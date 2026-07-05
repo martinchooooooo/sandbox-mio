@@ -4,6 +4,8 @@ import path from "path";
 
 import ProjectsPage from "../../pageobjects/projects.page.js";
 import ProjectRow from "../../pageobjects/project-row.component.js";
+import workspaceDashboard from "../../pageobjects/workspace-dashboard.page.js";
+import workspaceSwitcher from "../../pageobjects/workspace-switcher.page.js";
 import { podman, podmanOk, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
 import { forwardList } from "../../../lib/mutagen.js";
 import { captureDiagOnFailure } from "../../../lib/diag.js";
@@ -11,7 +13,7 @@ import {
   workspaceState,
   setPanelCollapsed,
   switchApp,
-  switchPane,
+  hideActivePane,
   paneFor,
   panesFor,
   openTerminalPane,
@@ -21,8 +23,8 @@ import {
 
 // Logical-px constants mirrored from src-tauri/src/workspace/mod.rs. Asserted directly (not
 // re-derived) so a spec failure points at either side changing without the other.
-const GLOBAL_EXPANDED_W = 380;
-const GLOBAL_RAIL_W = 48;
+const NAVIGATION_PANEL_EXPANDED_W = 380;
+const NAVIGATION_PANEL_RAIL_W = 48;
 const SWITCHER_H = 64;
 
 const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
@@ -38,9 +40,29 @@ async function waitForToken(name: string): Promise<void> {
   });
 }
 
+// A sandbox's Dashboard is DOM-derived client state, not a Rust-tracked pane
+// (docs/features/consolidate-app-container/02_dev.md Resolved Decision 2): the only way to prove it
+// is actually visible — as opposed to present-but-zero-height, the exact class of regression this
+// feature already produced once (WorkspaceSwitcher.svelte's h-screen/h-16 bug, 02_dev.md Common
+// Gotchas) — is to read the rendered DOM, not workspace_state() alone.
+async function assertDashboardVisible(sandbox: string): Promise<void> {
+  await workspaceDashboard.waitForRendered(sandbox);
+  const input = await workspaceDashboard.packageInput;
+  assert(
+    await input.isDisplayed(),
+    `Dashboard content for "${sandbox}" exists in the DOM but is not displayed.`,
+  );
+  const { height } = await input.getSize();
+  assert(
+    height > 0,
+    `Dashboard content for "${sandbox}" has zero rendered height — this is the WorkspaceSwitcher ` +
+      "h-screen/h-16 class of bug (docs/features/consolidate-app-container/02_dev.md Common Gotchas).",
+  );
+}
+
 // `function ()` (not an arrow) so `this.timeout` raises the suite ceiling: the first create on a
 // connection may trigger the one-time mise base-image build (~324 MB).
-describe("Embedded workspace (multi-webview container)", function () {
+describe("Embedded workspace (merged NavigationPanel/Switcher/Dashboard webview)", function () {
   this.timeout(600000);
 
   const nameA = `e2e-workspace-a-${Date.now()}`;
@@ -71,40 +93,21 @@ describe("Embedded workspace (multi-webview container)", function () {
     await rowA.waitForRunning();
   });
 
-  it("opening the workspace embeds and activates only the Manage/Dashboard pane (Terminal is not started)", async () => {
+  it("opening the workspace shows sandbox A's Dashboard with no pane registered (Terminal is not started)", async () => {
     await rowA.openWorkspace();
-
-    await browser.waitUntil(async () => panesFor(await workspaceState(), nameA).length === 1, {
-      timeout: 30000,
-      interval: 500,
-      timeoutMsg: `sandbox "${nameA}" never registered its Dashboard pane after openWorkspace`,
-    });
+    await assertDashboardVisible(nameA);
 
     const state = await workspaceState();
-    const panes = panesFor(state, nameA);
     assert.strictEqual(
-      panes.length,
-      1,
-      `Expected exactly one pane (Dashboard) for "${nameA}" right after openWorkspace, got ${panes.length}: ` +
-        `${panes.map((p) => p.kind).join(", ")}. This can happen when open_workspace still calls embed_terminal.`,
-    );
-
-    const dashboard = paneFor(state, nameA, "dashboard")!;
-    assert.strictEqual(dashboard.kind, "dashboard");
-    assert(
-      dashboard.url.includes("/workspace/dashboard"),
-      `Dashboard pane url "${dashboard.url}" is not the internal /workspace/dashboard route.`,
-    );
-    assert.strictEqual(
-      dashboard.forward_name,
-      "",
-      "The Dashboard pane has no Mutagen forward (it is pure Tauri IPC); forward_name must stay empty.",
+      panesFor(state, nameA).length,
+      0,
+      "No AppPane should exist for a sandbox that has only ever been viewed via Dashboard " +
+        "(Resolved Decision 2) — Dashboard is client-side view state, not a Rust-tracked pane.",
     );
     assert.strictEqual(
       state.active_app,
-      dashboard.label,
-      "The Dashboard pane must be active immediately on creation — open_workspace no longer embeds " +
-        "Terminal first, so embed_dashboard must activate the pane it creates instead of hiding it.",
+      null,
+      "active_app must stay null while the client-side view is Dashboard for any sandbox.",
     );
     assert(
       !fs.existsSync(path.join(workspaceDirA, ".mio", "zellij.json")),
@@ -112,14 +115,12 @@ describe("Embedded workspace (multi-webview container)", function () {
         "eagerly during open_workspace, defeating the lazy-Terminal goal.",
     );
 
-    // Structural layout proof (mirrors the Rust unit tests in workspace/mod.rs): the global panel
-    // is fixed-width regardless of window size, and the switcher/content regions start exactly
-    // where it ends — the same non-overlap invariant `workspace_layout` guarantees. SWITCHER_H is
-    // 64 (grown from 40) to fit the two-level switcher's name row + tab row.
-    assert.strictEqual(state.rects.global.width, GLOBAL_EXPANDED_W);
-    assert.strictEqual(state.rects.switcher.height, SWITCHER_H);
-    assert.strictEqual(state.rects.switcher.x, GLOBAL_EXPANDED_W);
-    assert.strictEqual(state.rects.content.x, GLOBAL_EXPANDED_W);
+    // Structural layout proof (mirrors the Rust unit tests in workspace/mod.rs): the overlay rect
+    // — where a Terminal/AgentWeb pane would be positioned if one were active — starts exactly
+    // where the expanded nav column ends, and is SWITCHER_H tall from the top. This is always true
+    // regardless of whether any pane is active; the merged webview itself is never resized.
+    assert.strictEqual(state.overlay.x, NAVIGATION_PANEL_EXPANDED_W);
+    assert.strictEqual(state.overlay.y, SWITCHER_H);
   });
 
   it("open_terminal_pane lazily embeds the Terminal pane and makes it active", async () => {
@@ -130,8 +131,8 @@ describe("Embedded workspace (multi-webview container)", function () {
     const panes = panesFor(state, nameA);
     assert.strictEqual(
       panes.length,
-      2,
-      `Expected exactly two panes (Dashboard + Terminal) for "${nameA}" after open_terminal_pane, got ${panes.length}.`,
+      1,
+      `Expected exactly one pane (Terminal) for "${nameA}" after open_terminal_pane, got ${panes.length}.`,
     );
 
     const pane = paneFor(state, nameA, "terminal")!;
@@ -156,44 +157,51 @@ describe("Embedded workspace (multi-webview container)", function () {
     );
   });
 
-  it("switch_pane brings the Dashboard pane forward and records it as the sandbox's last-active pane", async () => {
+  it("clicking the switcher's Manage tab hides the Terminal overlay and shows Dashboard again", async () => {
     const terminal = paneFor(await workspaceState(), nameA, "terminal")!;
-    const dashboard = paneFor(await workspaceState(), nameA, "dashboard")!;
 
-    await switchPane(nameA, "dashboard");
+    await workspaceSwitcher.clickTab(nameA, "dashboard");
+    await assertDashboardVisible(nameA);
+
     const afterToDashboard = await workspaceState();
-    assert.strictEqual(afterToDashboard.active_app, dashboard.label);
+    assert.strictEqual(
+      afterToDashboard.active_app,
+      null,
+      "hide_active_pane must clear active_app once the Manage tab is clicked.",
+    );
     assert.strictEqual(
       afterToDashboard.sandbox_last_pane[nameA],
-      dashboard.label,
-      "switch_pane must record the sandbox's last-active pane so a later switch_app restores it.",
+      terminal.label,
+      "sandbox_last_pane must still remember the Terminal pane so a later switch_app restores it, " +
+        "even though it is no longer the active view.",
     );
 
     // The projects-list row narrows once nameA's workspace is open (Track 1 + Resolved Decision 3,
     // docs/features/responsive-panel/02_dev.md): the inline Package/Agent controls are gone, and
     // the remaining buttons drop their text label at the panel's real 380px width
-    // (GLOBAL_EXPANDED_W, asserted above) — not a resized/simulated window.
+    // (NAVIGATION_PANEL_EXPANDED_W, asserted above) — not a resized/simulated window.
     assert.strictEqual(
       await (await rowA.root.$("input[placeholder='package name']")).isExisting(),
       false,
-      "Inline package management must never render in the projects-list row (it moved to the dashboard pane).",
+      "Inline package management must never render in the projects-list row (it moved to the Dashboard region).",
     );
     assert.strictEqual(
       await (await rowA.root.$("button=Add agent")).isExisting(),
       false,
-      "Inline agent management must never render in the projects-list row (it moved to the dashboard pane).",
+      "Inline agent management must never render in the projects-list row (it moved to the Dashboard region).",
     );
     const workspaceLabel = await (await rowA.workspaceButton).$("span");
     assert.strictEqual(
       await workspaceLabel.isDisplayed(),
       false,
       "The workspace button's text label must be hidden at the panel's real 380px width — the " +
-        "max-[420px]: breakpoint did not fire, or main-global's viewport is not actually 380px.",
+        "max-[420px]: breakpoint did not fire, or the nav column's viewport is not actually 380px.",
     );
 
     // Leave nameA back on its Terminal pane so the pre-existing switch_app assertion below (which
-    // predates the two-pane model) keeps its original meaning unchanged.
-    await switchPane(nameA, "terminal");
+    // predates the merged-webview model) keeps its original meaning unchanged.
+    await workspaceSwitcher.clickTab(nameA, "terminal");
+    await waitForToken(nameA);
     assert.strictEqual((await workspaceState()).active_app, terminal.label);
   });
 
@@ -226,31 +234,33 @@ describe("Embedded workspace (multi-webview container)", function () {
     assert(status200, `${pane.url} did not serve HTTP 200`);
   });
 
-  it("collapsing and expanding the global panel snaps the layout to the rail and back", async () => {
+  it("collapsing and expanding the nav column moves the overlay rect to the rail and back", async () => {
     const before = await workspaceState();
-    const beforeContentX = before.rects.content.x;
+    const beforeOverlayX = before.overlay.x;
+    assert.strictEqual(beforeOverlayX, NAVIGATION_PANEL_EXPANDED_W);
 
     await setPanelCollapsed(true);
     const collapsed = await workspaceState();
     assert.strictEqual(collapsed.collapsed, true);
-    assert.strictEqual(collapsed.rects.global.width, GLOBAL_RAIL_W);
-    assert.strictEqual(collapsed.rects.content.x, GLOBAL_RAIL_W);
+    assert.strictEqual(collapsed.overlay.x, NAVIGATION_PANEL_RAIL_W);
     assert(
-      collapsed.rects.content.width > before.rects.content.width,
-      "Collapsing the rail must grow the content area.",
+      collapsed.overlay.width > before.overlay.width,
+      "Collapsing the nav column must grow the overlay's available width.",
     );
 
     await setPanelCollapsed(false);
     const expanded = await workspaceState();
     assert.strictEqual(expanded.collapsed, false);
-    assert.strictEqual(expanded.rects.global.width, GLOBAL_EXPANDED_W);
-    assert.strictEqual(expanded.rects.content.x, beforeContentX);
+    assert.strictEqual(expanded.overlay.x, beforeOverlayX);
+
+    // The Terminal pane is still the active view throughout — collapsing/expanding is pure
+    // client-side CSS on the nav column, it must not disturb which pane is active.
+    assert.strictEqual(expanded.active_app, paneFor(before, nameA, "terminal")!.label);
   });
 
-  it("close_pane closes only the Terminal tab, leaving Dashboard open and active", async () => {
+  it("close_pane closes the Terminal tab, leaving the client-side view to fall back to Dashboard", async () => {
     const before = await workspaceState();
     const terminalBefore = paneFor(before, nameA, "terminal")!;
-    const dashboard = paneFor(before, nameA, "dashboard")!;
 
     await closePane(nameA, "terminal");
 
@@ -267,28 +277,17 @@ describe("Embedded workspace (multi-webview container)", function () {
     const panes = panesFor(state, nameA);
     assert.strictEqual(
       panes.length,
-      1,
-      `Expected only the Dashboard pane for "${nameA}" after closing Terminal, got ${panes.length}: ` +
+      0,
+      `Expected no panes for "${nameA}" after closing its only Terminal pane, got ${panes.length}: ` +
         `${panes.map((p) => p.kind).join(", ")}.`,
     );
-    assert.strictEqual(panes[0].kind, "dashboard");
     assert.strictEqual(
       state.active_app,
-      dashboard.label,
-      "close_pane must re-activate the sandbox's Dashboard pane once its Terminal pane closes.",
+      null,
+      "close_pane must clear active_app once the closed pane was the active one, letting the " +
+        "client-side view fall back to Dashboard (no Dashboard pane label to re-activate).",
     );
-    // The sandbox is not empty (Dashboard remains), so the global panel must stay narrow, not
-    // return to full-bleed — that is close_workspace's contract, not close_pane's.
-    assert.strictEqual(state.rects.global.width, GLOBAL_EXPANDED_W);
-
-    // close_pane must never accept AppKind::Dashboard (Resolved Decision 2): a no-op, not a crash.
-    await closePane(nameA, "dashboard");
-    const afterNoop = await workspaceState();
-    assert.strictEqual(
-      panesFor(afterNoop, nameA).length,
-      1,
-      "close_pane(kind: dashboard) must be a no-op — the Manage/Home tab is not closable.",
-    );
+    await assertDashboardVisible(nameA);
 
     // Reopening reattaches to the same Zellij session: the URL's stable session-name path
     // (Phase C) is unchanged across close + reopen.
@@ -306,8 +305,8 @@ describe("Embedded workspace (multi-webview container)", function () {
     const state = await workspaceState();
     assert.strictEqual(
       panesFor(state, nameA).length,
-      2,
-      "Re-opening must not push additional panes for the same sandbox (still exactly Dashboard + Terminal).",
+      1,
+      "Re-opening must not push additional panes for the same sandbox (still exactly one Terminal pane).",
     );
     const fwdOut = forwardList(`terminal-${nameA}`);
     assert(
@@ -325,14 +324,19 @@ describe("Embedded workspace (multi-webview container)", function () {
 
     const state = await workspaceState();
     const paneA = paneFor(state, nameA, "terminal");
-    const paneB = paneFor(state, nameB, "dashboard");
     assert(paneA, `sandbox A's terminal pane disappeared once B's workspace opened.`);
-    assert(paneB, `workspace_state() has no dashboard pane for "${nameB}".`);
+    assert.strictEqual(
+      panesFor(state, nameB).length,
+      0,
+      `sandbox "${nameB}" should have no registered pane — it has only been viewed via Dashboard.`,
+    );
     assert.strictEqual(
       state.active_app,
-      paneB!.label,
-      "Opening B's workspace must make its Dashboard pane the active tab, leaving A embedded but hidden.",
+      null,
+      "Opening B's workspace shows its Dashboard (client-side view state, no Rust pane), so " +
+        "active_app must be null, leaving A's Terminal pane embedded but hidden underneath.",
     );
+    await assertDashboardVisible(nameB);
     assert(
       forwardList(`terminal-${nameA}`).includes("Connected"),
       "Sandbox A's forward must stay connected while B's workspace opens.",
@@ -349,9 +353,6 @@ describe("Embedded workspace (multi-webview container)", function () {
   });
 
   it("destroying one sandbox tears down every one of its panes and its forward", async () => {
-    const beforeState = await workspaceState();
-    const paneB = paneFor(beforeState, nameB, "dashboard")!;
-
     await rowA.destroy();
 
     assert(!podmanOk(LOCAL_CONNECTION, ["inspect", nameA]), `Local container "${nameA}" still exists after destroy.`);
@@ -373,13 +374,13 @@ describe("Embedded workspace (multi-webview container)", function () {
       `terminal-${nameA} forward still shows Connected after destroy.`,
     );
 
-    // Sandbox B's workspace must be untouched: same pane, no forward to check (Dashboard has none).
-    const paneBAfter = paneFor(afterState, nameB, "dashboard");
-    assert(paneBAfter, "Sandbox B's pane disappeared after sandbox A was destroyed.");
-    assert.strictEqual(paneBAfter!.label, paneB.label);
+    // Sandbox B's workspace must be untouched: it never had a Rust-tracked pane to begin with, so
+    // there is nothing to assert on workspace_state() for it — its Dashboard is still reachable.
+    await rowB.openWorkspace();
+    await assertDashboardVisible(nameB);
   });
 
-  it("destroying the last sandbox returns the global panel to full-bleed", async () => {
+  it("destroying the last sandbox leaves the overlay rect at its expanded default", async () => {
     await rowB.destroy();
 
     assert(!podmanOk(LOCAL_CONNECTION, ["inspect", nameB]), `Local container "${nameB}" still exists after destroy.`);
@@ -387,9 +388,10 @@ describe("Embedded workspace (multi-webview container)", function () {
     const state: WorkspaceState = await workspaceState();
     assert.strictEqual(state.apps.length, 0);
     assert.strictEqual(state.active_app, null);
-    // No content: workspace_layout's !has_content branch collapses switcher/content to zero-width
-    // and the global panel fills the window (see workspace/mod.rs's without_content unit test).
-    assert.strictEqual(state.rects.switcher.width, 0);
-    assert.strictEqual(state.rects.content.width, 0);
+    // Unlike the pre-consolidation three-rect model, the overlay rect is not conditioned on
+    // whether any sandbox is open (Resolved Decision 3) — it always reflects the current
+    // nav-width/switcher-height layout, since the merged webview is never resized.
+    assert.strictEqual(state.overlay.x, NAVIGATION_PANEL_EXPANDED_W);
+    assert.strictEqual(state.overlay.y, SWITCHER_H);
   });
 });

@@ -1,26 +1,24 @@
 <script lang="ts">
-    import { page } from "$app/state";
     import { invoke } from "@tauri-apps/api/core";
     import { onMount } from "svelte";
     import { HugeiconsIcon } from "@hugeicons/svelte";
     import Button from "$lib/components/ui/button/button.svelte";
     import { m } from "$lib/paraglide/messages.js";
     import { createActionRunner } from "$lib/actions.svelte";
-    import StatusRow from "../../projects/StatusRow.svelte";
-    import PackageManager from "../../projects/PackageManager.svelte";
-    import AgentManager from "../../projects/AgentManager.svelte";
-    import PortsManager from "../../projects/PortsManager.svelte";
+    import StatusRow from "../../routes/projects/StatusRow.svelte";
+    import PackageManager from "../../routes/projects/PackageManager.svelte";
+    import AgentManager from "../../routes/projects/AgentManager.svelte";
+    import PortsManager from "../../routes/projects/PortsManager.svelte";
     import type { Project } from "$lib/sandbox";
     import { LoaderPinwheelIcon } from "@hugeicons/core-free-icons";
     import { AGENTS, miseKey } from "$lib/agents/catalogue";
     import { LAUNCHABLE_APPS } from "$lib/workspace/apps";
     import { sandboxHasPane } from "$lib/workspace/state.svelte";
 
-    // Content pane for `AppKind::Dashboard` (docs/features/responsive-panel/02_dev.md Phase D):
-    // an internal SvelteKit route embedded as a second content webview alongside a sandbox's
-    // terminal pane (src-tauri/src/workspace/mod.rs, embed_dashboard). Reads which sandbox it
-    // belongs to from the query string set at pane-creation time.
-    const sandboxName = $derived(page.url.searchParams.get("sandbox") ?? "");
+    // Rendered by `+layout.svelte` when no Terminal/AgentWeb overlay is active for the active
+    // sandbox (docs/features/consolidate-app-container/02_dev.md) — no longer a separate embedded
+    // pane with its own lifecycle.
+    let { sandboxName }: { sandboxName: string } = $props();
 
     let workspacePath = $state("");
     let packages = $state<string[]>([]);
@@ -37,6 +35,9 @@
     );
 
     async function launch(app: (typeof LAUNCHABLE_APPS)[number]) {
+        // No optimistic client-side state here: the Dashboard hides itself once Rust confirms the
+        // pane is active (`activeAppLabel()` becomes non-null via `workspace://state`), not before
+        // — see the comment on `activeSandbox` in state.svelte.ts.
         await launcherAction.run(app.kind, async () => {
             await invoke(app.command, { name: sandboxName, workspacePath });
         });
@@ -80,6 +81,9 @@
                     </Button>
                 {/each}
             </div>
+            {#if launcherAction.error}
+                <p class="text-destructive -mt-4 text-xs">{launcherAction.error}</p>
+            {/if}
             <PackageManager {sandboxName} {workspacePath} {action} />
             <AgentManager {sandboxName} {workspacePath} {action} />
             <PortsManager {sandboxName} {workspacePath} {action} />

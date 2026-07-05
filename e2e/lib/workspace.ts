@@ -1,8 +1,10 @@
 // Reads/drives the single AppContainer workspace registry (src-tauri/src/workspace/mod.rs) through
-// its Tauri commands. The container's child webviews (main-navigation-panel, main-switcher, and each
-// sandbox's terminal/dashboard panes) are separate native surfaces.
+// its Tauri commands. `main-navigation-panel` is the only chrome webview (nav rail, switcher tab
+// bar, and every sandbox's Dashboard are DOM regions of that one document,
+// docs/features/consolidate-app-container/02_dev.md Phase C); a Terminal/AgentWeb pane is the one
+// remaining genuine second native surface, positioned by Rust as `WorkspaceState.overlay`.
 
-export type AppKind = "terminal" | "dashboard" | "agentweb";
+export type AppKind = "terminal" | "agentweb";
 
 export interface AppPane {
   label: string;
@@ -20,17 +22,11 @@ export interface Rect {
   height: number;
 }
 
-export interface WorkspaceRects {
-  navigation_panel: Rect;
-  switcher: Rect;
-  content: Rect;
-}
-
 export interface WorkspaceState {
   apps: AppPane[];
   active_app: string | null;
   collapsed: boolean;
-  rects: WorkspaceRects;
+  overlay: Rect;
   sandbox_last_pane: Record<string, string>;
 }
 
@@ -59,6 +55,10 @@ export async function switchApp(name: string): Promise<void> {
 
 export async function switchPane(name: string, kind: AppKind): Promise<void> {
   await invoke("switch_pane", { name, kind });
+}
+
+export async function hideActivePane(): Promise<void> {
+  await invoke("hide_active_pane");
 }
 
 export async function openAgentWeb(name: string, workspacePath: string): Promise<void> {

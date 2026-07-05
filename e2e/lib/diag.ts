@@ -3,8 +3,8 @@ import path from "path";
 
 // Registers an `afterEach` that, only when the current test failed, dumps the webview URL + page
 // source + a screenshot to e2e/.diag (files stamped from the test title). This exact block was
-// copy-pasted verbatim across several standard/heavy specs before this helper existed;
-// useDashboardWebview() (lib/dashboard-suite.ts) and the standalone specs all call it now.
+// copy-pasted verbatim across several standard/heavy specs before this helper existed; every spec
+// calls it directly now.
 //
 // `extra` runs after the page dump for specs that also want a sidecar artifact (e.g. local-llm
 // copies llama-server.log). It receives the same diag dir + stamp so its files land beside the page

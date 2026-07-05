@@ -84,16 +84,15 @@ the UI's podman-startup activity card behaves the same.
 - `pnpm run test:light` → `wdio run wdio.conf.ts --suite light` — no podman, mock backend.
 - `pnpm run test:heavy` → unchanged.
 
-## Dashboard webview specs: always use `lib/dashboard-suite.ts`
+## Dashboard specs: `workspace-dashboard.page.ts`, no window switching needed
 
-Any `standard` spec whose tests interact with a sandbox's dashboard pane (a separate WebDriver
-window handle from the main app webview) **must** use `useDashboardWebview()` and `dashboardIt()`
-from `e2e/lib/dashboard-suite.ts` rather than hand-rolling `afterEach`/`switchToDashboard` calls.
-Call `useDashboardWebview()` once per `describe` block for the shared teardown and wrap every test after the suite's first dashboard-opening
-test with `dashboardIt(title, () => sandboxName, fn)` so it re-attaches to the dashboard
-automatically. A test forgetting to re-attach after the shared teardown
-resets the session produces a misleading "element wasn't found" error, not a useful one — that's
-the exact pitfall this helper exists to prevent.
+A sandbox's Dashboard (package/agent/ports management) is a DOM region of the single
+`main-navigation-panel` webview (docs/features/consolidate-app-container/02_dev.md Phase C), not a
+separate WebDriver window handle — there is nothing to switch to or back from. Call
+`workspaceDashboard.waitForRendered(sandbox)` (`e2e/test/pageobjects/workspace-dashboard.page.ts`)
+after `row.openWorkspace()` or any action that returns the client-side view to Dashboard, then use
+its other getters/actions directly. Use `captureDiagOnFailure()` (`e2e/lib/diag.ts`) for the
+standard failure-dump `afterEach`, same as any other spec.
 
 ## Failure diagnostics: use `captureDiagOnFailure()` from `lib/diag.ts`
 

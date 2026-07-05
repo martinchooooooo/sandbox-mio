@@ -215,11 +215,13 @@ export const config: WebdriverIO.Config = {
       }
     });
   },
-  // The AppContainer is a multi-webview container (docs/features/embedded-windows/02_dev.md):
-  // the app UI lives in the `main-navigation-panel` child webview, next to the `main-switcher` tab bar
-  // (and, once opened, per-sandbox terminal webviews). Each webview is a WebDriver window
-  // handle and the session may attach to any of them, so pin the session to the app UI handle —
-  // the one whose page is neither the /workspace/* chrome nor a remote terminal origin.
+  // The AppContainer is a bare Window hosting one merged chrome webview, `main-navigation-panel`
+  // (nav rail, switcher tab bar, and every sandbox's Dashboard are DOM regions of that one document,
+  // docs/features/consolidate-app-container/02_dev.md), plus a Terminal/AgentWeb overlay webview per
+  // open pane. Each webview is a WebDriver window handle and the session may attach to any of them,
+  // so pin the session to the app UI handle — the one whose page is neither the legacy
+  // /workspace/* chrome route (none exist any more, but the check is harmless) nor a remote
+  // terminal/agentweb origin.
   before: async () => {
     for (const handle of await browser.getWindowHandles()) {
       await browser.switchToWindow(handle);

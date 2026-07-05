@@ -5,7 +5,7 @@ import path from "path";
 import ProjectsPage from "../../pageobjects/projects.page.js";
 import workspaceDashboard from "../../pageobjects/workspace-dashboard.page.js";
 import { podman, podmanOk, LOCAL_CONNECTION, REMOTE_CONNECTION } from "../../../lib/podman-connection.js";
-import { useDashboardWebview } from "../../../lib/dashboard-suite.js";
+import { captureDiagOnFailure } from "../../../lib/diag.js";
 import { useSandboxWorkspace } from "../../../lib/sandbox-suite.js";
 
 // The test tool: `jq` is a tiny static single-binary CLI (no runtime deps, so it runs on the glibc
@@ -39,7 +39,7 @@ describe("Sandbox runtime management (mise)", function () {
 
   // Capture the webview state on any failure: the "row vanished" symptom points at an app crash or
   // navigation, so dump the URL + page source + a screenshot to e2e/.diag for inspection.
-  useDashboardWebview();
+  captureDiagOnFailure();
 
   it("creates a project whose workspace gets a mise environment", async () => {
     await ProjectsPage.open();
@@ -67,7 +67,7 @@ describe("Sandbox runtime management (mise)", function () {
     // Package management now requires a workspace to be open (Resolved Decision 3,
     // docs/features/responsive-panel/02_dev.md) — there is no inline fallback in the row anymore.
     await row.openWorkspace();
-    await workspaceDashboard.switchToDashboard(projectName);
+    await workspaceDashboard.waitForRendered(projectName);
     await workspaceDashboard.installPackage(PKG);
 
     const manifest = fs.readFileSync(manifestPath, "utf8");
@@ -91,8 +91,6 @@ describe("Sandbox runtime management (mise)", function () {
       `installed-package list in the dashboard pane does not show "${PKG}". ` +
         "This can happen when list_packages did not re-read the [tools] table of mise.toml after install."
     );
-
-    await workspaceDashboard.switchToAppWebview();
   });
 
   it("runs the installed package inside the local container", async () => {

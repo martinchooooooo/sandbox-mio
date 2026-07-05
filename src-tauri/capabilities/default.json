@@ -1,9 +1,9 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the AppContainer window. `windows: [main]` covers its child webviews (main-navigation-panel, main-switcher); the per-sandbox terminal webviews render a remote page only and get no IPC, but each sandbox's dashboard pane (`workspace-*-dashboard`) is an internal route that calls `invoke` (install_package, install_agent, ...) and needs the same coverage.",
+  "description": "Capability for the AppContainer window. `windows: [main]` covers its one merged child webview (main-navigation-panel), which now hosts NavigationPanel, switcher, and Dashboard content as one document (docs/features/consolidate-app-container/02_dev.md); the per-sandbox Terminal/AgentWeb overlay webviews render a remote page only and get no IPC.",
   "windows": ["main"],
-  "webviews": ["main-navigation-panel", "main-switcher", "workspace-*-dashboard"],
+  "webviews": ["main-navigation-panel"],
   "permissions": [
     "core:default",
     "opener:default",

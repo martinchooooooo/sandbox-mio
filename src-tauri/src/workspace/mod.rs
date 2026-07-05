@@ -1,7 +1,10 @@
-//! The embedded multi-webview AppContainer IS the app's main window: a bare container `Window`
-//! (label `main`, created in setup instead of tauri.conf.json) hosting the full SvelteKit app as
-//! the left collapsible NavigationPanel (`main-navigation-panel`), an app-switcher tab bar (`main-switcher`), and
-//! content child webviews per sandbox whose workspace is open.
+//! The embedded AppContainer IS the app's main window: a bare container `Window` (label `main`,
+//! created in setup instead of tauri.conf.json) hosting the full SvelteKit app — NavigationPanel,
+//! switcher tab bar, and the active sandbox's Dashboard content — as one merged webview
+//! (`main-navigation-panel`), plus a Terminal/AgentWeb overlay child webview per sandbox whose
+//! pane is open. Nav/Switcher/Dashboard used to be three separate webviews
+//! (docs/features/embedded-windows/02_dev.md); consolidated by
+//! docs/features/consolidate-app-container/02_dev.md to remove open/close jitter.
 
 pub mod types;
 
@@ -9,67 +12,50 @@ use std::sync::mpsc;
 
 use tauri::{AppHandle, Emitter, Manager, Runtime, WindowEvent};
 
-use types::{
-    AppKind, AppPane, Rect, TerminalPane, WorkspaceError, WorkspaceRects, WorkspaceRegistry,
-    WorkspaceState,
-};
+use types::{AppKind, AppPane, Rect, TerminalPane, WorkspaceError, WorkspaceRegistry, WorkspaceState};
 
 /// Label of the main container window (bare `Window`, no webview of its own).
 pub const MAIN_WINDOW: &str = "main";
-/// Label of the NavigationPanel child webview hosting the full app UI.
+/// Label of the merged NavigationPanel/Switcher/Dashboard child webview hosting the full app UI.
 pub const NAVIGATION_PANEL_LABEL: &str = "main-navigation-panel";
-/// Label of the app-switcher child webview (tab bar above the content area).
-pub const SWITCHER_LABEL: &str = "main-switcher";
 
-/// NavigationPanel width when expanded and an app is embedded, logical px. Cross-referenced by the
-/// `max-[420px]:` CSS breakpoint in `src/routes/projects/+page.svelte` and
-/// `src/routes/projects/SandboxItem.svelte` (docs/features/responsive-panel/02_dev.md, Resolved
-/// Decision 4) — that breakpoint must stay above this value if it ever changes.
+/// NavigationPanel width when expanded, logical px. Cross-referenced by the `max-[420px]:` CSS
+/// breakpoint in `src/routes/projects/+page.svelte` and `src/routes/projects/SandboxItem.svelte`
+/// (docs/features/responsive-panel/02_dev.md, Resolved Decision 4) — that breakpoint must stay
+/// above this value if it ever changes. Also cross-referenced by the merged webview's own nav-rail
+/// CSS width, since this constant no longer drives that layout via `set_bounds`
+/// (docs/features/consolidate-app-container/02_dev.md Resolved Decision 1): if the two drift, the
+/// Terminal/AgentWeb overlay renders at the wrong x-offset.
 pub const NAVIGATION_PANEL_EXPANDED_W: f64 = 380.0;
 /// NavigationPanel width when collapsed to the thin rail (never zero: the rail keeps the expand
 /// button reachable), logical px.
 pub const NAVIGATION_PANEL_RAIL_W: f64 = 48.0;
 /// Switcher bar height across the top of the content area, logical px. 64 fits the two-level
-/// per-sandbox block (name row over app-tab row, `src/routes/workspace/switcher/+page.svelte`)
-/// without clipping (`docs/features/workspace-app-tabs/02_dev.md` Resolved Decision 5).
+/// per-sandbox block (name row over app-tab row) without clipping
+/// (`docs/features/workspace-app-tabs/02_dev.md` Resolved Decision 5). Cross-referenced by the
+/// merged webview's own switcher-bar CSS height, same drift risk as `NAVIGATION_PANEL_EXPANDED_W`.
 pub const SWITCHER_H: f64 = 64.0;
 
-/// Compute the three child-webview rectangles from the container's logical size, the collapse
-/// flag, and whether any app is embedded. With no content the NavigationPanel takes the whole window
-/// (the collapse flag is moot: there is nothing to yield space to). Pure so it is unit-testable
-/// without a window; every geometry change (embed, close, collapse toggle, OS resize) flows
-/// through here.
-pub fn workspace_layout(
-    width: f64,
-    height: f64,
-    collapsed: bool,
-    has_content: bool,
-) -> WorkspaceRects {
-    if !has_content {
-        return WorkspaceRects {
-            navigation_panel: Rect { x: 0.0, y: 0.0, width, height },
-            switcher: Rect { x: width, y: 0.0, width: 0.0, height: 0.0 },
-            content: Rect { x: width, y: 0.0, width: 0.0, height: 0.0 },
-        };
-    }
-    let navigation_panel_w = if collapsed { NAVIGATION_PANEL_RAIL_W } else { NAVIGATION_PANEL_EXPANDED_W }.min(width);
-    let content_w = (width - navigation_panel_w).max(0.0);
+/// Compute the Terminal/AgentWeb overlay's rectangle from the container's logical size and the
+/// collapse flag: `(nav_width, switcher_h, width - nav_width, height - switcher_h)`. Pure so it is
+/// unit-testable without a window; every geometry change (embed, close, collapse toggle, OS
+/// resize) flows through here. The merged webview itself is never resized by this: it always
+/// fills the window, laying out nav/switcher/dashboard with ordinary CSS.
+pub fn workspace_layout(width: f64, height: f64, collapsed: bool) -> Rect {
+    let navigation_panel_w =
+        if collapsed { NAVIGATION_PANEL_RAIL_W } else { NAVIGATION_PANEL_EXPANDED_W }.min(width);
     let switcher_h = SWITCHER_H.min(height);
-    WorkspaceRects {
-        navigation_panel: Rect { x: 0.0, y: 0.0, width: navigation_panel_w, height },
-        switcher: Rect { x: navigation_panel_w, y: 0.0, width: content_w, height: switcher_h },
-        content: Rect {
-            x: navigation_panel_w,
-            y: switcher_h,
-            width: content_w,
-            height: (height - switcher_h).max(0.0),
-        },
+    Rect {
+        x: navigation_panel_w,
+        y: switcher_h,
+        width: (width - navigation_panel_w).max(0.0),
+        height: (height - switcher_h).max(0.0),
     }
 }
 
-/// Create the AppContainer window with its two chrome children. Called once from setup; the
+/// Create the AppContainer window with its one merged chrome child. Called once from setup; the
 /// window replaces the `windows` entry that used to live in tauri.conf.json (a config window
-/// always gets its own webview, which a multi-webview container must not have).
+/// always gets its own webview, which this container must not have).
 pub fn create_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), WorkspaceError> {
     let win = |e: tauri::Error| WorkspaceError::Window(e.to_string());
 
@@ -80,7 +66,6 @@ pub fn create_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), Workspac
         .map_err(win)?;
 
     let size = logical_size(&window)?;
-    let rects = workspace_layout(size.width, size.height, false, false);
 
     window
         .add_child(
@@ -88,23 +73,14 @@ pub fn create_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), Workspac
                 NAVIGATION_PANEL_LABEL,
                 tauri::WebviewUrl::App(Default::default()),
             ),
-            tauri::LogicalPosition::new(rects.navigation_panel.x, rects.navigation_panel.y),
-            tauri::LogicalSize::new(rects.navigation_panel.width, rects.navigation_panel.height),
-        )
-        .map_err(win)?;
-    window
-        .add_child(
-            tauri::webview::WebviewBuilder::new(
-                SWITCHER_LABEL,
-                tauri::WebviewUrl::App("workspace/switcher".into()),
-            ),
-            tauri::LogicalPosition::new(rects.switcher.x, rects.switcher.y),
-            tauri::LogicalSize::new(rects.switcher.width, rects.switcher.height),
+            tauri::LogicalPosition::new(0.0, 0.0),
+            tauri::LogicalSize::new(size.width, size.height),
         )
         .map_err(win)?;
 
+    let overlay = workspace_layout(size.width, size.height, false);
     *app.state::<WorkspaceRegistry>().lock().unwrap() =
-        WorkspaceState { rects, ..Default::default() };
+        WorkspaceState { overlay, ..Default::default() };
 
     // Child bounds are absolute and do not reflow: re-layout on every OS resize. Closing the main
     // window exits the app, but the Mutagen forwards live in the daemon and would outlive it, so
@@ -171,14 +147,13 @@ fn embed_external_on_main<R: Runtime>(
     let suffix = match kind {
         AppKind::Terminal => "terminal",
         AppKind::AgentWeb => "agentweb",
-        AppKind::Dashboard => "dashboard",
     };
     let label = format!("workspace-{name}-{suffix}");
 
     let registry = app.state::<WorkspaceRegistry>();
     let collapsed = registry.lock().unwrap().collapsed;
     let size = logical_size(&window)?;
-    let rects = workspace_layout(size.width, size.height, collapsed, true);
+    let overlay = workspace_layout(size.width, size.height, collapsed);
 
     window
         .add_child(
@@ -187,8 +162,8 @@ fn embed_external_on_main<R: Runtime>(
                 tauri::WebviewUrl::External(pane.url.clone()),
             )
             .initialization_script(&pane.init_script),
-            tauri::LogicalPosition::new(rects.content.x, rects.content.y),
-            tauri::LogicalSize::new(rects.content.width, rects.content.height),
+            tauri::LogicalPosition::new(overlay.x, overlay.y),
+            tauri::LogicalSize::new(overlay.width, overlay.height),
         )
         .map_err(win)?;
 
@@ -203,23 +178,22 @@ fn embed_external_on_main<R: Runtime>(
             kind,
             url: pane.url.to_string(),
         },
-        rects,
+        overlay,
     );
 
     let state = registry.lock().unwrap().clone();
-    apply_layout(&window, &state, &rects)?;
+    apply_layout(&window, &state, overlay)?;
     emit_state(app);
     Ok(())
 }
 
 /// Push a newly created pane into the registry, make it the sandbox's active tab, and hide
-/// whichever pane was active before. Shared by `embed_external_on_main` and
-/// `embed_dashboard_on_main` — every pane becomes active on creation.
+/// whichever pane was active before. Every pane becomes active on creation.
 fn activate_new_pane<R: Runtime>(
     window: &tauri::window::Window<R>,
     registry: &WorkspaceRegistry,
     pane: AppPane,
-    rects: WorkspaceRects,
+    overlay: Rect,
 ) {
     let name = pane.sandbox.clone();
     let label = pane.label.clone();
@@ -229,7 +203,7 @@ fn activate_new_pane<R: Runtime>(
         state.apps.push(pane);
         state.active_app = Some(label.clone());
         state.sandbox_last_pane.insert(name, label);
-        state.rects = rects;
+        state.overlay = overlay;
         previous
     };
     if let Some(previous) = previous {
@@ -237,70 +211,10 @@ fn activate_new_pane<R: Runtime>(
     }
 }
 
-/// Embed sandbox `name`'s package/agent management dashboard (the Manage/Home tab) and make it the
-/// active pane. No Mutagen forward backs it, since the dashboard is pure Tauri IPC, not an external process.
-///
-/// Must only ever be called from an `async` Tauri command: `add_child` deadlocks the whole app
-/// when reached from a synchronous command, because `run_on_main`'s blocking wait never returns
-/// (confirmed by the de-risking spike, `docs/features/responsive-panel/03_e2e.md`, 2026-07-02).
-/// `open_workspace` is already `async fn`, so this is satisfied today; do not add a sync wrapper.
-pub fn embed_dashboard<R: Runtime>(
-    app: &AppHandle<R>,
-    name: &str,
-    workspace_path: &str,
-) -> Result<(), WorkspaceError> {
-    let app_in = app.clone();
-    let name = name.to_string();
-    let workspace_path = workspace_path.to_string();
-    run_on_main(app, move || embed_dashboard_on_main(&app_in, &name, &workspace_path))?
-}
-
-fn embed_dashboard_on_main<R: Runtime>(
-    app: &AppHandle<R>,
-    name: &str,
-    workspace_path: &str,
-) -> Result<(), WorkspaceError> {
-    let win = |e: tauri::Error| WorkspaceError::Window(e.to_string());
-    let window = main_window(app)?;
-    let label = format!("workspace-{name}-dashboard");
-    let route = format!("workspace/dashboard?sandbox={name}");
-
-    let registry = app.state::<WorkspaceRegistry>();
-    let collapsed = registry.lock().unwrap().collapsed;
-    let size = logical_size(&window)?;
-    let rects = workspace_layout(size.width, size.height, collapsed, true);
-
-    window
-        .add_child(
-            tauri::webview::WebviewBuilder::new(&label, tauri::WebviewUrl::App(route.clone().into())),
-            tauri::LogicalPosition::new(rects.content.x, rects.content.y),
-            tauri::LogicalSize::new(rects.content.width, rects.content.height),
-        )
-        .map_err(win)?;
-
-    activate_new_pane(
-        &window,
-        &registry,
-        AppPane {
-            label,
-            sandbox: name.to_string(),
-            workspace_path: workspace_path.to_string(),
-            forward_name: String::new(),
-            kind: AppKind::Dashboard,
-            url: format!("/{route}"),
-        },
-        rects,
-    );
-
-    let state = registry.lock().unwrap().clone();
-    apply_layout(&window, &state, &rects)?;
-    emit_state(app);
-    Ok(())
-}
-
-/// Bring sandbox `name`'s last-active pane to the front, defaulting to its Manage/Dashboard pane
-/// if none is recorded yet (the one pane every open sandbox is guaranteed to have). Used by the
-/// projects-list "Open workspace" button when panes already exist.
+/// Bring sandbox `name`'s last-active Terminal/AgentWeb pane to the front. No-op if the sandbox
+/// has no such pane open — the client-side router is what puts the user on that sandbox's
+/// Dashboard view in that case, not this command (Resolved Decision 2,
+/// docs/features/consolidate-app-container/02_dev.md).
 pub fn switch_app<R: Runtime>(app: &AppHandle<R>, name: &str) -> Result<(), WorkspaceError> {
     let app_in = app.clone();
     let name = name.to_string();
@@ -317,17 +231,31 @@ fn switch_app_on_main<R: Runtime>(app: &AppHandle<R>, name: &str) -> Result<(), 
             .get(name)
             .filter(|label| state.apps.iter().any(|p| &p.label == *label))
             .cloned()
-            .or_else(|| {
-                state
-                    .apps
-                    .iter()
-                    .find(|p| p.sandbox == name && p.kind == AppKind::Dashboard)
-                    .map(|p| p.label.clone())
-            })
-            .ok_or_else(|| WorkspaceError::NotOpen(name.to_string()))?
     };
+    let Some(target) = target else { return Ok(()) };
     activate_pane(&window, &registry, name, target)?;
     emit_state(app);
+    Ok(())
+}
+
+/// Hide whichever Terminal/AgentWeb overlay is currently shown and clear `active_app`, with no
+/// replacement pane activated. Called when the client-side view navigates to a sandbox's
+/// Dashboard (or away from any sandbox) while an overlay is still visible — the merged webview's
+/// own DOM change is not enough by itself, since the overlay is a native sibling surface stacked on
+/// top of it (docs/features/consolidate-app-container/02_dev.md).
+pub fn hide_active_pane<R: Runtime>(app: &AppHandle<R>) -> Result<(), WorkspaceError> {
+    let app_in = app.clone();
+    run_on_main(app, move || hide_active_pane_on_main(&app_in))?
+}
+
+fn hide_active_pane_on_main<R: Runtime>(app: &AppHandle<R>) -> Result<(), WorkspaceError> {
+    let window = main_window(app)?;
+    let registry = app.state::<WorkspaceRegistry>();
+    let previous = registry.lock().unwrap().active_app.take();
+    if let Some(previous) = previous {
+        hide_webview(&window, &previous);
+        emit_state(app);
+    }
     Ok(())
 }
 
@@ -400,25 +328,22 @@ fn set_collapsed_on_main<R: Runtime>(
     let window = main_window(app)?;
     let registry = app.state::<WorkspaceRegistry>();
     let size = logical_size(&window)?;
-    let (state, rects) = {
+    let (state, overlay) = {
         let mut state = registry.lock().unwrap();
         state.collapsed = collapsed;
-        let rects =
-            workspace_layout(size.width, size.height, collapsed, !state.apps.is_empty());
-        state.rects = rects;
-        (state.clone(), rects)
+        let overlay = workspace_layout(size.width, size.height, collapsed);
+        state.overlay = overlay;
+        (state.clone(), overlay)
     };
-    apply_layout(&window, &state, &rects)?;
+    apply_layout(&window, &state, overlay)?;
     emit_state(app);
     Ok(())
 }
 
-/// Tear down every one of sandbox `name`'s embedded panes (Terminal and, if open, Dashboard and
-/// AgentWeb): close their webviews, activate the neighbouring tab, terminate the Terminal and
-/// AgentWeb panes' forwards (Dashboard has none), drop the forward-port entry, clear
-/// `sandbox_last_pane`, re-layout
-/// (closing the last pane returns the NavigationPanel to full-bleed). Idempotent and best-effort, so
-/// it is safe from the command, from undeploy/destroy, and from the Destroyed event alike.
+/// Tear down every one of sandbox `name`'s embedded panes (Terminal and, if open, AgentWeb): close
+/// their webviews, activate the neighbouring tab, terminate their forwards, drop the forward-port
+/// entry, clear `sandbox_last_pane`. Idempotent and best-effort, so it is safe from the command,
+/// from undeploy/destroy, and from the Destroyed event alike.
 pub async fn close_app<R: Runtime>(app: &AppHandle<R>, name: &str) {
     let registry = app.state::<WorkspaceRegistry>();
     let removed = {
@@ -432,33 +357,35 @@ pub async fn close_app<R: Runtime>(app: &AppHandle<R>, name: &str) {
                 true
             }
         });
+        // Clear unconditionally, before the early return below: a sandbox's last pane can already
+        // be gone from `apps` (closed individually via `close_pane`, which doesn't touch this map)
+        // by the time `close_app` runs, and this entry must not outlive the sandbox regardless.
+        state.sandbox_last_pane.remove(name);
         if panes.is_empty() {
             return;
         }
         if state.active_app.as_deref().is_some_and(|active| panes.iter().any(|p| p.label == active)) {
             state.active_app = state.apps.last().map(|p| p.label.clone());
         }
-        state.sandbox_last_pane.remove(name);
-        (panes, state.active_app.clone(), state.collapsed, state.apps.is_empty())
+        (panes, state.active_app.clone(), state.collapsed)
     };
-    let (panes, next_active, collapsed, now_empty) = removed;
+    let (panes, next_active, collapsed) = removed;
 
     let app_in = app.clone();
     let pane_labels: Vec<String> = panes.iter().map(|p| p.label.clone()).collect();
     let _ = run_on_main(app, move || {
-        close_app_on_main(&app_in, &pane_labels, next_active, collapsed, now_empty)
+        close_app_on_main(&app_in, &pane_labels, next_active, collapsed)
     });
 
     teardown_forwards(app, name, &panes).await;
     emit_state(app);
 }
 
-/// Close one pane of sandbox `name`, leaving its siblings open; no-op on `AppKind::Dashboard` or an
-/// already-closed pane. Re-activates the sandbox's Dashboard pane if the removed one was active.
+/// Close one pane of sandbox `name`, leaving its siblings open; no-op on an already-closed pane.
+/// Clears `active_app`/hides the overlay if the removed pane was active, letting the client-side
+/// view fall back to Dashboard — there is no Dashboard pane label to re-activate any more
+/// (docs/features/consolidate-app-container/02_dev.md Resolved Decision 4).
 pub async fn close_pane<R: Runtime>(app: &AppHandle<R>, name: &str, kind: AppKind) {
-    if kind == AppKind::Dashboard {
-        return;
-    }
     let registry = app.state::<WorkspaceRegistry>();
     let removed = {
         let mut state = registry.lock().unwrap();
@@ -468,24 +395,16 @@ pub async fn close_pane<R: Runtime>(app: &AppHandle<R>, name: &str, kind: AppKin
         };
         let pane = state.apps.remove(index);
         if state.active_app.as_deref() == Some(pane.label.as_str()) {
-            let dashboard_label = state
-                .apps
-                .iter()
-                .find(|p| p.sandbox == name && p.kind == AppKind::Dashboard)
-                .map(|p| p.label.clone());
-            state.active_app = dashboard_label.clone();
-            if let Some(label) = dashboard_label {
-                state.sandbox_last_pane.insert(name.to_string(), label);
-            }
+            state.active_app = None;
         }
-        (pane, state.active_app.clone(), state.collapsed, state.apps.is_empty())
+        (pane, state.active_app.clone(), state.collapsed)
     };
-    let (pane, next_active, collapsed, now_empty) = removed;
+    let (pane, next_active, collapsed) = removed;
 
     let app_in = app.clone();
     let pane_labels = vec![pane.label.clone()];
     let _ = run_on_main(app, move || {
-        close_app_on_main(&app_in, &pane_labels, next_active, collapsed, now_empty)
+        close_app_on_main(&app_in, &pane_labels, next_active, collapsed)
     });
 
     teardown_forwards(app, name, std::slice::from_ref(&pane)).await;
@@ -496,13 +415,10 @@ async fn teardown_forwards<R: Runtime>(app: &AppHandle<R>, name: &str, panes: &[
     let network = app.state::<std::sync::Arc<dyn crate::network::types::NetworkManager>>();
     for pane in panes {
         let kind = match pane.kind {
-            AppKind::Terminal => Some(crate::network::types::ServiceKind::Terminal),
-            AppKind::AgentWeb => Some(crate::network::types::ServiceKind::AgentWeb),
-            AppKind::Dashboard => None,
+            AppKind::Terminal => crate::network::types::ServiceKind::Terminal,
+            AppKind::AgentWeb => crate::network::types::ServiceKind::AgentWeb,
         };
-        if let Some(kind) = kind {
-            network.close_forward(name, kind).await;
-        }
+        network.close_forward(name, kind).await;
     }
 }
 
@@ -513,7 +429,6 @@ fn close_app_on_main<R: Runtime>(
     pane_labels: &[String],
     next_active: Option<String>,
     collapsed: bool,
-    now_empty: bool,
 ) {
     let Some(window) = app.get_window(MAIN_WINDOW) else { return };
     for label in pane_labels {
@@ -525,11 +440,11 @@ fn close_app_on_main<R: Runtime>(
         let _ = show_webview(&window, next);
     }
     if let Ok(size) = logical_size(&window) {
-        let rects = workspace_layout(size.width, size.height, collapsed, !now_empty);
+        let overlay = workspace_layout(size.width, size.height, collapsed);
         let registry = app.state::<WorkspaceRegistry>();
         let state = registry.lock().unwrap().clone();
-        if apply_layout(&window, &state, &rects).is_ok() {
-            registry.lock().unwrap().rects = rects;
+        if apply_layout(&window, &state, overlay).is_ok() {
+            registry.lock().unwrap().overlay = overlay;
         }
     }
 }
@@ -548,20 +463,24 @@ pub async fn close_all_apps<R: Runtime>(app: &AppHandle<R>) {
 }
 
 /// Recompute and apply the layout after an OS-window resize, preserving collapse and tab state.
+/// The merged NavigationPanel webview always fills the window, so it alone is re-bounded here even
+/// when no overlay is active.
 fn relayout<R: Runtime>(app: &AppHandle<R>, size: tauri::PhysicalSize<u32>) {
     let Some(window) = app.get_window(MAIN_WINDOW) else { return };
     let Ok(scale) = window.scale_factor() else { return };
     let logical = size.to_logical::<f64>(scale);
     let registry = app.state::<WorkspaceRegistry>();
     let state = registry.lock().unwrap().clone();
-    let rects =
-        workspace_layout(logical.width, logical.height, state.collapsed, !state.apps.is_empty());
-    // Coalesce resize bursts: identical rects (minimise/restore, sub-pixel moves) apply nothing.
-    if rects == state.rects {
+    let overlay = workspace_layout(logical.width, logical.height, state.collapsed);
+    // Coalesce resize bursts: an unchanged overlay rect (minimise/restore, sub-pixel moves) implies
+    // the window's logical size didn't change either, so there is nothing to apply.
+    if overlay == state.overlay {
         return;
     }
-    if apply_layout(&window, &state, &rects).is_ok() {
-        registry.lock().unwrap().rects = rects;
+    let full = Rect { x: 0.0, y: 0.0, width: logical.width, height: logical.height };
+    let _ = set_webview_bounds(&window, NAVIGATION_PANEL_LABEL, full);
+    if apply_layout(&window, &state, overlay).is_ok() {
+        registry.lock().unwrap().overlay = overlay;
     }
 }
 
@@ -603,17 +522,15 @@ fn logical_size<R: Runtime>(
     Ok(window.inner_size().map_err(win)?.to_logical::<f64>(scale))
 }
 
-/// `set_bounds` every child of the workspace. Hidden app panes are re-bounded too so they
-/// reappear at the right geometry when a later `switch_app` shows them.
+/// `set_bounds` every Terminal/AgentWeb overlay pane to `overlay`. Hidden panes are re-bounded too
+/// so they reappear at the right geometry when a later `switch_app`/`switch_pane` shows them.
 fn apply_layout<R: Runtime>(
     window: &tauri::window::Window<R>,
     state: &WorkspaceState,
-    rects: &WorkspaceRects,
+    overlay: Rect,
 ) -> Result<(), WorkspaceError> {
-    set_webview_bounds(window, NAVIGATION_PANEL_LABEL, rects.navigation_panel)?;
-    set_webview_bounds(window, SWITCHER_LABEL, rects.switcher)?;
     for pane in &state.apps {
-        set_webview_bounds(window, &pane.label, rects.content)?;
+        set_webview_bounds(window, &pane.label, overlay)?;
     }
     Ok(())
 }
@@ -660,55 +577,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn without_content_the_navigation_panel_fills_the_window() {
-        let r = workspace_layout(1024.0, 720.0, false, false);
-        assert_eq!(r.navigation_panel, Rect { x: 0.0, y: 0.0, width: 1024.0, height: 720.0 });
-        assert_eq!(r.switcher.width, 0.0);
-        assert_eq!(r.content.width, 0.0);
-        // The collapse flag is moot with nothing to yield space to.
-        let r = workspace_layout(1024.0, 720.0, true, false);
-        assert_eq!(r.navigation_panel.width, 1024.0);
+    fn expanded_layout_places_overlay_beside_nav_and_below_switcher() {
+        let r = workspace_layout(1024.0, 720.0, false);
+        assert_eq!(r.x, NAVIGATION_PANEL_EXPANDED_W);
+        assert_eq!(r.y, SWITCHER_H);
+        assert_eq!(r.width, 1024.0 - NAVIGATION_PANEL_EXPANDED_W);
+        assert_eq!(r.height, 720.0 - SWITCHER_H);
     }
 
     #[test]
-    fn expanded_layout_partitions_the_container() {
-        let r = workspace_layout(1024.0, 720.0, false, true);
-        assert_eq!(r.navigation_panel.width, NAVIGATION_PANEL_EXPANDED_W);
-        assert_eq!(r.navigation_panel.height, 720.0);
-        assert_eq!(r.switcher.x, NAVIGATION_PANEL_EXPANDED_W);
-        assert_eq!(r.switcher.width, 1024.0 - NAVIGATION_PANEL_EXPANDED_W);
-        assert_eq!(r.switcher.height, SWITCHER_H);
-        assert_eq!(r.content.x, NAVIGATION_PANEL_EXPANDED_W);
-        assert_eq!(r.content.y, SWITCHER_H);
-        assert_eq!(r.content.width, 1024.0 - NAVIGATION_PANEL_EXPANDED_W);
-        assert_eq!(r.content.height, 720.0 - SWITCHER_H);
-    }
-
-    #[test]
-    fn collapsed_layout_shrinks_navigation_panel_to_the_rail_and_grows_content() {
-        let expanded = workspace_layout(1024.0, 720.0, false, true);
-        let collapsed = workspace_layout(1024.0, 720.0, true, true);
-        assert_eq!(collapsed.navigation_panel.width, NAVIGATION_PANEL_RAIL_W);
-        assert!(collapsed.content.x < expanded.content.x);
-        assert!(collapsed.content.width > expanded.content.width);
-        assert_eq!(collapsed.content.x + collapsed.content.width, 1024.0);
-    }
-
-    #[test]
-    fn regions_do_not_overlap() {
-        let r = workspace_layout(800.0, 600.0, false, true);
-        assert_eq!(r.global.x + r.global.width, r.switcher.x);
-        assert_eq!(r.global.x + r.global.width, r.content.x);
-        assert_eq!(r.switcher.y + r.switcher.height, r.content.y);
+    fn collapsed_layout_shrinks_nav_width_and_grows_overlay() {
+        let expanded = workspace_layout(1024.0, 720.0, false);
+        let collapsed = workspace_layout(1024.0, 720.0, true);
+        assert_eq!(collapsed.x, NAVIGATION_PANEL_RAIL_W);
+        assert!(collapsed.x < expanded.x);
+        assert!(collapsed.width > expanded.width);
+        assert_eq!(collapsed.x + collapsed.width, 1024.0);
     }
 
     #[test]
     fn degenerate_container_sizes_never_go_negative() {
-        let r = workspace_layout(0.0, 0.0, false, true);
-        assert!(r.global.width >= 0.0 && r.switcher.width >= 0.0 && r.content.width >= 0.0);
-        assert!(r.switcher.height >= 0.0 && r.content.height >= 0.0);
-        let r = workspace_layout(30.0, 20.0, true, true);
-        assert!(r.global.width <= 30.0);
-        assert!(r.content.width >= 0.0 && r.content.height >= 0.0);
+        let r = workspace_layout(0.0, 0.0, false);
+        assert!(r.width >= 0.0 && r.height >= 0.0);
+        let r = workspace_layout(30.0, 20.0, true);
+        assert!(r.x <= 30.0);
+        assert!(r.width >= 0.0 && r.height >= 0.0);
     }
 }

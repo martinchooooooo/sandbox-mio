@@ -5,7 +5,7 @@ import path from "path";
 import ProjectsPage from "../../pageobjects/projects.page.js";
 import workspaceDashboard from "../../pageobjects/workspace-dashboard.page.js";
 import { podman, podmanOk, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
-import { useDashboardWebview, dashboardIt } from "../../../lib/dashboard-suite.js";
+import { captureDiagOnFailure } from "../../../lib/diag.js";
 import { useSandboxWorkspace } from "../../../lib/sandbox-suite.js";
 
 // `browser.url` rejects relative paths, and there is no wdio `baseUrl`: the app is served from a
@@ -25,7 +25,7 @@ describe("Agent setup — Claude Code", function () {
   const { projectName, row, workspaceDir } = useSandboxWorkspace("e2e-agents");
   const manifestPath = path.join(workspaceDir, "mise.toml");
 
-  useDashboardWebview();
+  captureDiagOnFailure();
 
   it("creates a project, opens its workspace, and shows an Agents section with no agents in the dashboard pane", async () => {
     await ProjectsPage.open();
@@ -40,7 +40,7 @@ describe("Agent setup — Claude Code", function () {
     // Package/agent management now requires a workspace to be open (Resolved Decision 3,
     // docs/features/responsive-panel/02_dev.md) — there is no inline fallback in the row anymore.
     await row.openWorkspace();
-    await workspaceDashboard.switchToDashboard(projectName);
+    await workspaceDashboard.waitForRendered(projectName);
 
     await workspaceDashboard.noAgentsText.waitForExist({
       timeout: 5000,
@@ -48,7 +48,7 @@ describe("Agent setup — Claude Code", function () {
     });
   });
 
-  dashboardIt("installs Claude Code through the UI including the npm postinstall step", () => projectName, async () => {
+  it("installs Claude Code through the UI including the npm postinstall step", async () => {
     await workspaceDashboard.startAgentInstall("Claude Code");
 
     // Wait for the agent row to appear — install downloads node@lts + claude-code + native binary.
@@ -97,7 +97,7 @@ describe("Agent setup — Claude Code", function () {
     await row.waitForDisplayed();
 
     await row.openWorkspace();
-    await workspaceDashboard.switchToDashboard(projectName);
+    await workspaceDashboard.waitForRendered(projectName);
 
     await workspaceDashboard.waitForAgentStatus("Claude Code", "e2e-test@example.com", 15000);
 
@@ -114,7 +114,7 @@ describe("Agent setup — Claude Code", function () {
     await ProjectsPage.open();
     await row.waitForDisplayed();
     await row.openWorkspace();
-    await workspaceDashboard.switchToDashboard(projectName);
+    await workspaceDashboard.waitForRendered(projectName);
     await workspaceDashboard.waitForAgentStatus("Claude Code", "not authenticated");
 
     const authBtn = await workspaceDashboard.agentAuthButton("Claude Code");
