@@ -1,5 +1,5 @@
-// Reads/drives the single main-window workspace registry (src-tauri/src/workspace/mod.rs) through
-// its Tauri commands. The container's child webviews (main-global, main-switcher, and each
+// Reads/drives the single AppContainer workspace registry (src-tauri/src/workspace/mod.rs) through
+// its Tauri commands. The container's child webviews (main-navigation-panel, main-switcher, and each
 // sandbox's terminal/dashboard panes) are separate native surfaces.
 
 export type AppKind = "terminal" | "dashboard" | "agentweb";
@@ -21,7 +21,7 @@ export interface Rect {
 }
 
 export interface WorkspaceRects {
-  global: Rect;
+  navigation_panel: Rect;
   switcher: Rect;
   content: Rect;
 }

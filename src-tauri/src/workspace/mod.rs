@@ -1,6 +1,6 @@
-//! The embedded multi-webview workspace IS the app's main window: a bare container `Window`
+//! The embedded multi-webview AppContainer IS the app's main window: a bare container `Window`
 //! (label `main`, created in setup instead of tauri.conf.json) hosting the full SvelteKit app as
-//! the left collapsible panel (`main-global`), an app-switcher tab bar (`main-switcher`), and
+//! the left collapsible NavigationPanel (`main-navigation-panel`), an app-switcher tab bar (`main-switcher`), and
 //! content child webviews per sandbox whose workspace is open.
 
 pub mod types;
@@ -16,26 +16,26 @@ use types::{
 
 /// Label of the main container window (bare `Window`, no webview of its own).
 pub const MAIN_WINDOW: &str = "main";
-/// Label of the global-panel child webview hosting the full app UI.
-pub const GLOBAL_LABEL: &str = "main-global";
+/// Label of the NavigationPanel child webview hosting the full app UI.
+pub const NAVIGATION_PANEL_LABEL: &str = "main-navigation-panel";
 /// Label of the app-switcher child webview (tab bar above the content area).
 pub const SWITCHER_LABEL: &str = "main-switcher";
 
-/// Global panel width when expanded and an app is embedded, logical px. Cross-referenced by the
+/// NavigationPanel width when expanded and an app is embedded, logical px. Cross-referenced by the
 /// `max-[420px]:` CSS breakpoint in `src/routes/projects/+page.svelte` and
 /// `src/routes/projects/SandboxItem.svelte` (docs/features/responsive-panel/02_dev.md, Resolved
 /// Decision 4) — that breakpoint must stay above this value if it ever changes.
-pub const GLOBAL_EXPANDED_W: f64 = 380.0;
-/// Global panel width when collapsed to the thin rail (never zero: the rail keeps the expand
+pub const NAVIGATION_PANEL_EXPANDED_W: f64 = 380.0;
+/// NavigationPanel width when collapsed to the thin rail (never zero: the rail keeps the expand
 /// button reachable), logical px.
-pub const GLOBAL_RAIL_W: f64 = 48.0;
+pub const NAVIGATION_PANEL_RAIL_W: f64 = 48.0;
 /// Switcher bar height across the top of the content area, logical px. 64 fits the two-level
 /// per-sandbox block (name row over app-tab row, `src/routes/workspace/switcher/+page.svelte`)
 /// without clipping (`docs/features/workspace-app-tabs/02_dev.md` Resolved Decision 5).
 pub const SWITCHER_H: f64 = 64.0;
 
 /// Compute the three child-webview rectangles from the container's logical size, the collapse
-/// flag, and whether any app is embedded. With no content the global panel takes the whole window
+/// flag, and whether any app is embedded. With no content the NavigationPanel takes the whole window
 /// (the collapse flag is moot: there is nothing to yield space to). Pure so it is unit-testable
 /// without a window; every geometry change (embed, close, collapse toggle, OS resize) flows
 /// through here.
@@ -47,19 +47,19 @@ pub fn workspace_layout(
 ) -> WorkspaceRects {
     if !has_content {
         return WorkspaceRects {
-            global: Rect { x: 0.0, y: 0.0, width, height },
+            navigation_panel: Rect { x: 0.0, y: 0.0, width, height },
             switcher: Rect { x: width, y: 0.0, width: 0.0, height: 0.0 },
             content: Rect { x: width, y: 0.0, width: 0.0, height: 0.0 },
         };
     }
-    let global_w = if collapsed { GLOBAL_RAIL_W } else { GLOBAL_EXPANDED_W }.min(width);
-    let content_w = (width - global_w).max(0.0);
+    let navigation_panel_w = if collapsed { NAVIGATION_PANEL_RAIL_W } else { NAVIGATION_PANEL_EXPANDED_W }.min(width);
+    let content_w = (width - navigation_panel_w).max(0.0);
     let switcher_h = SWITCHER_H.min(height);
     WorkspaceRects {
-        global: Rect { x: 0.0, y: 0.0, width: global_w, height },
-        switcher: Rect { x: global_w, y: 0.0, width: content_w, height: switcher_h },
+        navigation_panel: Rect { x: 0.0, y: 0.0, width: navigation_panel_w, height },
+        switcher: Rect { x: navigation_panel_w, y: 0.0, width: content_w, height: switcher_h },
         content: Rect {
-            x: global_w,
+            x: navigation_panel_w,
             y: switcher_h,
             width: content_w,
             height: (height - switcher_h).max(0.0),
@@ -67,7 +67,7 @@ pub fn workspace_layout(
     }
 }
 
-/// Create the main workspace window with its two chrome children. Called once from setup; the
+/// Create the AppContainer window with its two chrome children. Called once from setup; the
 /// window replaces the `windows` entry that used to live in tauri.conf.json (a config window
 /// always gets its own webview, which a multi-webview container must not have).
 pub fn create_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), WorkspaceError> {
@@ -85,11 +85,11 @@ pub fn create_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), Workspac
     window
         .add_child(
             tauri::webview::WebviewBuilder::new(
-                GLOBAL_LABEL,
+                NAVIGATION_PANEL_LABEL,
                 tauri::WebviewUrl::App(Default::default()),
             ),
-            tauri::LogicalPosition::new(rects.global.x, rects.global.y),
-            tauri::LogicalSize::new(rects.global.width, rects.global.height),
+            tauri::LogicalPosition::new(rects.navigation_panel.x, rects.navigation_panel.y),
+            tauri::LogicalSize::new(rects.navigation_panel.width, rects.navigation_panel.height),
         )
         .map_err(win)?;
     window
@@ -385,7 +385,7 @@ fn activate_pane<R: Runtime>(
     show_webview(window, &target)
 }
 
-/// Flip the global panel between expanded and the thin rail. The transition snaps: one
+/// Flip the NavigationPanel between expanded and the thin rail. The transition snaps: one
 /// `set_bounds` pass, no animation (Resolved Decision 4). With no embedded app this only records
 /// the flag: the layout stays full-bleed.
 pub fn set_collapsed<R: Runtime>(app: &AppHandle<R>, collapsed: bool) -> Result<(), WorkspaceError> {
@@ -417,7 +417,7 @@ fn set_collapsed_on_main<R: Runtime>(
 /// AgentWeb): close their webviews, activate the neighbouring tab, terminate the Terminal and
 /// AgentWeb panes' forwards (Dashboard has none), drop the forward-port entry, clear
 /// `sandbox_last_pane`, re-layout
-/// (closing the last pane returns the global panel to full-bleed). Idempotent and best-effort, so
+/// (closing the last pane returns the NavigationPanel to full-bleed). Idempotent and best-effort, so
 /// it is safe from the command, from undeploy/destroy, and from the Destroyed event alike.
 pub async fn close_app<R: Runtime>(app: &AppHandle<R>, name: &str) {
     let registry = app.state::<WorkspaceRegistry>();
@@ -565,7 +565,7 @@ fn relayout<R: Runtime>(app: &AppHandle<R>, size: tauri::PhysicalSize<u32>) {
     }
 }
 
-/// Broadcast the fresh state so the switcher tab bar and the global panel's collapse chrome
+/// Broadcast the fresh state so the switcher tab bar and the NavigationPanel's collapse chrome
 /// track what Rust applied. Best-effort: a dropped event never fails the underlying operation.
 fn emit_state<R: Runtime>(app: &AppHandle<R>) {
     let state = app.state::<WorkspaceRegistry>().lock().unwrap().clone();
@@ -610,7 +610,7 @@ fn apply_layout<R: Runtime>(
     state: &WorkspaceState,
     rects: &WorkspaceRects,
 ) -> Result<(), WorkspaceError> {
-    set_webview_bounds(window, GLOBAL_LABEL, rects.global)?;
+    set_webview_bounds(window, NAVIGATION_PANEL_LABEL, rects.navigation_panel)?;
     set_webview_bounds(window, SWITCHER_LABEL, rects.switcher)?;
     for pane in &state.apps {
         set_webview_bounds(window, &pane.label, rects.content)?;
@@ -660,35 +660,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn without_content_the_global_panel_fills_the_window() {
+    fn without_content_the_navigation_panel_fills_the_window() {
         let r = workspace_layout(1024.0, 720.0, false, false);
-        assert_eq!(r.global, Rect { x: 0.0, y: 0.0, width: 1024.0, height: 720.0 });
+        assert_eq!(r.navigation_panel, Rect { x: 0.0, y: 0.0, width: 1024.0, height: 720.0 });
         assert_eq!(r.switcher.width, 0.0);
         assert_eq!(r.content.width, 0.0);
         // The collapse flag is moot with nothing to yield space to.
         let r = workspace_layout(1024.0, 720.0, true, false);
-        assert_eq!(r.global.width, 1024.0);
+        assert_eq!(r.navigation_panel.width, 1024.0);
     }
 
     #[test]
     fn expanded_layout_partitions_the_container() {
         let r = workspace_layout(1024.0, 720.0, false, true);
-        assert_eq!(r.global.width, GLOBAL_EXPANDED_W);
-        assert_eq!(r.global.height, 720.0);
-        assert_eq!(r.switcher.x, GLOBAL_EXPANDED_W);
-        assert_eq!(r.switcher.width, 1024.0 - GLOBAL_EXPANDED_W);
+        assert_eq!(r.navigation_panel.width, NAVIGATION_PANEL_EXPANDED_W);
+        assert_eq!(r.navigation_panel.height, 720.0);
+        assert_eq!(r.switcher.x, NAVIGATION_PANEL_EXPANDED_W);
+        assert_eq!(r.switcher.width, 1024.0 - NAVIGATION_PANEL_EXPANDED_W);
         assert_eq!(r.switcher.height, SWITCHER_H);
-        assert_eq!(r.content.x, GLOBAL_EXPANDED_W);
+        assert_eq!(r.content.x, NAVIGATION_PANEL_EXPANDED_W);
         assert_eq!(r.content.y, SWITCHER_H);
-        assert_eq!(r.content.width, 1024.0 - GLOBAL_EXPANDED_W);
+        assert_eq!(r.content.width, 1024.0 - NAVIGATION_PANEL_EXPANDED_W);
         assert_eq!(r.content.height, 720.0 - SWITCHER_H);
     }
 
     #[test]
-    fn collapsed_layout_shrinks_global_to_the_rail_and_grows_content() {
+    fn collapsed_layout_shrinks_navigation_panel_to_the_rail_and_grows_content() {
         let expanded = workspace_layout(1024.0, 720.0, false, true);
         let collapsed = workspace_layout(1024.0, 720.0, true, true);
-        assert_eq!(collapsed.global.width, GLOBAL_RAIL_W);
+        assert_eq!(collapsed.navigation_panel.width, NAVIGATION_PANEL_RAIL_W);
         assert!(collapsed.content.x < expanded.content.x);
         assert!(collapsed.content.width > expanded.content.width);
         assert_eq!(collapsed.content.x + collapsed.content.width, 1024.0);

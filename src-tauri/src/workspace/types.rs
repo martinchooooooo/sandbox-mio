@@ -3,18 +3,18 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
-/// The live state of the single main workspace window, held in Tauri state (mirroring
+/// The live state of the single AppContainer window, held in Tauri state (mirroring
 /// `ForwardPortMap`) so the switcher chrome can target the right webviews and undeploy/destroy
 /// can close a sandbox's embedded pane.
 pub type WorkspaceRegistry = Arc<Mutex<WorkspaceState>>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum WorkspaceError {
-    #[error("the main workspace window is not available")]
+    #[error("the AppContainer window is not available")]
     MainWindowMissing,
     #[error("no embedded app is open for sandbox {0:?}")]
     NotOpen(String),
-    #[error("workspace window error: {0}")]
+    #[error("AppContainer window error: {0}")]
     Window(String),
 }
 
@@ -58,12 +58,12 @@ pub struct Rect {
 /// The three child-webview rectangles computed by [`super::workspace_layout`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize)]
 pub struct WorkspaceRects {
-    pub global: Rect,
+    pub navigation_panel: Rect,
     pub switcher: Rect,
     pub content: Rect,
 }
 
-/// Main-window workspace bookkeeping. `rects` holds the last-*applied* logical rectangles, not
+/// AppContainer state bookkeeping. `rects` holds the last-*applied* logical rectangles, not
 /// live physical bounds, so `workspace_state` reports deterministic DPI-independent geometry to
 /// the e2e read-back seam (docs/features/embedded-windows/03_e2e.md). Broadcast to the chrome
 /// webviews as the `workspace://state` event after every mutation.

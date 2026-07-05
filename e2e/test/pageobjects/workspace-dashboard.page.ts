@@ -3,18 +3,18 @@ import { switchPane } from "../../lib/workspace.js";
 
 // Page object for the AppKind::Dashboard content pane (docs/features/responsive-panel/02_dev.md
 // Phase D / 03_e2e.md): a `workspace-<sandbox>-dashboard` child webview, a separate top-level
-// document from `main-global` hosting PackageManager.svelte/AgentManager.svelte moved out of the
+// document from `main-navigation-panel` hosting PackageManager.svelte/AgentManager.svelte moved out of the
 // projects-list row. Every getter here is scoped to that document's root (no wrapping `<li>`
 // unlike project-row.component.ts, since the whole pane belongs to one sandbox).
 //
 // Specs must call switchToDashboard(sandbox) before using these getters, and switchToAppWebview()
-// afterward — the global `before` hook (e2e/wdio.conf.ts) only pins the session to `main-global`
+// afterward — the global `before` hook (e2e/wdio.conf.ts) only pins the session to `main-navigation-panel`
 // once per session, not per test, so a spec that switches away must switch back itself.
 class WorkspaceDashboardPage {
   // ── Window/document switching ──────────────────────────────────────────────
 
   // Poll every window handle until one is this sandbox's dashboard route (mirrors the technique
-  // e2e/wdio.conf.ts's global `before` hook uses to find `main-global`, extended to also match the
+  // e2e/wdio.conf.ts's global `before` hook uses to find `main-navigation-panel`, extended to also match the
   // `sandbox` query param since multiple sandboxes' dashboards can coexist).
   async switchToDashboard(sandbox: string, timeoutMs = 15000): Promise<void> {
     await browser.waitUntil(
@@ -62,7 +62,7 @@ class WorkspaceDashboardPage {
     });
   }
 
-  // Switch back to the app webview (main-global) — the same handle the global `before` hook picks.
+  // Switch back to the app webview (main-navigation-panel) — the same handle the global `before` hook picks.
   async switchToAppWebview(): Promise<void> {
     for (const handle of await browser.getWindowHandles()) {
       await browser.switchToWindow(handle);

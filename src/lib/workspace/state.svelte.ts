@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 // Module-scoped store (mirrors src/lib/activity/activity.svelte.ts): the single `workspace://state`
-// subscription for the whole global-panel document, shared by +layout.svelte (collapse/rail chrome)
+// subscription for the whole NavigationPanel document, shared by +layout.svelte (collapse/rail chrome)
 // and the projects list (per-sandbox open/closed state), so neither maintains its own listener.
 
 export type AppKind = "terminal" | "dashboard" | "agentweb";
@@ -14,7 +14,7 @@ export type AppPane = {
     kind: AppKind;
     url: string;
 };
-type WorkspaceState = { apps: AppPane[]; active_app: string | null; collapsed: boolean };
+type WorkspaceState = { apps: AppPane[]; active_app: string | null; collapsed: boolean } /* collapsed = NavigationPanel is collapsed */;
 
 let apps = $state<AppPane[]>([]);
 let collapsed = $state(false);

@@ -194,8 +194,8 @@
                 <span class="text-muted-foreground text-xs shrink-0">→ {deployment.host}</span>
             {/if}
         </span>
-        <!-- max-[420px]: matches main-global's real rendered width once a workspace is open
-             (GLOBAL_EXPANDED_W = 380, src-tauri/src/workspace/mod.rs:32); labels drop to icons. -->
+        <!-- max-[420px]: matches main-navigation-panel's real rendered width once a workspace is open
+             (NAVIGATION_PANEL_EXPANDED_W = 380, src-tauri/src/workspace/mod.rs:32); labels drop to icons. -->
         <span class="flex items-center gap-2 shrink-0">
             <Button variant="ghost" size="sm" onclick={openFolder} title={project.workspace_path}
                 loading={action.busy === "folder"} disabled={action.busy !== null}>

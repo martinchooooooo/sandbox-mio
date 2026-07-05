@@ -25,12 +25,12 @@
     // which draw their own chrome; suppress the panel nav and activity center there.
     const isWorkspaceChrome = $derived(page.url.pathname.startsWith("/workspace"));
 
-    // This layout is the app's home: the `main-global` child webview, i.e. the left collapsible
-    // panel of the main workspace window. Rust owns the native geometry; `collapsed` and
+    // This layout is the app's home: the `main-navigation-panel` child webview, i.e. the left collapsible
+    // NavigationPanel of the AppContainer. Rust owns the native geometry; `collapsed` and
     // `hasTabs` mirror the shared workspace store (src/lib/workspace/state.svelte.ts) so the DOM
     // tracks what Rust actually applied (with no embedded tab the panel is full-bleed and the
     // collapse control is meaningless, so it is hidden).
-    let isGlobalPanel = $state(false);
+    let isNavigationPanel = $state(false);
     const collapsed = $derived(isCollapsed());
     const hasTabs = $derived(hasTabsStore());
 
@@ -44,7 +44,7 @@
         }
     }
 
-    // Checked once, from the main-global webview only (every other webview would otherwise
+    // Checked once, from the main-navigation-panel webview only (every other webview would otherwise
     // duplicate the same check). Downloads and installs silently on accept, then relaunches —
     // the NSIS `currentUser` install mode needs no elevation for either step.
     async function checkForUpdate() {
@@ -77,13 +77,13 @@
         (async () => {
             try {
                 const { getCurrentWebview } = await import("@tauri-apps/api/webview");
-                isGlobalPanel = getCurrentWebview().label === "main-global";
+                isNavigationPanel = getCurrentWebview().label === "main-navigation-panel";
             } catch {
                 // Plain-browser dev or another window (agent-auth): no workspace chrome.
             }
             await ensureWorkspaceState();
             await ensureNetworkState();
-            if (isGlobalPanel) checkForUpdate();
+            if (isNavigationPanel) checkForUpdate();
         })();
     });
 </script>
@@ -91,7 +91,7 @@
 <ModeWatcher />
 <Toaster />
 
-{#if isGlobalPanel && collapsed && hasTabs}
+{#if isNavigationPanel && collapsed && hasTabs}
     <!-- Thin-rail state: the panel is 48 logical px wide; only the expand button fits. -->
     <div class="flex h-screen flex-col items-center bg-background p-1">
         <Button variant="ghost" size="sm" onclick={toggleCollapsed} title={m.workspace_expand()}>
@@ -102,7 +102,7 @@
     {#if !isWorkspaceChrome}
         <div class="flex items-center justify-between gap-2">
             <GlobalNav />
-            {#if isGlobalPanel && hasTabs}
+            {#if isNavigationPanel && hasTabs}
                 <Button
                     variant="ghost"
                     size="sm"
