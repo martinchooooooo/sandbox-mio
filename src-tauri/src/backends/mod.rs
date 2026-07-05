@@ -587,6 +587,7 @@ impl SandboxBackend for PodmanCliBackend {
             .arg(&self.connection)
             .args(["events", "--format", "json"])
             .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| BackendError::CommandFailed(e.to_string()))?;
 
@@ -594,8 +595,21 @@ impl SandboxBackend for PodmanCliBackend {
             .stdout
             .take()
             .ok_or_else(|| BackendError::CommandFailed("no stdout".to_string()))?;
-        let mut lines = BufReader::new(stdout).lines();
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| BackendError::CommandFailed("no stderr".to_string()))?;
+        // Drained on its own task rather than left inherited: this call runs unconditionally at app
+        // startup (`ensureActivity` in `src/routes/+layout.svelte`), before any Podman-readiness
+        // check, so a connection-not-found failure must not leak raw podman stderr to the app's own
+        // console — it has to come back as a `BackendError` the caller can swallow.
+        let stderr_task = tokio::spawn(async move {
+            let mut buf = String::new();
+            let _ = tokio::io::AsyncReadExt::read_to_string(&mut BufReader::new(stderr), &mut buf).await;
+            buf
+        });
 
+        let mut lines = BufReader::new(stdout).lines();
         while let Some(line) = lines.next_line().await.map_err(|e| BackendError::CommandFailed(e.to_string()))? {
             if line.trim().is_empty() {
                 continue;
@@ -607,6 +621,11 @@ impl SandboxBackend for PodmanCliBackend {
                 .map_err(|e| BackendError::CommandFailed(e.to_string()))?;
         }
 
+        let status = child.wait().await.map_err(|e| BackendError::CommandFailed(e.to_string()))?;
+        if !status.success() {
+            let stderr = stderr_task.await.unwrap_or_default();
+            return Err(BackendError::CommandFailed(stderr.trim().to_string()));
+        }
         Ok(())
     }
 
