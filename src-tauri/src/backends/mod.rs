@@ -9,6 +9,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 use mock::MockBackend;
+use crate::process_ext::NoWindow;
 use types::{
     BackendError, ConnectionInfo, PodmanCliBackend, RemoteDeployment, Sandbox, SandboxBackend,
     SyncStrategy, WorkspacePlan,
@@ -129,14 +130,16 @@ pub fn set_podman_resource_dir(dir: std::path::PathBuf) {
 /// that shells out to podman (`backends`, `runtime`, `machine`) instead of a bare
 /// `Command::new("podman")`, so packaging never depends on a system-installed Podman.
 pub(crate) fn podman_command() -> Command {
-    match PODMAN_RESOURCE_DIR.get() {
+    let mut cmd = match PODMAN_RESOURCE_DIR.get() {
         Some(dir) => {
             let mut cmd = Command::new(dir.join("podman.exe"));
             cmd.env("CONTAINERS_HELPER_BINARY_DIR", dir);
             cmd
         }
         None => Command::new("podman"),
-    }
+    };
+    cmd.no_window();
+    cmd
 }
 
 /// Returns stdout on success, or the captured stderr as `Err` on a non-zero exit.
@@ -240,6 +243,7 @@ impl PodmanCliBackend {
             return Ok(());
         }
         let out = std::process::Command::new("ssh-keygen")
+            .no_window()
             .args(["-t", "ed25519", "-f", identity_path, "-N", ""])
             .output()
             .map_err(|e| BackendError::CommandFailed(format!("failed to run ssh-keygen: {e}")))?;
@@ -295,6 +299,7 @@ impl PodmanCliBackend {
     /// remote filesystem.
     async fn remote_mkdir(info: &ConnectionInfo, dir: &str) -> Result<(), BackendError> {
         let out = Command::new("ssh")
+            .no_window()
             .arg("-o")
             .arg("BatchMode=yes")
             .arg("-o")
@@ -659,6 +664,7 @@ impl SandboxBackend for PodmanCliBackend {
     async fn prepare_host(&self, ssh_url: &str, identity_path: &str) -> Result<(), BackendError> {
         let (target, port) = ssh_target(ssh_url)?;
         let mut cmd = Command::new("ssh");
+        cmd.no_window();
         // BatchMode=yes turns a missing key authorization into a fast failure instead of a
         // password prompt that would hang headless — authorizing the key is a manual
         // prerequisite (`ssh` reads passwords from the TTY, not stdin).

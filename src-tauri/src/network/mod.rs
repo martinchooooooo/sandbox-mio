@@ -16,6 +16,8 @@ use tokio::process::Command;
 use mock::MockNetworkManager;
 use types::{ForwardInfo, NetworkError, NetworkManager, ServiceKind};
 
+use crate::process_ext::NoWindow;
+
 pub use types::EVENT_NAME;
 
 /// First container-side port in the pre-published relay pool (`crate::backends` publishes
@@ -74,6 +76,7 @@ async fn podman(connection: &str, args: &[&str]) -> Result<Output, NetworkError>
     let mut full = vec!["--connection", connection];
     full.extend_from_slice(args);
     Command::new("podman")
+        .no_window()
         .args(&full)
         .output()
         .await

@@ -16,6 +16,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
 use crate::backends::types::SandboxBackend;
+use crate::process_ext::NoWindow;
 use crate::runtime::types::RuntimeManager;
 use types::{CredentialError, CredentialManifest};
 
@@ -205,6 +206,7 @@ fn tar_relative(path: &str) -> &str {
 /// `tar` inside the container preserves original modes in the archive instead.
 async fn tar_capture(connection: &str, name: &str, paths: &[String]) -> Result<Vec<u8>, CredentialError> {
     tokio::process::Command::new("podman")
+        .no_window()
         .args(["--connection", connection, "start", name])
         .output()
         .await
@@ -215,6 +217,7 @@ async fn tar_capture(connection: &str, name: &str, paths: &[String]) -> Result<V
     args.extend(rel.iter().copied());
 
     let output = tokio::process::Command::new("podman")
+        .no_window()
         .args(&args)
         .output()
         .await
@@ -232,12 +235,14 @@ async fn tar_inject(connection: &str, name: &str, archive: &[u8]) -> Result<(), 
     use tokio::io::AsyncWriteExt;
 
     tokio::process::Command::new("podman")
+        .no_window()
         .args(["--connection", connection, "start", name])
         .output()
         .await
         .map_err(|e| CredentialError::ExecFailed(e.to_string()))?;
 
     let mut cmd = tokio::process::Command::new("podman");
+    cmd.no_window();
     cmd.args(["--connection", connection, "exec", "-i", name, "tar", "-C", "/", "-xzpf", "-"]);
     cmd.stdin(std::process::Stdio::piped());
     cmd.stdout(std::process::Stdio::piped());

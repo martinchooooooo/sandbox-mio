@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tauri::{ipc::Channel, Emitter};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+use crate::process_ext::NoWindow;
 use crate::runtime::types::RuntimeManager;
 use types::{AgentAuthEvent, AgentAuthStatus, AgentError, AgentInstallEvent, AuthSession, AuthSessionMap};
 
@@ -135,12 +136,14 @@ pub async fn start_auth(
 
     // Ensure the container is running before exec.
     tokio::process::Command::new("podman")
+        .no_window()
         .args(["--connection", &connection, "start", name])
         .output()
         .await
         .map_err(|e| AgentError::AuthFailed(e.to_string()))?;
 
     let mut cmd = tokio::process::Command::new("podman");
+    cmd.no_window();
     cmd.arg("--connection").arg(&connection);
     cmd.args(["exec", "-i", "--workdir", "/root/work", name, "mise", "exec", "--"]);
     for arg in auth_command {

@@ -6,6 +6,7 @@ mod error;
 mod inference;
 mod machine;
 mod network;
+mod process_ext;
 mod runtime;
 mod settings;
 mod ssh;

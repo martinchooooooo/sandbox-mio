@@ -14,6 +14,7 @@ use std::process::Output;
 
 use crate::backends::types::BackendError;
 use crate::backends::{mock_backend_enabled, podman_command, DEFAULT_CONNECTION};
+use crate::process_ext::NoWindow;
 
 use mock::MockMachineManager;
 use types::{MachineManager, PodmanMachineManager};
@@ -95,7 +96,7 @@ impl MachineManager for PodmanMachineManager {
         // Run on the blocking pool (synchronous `std::process::Command`). A shutdown failure is
         // non-fatal — the caller retries the machine start regardless of the exit code.
         let _ = tokio::task::spawn_blocking(|| {
-            std::process::Command::new("wsl").arg("--shutdown").output()
+            std::process::Command::new("wsl").no_window().arg("--shutdown").output()
         })
         .await;
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -151,7 +152,7 @@ impl MachineManager for PodmanMachineManager {
         // default version even when no distribution is installed yet (which is all Podman needs:
         // it brings its own Fedora CoreOS distribution via `machine init`).
         tokio::task::spawn_blocking(|| {
-            std::process::Command::new("wsl").arg("--status").output()
+            std::process::Command::new("wsl").no_window().arg("--status").output()
         })
         .await
         .map(|r| r.map(|o| o.status.success()).unwrap_or(false))
@@ -166,6 +167,7 @@ impl MachineManager for PodmanMachineManager {
         // failing, which would surface as a confusing `machine init` error instead.
         let out = tokio::task::spawn_blocking(|| {
             std::process::Command::new("wsl")
+                .no_window()
                 .args(["--install", "--no-distribution"])
                 .output()
         })

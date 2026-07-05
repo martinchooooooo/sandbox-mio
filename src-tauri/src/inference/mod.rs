@@ -13,6 +13,7 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager};
 use tokio::io::AsyncWriteExt;
 
+use crate::process_ext::NoWindow;
 use types::{
     EngineKind, InferenceEngine, InferenceError, MachineSpecs, MachineSpecsCache,
     ModelDownloadEvent, StaticMachineSpecs,
@@ -223,6 +224,7 @@ pub fn redetect_specs(cache: &MachineSpecsCache) -> MachineSpecs {
 #[cfg(windows)]
 fn powershell(script: &str) -> Option<String> {
     let out = std::process::Command::new("powershell")
+        .no_window()
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
         .output()
         .ok()?;
@@ -250,6 +252,7 @@ fn has_npu() -> bool {
 #[cfg(windows)]
 fn foundry_installed() -> bool {
     std::process::Command::new("foundry")
+        .no_window()
         .arg("--version")
         .output()
         .map(|o| o.status.success())
@@ -259,6 +262,7 @@ fn foundry_installed() -> bool {
 #[cfg(windows)]
 fn foundry_installable() -> bool {
     std::process::Command::new("winget")
+        .no_window()
         .args(["show", "Microsoft.FoundryLocal"])
         .output()
         .map(|o| o.status.success())
@@ -289,6 +293,7 @@ pub async fn install_foundry(on_progress: &Channel<serde_json::Value>) -> Result
     use tokio::io::AsyncBufReadExt;
 
     let mut child = tokio::process::Command::new("winget")
+        .no_window()
         .args([
             "install",
             "Microsoft.FoundryLocal",
