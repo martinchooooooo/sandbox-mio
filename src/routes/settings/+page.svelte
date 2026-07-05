@@ -93,7 +93,7 @@
     );
 </script>
 
-<main class="p-6 pb-24 max-w-2xl mx-auto">
+<main class="p-3 pb-6 @max-[420px]:p-2">
     <Button href="/" variant="outline" class="mb-6">{m.back()}</Button>
     <h1 class="text-3xl mb-8">{m.settings_title()}</h1>
 
@@ -123,7 +123,7 @@
                     <p class="text-xs text-emerald-600 dark:text-emerald-400">{m.settings_foundry_installed()}</p>
                 {:else if showFoundryInstall}
                     <Field.Field>
-                        <p class="text-xs text-muted-foreground">{m.settings_foundry_unavailable()}</p>
+                        <p class="text-xs text-muted-foreground @max-[420px]:hidden">{m.settings_foundry_unavailable()}</p>
                         <Button
                             size="sm"
                             loading={installing}

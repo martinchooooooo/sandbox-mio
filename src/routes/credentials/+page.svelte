@@ -104,7 +104,7 @@
     onMount(loadBundles);
 </script>
 
-<main class="p-6 pb-24 max-w-2xl mx-auto">
+<main class="p-3 pb-6 @max-[420px]:p-2">
     <Button href="/" variant="outline" class="mb-6">{m.back()}</Button>
     <h1 class="text-3xl mb-2">{m.credentials_title()}</h1>
     <p class="text-sm text-muted-foreground mb-8">{m.credentials_intro()}</p>
@@ -116,9 +116,9 @@
                 class="flex items-center justify-between gap-2 rounded-lg border p-3"
                 data-service={service.serviceId}
             >
-                <div>
-                    <div class="text-sm font-medium">{service.label}</div>
-                    <div class="text-xs text-muted-foreground" data-status>
+                <div class="flex-1 min-w-0">
+                    <div class="text-sm font-medium truncate">{service.label}</div>
+                    <div class="text-xs text-muted-foreground truncate" data-status>
                         {bundle ? (bundle.accountEmail ?? m.credentials_status_connected()) : m.credentials_status_not_connected()}
                     </div>
                 </div>

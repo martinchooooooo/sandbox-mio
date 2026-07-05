@@ -221,7 +221,7 @@
     });
 </script>
 
-<main class="p-6 pb-24 max-w-2xl mx-auto">
+<main class="p-3 pb-6 @max-[420px]:p-2">
     <Button href="/" variant="outline" class="mb-6">{m.back()}</Button>
     <h1 class="text-3xl mb-2">{m.models_title()}</h1>
     <p class="text-sm text-muted-foreground mb-6">{m.models_engine_label({ engine })}</p>
@@ -271,14 +271,14 @@
         {#each displayModels as { descriptor, rating } (descriptor.id)}
             <li class="border rounded-lg p-4" data-model-id={descriptor.id} data-running={isRunning(descriptor) ? "" : undefined}>
                 <div class="flex items-center justify-between gap-3">
-                    <div>
-                        <span class="font-medium">{descriptor.label}</span>
-                        <span class={"ml-2 text-xs " + ratingClass(rating)} data-rating>{ratingLabel(rating)}</span>
+                    <div class="flex-1 min-w-0 flex items-center gap-2">
+                        <span class="font-medium truncate">{descriptor.label}</span>
+                        <span class={"shrink-0 text-xs " + ratingClass(rating)} data-rating>{ratingLabel(rating)}</span>
                         {#if isRunning(descriptor)}
                             <div class="text-xs mt-0.5">
                                 <span class="text-emerald-600 dark:text-emerald-400 font-medium">{m.models_running()}</span>
-                                <span class="text-muted-foreground ml-1">{m.models_base_url()}:</span>
-                                <code data-base-url>{status.baseUrl}</code>
+                                <span class="text-muted-foreground ml-1 @max-[420px]:hidden">{m.models_base_url()}:</span>
+                                <code data-base-url class="@max-[420px]:hidden">{status.baseUrl}</code>
                             </div>
                         {/if}
                     </div>

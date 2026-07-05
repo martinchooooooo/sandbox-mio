@@ -17,8 +17,14 @@
 
 <style>
     .robot {
-      width: 220px;
+      max-width: 220px;
+      width: 100%;
       margin: 2rem auto;
       display: block;
+    }
+    @container (max-width: 350px) {
+      .robot {
+        max-width: 150px;
+      }
     }
 </style>
