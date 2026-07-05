@@ -50,7 +50,7 @@ fn main() {
             setup_e2e();
         }
         Some("e2e") => {
-            run(e2e_dir(), "pnpm", &["test"]);
+            run(e2e_dir(), "pnpm", &["run", "test:standard"]);
         }
         Some("package") => {
             // Bundling copies from src-tauri/binaries at build time (unlike `dev`, which needs
@@ -286,6 +286,11 @@ fn stage_llama() {
 }
 
 /// Recursively copy `src` into `dst`, overwriting existing files (std has no recursive copy).
+///
+/// A destination `.exe` may be locked by a running process (e.g. `podman.exe` kept alive by
+/// Podman Desktop or a running Podman machine) - overwriting it fails with a Windows "the process
+/// cannot access the file" error. When that happens and the file is already staged, skip it with a
+/// warning instead of failing the whole `dev` build; the already-staged copy is still usable.
 fn copy_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {
@@ -294,8 +299,16 @@ fn copy_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
         let to = dst.join(entry.file_name());
         if entry.file_type()?.is_dir() {
             copy_dir(&from, &to)?;
-        } else {
-            fs::copy(&from, &to)?;
+        } else if let Err(e) = fs::copy(&from, &to) {
+            if to.exists() {
+                println!(
+                    "warning: could not update {} ({e}); it may be locked by a running process. \
+                     Using the already-staged copy.",
+                    to.display()
+                );
+            } else {
+                return Err(e);
+            }
         }
     }
     Ok(())
