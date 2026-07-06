@@ -51,6 +51,11 @@ pub struct ForwardInfo {
     /// also how the frontend decides whether to show the manual close (X) button: file-declared
     /// entries are removed by editing the file, not by clicking X.
     pub label: Option<String>,
+    /// Set when this exposure was discovered by scanning the sandbox's own listening sockets
+    /// (see `watch_ports_file`'s socket scan) rather than a declared `.mio/ports.json` entry or the
+    /// "Expose a port" UI. Like a file-declared entry, it comes back on the next poll tick as long
+    /// as the port is still listening, so the frontend hides the manual close (X) button for it too.
+    pub auto_detected: bool,
 }
 
 /// Owns Mutagen-forward lifecycle and port allocation for the terminal/agent-web bridges and for
@@ -99,16 +104,19 @@ pub trait NetworkManager: Send + Sync {
         workspace_path: &str,
         target_port: u16,
         label: Option<String>,
+        auto_detected: bool,
     ) -> Result<u16, NetworkError>;
 
     /// Tear down the relay and forward for `target_port` on `sandbox`, freeing its pool slot.
     /// Best-effort.
     async fn unexpose_port(&self, sandbox: &str, target_port: u16);
 
-    /// Start (idempotently) polling `<workspace_path>/.mio/ports.json` for `sandbox` — a contract
-    /// file the container's own tooling can write to declare `{"<port>": "<short name>"}` entries —
-    /// and call `expose_port`/`unexpose_port` for whatever changed since the last poll. A no-op if
-    /// `sandbox` is already being watched. `close_sandbox` cancels the watch task.
+    /// Start (idempotently) polling `sandbox` for `expose_port`/`unexpose_port`-worthy changes since
+    /// the last tick: both `<workspace_path>/.mio/ports.json` (a contract file the container's own
+    /// tooling can write to declare `{"<port>": "<short name>"}` entries) and, independently, the
+    /// sandbox's own listening TCP sockets (so a dev server started from an open Terminal pane gets
+    /// picked up with no `.mio/ports.json` entry needed). A no-op if `sandbox` is already being
+    /// watched. `close_sandbox` cancels the watch task.
     ///
     /// Takes `self` by `Arc` (rather than `&self`) so the spawned poll loop can hold its own
     /// `'static` handle back into the manager to call `expose_port`/`unexpose_port` on.

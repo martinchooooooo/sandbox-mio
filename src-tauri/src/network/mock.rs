@@ -55,6 +55,7 @@ impl NetworkManager for MockNetworkManager {
                 remote_port,
                 forward_name: format!("mock-{sandbox}"),
                 label: None,
+                auto_detected: false,
             },
         );
         self.emit_forwards();
@@ -87,6 +88,7 @@ impl NetworkManager for MockNetworkManager {
         workspace_path: &str,
         target_port: u16,
         label: Option<String>,
+        auto_detected: bool,
     ) -> Result<u16, NetworkError> {
         let used: std::collections::HashSet<u16> = self
             .forwards
@@ -117,6 +119,7 @@ impl NetworkManager for MockNetworkManager {
                 remote_port: slot,
                 forward_name: format!("mock-expose-{sandbox}-{target_port}"),
                 label: label.clone(),
+                auto_detected,
             },
         );
         self.emit_forwards();
@@ -188,7 +191,7 @@ impl NetworkManager for MockNetworkManager {
 
                 for (port, label) in declared.into_iter().filter(|(p, _)| !already_exposed.contains(p)) {
                     let _ = manager
-                        .expose_port(&task_sandbox, &connection, &workspace_path, port, Some(label))
+                        .expose_port(&task_sandbox, &connection, &workspace_path, port, Some(label), false)
                         .await;
                 }
             }

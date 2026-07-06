@@ -622,7 +622,7 @@ async fn expose_port(
 ) -> Result<u16, AppError> {
     let connection = resolve_connection(&name, &runtime, &engine).await?;
     Ok(network
-        .expose_port(&name, &connection, &workspace_path, target_port, None)
+        .expose_port(&name, &connection, &workspace_path, target_port, None, false)
         .await?)
 }
 

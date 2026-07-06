@@ -20,6 +20,9 @@ export type ForwardInfo = {
     /** Set when this exposure was declared via `.mio/ports.json` rather than the manual UI; also
      *  how `PortsManager.svelte` decides not to show a close (X) button for it. */
     label: string | null;
+    /** Set when this exposure was discovered by scanning the sandbox's listening sockets rather
+     *  than declared or manually exposed; like `label`, hides the close (X) button. */
+    autoDetected: boolean;
 };
 
 const EVENT_NAME = "network://forwards-changed";

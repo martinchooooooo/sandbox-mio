@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { openUrl } from "@tauri-apps/plugin-opener";
     import Button from "$lib/components/ui/button/button.svelte";
     import { parseError } from "$lib/errors";
     import { openForwardsFor, exposePort, unexposePort, type ForwardInfo } from "$lib/network/state.svelte";
@@ -33,15 +34,16 @@
         switch (fwd.kind.kind) {
             case "terminal": return "Terminal";
             case "agent-web": return "Agents";
-            case "exposed": return `Exposed :${fwd.kind.targetPort}`;
+            case "exposed": return fwd.autoDetected ? `Auto :${fwd.kind.targetPort}` : `Exposed :${fwd.kind.targetPort}`;
         }
     }
 
-    // Ports declared via `.mio/ports.json` (identified by having a `label`) are managed by the
-    // file, not the UI: editing/removing the entry there is the only way to unexpose them, so they
-    // don't get a manual close button.
-    function isFileManaged(fwd: ForwardInfo): boolean {
-        return fwd.kind.kind === "exposed" && fwd.label !== null;
+    // Ports declared via `.mio/ports.json` (identified by having a `label`) or discovered by the
+    // listening-socket scan (`autoDetected`) are managed by the backend poll loop, not the UI:
+    // they come back on the next tick as long as the file entry/listening socket still exists, so
+    // they don't get a manual close button.
+    function isManaged(fwd: ForwardInfo): boolean {
+        return fwd.kind.kind === "exposed" && (fwd.label !== null || fwd.autoDetected);
     }
 
     async function addExposedPort() {
@@ -76,15 +78,14 @@
             {#each forwards as fwd (fwd.forwardName)}
                 <div class="flex items-center gap-2 rounded bg-muted px-2 py-1 text-xs">
                     <span class="w-24 shrink-0 font-mono">{kindLabel(fwd)}</span>
-                    <a
-                        href={`http://127.0.0.1:${fwd.hostPort}/`}
-                        target="_blank"
-                        rel="noreferrer"
-                        class="flex-1 truncate text-blue-600 hover:underline dark:text-blue-400"
+                    <button
+                        type="button"
+                        onclick={() => openUrl(`http://127.0.0.1:${fwd.hostPort}/`)}
+                        class="flex-1 truncate text-left text-blue-600 hover:underline dark:text-blue-400"
                     >
                         http://127.0.0.1:{fwd.hostPort}/
-                    </a>
-                    {#if fwd.kind.kind === "exposed" && !isFileManaged(fwd)}
+                    </button>
+                    {#if fwd.kind.kind === "exposed" && !isManaged(fwd)}
                         <Button variant="ghost" size="icon-xs" disabled={portBusy} title="Stop exposing"
                             onclick={() => removeExposedPort(fwd.kind.kind === "exposed" ? fwd.kind.targetPort : 0)}>
                             ✕

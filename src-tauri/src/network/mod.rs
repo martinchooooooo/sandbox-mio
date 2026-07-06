@@ -171,6 +171,7 @@ impl NetworkManager for MutagenNetworkManager {
                 remote_port,
                 forward_name: name,
                 label: None,
+                auto_detected: false,
             },
         );
         self.emit_forwards();
@@ -228,6 +229,7 @@ impl NetworkManager for MutagenNetworkManager {
         workspace_path: &str,
         target_port: u16,
         label: Option<String>,
+        auto_detected: bool,
     ) -> Result<u16, NetworkError> {
         let _guard = self.expose_lock.lock().await;
         let slot = self.free_slot(sandbox).ok_or_else(|| NetworkError::NoFreeSlot {
@@ -273,6 +275,7 @@ impl NetworkManager for MutagenNetworkManager {
                 remote_port: slot,
                 forward_name: name,
                 label: label.clone(),
+                auto_detected,
             },
         );
         self.emit_forwards();
@@ -312,18 +315,59 @@ impl NetworkManager for MutagenNetworkManager {
     }
 }
 
-/// Poll interval for `.mio/ports.json`. It's a local bind mount (no network round trip to read),
-/// so a short interval is cheap.
+/// Poll interval for `.mio/ports.json` and the listening-socket scan. Both are cheap (a local bind
+/// mount read and a `podman exec cat /proc/net/tcp*`), so a short interval is fine.
 const PORTS_FILE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// The `watch_ports_file` poll loop body, run as its own detached task: reads `workspace_path`'s
-/// `.mio/ports.json` and diffs its `{"<port>": "<short name>"}` entries against the *live*
-/// `forwards` map (not a locally-remembered snapshot), so a port that got exposed some other way
-/// between ticks — e.g. a manual "Expose a port" click, whose `expose_port` call also bootstraps
-/// this same file via `ensure_ports_file` — is recognized as already-exposed instead of triggering
-/// a second relay for it. Only ports this loop itself exposed (`label.is_some()`) are eligible to
-/// be auto-unexposed when their entry disappears from the file; a manually-exposed port stays up
-/// even if it isn't (or is no longer) declared in the file. Runs until `close_sandbox` aborts it.
+/// Parses `/proc/net/tcp`/`/proc/net/tcp6` content (as read from inside the sandbox) into the set
+/// of local ports currently in `LISTEN` state. Column 1 is `local_address` (`<hex addr>:<hex
+/// port>`), column 3 is `st` (`0A` = `TCP_LISTEN`); the header row and any malformed line fail one
+/// of the parses and are skipped for free. Bound address is ignored — the relay dials the
+/// sandbox's own loopback either way (see `expose_port`'s `dial_spec` comment).
+fn parse_listening_ports(output: &str) -> std::collections::HashSet<u16> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            if fields.get(3)? != &"0A" {
+                return None;
+            }
+            let port_hex = fields.get(1)?.rsplit(':').next()?;
+            u16::from_str_radix(port_hex, 16).ok()
+        })
+        .collect()
+}
+
+/// Reads the sandbox's currently-listening TCP ports via `podman exec`. Best-effort: any failure
+/// (container not running, `cat` missing, ...) reports no listening ports rather than erroring, so
+/// a scan hiccup can't tear down forwards the next block sets up to remove.
+async fn scan_listening_ports(connection: &str, sandbox: &str) -> std::collections::HashSet<u16> {
+    match podman(
+        connection,
+        &["exec", sandbox, "sh", "-c", "cat /proc/net/tcp /proc/net/tcp6 2>/dev/null"],
+    )
+    .await
+    {
+        Ok(out) if out.status.success() => parse_listening_ports(&String::from_utf8_lossy(&out.stdout)),
+        _ => Default::default(),
+    }
+}
+
+/// The `watch_ports_file` poll loop body, run as its own detached task. Each tick does two
+/// independent things against the *live* `forwards` map (not a locally-remembered snapshot), so a
+/// port that got exposed some other way between ticks — e.g. a manual "Expose a port" click — is
+/// recognized as already-exposed instead of triggering a second relay for it:
+///
+/// 1. Reads `workspace_path`'s `.mio/ports.json` and diffs its `{"<port>": "<short name>"}`
+///    entries against the live map. Only ports this loop itself exposed this way (`label.is_some()`)
+///    are eligible to be auto-unexposed when their entry disappears from the file; a
+///    manually-exposed port stays up even if it isn't (or is no longer) declared in the file.
+/// 2. Scans the sandbox's own listening TCP sockets and exposes whichever aren't already tracked
+///    under some other kind/relay-pool slot, so e.g. a dev server started from an open Terminal
+///    pane shows up with no `.mio/ports.json` entry needed. Mirrors (1): only ports this loop
+///    exposed this way (`auto_detected`) are auto-unexposed, once they stop listening.
+///
+/// Runs until `close_sandbox` aborts it.
 async fn poll_ports_file(
     manager: std::sync::Arc<MutagenNetworkManager>,
     sandbox: String,
@@ -333,42 +377,78 @@ async fn poll_ports_file(
     let path = std::path::Path::new(&workspace_path).join(".mio").join("ports.json");
     loop {
         tokio::time::sleep(PORTS_FILE_POLL_INTERVAL).await;
-        let Ok(contents) = tokio::fs::read_to_string(&path).await else { continue };
-        let Ok(raw) = serde_json::from_str::<HashMap<String, String>>(&contents) else { continue };
-        let declared: HashMap<u16, String> = raw
-            .into_iter()
-            .filter_map(|(port, label)| port.parse::<u16>().ok().map(|p| (p, label)))
-            .collect();
 
-        let (file_managed, already_exposed): (Vec<u16>, std::collections::HashSet<u16>) = {
+        if let Ok(contents) = tokio::fs::read_to_string(&path).await {
+            if let Ok(raw) = serde_json::from_str::<HashMap<String, String>>(&contents) {
+                let declared: HashMap<u16, String> = raw
+                    .into_iter()
+                    .filter_map(|(port, label)| port.parse::<u16>().ok().map(|p| (p, label)))
+                    .collect();
+
+                let (file_managed, already_exposed): (Vec<u16>, std::collections::HashSet<u16>) = {
+                    let forwards = manager.forwards.lock().unwrap();
+                    let exposed_for_sandbox: Vec<&ForwardInfo> =
+                        forwards.values().filter(|f| f.sandbox == sandbox).collect();
+                    let file_managed = exposed_for_sandbox
+                        .iter()
+                        .filter(|f| f.label.is_some())
+                        .filter_map(|f| match f.kind {
+                            ServiceKind::Exposed(p) => Some(p),
+                            _ => None,
+                        })
+                        .collect();
+                    let already_exposed = exposed_for_sandbox
+                        .iter()
+                        .filter_map(|f| match f.kind {
+                            ServiceKind::Exposed(p) => Some(p),
+                            _ => None,
+                        })
+                        .collect();
+                    (file_managed, already_exposed)
+                };
+
+                for port in file_managed.into_iter().filter(|p| !declared.contains_key(p)) {
+                    manager.unexpose_port(&sandbox, port).await;
+                }
+
+                for (port, label) in declared.into_iter().filter(|(p, _)| !already_exposed.contains(p)) {
+                    let _ = manager
+                        .expose_port(&sandbox, &connection, &workspace_path, port, Some(label), false)
+                        .await;
+                }
+            }
+        }
+
+        let scanned = scan_listening_ports(&connection, &sandbox).await;
+
+        let (auto_tracked, exclude): (Vec<u16>, std::collections::HashSet<u16>) = {
             let forwards = manager.forwards.lock().unwrap();
             let exposed_for_sandbox: Vec<&ForwardInfo> =
                 forwards.values().filter(|f| f.sandbox == sandbox).collect();
-            let file_managed = exposed_for_sandbox
+            let auto_tracked = exposed_for_sandbox
                 .iter()
-                .filter(|f| f.label.is_some())
+                .filter(|f| f.auto_detected)
                 .filter_map(|f| match f.kind {
                     ServiceKind::Exposed(p) => Some(p),
                     _ => None,
                 })
                 .collect();
-            let already_exposed = exposed_for_sandbox
-                .iter()
-                .filter_map(|f| match f.kind {
-                    ServiceKind::Exposed(p) => Some(p),
-                    _ => None,
-                })
-                .collect();
-            (file_managed, already_exposed)
+            let mut exclude: std::collections::HashSet<u16> =
+                (RELAY_PORT_POOL_START..RELAY_PORT_POOL_START + RELAY_POOL_SIZE).collect();
+            exclude.extend(exposed_for_sandbox.iter().map(|f| match f.kind {
+                ServiceKind::Exposed(p) => p,
+                ServiceKind::Terminal | ServiceKind::AgentWeb => f.remote_port,
+            }));
+            (auto_tracked, exclude)
         };
 
-        for port in file_managed.into_iter().filter(|p| !declared.contains_key(p)) {
+        for port in auto_tracked.into_iter().filter(|p| !scanned.contains(p)) {
             manager.unexpose_port(&sandbox, port).await;
         }
 
-        for (port, label) in declared.into_iter().filter(|(p, _)| !already_exposed.contains(p)) {
+        for port in scanned.into_iter().filter(|p| !exclude.contains(p)) {
             let _ = manager
-                .expose_port(&sandbox, &connection, &workspace_path, port, Some(label))
+                .expose_port(&sandbox, &connection, &workspace_path, port, None, true)
                 .await;
         }
     }
