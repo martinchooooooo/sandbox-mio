@@ -5,7 +5,7 @@
     import { openUrl } from "@tauri-apps/plugin-opener";
     import { getCurrentWindow } from "@tauri-apps/api/window";
     import Button from "$lib/components/ui/button/button.svelte";
-    import { AGENTS } from "$lib/agents/catalogue";
+    import { AGENTS, onboardingSeed } from "$lib/agents/catalogue";
     import type { AgentAuthEvent } from "$lib/agents/types";
 
     let sessionId = $state("");
@@ -63,6 +63,12 @@
             } else if (data.kind === "Exit") {
                 exitCode = data.code;
                 if (data.code === 0) {
+                    const seed = agent ? onboardingSeed(agent) : null;
+                    if (seed && sandbox) {
+                        invoke("seed_agent_onboarding", { name: sandbox, onboarding: seed }).catch(
+                            () => {},
+                        );
+                    }
                     setTimeout(() => getCurrentWindow().close(), 2000);
                 }
             }

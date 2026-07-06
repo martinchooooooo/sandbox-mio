@@ -4,7 +4,7 @@
     import { onMount } from "svelte";
     import { m } from "$lib/paraglide/messages.js";
     import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-    import { AGENTS, miseKey } from "$lib/agents/catalogue";
+    import { AGENTS, miseKey, onboardingSeed } from "$lib/agents/catalogue";
     import { buildLocalLlmProvider } from "$lib/agents/opencode";
     import { buildPiLocalLlmProvider, PI_CONFIG_ENV, PI_CONFIG_DIR_CONTAINER } from "$lib/agents/pi";
     import type { AgentDescriptor, AgentInstallEvent, AgentAuthStatus } from "$lib/agents/types";
@@ -21,8 +21,6 @@
         action: ReturnType<typeof createActionRunner>;
     } = $props();
 
-    // Package list read from the workspace manifest, used solely to derive which agents are
-    // installed. PackageManager keeps its own copy for the packages UI; this one is private.
     let packages = $state<string[]>([]);
 
     let agentStatuses = $state<Record<string, AgentAuthStatus>>({});
@@ -63,7 +61,7 @@
     async function loadAgentStatuses() {
         for (const agent of installedAgents) {
             const auth = agent.auth;
-            if (!auth) continue; // Config-only agents (OpenCode) have no auth status to read.
+            if (!auth) continue;
             try {
                 const result = await invoke<{ authenticated: boolean; expiresAtMs: number | null; accountEmail: string | null }>(
                     "get_agent_auth_status",
@@ -98,6 +96,7 @@
                 packages: descriptor.misePackages,
                 postinstallNpm: npmStep ? [npmStep.package, npmStep.nodeVersion] : null,
                 credentialService: descriptor.credentialService ?? null,
+                onboarding: onboardingSeed(descriptor),
                 onProgress: channel,
             });
             if (descriptor.provision) {
@@ -162,6 +161,7 @@
             await invoke("inject_agent_credentials", {
                 name: sandboxName,
                 serviceId,
+                onboarding: onboardingSeed(descriptor),
             });
         });
         await loadAgentStatuses();

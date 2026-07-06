@@ -25,17 +25,23 @@ impl From<BackendError> for CredentialError {
     }
 }
 
-/// Reserved container-name prefix marking a container as an ephemeral auth container rather than
-/// a user sandbox; `list_sandboxes` (`lib.rs`) filters these out before returning to the frontend.
-/// Must start with a letter or digit — podman rejects names starting with `_`.
 pub const AUTH_CONTAINER_PREFIX: &str = "mio-auth-";
 
-/// Host-side record of a captured credential bundle. The only credential-adjacent data that
-/// crosses the Tauri IPC boundary — the credential and account-merge files themselves never do.
+/// Only credential metadata crosses the IPC boundary; the actual files never do.
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CredentialManifest {
     pub captured_at_ms: u64,
     pub account_email: Option<String>,
     pub expires_at_ms: Option<u64>,
+}
+
+/// Skip onboarding wizard for agents that only received injected credentials.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OnboardingSeed {
+    pub account_source_path: String,
+    pub workspace_dir: String,
+    pub account_file_patch: serde_json::Value,
+    pub project_trust_keys: Vec<String>,
 }

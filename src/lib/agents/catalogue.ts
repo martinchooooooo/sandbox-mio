@@ -1,4 +1,4 @@
-import type { AgentDescriptor } from "./types";
+import type { AgentDescriptor, OnboardingSeed } from "./types";
 
 export const AGENTS: AgentDescriptor[] = [
   {
@@ -23,6 +23,11 @@ export const AGENTS: AgentDescriptor[] = [
       expiresAtJsonKey: "claudeAiOauth.expiresAt",
       accountSourceFile: "/root/.claude.json",
       accountEmailJsonKey: "oauthAccount.emailAddress",
+      onboarding: {
+        workspaceDir: "/root/work",
+        accountFilePatch: { hasCompletedOnboarding: true },
+        projectTrustKeys: ["hasTrustDialogAccepted"],
+      },
     },
     credentialService: "anthropic",
   },
@@ -32,7 +37,6 @@ export const AGENTS: AgentDescriptor[] = [
     description: "Open-source terminal coding agent, pre-wired to your local LLM",
     misePackages: ["opencode"],
     postInstallSteps: [],
-    // No `auth`: OpenCode configures a provider instead of authenticating.
     provision: { kind: "opencode-provider", providerId: "local-llm", relativeConfigPath: "opencode.json" },
   },
   {
@@ -41,20 +45,27 @@ export const AGENTS: AgentDescriptor[] = [
     description: "Minimal terminal coding agent, pre-wired to your local LLM",
     misePackages: ["pi"],
     postInstallSteps: [],
-    // No `auth`: pi configures a provider instead of authenticating. The nested config path is
-    // redirected into the workspace via PI_CODING_AGENT_DIR (set by provision_pi in mise.toml).
     provision: { kind: "pi-provider", providerId: "local-llm", relativeConfigPath: ".mio/pi-agent/models.json" },
   },
 ];
 
-/** Extract the mise.toml key from a full package spec (strips the @version suffix). */
+export function onboardingSeed(agent: AgentDescriptor): OnboardingSeed | null {
+  const auth = agent.auth;
+  if (!auth?.onboarding || !auth.accountSourceFile) return null;
+  return {
+    accountSourcePath: auth.accountSourceFile,
+    workspaceDir: auth.onboarding.workspaceDir,
+    accountFilePatch: auth.onboarding.accountFilePatch,
+    projectTrustKeys: auth.onboarding.projectTrustKeys,
+  };
+}
+
 export function miseKey(spec: string): string {
   const colonIdx = spec.indexOf(":");
   if (colonIdx === -1) {
     const atIdx = spec.indexOf("@");
     return atIdx === -1 ? spec : spec.slice(0, atIdx);
   }
-  // "npm:@anthropic-ai/claude-code@2.1.195" → "npm:@anthropic-ai/claude-code"
   const afterScheme = spec.slice(colonIdx + 1);
   const lastAt = afterScheme.lastIndexOf("@");
   if (lastAt <= 0) return spec;

@@ -6,6 +6,12 @@ export interface NpmPostInstallStep {
 
 export type PostInstallStep = NpmPostInstallStep;
 
+export interface OnboardingSeedConfig {
+  workspaceDir: string;
+  accountFilePatch: Record<string, unknown>;
+  projectTrustKeys: string[];
+}
+
 export interface ExecInteractiveAuth {
   kind: "exec-interactive";
   command: string[];
@@ -13,17 +19,22 @@ export interface ExecInteractiveAuth {
   expiresAtJsonKey: string;
   accountSourceFile?: string;
   accountEmailJsonKey?: string;
+  onboarding?: OnboardingSeedConfig;
 }
 
 export type AuthStrategy = ExecInteractiveAuth;
 
-/** Provider-provisioning step for agents that configure an endpoint instead of authenticating.
- * The concrete provider JSON and default model are generated at call time from the model
- * catalogue (see `buildLocalLlmProvider`), so the catalogue stays the single source of truth. */
+export interface OnboardingSeed {
+  accountSourcePath: string;
+  workspaceDir: string;
+  accountFilePatch: Record<string, unknown>;
+  projectTrustKeys: string[];
+}
+
 export interface ProviderProvisionConfig {
-  kind: "opencode-provider" | "pi-provider"; // discriminant selecting the provisioner
-  providerId: string; // "local-llm"
-  relativeConfigPath: string; // config file relative to the workspace root (e.g. "opencode.json")
+  kind: "opencode-provider" | "pi-provider";
+  providerId: string;
+  relativeConfigPath: string;
 }
 
 export interface AgentDescriptor {
@@ -32,11 +43,8 @@ export interface AgentDescriptor {
   description: string;
   misePackages: string[];
   postInstallSteps: PostInstallStep[];
-  /** Absent for agents that configure a provider instead of authenticating (e.g. OpenCode). */
   auth?: AuthStrategy;
   provision?: ProviderProvisionConfig;
-  /** Service id (e.g. `"anthropic"`) the credential store keys bundles by. Absent for agents
-   * with no `auth` — see `docs/features/shared-agent-auth/02_dev.md`. */
   credentialService?: string;
 }
 
