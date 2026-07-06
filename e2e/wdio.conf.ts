@@ -47,6 +47,26 @@ const APP_DATA_DIR = path.join(
 );
 const APP_DATA_MODELS = path.join(APP_DATA_DIR, "models");
 
+// Kills podman/gvproxy/win-sshproxy processes running out of target/debug, left over from a
+// previous run's app process (win-sshproxy is designed to outlive its parent, so the app exiting
+// or a prior suite aborting doesn't stop it). A stale one holds those .exe files locked, which
+// fails the `tauri build` step below on Windows with "the process cannot access the file". Only
+// matches processes under target/debug, leaving a real Podman Desktop install alone.
+function killStaleDevProcesses(): void {
+  if (process.platform !== "win32") return;
+  spawnSync(
+    "powershell",
+    [
+      "-NoProfile",
+      "-Command",
+      "Get-Process -Name podman,win-sshproxy,gvproxy -ErrorAction SilentlyContinue | " +
+        "Where-Object { $_.Path -and $_.Path -like '*\\target\\debug\\*' } | " +
+        "Stop-Process -Force -ErrorAction SilentlyContinue",
+    ],
+    { stdio: "ignore" },
+  );
+}
+
 let tauriDriver: ChildProcess | undefined;
 let exit = false;
 
@@ -142,6 +162,7 @@ export const config: WebdriverIO.Config = {
     // is a `tauri dev` binary, its webview points at devUrl (localhost:1420) and shows a
     // "lost connection" page under wdio. Removing the output forces cargo to relink and re-embed
     // the current assets every run.
+    killStaleDevProcesses();
     const appExe = path.resolve(__dirname, `../src-tauri/target/debug/sandbox-mio${ext}`);
     fs.rmSync(appExe, { force: true });
     // Abort on a failed build: spawnSync does not throw on a non-zero exit, and a silent failure

@@ -42,6 +42,7 @@ fn main() {
             fetch_podman();
         }
         Some("dev") => {
+            kill_stale_dev_processes();
             stage_llama();
             stage_podman();
             run(root_dir(), "pnpm", &["run", "tauri", "dev"]);
@@ -238,6 +239,26 @@ fn find_file(dir: &Path, name: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// Kill lingering `podman`/`gvproxy`/`win-sshproxy` processes running out of `target/debug` from a
+/// previous `dev` run. Unlike the app's normal shutdown (where these are meant to outlive the app
+/// so the podman machine keeps running), a dev restart re-stages the same binaries every time, so a
+/// stale process still holding one open causes the next `stage_podman` copy - or a `cargo clean` -
+/// to fail with a Windows file-lock error. Only processes whose exe path is under `target/debug`
+/// are targeted, so a real Podman Desktop install is left alone.
+fn kill_stale_dev_processes() {
+    if !cfg!(windows) {
+        return;
+    }
+    let script = r#"
+        Get-Process -Name podman,win-sshproxy,gvproxy -ErrorAction SilentlyContinue |
+            Where-Object { $_.Path -and $_.Path -like '*\target\debug\*' } |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+    "#;
+    let _ = Command::new("powershell")
+        .args(["-NoProfile", "-Command", script])
+        .status();
 }
 
 /// Stage the bundled Podman binaries next to the debug exe so `resource_dir()/podman` resolves
