@@ -77,6 +77,13 @@ export function setActiveSandbox(name: string): void {
     activeSandbox = name;
 }
 
+/** Clear the Dashboard-bound sandbox, e.g. after closing a sandbox that has no open pane to fall
+ * back to (`isSandboxOpen` would otherwise keep reporting it open forever — nothing else clears
+ * this client-side field). */
+export function clearActiveSandbox(): void {
+    activeSandbox = null;
+}
+
 /**
  * Hydrate the store and keep it live. Idempotent (guarded by `started`), safe to call from any
  * webview or plain-browser dev context: a failed subscribe/hydrate (no Tauri runtime) is caught

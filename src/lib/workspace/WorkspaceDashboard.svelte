@@ -13,7 +13,7 @@
     import { LoaderPinwheelIcon } from "@hugeicons/core-free-icons";
     import { AGENTS, miseKey } from "$lib/agents/catalogue";
     import { LAUNCHABLE_APPS } from "$lib/workspace/apps";
-    import { sandboxHasPane } from "$lib/workspace/state.svelte";
+    import { sandboxHasPane, clearActiveSandbox } from "$lib/workspace/state.svelte";
     import { packagesFor, ensurePackages } from "$lib/workspace/packages.svelte";
 
     // Rendered by `+layout.svelte` when no Terminal/AgentWeb overlay is active for the active
@@ -44,6 +44,19 @@
         });
     }
 
+    // A sandbox with no open Terminal/AgentWeb pane has no `SandboxSwitcherGroup` (WorkspaceSwitcher.svelte
+    // only groups by open panes), so its × close button doesn't exist there either — this is the
+    // only remaining way to close such a sandbox. `close_workspace` is a no-op here (no panes to
+    // tear down), so it's `clearActiveSandbox` that actually drops this Dashboard.
+    async function close() {
+        try {
+            await invoke("close_workspace", { name: sandboxName });
+        } catch (e) {
+            console.error(e);
+        }
+        clearActiveSandbox();
+    }
+
     onMount(async () => {
         const projects = await invoke<Project[]>("list_sandboxes");
         workspacePath = projects.find((p) => p.name === sandboxName)?.workspace_path ?? "";
@@ -55,7 +68,17 @@
 </script>
 
 <main class="h-screen overflow-y-auto p-6">
-    <h1 class="text-xl font-medium mb-4">{sandboxName}</h1>
+    <div class="mb-4 flex items-center justify-between gap-2">
+        <h1 class="text-xl font-medium">{sandboxName}</h1>
+        <button
+            class="text-muted-foreground hover:text-foreground"
+            data-close-sandbox
+            aria-label={m.workspace_close_sandbox_label({ sandbox: sandboxName })}
+            onclick={close}
+        >
+            ×
+        </button>
+    </div>
 
     <StatusRow busy={action.busy} message={action.message} error={action.error} />
 
