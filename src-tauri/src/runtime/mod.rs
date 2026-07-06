@@ -32,7 +32,7 @@ const PASEO_WEB_PORT: u16 = 6767;
 /// harness overrides `PODMAN_CONNECTION` to pin the local test connection.
 pub fn default_runtime() -> std::sync::Arc<dyn RuntimeManager> {
     if crate::backends::mock_backend_enabled() {
-        return std::sync::Arc::new(MockRuntime);
+        return std::sync::Arc::new(MockRuntime::new());
     }
     let connection = std::env::var("PODMAN_CONNECTION")
         .unwrap_or_else(|_| crate::backends::DEFAULT_CONNECTION.to_string());

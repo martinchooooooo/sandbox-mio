@@ -11,7 +11,9 @@
     {/if}
     <div class="flex-1 overflow-hidden">
         {#if dashboardSandbox}
-            <WorkspaceDashboard sandboxName={dashboardSandbox} />
+            {#key dashboardSandbox}
+                <WorkspaceDashboard sandboxName={dashboardSandbox} />
+            {/key}
         {/if}
     </div>
 </div>

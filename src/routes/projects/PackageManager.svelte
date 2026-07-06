@@ -1,11 +1,11 @@
 <script lang="ts">
     import Button from "$lib/components/ui/button/button.svelte";
     import { invoke } from "@tauri-apps/api/core";
-    import { onMount } from "svelte";
     import { m } from "$lib/paraglide/messages.js";
     import { registryEntries, ensureRegistry } from "$lib/registry.svelte";
     import { portal } from "$lib/portal";
     import type { createActionRunner } from "$lib/actions.svelte";
+    import { packagesFor, ensurePackages, refreshPackages } from "$lib/workspace/packages.svelte";
 
     let {
         sandboxName,
@@ -17,7 +17,7 @@
         action: ReturnType<typeof createActionRunner>;
     } = $props();
 
-    let packages = $state<string[]>([]);
+    const packages = $derived(packagesFor(sandboxName));
     let packageInput = $state("");
     let showSuggestions = $state(false);
     let packageInputEl = $state<HTMLInputElement>();
@@ -38,12 +38,6 @@
         ensureRegistry(sandboxName);
     }
 
-    async function loadPackages() {
-        await action.run("load", async () => {
-            packages = await invoke<string[]>("list_packages", { workspacePath });
-        });
-    }
-
     async function installPackage() {
         const pkg = packageInput.trim();
         if (!pkg) return;
@@ -54,7 +48,7 @@
         )) {
             packageInput = "";
             showSuggestions = false;
-            await loadPackages();
+            await refreshPackages(sandboxName, workspacePath);
         }
     }
 
@@ -64,11 +58,13 @@
             () => invoke("uninstall_package", { name: sandboxName, package: pkg }),
             { message: m.projects_status_uninstalling({ name: pkg }) }
         )) {
-            await loadPackages();
+            await refreshPackages(sandboxName, workspacePath);
         }
     }
 
-    onMount(loadPackages);
+    $effect(() => {
+        ensurePackages(sandboxName, workspacePath);
+    });
 </script>
 
 <div class="flex flex-col gap-1.5 border-t pt-2">

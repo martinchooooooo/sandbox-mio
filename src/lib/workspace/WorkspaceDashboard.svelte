@@ -14,6 +14,7 @@
     import { AGENTS, miseKey } from "$lib/agents/catalogue";
     import { LAUNCHABLE_APPS } from "$lib/workspace/apps";
     import { sandboxHasPane } from "$lib/workspace/state.svelte";
+    import { packagesFor, ensurePackages } from "$lib/workspace/packages.svelte";
 
     // Rendered by `+layout.svelte` when no Terminal/AgentWeb overlay is active for the active
     // sandbox (docs/features/consolidate-app-container/02_dev.md) — no longer a separate embedded
@@ -21,7 +22,7 @@
     let { sandboxName }: { sandboxName: string } = $props();
 
     let workspacePath = $state("");
-    let packages = $state<string[]>([]);
+    const packages = $derived(packagesFor(sandboxName));
     const action = createActionRunner();
     const launcherAction = createActionRunner();
 
@@ -46,7 +47,10 @@
     onMount(async () => {
         const projects = await invoke<Project[]>("list_sandboxes");
         workspacePath = projects.find((p) => p.name === sandboxName)?.workspace_path ?? "";
-        packages = await invoke<string[]>("list_packages", { workspacePath });
+    });
+
+    $effect(() => {
+        ensurePackages(sandboxName, workspacePath);
     });
 </script>
 

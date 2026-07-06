@@ -10,6 +10,7 @@
     import type { AgentDescriptor, AgentInstallEvent, AgentAuthStatus } from "$lib/agents/types";
     import type { InferenceStatus } from "$lib/models/types";
     import type { createActionRunner } from "$lib/actions.svelte";
+    import { packagesFor, ensurePackages, refreshPackages } from "$lib/workspace/packages.svelte";
 
     let {
         sandboxName,
@@ -21,7 +22,7 @@
         action: ReturnType<typeof createActionRunner>;
     } = $props();
 
-    let packages = $state<string[]>([]);
+    const packages = $derived(packagesFor(sandboxName));
 
     let agentStatuses = $state<Record<string, AgentAuthStatus>>({});
     let credentialBundles = $state<Record<string, boolean>>({});
@@ -43,10 +44,6 @@
             case "PostInstallDone": return `✓ ${e.step}`;
             case "Done": return "Done.";
         }
-    }
-
-    async function loadPackages() {
-        packages = await invoke<string[]>("list_packages", { workspacePath });
     }
 
     async function loadCredentialBundles() {
@@ -126,8 +123,9 @@
         });
         installingAgent = null;
         if (success) {
-            await loadPackages();
-            await loadAgentStatuses();
+            // Triggers the `installedAgents` effect below, which re-checks auth status once the
+            // newly installed agent shows up in the shared packages store.
+            await refreshPackages(sandboxName, workspacePath);
         }
     }
 
@@ -177,10 +175,19 @@
     }
 
     onMount(async () => {
-        await loadPackages();
         await loadCredentialBundles();
-        await loadAgentStatuses();
         await loadInferenceStatus();
+    });
+
+    $effect(() => {
+        ensurePackages(sandboxName, workspacePath);
+    });
+
+    // `installedAgents` derives from the shared `packages` store, so re-check auth status whenever
+    // it changes (initial load, install/uninstall, or a sandbox switch) rather than only once at mount.
+    $effect(() => {
+        installedAgents;
+        loadAgentStatuses();
     });
 </script>
 
