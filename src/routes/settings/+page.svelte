@@ -9,6 +9,16 @@
     import { createActionRunner } from "$lib/actions.svelte";
     import RuntimeSteps from "$lib/models/RuntimeSteps.svelte";
     import type { EngineKind, MachineSpecs, SetupStep } from "$lib/models/types";
+    import { toggleMode } from "mode-watcher";
+    import { HugeiconsIcon } from "@hugeicons/svelte";
+    import { SunIcon, MoonIcon } from "@hugeicons/core-free-icons";
+    import { locales, getLocale, setLocale } from "$lib/paraglide/runtime.js";
+
+    function cycleLocale() {
+        const current = getLocale();
+        const idx = locales.indexOf(current);
+        setLocale(locales[(idx + 1) % locales.length]);
+    }
 
     interface AppSettings {
         inferenceEngine: EngineKind;
@@ -94,8 +104,27 @@
 </script>
 
 <main class="p-3 pb-6 @max-[420px]:p-2">
-    <Button href="/" variant="outline" class="mb-6">{m.back()}</Button>
     <h1 class="text-3xl mb-8">{m.settings_title()}</h1>
+
+    <Field.Set class="mb-8">
+        <Field.Legend>{m.settings_appearance()}</Field.Legend>
+        <Field.Group>
+            <Field.Field orientation="horizontal">
+                <Field.Label>{m.settings_theme_label()}</Field.Label>
+                <Button onclick={toggleMode} variant="outline">
+                    <HugeiconsIcon icon={SunIcon}></HugeiconsIcon>
+                    /
+                    <HugeiconsIcon icon={MoonIcon}></HugeiconsIcon>
+                </Button>
+            </Field.Field>
+            <Field.Field orientation="horizontal">
+                <Field.Label>{m.settings_language_label()}</Field.Label>
+                <Button onclick={cycleLocale} variant="outline">
+                    {getLocale().toUpperCase()}
+                </Button>
+            </Field.Field>
+        </Field.Group>
+    </Field.Set>
 
     <Field.Set>
         <Field.Legend>{m.settings_advanced()}</Field.Legend>

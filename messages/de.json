@@ -1,6 +1,5 @@
 {
   "$schema": "https://inlang.com/schema/inlang-message-format",
-  "back": "← Zurück",
   "home_title": "Willkommen bei Sandbox-mio",
   "nav_intro": "Einführung",
   "nav_projects": "Projekte",
@@ -140,6 +139,9 @@
   "models_test_thinking": "Denkt nach…",
   "models_test_empty": "(leere Antwort)",
   "settings_title": "Einstellungen",
+  "settings_appearance": "Erscheinungsbild",
+  "settings_theme_label": "Design",
+  "settings_language_label": "Sprache",
   "settings_advanced": "Erweitert",
   "settings_engine_label": "Inferenz-Engine",
   "settings_engine_llama": "llama.cpp (Vulkan) — gebündelt, portabel",

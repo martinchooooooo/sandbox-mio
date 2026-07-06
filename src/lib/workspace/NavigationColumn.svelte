@@ -28,7 +28,7 @@
 
 <div
     class={[
-        "@container flex flex-col overflow-y-auto",
+        "@container flex flex-col overflow-y-auto [scrollbar-gutter:stable]",
         showControls ? (collapsed ? "w-12 shrink-0" : "w-[380px] shrink-0") : "flex-1",
     ].join(" ")}
 >
@@ -40,7 +40,7 @@
             </Button>
         </div>
     {:else}
-        <div class="flex items-center justify-between gap-2">
+        <div class="flex items-start justify-between gap-2 pb-2">
             <GlobalNav />
             {#if showControls}
                 <Button variant="ghost" size="sm" onclick={onToggleCollapsed} title={m.workspace_collapse()}>

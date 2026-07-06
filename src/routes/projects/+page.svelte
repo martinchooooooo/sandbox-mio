@@ -159,8 +159,6 @@
 </script>
 
 <main class="p-6 pb-52">
-    <Button href="/" variant="outline" class="mb-6">{m.back()}</Button>
-
     <h1 class="text-center text-3xl mb-8">{m.projects_title()}</h1>
 
     <!-- @max-[420px]: a container query against NavigationColumn.svelte's `@container` ancestor

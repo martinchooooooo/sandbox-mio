@@ -1,26 +1,30 @@
 <script lang="ts">
-    import Button from "$lib/components/ui/button/button.svelte";
-    import { toggleMode } from "mode-watcher";
-    import { HugeiconsIcon } from "@hugeicons/svelte";
-    import { SunIcon, MoonIcon } from "@hugeicons/core-free-icons";
-    import { locales, getLocale, setLocale } from "$lib/paraglide/runtime.js";
+    import * as Tabs from "$lib/components/ui/tabs";
+    import { goto } from "$app/navigation";
+    import { page } from "$app/state";
     import { m } from "$lib/paraglide/messages.js";
 
-    function cycleLocale() {
-        const current = getLocale();
-        const idx = locales.indexOf(current);
-        setLocale(locales[(idx + 1) % locales.length]);
-    }
+    const items = [
+        { href: "/intro", label: m.nav_intro },
+        { href: "/projects", label: m.nav_projects },
+        { href: "/models", label: m.nav_models },
+        { href: "/settings", label: m.nav_settings },
+        { href: "/credentials", label: m.nav_credentials },
+    ];
+
+    const active = $derived(
+        items.find((item) => item.href === page.url.pathname)?.href ?? items[0].href,
+    );
 </script>
 
-<div class="flex gap-2">
-    <Button href="/credentials" variant="outline">{m.nav_credentials()}</Button>
-    <Button onclick={toggleMode} variant="outline">
-        <HugeiconsIcon icon={SunIcon}></HugeiconsIcon>
-        /
-        <HugeiconsIcon icon={MoonIcon}></HugeiconsIcon>
-    </Button>
-    <Button onclick={cycleLocale} variant="outline">
-        {getLocale().toUpperCase()}
-    </Button>
-</div>
+<Tabs.Root value={active} onValueChange={(value) => goto(value)}>
+    <Tabs.List
+        variant="line"
+        class="flex-wrap justify-start"
+        style="height: auto;"
+    >
+        {#each items as item (item.href)}
+            <Tabs.Trigger value={item.href}>{item.label()}</Tabs.Trigger>
+        {/each}
+    </Tabs.List>
+</Tabs.Root>

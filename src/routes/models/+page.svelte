@@ -222,7 +222,6 @@
 </script>
 
 <main class="p-3 pb-6 @max-[420px]:p-2">
-    <Button href="/" variant="outline" class="mb-6">{m.back()}</Button>
     <h1 class="text-3xl mb-2">{m.models_title()}</h1>
     <p class="text-sm text-muted-foreground mb-6">{m.models_engine_label({ engine })}</p>
 
