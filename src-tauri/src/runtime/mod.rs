@@ -27,6 +27,9 @@ const ZELLIJ_WEB_PORT: u16 = 8082;
 /// which publishes it to the host at `create`.
 const PASEO_WEB_PORT: u16 = 6767;
 
+const PASEO_PROJECTS_DIR: &str = "/root/.paseo/projects";
+const PASEO_PROJECTS_FILE: &str = "/root/.paseo/projects/projects.json";
+
 /// Construct the managed [`RuntimeManager`] for Tauri state. The Podman connection is read from
 /// `PODMAN_CONNECTION`; defaults to [`crate::backends::DEFAULT_CONNECTION`] when unset. The e2e
 /// harness overrides `PODMAN_CONNECTION` to pin the local test connection.
@@ -119,6 +122,66 @@ impl PodmanMiseRuntime {
         args.extend_from_slice(mise_args);
         check(self.podman(&args).await?)
     }
+
+    async fn seed_paseo_projects(connection: &str, name: &str) -> Result<(), RuntimeError> {
+        let already_seeded = Self::podman_on(connection, &["exec", name, "test", "-f", PASEO_PROJECTS_FILE])
+            .await
+            .map(|out| out.status.success())
+            .unwrap_or(false);
+        if already_seeded {
+            return Ok(());
+        }
+
+        check(Self::podman_on(connection, &["exec", name, "mkdir", "-p", PASEO_PROJECTS_DIR]).await?)?;
+
+        let now = iso8601_now();
+        let projects = serde_json::json!([{
+            "projectId": WORKSPACE_MOUNT,
+            "rootPath": WORKSPACE_MOUNT,
+            "kind": "non_git",
+            "displayName": name,
+            "customName": null,
+            "createdAt": &now,
+            "updatedAt": &now,
+            "archivedAt": null,
+        }]);
+        let contents = serde_json::to_string_pretty(&projects)
+            .map_err(|e| RuntimeError::AgentWebUnavailable(e.to_string()))?;
+
+        let tmp_path = std::env::temp_dir().join(format!("paseo-projects-{name}.json"));
+        std::fs::write(&tmp_path, &contents)
+            .map_err(|e| RuntimeError::AgentWebUnavailable(format!("failed to write {}: {e}", tmp_path.to_string_lossy())))?;
+        let dest = format!("{name}:{PASEO_PROJECTS_FILE}");
+        let result = check(Self::podman_on(connection, &["cp", &tmp_path.to_string_lossy(), &dest]).await?);
+        let _ = std::fs::remove_file(&tmp_path);
+        result.map(|_| ())
+    }
+}
+
+fn iso8601_now() -> String {
+    let since_epoch =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let secs = since_epoch.as_secs();
+    let millis = since_epoch.subsec_millis();
+    let days = (secs / 86400) as i64;
+    let rem = secs % 86400;
+    let (hour, minute, second) = (rem / 3600, (rem % 3600) / 60, rem % 60);
+    let (year, month, day) = civil_from_days(days);
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{millis:03}Z")
+}
+
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
 }
 
 #[async_trait::async_trait]
@@ -257,6 +320,8 @@ impl RuntimeManager for PodmanMiseRuntime {
     ) -> Result<u16, RuntimeError> {
         // The container must be running before any `podman exec`.
         check(Self::podman_on(connection, &["start", name]).await?)?;
+
+        Self::seed_paseo_projects(connection, name).await?;
 
         check(
             Self::podman_on(
