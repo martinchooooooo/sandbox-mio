@@ -16,6 +16,7 @@ mod workspace;
 use std::sync::Arc;
 
 use tauri::{ipc::Channel, Manager, State};
+use tracing_subscriber::prelude::*;
 
 use crate::activity::types::{Task, TaskKind};
 use crate::activity::TaskRegistry;
@@ -1291,6 +1292,38 @@ fn set_settings(settings: AppSettings, app: tauri::AppHandle) -> Result<(), AppE
     Ok(())
 }
 
+fn init_logging(app: &tauri::AppHandle) {
+    let log_dir = app
+        .path()
+        .app_log_dir()
+        .unwrap_or_else(|_| std::env::temp_dir());
+    let _ = std::fs::create_dir_all(&log_dir);
+
+    let file_appender = tracing_appender::rolling::daily(&log_dir, "mio.log");
+    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+    Box::leak(Box::new(guard));
+
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
+    let _ = tracing_subscriber::registry()
+        .with(filter)
+        .with(tracing_subscriber::fmt::layer().with_ansi(false).with_writer(non_blocking))
+        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stdout))
+        .try_init();
+
+    let panic_log_path = log_dir.join("mio-panic.log");
+    std::panic::set_hook(Box::new(move |info| {
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&panic_log_path) {
+            use std::io::Write;
+            let _ = writeln!(f, "{:?}: {info}", std::time::SystemTime::now());
+        }
+        tracing::error!("panic: {info}");
+    }));
+
+    tracing::info!(log_dir = %log_dir.display(), "logging initialized");
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[cfg(all(debug_assertions, feature = "devtools"))]
@@ -1317,6 +1350,7 @@ pub fn run() {
         .manage(runtime)
         .manage(machine)
         .setup(|app| {
+            init_logging(app.handle());
             if !backends::mock_backend_enabled() {
                 if let Ok(resource_dir) = app.path().resource_dir() {
                     backends::set_podman_resource_dir(resource_dir.join("podman"));

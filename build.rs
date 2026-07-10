@@ -43,6 +43,7 @@ fn main() {
         }
         Some("dev") => {
             kill_stale_dev_processes();
+            set_dev_diagnostics_env();
             stage_llama();
             stage_podman();
             run(root_dir(), "pnpm", &["run", "tauri", "dev"]);
@@ -72,6 +73,15 @@ fn main() {
             eprintln!("  build package      - stage bundled binaries and build the release NSIS installer");
             std::process::exit(1);
         }
+    }
+}
+
+fn set_dev_diagnostics_env() {
+    if env::var("RUST_LOG").is_err() {
+        env::set_var("RUST_LOG", "sandbox_mio_lib=debug,info");
+    }
+    if env::var("RUST_BACKTRACE").is_err() {
+        env::set_var("RUST_BACKTRACE", "1");
     }
 }
 
