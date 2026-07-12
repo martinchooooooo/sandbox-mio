@@ -5,7 +5,7 @@
     import { m } from "$lib/paraglide/messages.js";
     import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
     import { AGENTS, miseKey, onboardingSeed } from "$lib/agents/catalogue";
-    import { buildLocalLlmProvider } from "$lib/agents/opencode";
+    import { buildLocalLlmProvider, FALLBACK_MODEL_ID } from "$lib/agents/opencode";
     import { buildPiLocalLlmProvider, PI_CONFIG_ENV, PI_CONFIG_DIR_CONTAINER } from "$lib/agents/pi";
     import type { AgentDescriptor, AgentInstallEvent, AgentAuthStatus } from "$lib/agents/types";
     import type { InferenceStatus } from "$lib/models/types";
@@ -109,7 +109,16 @@
                         configDirContainer: PI_CONFIG_DIR_CONTAINER,
                     });
                 } else {
-                    const { providerId, providerJson, defaultModel } = buildLocalLlmProvider();
+                    let runningModelId: string | null = null;
+                    try {
+                        const status = await invoke<InferenceStatus>("inference_status");
+                        runningModelId = status.running ? status.modelId : null;
+                    } catch {
+                        runningModelId = null;
+                    }
+                    const { providerId, providerJson, defaultModel } = buildLocalLlmProvider(
+                        runningModelId ?? FALLBACK_MODEL_ID,
+                    );
                     await invoke("provision_opencode", {
                         workspacePath,
                         relativePath: descriptor.provision.relativeConfigPath,

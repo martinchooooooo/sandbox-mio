@@ -11,6 +11,7 @@
     import RuntimeSteps from "$lib/models/RuntimeSteps.svelte";
     import { recommendModels, type RankedModel } from "$lib/models/recommend";
     import { testModelFromEnv } from "$lib/models/catalogue";
+    import { reprovisionInstalledAgents } from "$lib/agents/reprovision";
     import type {
         EngineKind,
         InferenceStatus,
@@ -155,6 +156,9 @@
                 stepsCollapsed = true;
                 collapsedOnce = true;
             }, 2000);
+            // Keep every installed agent's default model in sync with whatever's now serving, so
+            // e.g. OpenCode doesn't keep targeting a model the server no longer runs.
+            if (status.modelId) reprovisionInstalledAgents(status.modelId);
         }
     }
 
