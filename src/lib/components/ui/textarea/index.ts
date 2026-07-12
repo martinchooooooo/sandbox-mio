@@ -1,5 +1,4 @@
 import Root from "./textarea.svelte";
-
 export {
 	Root,
 	//

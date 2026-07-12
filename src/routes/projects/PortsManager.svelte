@@ -86,7 +86,7 @@
                         http://127.0.0.1:{fwd.hostPort}/
                     </button>
                     {#if fwd.kind.kind === "exposed" && !isManaged(fwd)}
-                        <Button variant="ghost" size="icon-xs" disabled={portBusy} title="Stop exposing"
+                        <Button variant="ghost" size="icon" disabled={portBusy} title="Stop exposing"
                             onclick={() => removeExposedPort(fwd.kind.kind === "exposed" ? fwd.kind.targetPort : 0)}>
                             ✕
                         </Button>

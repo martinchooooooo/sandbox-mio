@@ -36,26 +36,34 @@ All read via `std::env::var` at call time, never cached:
 
 # UI Components
 
-This project uses [shadcn-svelte](https://shadcn-svelte.com) for UI primitives. Components live in `src/lib/components/ui/`.
+This project uses [shadcn-svelte](https://shadcn-svelte.com) for UI primitives, re-skinned with the [retro-ui-svelte](https://retroui-svelte.netlify.app) registry's Sunset Orange (Rounded) theme — same `bits-ui` headless primitives and component file layout, different markup/classes/theme tokens (thick borders, hard drop-shadows, Archivo Black display font, Space Grotesk body font). Components live in `src/lib/components/ui/`.
 
 When building UI features, always check `src/lib/components/ui/` first and reach for an existing component before writing custom markup.
 
 Currently available components:
 - `button`
-- `field` (Field.Set, Field.Group, Field.Field, Field.Label, Field.Description, Field.Error, etc.)
+- `collapsible`
+- `command` (includes `command-dialog`)
+- `dialog`
+- `field` (Field.Set, Field.Group, Field.Field, Field.Label, Field.Description, Field.Error, etc.) — retro-ui-svelte has no `field` registry item; this component keeps shadcn-svelte markup, restyled by hand to match the retro look (see `docs/features/retro-ui-migration/02_dev.md`)
 - `input`
+- `input-group` — retro-ui-svelte has no `input-group` registry item either; same hand-restyle situation as `field`
 - `label`
 - `separator`
 - `sonner` (toast notifications; mount a single `<Toaster />` in `src/routes/+layout.svelte`, call `toast.success`/`toast.error` from `svelte-sonner`)
 - `switch`
+- `tabs`
+- `textarea`
 
 ## Adding new components
 
-If a shadcn-svelte component would be a good fit but isn't in `src/lib/components/ui/` yet, ask the user if they'd like to add it before building a custom alternative. Components can be added via:
+If a shadcn-svelte component would be a good fit but isn't in `src/lib/components/ui/` yet, ask the user if they'd like to add it before building a custom alternative. Pull from the retro-ui-svelte registry so new components match the Sunset Orange (Rounded) theme already established, not the default shadcn-svelte look:
 
 ```
-pnpm dlx shadcn-svelte@latest add <component-name>
+pnpm dlx shadcn-svelte@latest add https://retroui-svelte.netlify.app/r/<component-name>.json
 ```
+
+If retro-ui-svelte has no registry item for the component (check `https://retroui-svelte.netlify.app/r/<component-name>.json` for a 404), fall back to the plain shadcn-svelte registry (`pnpm dlx shadcn-svelte@latest add <component-name>`) and hand-restyle it to match: `border-2`, `shadow-md` (`hover:shadow-none` or `focus:shadow-xs` on interactive elements), `rounded-md` are the conventions used throughout the pulled components.
 
 # Translations (i18n)
 
@@ -139,3 +147,5 @@ Good — states the constraint the code can't show:
 | Containerfile change has no effect on new sandboxes | `ensure_base_image` short-circuits on `podman image exists`, so an unchanged image tag keeps the stale image | Bump `BASE_IMAGE_VERSION` in `src-tauri/src/backends/mod.rs` whenever `src-tauri/resources/Containerfile` changes |
 | Feature works with `pnpm run test:light` but fails against real Podman | The `light` tier runs entirely against in-memory mocks (`MIO_MOCK_BACKEND=1`) and proves UI/store logic only | Write or run the feature's `standard` tier spec (`e2e/test/specs/standard/`); `e2e/AGENTS.md` defines `standard` as the default tier |
 | A `$state` store resets on route change | Component-local state is destroyed by the router | Put shared state in a module-scoped `.svelte.ts` store under `src/lib/` (pattern: `src/lib/activity/activity.svelte.ts`); see `src/AGENTS.md` |
+| A component added via `pnpm dlx shadcn-svelte@latest add <name>` (no URL) looks visually inconsistent with the rest of the app | The plain command pulls from the default shadcn-svelte registry, not retro-ui-svelte | Always use `pnpm dlx shadcn-svelte@latest add https://retroui-svelte.netlify.app/r/<name>.json` |
+| `bg-destructive-hover`/`hover:bg-destructive-hover` has no visible hover effect on a retro-pulled `Button` | retro-ui-svelte's `button.svelte` references this class but never defines a `--destructive-hover` token in any of its 16 theme files (upstream gap) | `src/app.css` already defines `--destructive-hover`/`--color-destructive-hover`; if a future theme swap drops it, re-add a manually chosen darker/lighter destructive shade |

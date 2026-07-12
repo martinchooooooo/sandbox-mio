@@ -108,7 +108,7 @@
             {#each packages as pkg}
                 <span class="flex items-center gap-1 rounded bg-muted px-2 py-0.5 text-xs">
                     <span class="font-mono">{pkg}</span>
-                    <Button variant="ghost" size="icon-xs"
+                    <Button variant="ghost" size="icon"
                         loading={action.busy === "uninstall"}
                         disabled={action.busy !== null}
                         title={m.projects_uninstall()}

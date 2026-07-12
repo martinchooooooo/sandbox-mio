@@ -233,7 +233,7 @@
             <h2 class="text-sm font-medium">{m.models_specs_title()}</h2>
             {#if specs}
                 <Button
-                    size="icon-xs"
+                    size="icon"
                     variant="ghost"
                     data-redetect
                     loading={action.busy === "redetect"}

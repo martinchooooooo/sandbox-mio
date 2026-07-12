@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { cn, type WithElementRef } from "$lib/utils.js";
 	import type { HTMLAttributes } from "svelte/elements";
-
 	let {
 		ref = $bindable(null),
 		class: className,
@@ -13,7 +12,7 @@
 <span
 	bind:this={ref}
 	data-slot="command-shortcut"
-	class={cn("text-muted-foreground group-data-selected/command-item:text-foreground ml-auto text-xs tracking-widest", className)}
+	class={cn("text-muted-foreground ml-auto text-xs tracking-widest", className)}
 	{...restProps}
 >
 	{@render children?.()}
