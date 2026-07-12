@@ -39,17 +39,73 @@ export const MODELS: ModelDescriptor[] = [
     foundryAlias: "phi-4-mini-reasoning",
   },
   {
-    id: "qwen2.5-7b-instruct",
-    label: "Qwen2.5 7B Instruct",
+    id: "qwen2.5-coder-7b-instruct",
+    label: "Qwen2.5 Coder 7B Instruct",
     paramsB: 7,
     ramFloorBytes: 16 * GB,
     llama: {
-      repo: "Qwen/Qwen2.5-7B-Instruct-GGUF",
-      file: "qwen2.5-7b-instruct-q4_k_m.gguf",
+      repo: "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
+      file: "qwen2.5-coder-7b-instruct-q4_k_m.gguf",
       sha256: "",
-      sizeBytes: 4_700_000_000,
+      sizeBytes: 4_680_000_000,
     },
     // No Foundry catalog entry as of the 2026-06-29 spike — llama engine only.
+    foundryAlias: null,
+  },
+  {
+    id: "qwen3-4b-instruct",
+    label: "Qwen3 4B Instruct",
+    paramsB: 4,
+    ramFloorBytes: 8 * GB,
+    llama: {
+      repo: "unsloth/Qwen3-4B-Instruct-2507-GGUF",
+      file: "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+      sha256: "",
+      sizeBytes: 2_500_000_000,
+    },
+    // No Foundry catalog entry — llama engine only.
+    foundryAlias: null,
+  },
+  {
+    id: "gpt-oss-20b",
+    label: "GPT-OSS 20B",
+    paramsB: 20,
+    ramFloorBytes: 24 * GB,
+    llama: {
+      repo: "ggml-org/gpt-oss-20b-GGUF",
+      file: "gpt-oss-20b-mxfp4.gguf",
+      sha256: "",
+      sizeBytes: 12_100_000_000,
+    },
+    // No Foundry catalog entry — llama engine only.
+    foundryAlias: null,
+  },
+  {
+    id: "devstral-small-2-24b",
+    label: "Devstral Small 2 24B",
+    paramsB: 24,
+    ramFloorBytes: 32 * GB,
+    llama: {
+      repo: "bartowski/mistralai_Devstral-Small-2-24B-Instruct-2512-GGUF",
+      file: "mistralai_Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf",
+      sha256: "",
+      sizeBytes: 14_330_000_000,
+    },
+    // No Foundry catalog entry — llama engine only.
+    foundryAlias: null,
+  },
+  {
+    id: "qwen3.6-27b",
+    label: "Qwen3.6 27B",
+    paramsB: 27,
+    ramFloorBytes: 32 * GB,
+    llama: {
+      repo: "unsloth/Qwen3.6-27B-GGUF",
+      file: "Qwen3.6-27B-Q4_K_M.gguf",
+      sha256: "",
+      sizeBytes: 16_800_000_000,
+    },
+    // No Foundry catalog entry — llama engine only.
     foundryAlias: null,
   },
 ];
