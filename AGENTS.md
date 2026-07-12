@@ -95,17 +95,12 @@ All `invoke()` catch blocks use `parseError(e).message` for display. Branch on `
 
 # Code Comments
 
-If you are going to right comments to source code, STOP. 
+- Code should be self explanatory; Avoid comments as much as possible.
+- If a comment is needed, the total comment must not be longer than 2 lines.
+- Do not add comments that are referring to your current work or process, only leave comments that exaplin the WHY, not the WHAT.
+- TODO's for future are the exception and definitely allowed
 
-**Skip comments entirely when:**
-- Private helpers whose name states intent
-- Error enum variants that have a self-documenting `#[error("…")]` message
-- Trait/interface method implementations that delegate to an already-documented API
-- Trait and interface method *declarations*: one or two lines — non-obvious contract only (idempotency, ordering, what the return value means). 
-- Module-level docs: one or two lines — role and where it is wired in (e.g. Tauri state, registered in `lib.rs`). Not a table of contents.
-
-
-If none of the above cases, here are rules to follow
+here are futher guidelines to follow if comments are needed:
 
 1. **one or two lines, not paragraphs.** State the non-obvious contract (idempotency, ordering constraints, what the return value represents). Skip anything the parameter names and return type already convey.
 2. **State the contract, not the implementation.** Describe what the function guarantees to the caller, not how it achieves it. Where the contract is non-obvious, state when the call returns or what it resolves to.
