@@ -22,6 +22,14 @@ class SettingsPage extends AppPage {
     return $("[data-saved]");
   }
 
+  get resetPodmanMachineButton(): Element {
+    return $("[data-reset-podman-machine]");
+  }
+
+  get resetPodmanMachineDoneMarker(): Element {
+    return $("[data-reset-podman-machine-done]");
+  }
+
   // Navigate to /settings and wait for the engine group to render. The nav link only exists on the
   // home page, so callers must start from home (the app launches there).
   async open(timeout = 10000): Promise<void> {
@@ -59,6 +67,14 @@ class SettingsPage extends AppPage {
     await btn.waitForClickable({ timeout: 10000 });
     await btn.click();
     await (await this.savedMarker).waitForDisplayed({ timeout: 10000 });
+  }
+
+  // Advanced Debugging: run the stuck-Podman-machine reset and wait for the done confirmation.
+  async resetPodmanMachine(): Promise<void> {
+    const btn = await this.resetPodmanMachineButton;
+    await btn.waitForClickable({ timeout: 10000 });
+    await btn.click();
+    await (await this.resetPodmanMachineDoneMarker).waitForDisplayed({ timeout: 10000 });
   }
 }
 

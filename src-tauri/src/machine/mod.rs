@@ -193,4 +193,22 @@ impl MachineManager for PodmanMachineManager {
     async fn init_machine(&self) -> Result<(), BackendError> {
         check(podman(&["machine", "init", DEFAULT_CONNECTION]).await?).map(|_| ())
     }
+
+    async fn reset_stuck_machine(&self) -> Result<(), BackendError> {
+        // Best-effort: a machine stuck mid-import may not appear in `podman machine list` at all,
+        // so its absence here is not an error.
+        let _ = podman(&["machine", "rm", "-f", DEFAULT_CONNECTION]).await;
+
+        // The actual fix: `wsl --import` leaves a partially-registered distro behind on failure,
+        // and podman refuses to retry `machine init` while it's still registered. `wsl
+        // --unregister` also exits non-zero when the distro is already gone, which is fine.
+        let _ = tokio::task::spawn_blocking(|| {
+            std::process::Command::new("wsl")
+                .no_window()
+                .args(["--unregister", DEFAULT_CONNECTION])
+                .output()
+        })
+        .await;
+        Ok(())
+    }
 }

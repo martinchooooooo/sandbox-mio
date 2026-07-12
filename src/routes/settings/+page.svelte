@@ -101,6 +101,15 @@
     const showFoundryInstall = $derived(
         specs !== null && !specs.foundryInstalled && specs.foundryInstallable,
     );
+
+    let machineReset = $state(false);
+
+    async function resetPodmanMachine() {
+        machineReset = false;
+        if (await action.run("reset-podman-machine", () => invoke("reset_stuck_podman_machine"))) {
+            machineReset = true;
+        }
+    }
 </script>
 
 <main class="p-3 pb-6 @max-[420px]:p-2">
@@ -180,6 +189,25 @@
                     <Input type="number" min="0" bind:value={ctxSize} placeholder="default" />
                 </Field.Field>
             {/if}
+        </Field.Group>
+    </Field.Set>
+
+    <Field.Set class="mt-8">
+        <Field.Legend>{m.settings_debugging()}</Field.Legend>
+        <Field.Group>
+            <Field.Field>
+                <Field.Label>{m.settings_debugging_reset_machine_label()}</Field.Label>
+                <p class="text-xs text-muted-foreground">{m.settings_debugging_reset_machine_description()}</p>
+                <Button
+                    data-reset-podman-machine
+                    size="sm"
+                    variant="outline"
+                    loading={action.busy === "reset-podman-machine"}
+                    disabled={action.busy !== null}
+                    onclick={resetPodmanMachine}
+                >{m.settings_debugging_reset_machine_button()}</Button>
+                {#if machineReset}<p data-reset-podman-machine-done class="text-xs text-emerald-600 dark:text-emerald-400">{m.settings_debugging_reset_machine_done()}</p>{/if}
+            </Field.Field>
         </Field.Group>
     </Field.Set>
 

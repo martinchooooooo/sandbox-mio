@@ -43,6 +43,11 @@ pub trait MachineManager: Send + Sync {
     /// Run `podman machine init` for the default machine. Downloads the machine image on first
     /// call, so this can take minutes and needs network access.
     async fn init_machine(&self) -> Result<(), BackendError>;
+    /// Force-clear a default machine stuck mid-import (e.g. a WSL import that failed with exit
+    /// `0xffffffff`): removes podman's own bookkeeping for it, then unregisters its WSL distro.
+    /// Best-effort and idempotent — always `Ok`, since "no machine, no distro" is the goal state
+    /// whether or not either resource existed. The next `init_machine` recreates it cleanly.
+    async fn reset_stuck_machine(&self) -> Result<(), BackendError>;
 }
 
 /// The real [`MachineManager`], driving the global `podman machine` CLI, `wsl`, and the rootless

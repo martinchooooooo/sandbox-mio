@@ -50,4 +50,8 @@ impl MachineManager for MockMachineManager {
     async fn init_machine(&self) -> Result<(), BackendError> {
         Ok(())
     }
+
+    async fn reset_stuck_machine(&self) -> Result<(), BackendError> {
+        Ok(())
+    }
 }

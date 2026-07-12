@@ -746,6 +746,19 @@ async fn provision_podman(
     start_podman_machine(app, machine).await
 }
 
+/// Advanced-settings debug utility: force-clear a default Podman machine stuck mid-import (the
+/// WSL import failure surfaces as `wsl --import ... failed: exit status 0xffffffff`), so the user
+/// can retry `provision_podman` without manually running `wsl --unregister` themselves.
+#[tauri::command]
+async fn reset_stuck_podman_machine(
+    machine: State<'_, Arc<dyn MachineManager>>,
+) -> Result<(), AppError> {
+    machine
+        .reset_stuck_machine()
+        .await
+        .map_err(|e| AppError::PodmanUnavailable(e.to_string()))
+}
+
 #[tauri::command]
 async fn listen_events(on_event: Channel<serde_json::Value>, store: State<'_, Arc<dyn SandboxBackend>>) -> Result<(), AppError> {
     Ok(store.listen_events(on_event).await?)
@@ -1411,6 +1424,7 @@ pub fn run() {
             machine_needs_init,
             start_podman_machine,
             provision_podman,
+            reset_stuck_podman_machine,
             listen_events,
             list_sandbox_hosts,
             add_sandbox_host,
