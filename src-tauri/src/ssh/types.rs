@@ -1,25 +1,24 @@
-/// Errors produced by SSH config management ([`crate::ssh`]).
+/// Errors from SSH config management.
 #[derive(Debug, thiserror::Error)]
 pub enum SshError {
     #[error("could not resolve home directory")]
     HomeDirNotFound,
-    /// The config-lock mutex was poisoned by a panicking writer.
+    /// Config-lock mutex was poisoned by a panicking writer.
     #[error("SSH config lock poisoned")]
     LockPoisoned,
-    /// Any file-system operation on the SSH config (create, write, rename).
+    /// File-system operation on SSH config failed.
     #[error("{0}")]
     WriteError(String),
 }
 
-/// One OpenSSH `Host` alias supplying the port and identity Mutagen's `alias:path` URLs cannot.
-/// Keyed to a Podman host (connection), not a sandbox: many sandboxes on one host share an
-/// endpoint. Written by [`crate::ssh::write_alias`].
+/// One OpenSSH `Host` alias for a remote sandbox. Supplies port and identity that Mutagen's
+/// `alias:path` URLs cannot embed. Keyed to a Podman connection (many sandboxes share one).
 pub struct SshAlias {
-    /// The `Host` token Mutagen URLs reference (`alias:path`). Also the per-block marker key.
+    /// The `Host` token Mutagen URLs reference (used in `alias:path` scp-style URLs).
     pub alias: String,
     pub host: String,
     pub port: String,
     pub user: String,
-    /// Path to the SSH private key Podman registered for the connection.
+    /// SSH private key path registered with Podman for this connection.
     pub identity: String,
 }

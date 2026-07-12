@@ -1,8 +1,11 @@
 use async_trait::async_trait;
 
+/// One tool from the mise registry. Returned by `registry()` to populate agent install UI.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct RegistryEntry {
+    /// Short tool name (e.g., "node", "python").
     pub short: String,
+    /// Human-readable description from the registry.
     pub description: Option<String>,
 }
 
@@ -31,22 +34,19 @@ pub enum RuntimeError {
 /// implementation is [`PodmanMiseRuntime`], held in Tauri state as `Arc<dyn RuntimeManager>`.
 #[async_trait]
 pub trait RuntimeManager: Send + Sync {
-    /// Idempotent: ensures the workspace holds a `mise.toml` (intent) and an empty `mise.lock`
-    /// (so installs maintain the lockfile); a no-op if `mise.toml` already exists there.
+    /// Create `mise.toml` and empty `mise.lock` if absent. Idempotent.
     async fn init(&self, workspace_host_path: &str) -> Result<(), RuntimeError>;
 
-    /// Install `package` via `mise use`, downloading the prebuilt binary and rewriting the manifest.
+    /// Install `package` via `mise use`, rewriting the manifest.
     async fn install(&self, name: &str, package: &str) -> Result<(), RuntimeError>;
 
-    /// Remove `package` via `mise rm`, rewriting the manifest.
+    /// Uninstall `package` via `mise rm`, rewriting the manifest.
     async fn uninstall(&self, name: &str, package: &str) -> Result<(), RuntimeError>;
 
-    /// Read `[tools]` entry names from `<workspace_host_path>/mise.toml`. Reads the host filesystem
-    /// directly, so it works for stopped and deployed sandboxes.
+    /// List installed tools from the manifest. Works for stopped and deployed sandboxes.
     async fn list(&self, workspace_host_path: &str) -> Result<Vec<String>, RuntimeError>;
 
-    /// Seed `mise.toml`/`mise.lock` onto the remote container and run `mise install` to download the
-    /// lock-pinned binaries from the upstream release hosts. Called after the remote container is created.
+    /// Seed manifest onto remote container and run `mise install` to download lock-pinned binaries.
     async fn reproduce_remote(
         &self,
         name: &str,
@@ -54,12 +54,8 @@ pub trait RuntimeManager: Send + Sync {
         workspace_host_path: &str,
     ) -> Result<(), RuntimeError>;
 
-    /// Start the zellij web server in sandbox `name` over `connection` (idempotently), mint a
-    /// one-time login token, and return `(token, container_port)` where `container_port` is the
-    /// ephemeral port on `connection`'s host loopback that the container published for the zellij
-    /// web server. The caller creates the Mutagen forwarding session that bridges a Windows-host
-    /// port to `container_port`, then persists the complete session (token + URL) host-side.
-    /// Works for any Podman connection.
+    /// Start zellij web server in sandbox, mint login token, return `(token, container_port)`.
+    /// Caller bridges container_port to Windows loopback via Mutagen forward.
     async fn prepare_terminal(
         &self,
         name: &str,
@@ -67,9 +63,7 @@ pub trait RuntimeManager: Send + Sync {
         workspace_host_path: &str,
     ) -> Result<(String, u16), RuntimeError>;
 
-    /// Paseo analog of [`RuntimeManager::prepare_terminal`]: (re)start the paseo daemon in
-    /// sandbox `name` over `connection` with `password` as `PASEO_PASSWORD`, returning the port
-    /// on `connection`'s host loopback that the container published for the paseo web UI.
+    /// Start paseo agent-web daemon in sandbox, return published container port.
     async fn prepare_agent_web(
         &self,
         name: &str,
@@ -77,20 +71,16 @@ pub trait RuntimeManager: Send + Sync {
         password: &str,
     ) -> Result<u16, RuntimeError>;
 
-    /// The Podman connection this runtime is pinned to, read from `PODMAN_CONNECTION` (or the
-    /// compiled-in default). Used by `open_terminal` as the fallback connection for local sandboxes.
+    /// The Podman connection this runtime is pinned to. Fallback for local sandboxes.
     fn local_connection(&self) -> &str;
 
-    /// Run `mise registry --json` in container `name` and return the full tool list.
-    /// Implementations cache the result process-wide; the first call pays the `podman exec` cost.
+    /// List available tools from the mise registry (process-wide cached).
     async fn registry(&self, name: &str) -> Result<Vec<RegistryEntry>, RuntimeError>;
 
-    /// Return the absolute install directory for `tool` inside container `name` (via `mise where`).
-    /// Used by agent postinstall steps that need a path into the tool's installation.
+    /// Return the install directory for `tool` in sandbox (used by agent postinstall).
     async fn tool_dir(&self, name: &str, tool: &str) -> Result<String, RuntimeError>;
 
-    /// Run an arbitrary command inside container `name` in the workspace directory and return stdout.
-    /// Starts the container first (idempotent). Extension point for agent postinstall steps.
+    /// Execute a command in sandbox's workspace and return stdout (starts container if needed).
     async fn exec_in_container(&self, name: &str, args: &[&str]) -> Result<String, RuntimeError>;
 }
 

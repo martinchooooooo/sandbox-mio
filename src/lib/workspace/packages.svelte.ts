@@ -1,8 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-// Module-scoped per-sandbox cache: WorkspaceDashboard, PackageManager and AgentManager all need the
-// installed-package list for the same sandbox, so it lives here once instead of three independent
-// local copies that could drift out of sync after an install/uninstall.
+// Module-scoped per-sandbox cache to avoid drifting independent copies across components.
 
 const packagesBySandbox = $state<Record<string, string[]>>({});
 const inFlight = new Map<string, Promise<void>>();

@@ -1,8 +1,4 @@
-//! Global activity subsystem: the authoritative `TaskRegistry` (Tauri state, managed in `lib.rs`
-//! `setup` alongside `ActiveServer`) plus the `open`/`progress`/`succeed`/`fail` helpers that
-//! enrolled commands call. Each helper mutates the map under the lock, stamps the task with the
-//! next process-wide version, clones it out, drops the lock, and only then broadcasts the whole
-//! task with `app.emit(EVENT_NAME, &task)`. In-memory only: dropped on exit like `ActiveServer`.
+//! Global activity subsystem: TaskRegistry holding long-running task state and mutation helpers.
 
 pub mod types;
 
@@ -15,14 +11,10 @@ use tauri::{AppHandle, Emitter};
 
 use types::{Task, TaskId, TaskKind, TaskStatus};
 
-/// Process-wide monotonic version source, mirroring `SESSION_COUNTER` in `agents/mod.rs`. Bumped
-/// under the registry lock on every mutation so version order matches insertion order.
 static ACTIVITY_VERSION: AtomicU64 = AtomicU64::new(0);
 
-/// Keep at most this many terminal tasks; `running` tasks are never evicted.
 const MAX_TERMINAL_TASKS: usize = 50;
 
-/// The single app-wide event both producers (here) and the consumer (`activity.svelte.ts`) name.
 pub const EVENT_NAME: &str = "activity://task-updated";
 
 #[derive(Default)]
@@ -33,7 +25,6 @@ pub struct ActivityState {
 pub type TaskRegistry = std::sync::Arc<ActivityState>;
 
 impl ActivityState {
-    /// Snapshot the current ledger, sorted by `started_at_ms`. Infallible — a read cannot fail.
     pub fn snapshot(&self) -> Vec<Task> {
         let mut tasks: Vec<Task> = self.tasks.lock().unwrap().values().cloned().collect();
         tasks.sort_by_key(|t| t.started_at_ms);
@@ -49,7 +40,6 @@ fn next_version() -> u64 {
     ACTIVITY_VERSION.fetch_add(1, Ordering::Relaxed)
 }
 
-/// Drop terminal tasks beyond the newest `MAX_TERMINAL_TASKS` (by `ended_at_ms`); keep all running.
 fn evict_terminal(map: &mut HashMap<TaskId, Task>) {
     let mut terminal: Vec<(TaskId, u64)> = map
         .iter()
@@ -59,15 +49,12 @@ fn evict_terminal(map: &mut HashMap<TaskId, Task>) {
     if terminal.len() <= MAX_TERMINAL_TASKS {
         return;
     }
-    // Newest first; drop everything past the cap.
     terminal.sort_by(|a, b| b.1.cmp(&a.1));
     for (id, _) in terminal.into_iter().skip(MAX_TERMINAL_TASKS) {
         map.remove(&id);
     }
 }
 
-/// Resolve the registry from the app handle and run `f` with the stamped task cloned out, then
-/// emit it outside the lock. A best-effort emit (a dropped emit never fails the underlying work).
 fn mutate(app: &AppHandle, f: impl FnOnce(&mut HashMap<TaskId, Task>) -> Option<Task>) {
     use tauri::Manager;
     let registry = app.state::<TaskRegistry>();
@@ -80,8 +67,6 @@ fn mutate(app: &AppHandle, f: impl FnOnce(&mut HashMap<TaskId, Task>) -> Option<
     }
 }
 
-/// Open (or replace) a `Running` task with a fresh version and `started_at_ms`, then emit.
-/// Replacing an existing id by natural key is intentional for singletons (e.g. `inference-setup`).
 pub fn open(app: &AppHandle, id: &str, kind: TaskKind, target: Option<String>) {
     mutate(app, |map| {
         let task = Task {

@@ -1,10 +1,5 @@
-//! Global Podman machine-lifecycle management (start the default machine, reset WSL, activate the
-//! rootless socket, poll for readiness), separate from [`crate::backends`] because it drives the
-//! whole default machine rather than a single named connection. The [`MachineManager`] trait has a
-//! real CLI-backed impl here and an in-memory [`mock`] selected once by [`default_machine_manager`].
-//!
-//! Used by the `check_podman_ready` and `start_podman_machine` commands in `lib.rs`, which receive
-//! an `Arc<dyn MachineManager>` from Tauri state.
+//! Podman machine-lifecycle management: start default machine, reset WSL, activate rootless socket.
+//! Separate from backends since it drives the whole machine rather than single connections.
 
 pub mod types;
 
@@ -23,9 +18,6 @@ use types::{MachineManager, PodmanMachineManager};
 /// via `podman system service` because the machine's user systemd session does not start on boot.
 const PODMAN_SOCKET: &str = "/run/user/1000/podman/podman.sock";
 
-/// Construct the managed [`MachineManager`] for Tauri state: [`MockMachineManager`] when
-/// `MIO_MOCK_BACKEND=1`, otherwise the real [`PodmanMachineManager`]. The single place that flag
-/// steers machine-lifecycle behavior, mirroring `default_backend`/`default_runtime`.
 pub fn default_machine_manager() -> std::sync::Arc<dyn MachineManager> {
     if mock_backend_enabled() {
         return std::sync::Arc::new(MockMachineManager);
@@ -104,15 +96,7 @@ impl MachineManager for PodmanMachineManager {
     }
 
     async fn activate_podman_socket(&self) -> Result<(), BackendError> {
-        // The machine's per-user systemd manager does not start on boot, so the socket must be
-        // activated by hand; `setsid` detaches the service so it survives the SIGHUP when the SSH
-        // channel closes. `podman machine ssh` allocates a pty and blocks until its timeout even
-        // after the service backgrounds, so the call is capped at 7 s and the SSH client is then
-        // asked to stop.
-        //
-        // The script is passed as one argv element (shell `false`): routing through `cmd.exe` on
-        // Windows would let it shred the `||`, `&`, `>`, and `<` metacharacters before they reach
-        // the remote bash (see `e2e/lib/podman-machine.ts:87`).
+        // Activates socket manually; setsid survives SSH SIGHUP; script as single argv for Windows.
         let script = format!(
             "test -S {sock} || {{ mkdir -p $(dirname {sock}) && setsid env XDG_RUNTIME_DIR=/run/user/1000 podman system service --time=0 </dev/null >/tmp/podman-svc.log 2>&1 & }}",
             sock = PODMAN_SOCKET,
@@ -124,9 +108,7 @@ impl MachineManager for PodmanMachineManager {
         else {
             return Ok(());
         };
-        // SIGTERM (start_kill), not SIGKILL: the latter tears down the pty abruptly and can take
-        // the newly backgrounded service with it. `tokio::time::timeout` only cancels the future,
-        // so the OS process must be stopped explicitly.
+        // Send SIGTERM, not SIGKILL, to avoid tearing down the backgrounded service.
         if tokio::time::timeout(std::time::Duration::from_secs(7), child.wait()).await.is_err() {
             let _ = child.start_kill();
         }

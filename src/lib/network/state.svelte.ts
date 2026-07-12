@@ -1,9 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
-// Module-scoped store (mirrors src/lib/workspace/state.svelte.ts): the single
-// `network://forwards-changed` subscription for the whole app. MutagenNetworkManager (and its mock)
-// emit the full forwards snapshot after every mutation, so callers never need to refetch manually.
+// Module-scoped store; owns the single `network://forwards-changed` subscription.
 
 export type ServiceKind =
     | { kind: "terminal" }
@@ -39,11 +37,7 @@ export function openForwardsFor(sandbox: string): ForwardInfo[] {
     return forwards.filter((f) => f.sandbox === sandbox);
 }
 
-/**
- * Hydrate the store and keep it live. Idempotent (guarded by `started`), safe to call from any
- * webview or plain-browser dev context: a failed subscribe/hydrate (no Tauri runtime) is caught
- * and resets the guard so a later caller can retry.
- */
+// Hydrates and keeps the store live; idempotent, safe to call in any context.
 export async function ensureNetworkState(): Promise<void> {
     if (started) return;
     started = true;
@@ -57,10 +51,7 @@ export async function ensureNetworkState(): Promise<void> {
     }
 }
 
-/**
- * Expose `targetPort` inside sandbox `name` to a Windows-host loopback port. Returns that port.
- * `workspacePath` bootstraps `.mio/ports.json` on the Rust side if it doesn't exist yet.
- */
+// Returns the Windows-host loopback port the container port is exposed to.
 export async function exposePort(name: string, workspacePath: string, targetPort: number): Promise<number> {
     return invoke<number>("expose_port", { name, workspacePath, targetPort });
 }

@@ -72,8 +72,6 @@ async fn create_sandbox(
     store: State<'_, Arc<dyn SandboxBackend>>,
     runtime: State<'_, Arc<dyn RuntimeManager>>,
 ) -> Result<Sandbox, AppError> {
-    // Build the mise-baked base image on first use; a no-op once staged. Done here, not in
-    // `create`, so the one-time build is an explicit step of the create command.
     store.ensure_base_image().await?;
     let sandbox = store.create(&name, existing_path.as_deref()).await?;
     runtime.init(&sandbox.workspace_path).await?;
@@ -98,14 +96,6 @@ async fn uninstall_package(
     Ok(runtime.uninstall(&name, &package).await?)
 }
 
-/// Prepare everything a webview needs to show sandbox `name`'s terminal, shared by the standalone
-/// `open_terminal` window and the embedded `open_workspace` pane (the shared helper is also the
-/// code-level fallback path: reverting to standalone windows is one call site — Resolved
-/// Decision 7 in docs/features/embedded-windows/02_dev.md). Works for both local and deployed
-/// sandboxes: starts the zellij web server over the appropriate Podman connection, mints a
-/// one-time token, creates a Mutagen forwarding session from a Windows-host loopback port to the
-/// container's published zellij port, and builds an initialization script that auto-logs in via
-/// POST /command/login (sets a 30-day cookie) so no manual paste is needed.
 async fn prepare_terminal_webview(
     name: &str,
     workspace_path: &str,
@@ -130,9 +120,6 @@ async fn prepare_terminal_webview(
         .open_forward(name, ServiceKind::Terminal, &connection, container_port)
         .await
         .map_err(|e| crate::runtime::types::RuntimeError::TerminalUnavailable(e.to_string()))?;
-    // Session name pinned to the sandbox name so a closed-and-reopened Terminal tab reattaches to
-    // the same Zellij session instead of spawning a fresh one (root URL `/` mints a new random
-    // session per connect; spike in docs/features/workspace-app-tabs/01_ideas.md).
     let mut url = tauri::Url::parse(&format!("http://127.0.0.1:{windows_port}/"))
         .map_err(|e| crate::runtime::types::RuntimeError::TerminalUnavailable(e.to_string()))?;
     url.path_segments_mut()
@@ -179,7 +166,6 @@ async fn prepare_terminal_webview(
     Ok(TerminalPane { url: parsed_url, init_script, forward_name })
 }
 
-/// Read the persisted password out of `<workspace_path>/.mio/paseo.json`, if any.
 fn read_paseo_password(workspace_path: &str) -> Option<String> {
     let path = std::path::Path::new(workspace_path).join(".mio").join("paseo.json");
     let value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
@@ -190,9 +176,6 @@ fn read_paseo_password(workspace_path: &str) -> Option<String> {
         .filter(|p| !p.is_empty())
 }
 
-/// Fetch the daemon's real `serverId` and `hostname` via `GET /api/status` through the port
-/// forward. Retries because the Mutagen forward listener may not accept connections the
-/// instant `forward_create` returns.
 async fn fetch_paseo_server_info(
     port: u16,
     password: &str,
@@ -226,15 +209,6 @@ async fn fetch_paseo_server_info(
     Err(format!("{url}: {last_err}"))
 }
 
-/// Paseo analog of `prepare_terminal_webview` (docs/features/agent-web-ui/02_dev.md Phase B):
-/// (re)start the paseo daemon over the right Podman connection, bridge an ephemeral
-/// Windows-loopback port to the container's published paseo port via a Mutagen forward, and
-/// persist the password at `.mio/paseo.json`. The password is minted once per sandbox and
-/// reused across the daemon restarts `prepare_agent_web` performs. Auto-login (Phase D) seeds the
-/// web client's own `@paseo:daemon-registry` localStorage entry with the known endpoint and
-/// password before the app boots, so its `HostRuntime.loadFromStorage()` finds an already-known,
-/// already-authenticated host and never shows the "Direct Connection" / "Paste pairing link"
-/// screen.
 async fn prepare_agent_web_pane(
     name: &str,
     workspace_path: &str,
@@ -528,18 +502,12 @@ async fn undeploy_sandbox(
         .into_iter()
         .find(|s| s.name == name)
         .ok_or_else(|| AppError::NotDeployed(name.clone()))?;
-    // Close the embedded workspace pane (tab + its forward) before the sync session closes its
-    // SSH channel, so no orphaned pane or forward survives the undeploy.
+    // Close pane and forwards before closing SSH channel to avoid orphans.
     workspace::close_app(&app, &name).await;
-    // Tear down any active forwarding sessions before the sync session closes its SSH channel.
-    // Named explicitly (not via close_app) because a forward can outlive its pane — e.g. one
-    // created in a previous app run that the in-memory pane registry no longer tracks.
     network.close_sandbox(&name).await;
-    // Flush before removing so any pending remote writes land locally first.
-    // Remove the container before terminating the Mutagen session: terminating closes
-    // Mutagen's SSH connections to the machine, which can briefly make it unresponsive
-    // to a subsequent `podman rm` SSH connection. Keeping the session alive until after
-    // the container is gone avoids that window.
+    // Order is load-bearing: flush pending remote writes first, and remove the container before
+    // terminating the session — terminating drops Mutagen's SSH connections, which can briefly
+    // make the machine unresponsive to a following `podman rm`.
     engine.flush(&name).await?;
     store.remove_remote(&name, &session.host).await?;
     engine.terminate(&name).await?;
@@ -1260,11 +1228,8 @@ async fn stop_inference(active: State<'_, ActiveServer>, app: tauri::AppHandle) 
         let engine = inference::engine_for(handle.engine, &app);
         engine.stop(handle).await?;
     }
-    // Tear down the reverse forward off the command's critical path: `forward terminate` can take
-    // many seconds against the VM listener, and the frontend Stop awaits this command before
-    // refreshing status. A brief window where the forward dials a dead port is harmless (containers
-    // get connection-refused); the app-exit daemon shutdown is the backstop if this is still
-    // running at exit.
+    // Spawned off the critical path: `forward terminate` can take seconds and the frontend
+    // awaits this command; a briefly dangling forward just gets connection-refused.
     let app_for_forward = app.clone();
     tauri::async_runtime::spawn(async move {
         sync::forward_terminate(&app_for_forward, INFERENCE_FORWARD).await;

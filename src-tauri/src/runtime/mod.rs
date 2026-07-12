@@ -10,29 +10,19 @@ use std::process::Output;
 use mock::MockRuntime;
 use types::{PodmanMiseRuntime, RuntimeError, RuntimeManager};
 
-/// Workspace bind-mount target inside every container. Matches `WORKSPACE_MOUNT` in `backends/mod.rs`.
 const WORKSPACE_MOUNT: &str = "/root/work";
 
-/// Path of the mise manifest (human-readable intent) relative to the workspace directory.
 const MANIFEST_REL: &str = "mise.toml";
 
-/// Path of the mise lockfile (resolved, checksum-pinned closure) relative to the workspace directory.
 const LOCKFILE_REL: &str = "mise.lock";
 
-/// Container port the zellij web server binds. Matches `ZELLIJ_WEB_PORT` in `backends/mod.rs`,
-/// which publishes it to the host at `create`.
 const ZELLIJ_WEB_PORT: u16 = 8082;
 
-/// Container port the paseo daemon binds. Matches `PASEO_WEB_PORT` in `backends/mod.rs`,
-/// which publishes it to the host at `create`.
 const PASEO_WEB_PORT: u16 = 6767;
 
 const PASEO_PROJECTS_DIR: &str = "/root/.paseo/projects";
 const PASEO_PROJECTS_FILE: &str = "/root/.paseo/projects/projects.json";
 
-/// Construct the managed [`RuntimeManager`] for Tauri state. The Podman connection is read from
-/// `PODMAN_CONNECTION`; defaults to [`crate::backends::DEFAULT_CONNECTION`] when unset. The e2e
-/// harness overrides `PODMAN_CONNECTION` to pin the local test connection.
 pub fn default_runtime() -> std::sync::Arc<dyn RuntimeManager> {
     if crate::backends::mock_backend_enabled() {
         return std::sync::Arc::new(MockRuntime::new());
@@ -64,8 +54,6 @@ fn validate_package(package: &str) -> Result<(), RuntimeError> {
     }
 }
 
-/// Parse the installed tool names from the `[tools]` table of a `mise.toml`. An absent `[tools]`
-/// table (a freshly initialized manifest) yields an empty list, not an error.
 fn parse_installed(manifest: &str) -> Result<Vec<String>, RuntimeError> {
     let value: toml::Value =
         toml::from_str(manifest).map_err(|e| RuntimeError::ManifestParse(e.to_string()))?;
@@ -75,9 +63,6 @@ fn parse_installed(manifest: &str) -> Result<Vec<String>, RuntimeError> {
     Ok(tools.keys().cloned().collect())
 }
 
-/// Parse the plaintext token from `zellij web --create-token` stdout. The token is emitted on a
-/// `token_<n>: <value>` line; the value is taken as the text after the colon. Returns the first
-/// such value found, or `None` when no token line is present (e.g. the command changed format).
 fn parse_token(stdout: &str) -> Option<String> {
     stdout
         .lines()
@@ -86,10 +71,6 @@ fn parse_token(stdout: &str) -> Option<String> {
         .filter(|t| !t.is_empty())
 }
 
-/// Parse the published host port from `podman port <name> <port>/tcp` output. Podman prints one
-/// `<ip>:<port>` mapping per line (an IPv4 and possibly an IPv6 line); the `127.0.0.1` mapping is
-/// selected because `create` publishes to host loopback. Returns the host port string, or `None`
-/// when no loopback mapping is present (the container was created without the `--publish` flag).
 fn parse_host_port(output: &str) -> Option<String> {
     output
         .lines()
@@ -114,8 +95,7 @@ impl PodmanMiseRuntime {
             .map_err(|e| RuntimeError::CommandFailed(e.to_string()))
     }
 
-    /// Run `mise <args>` in container `name`, in the workspace so mise reads the workspace `mise.toml`.
-    /// mise's data dir and lockfile settings come from the image ENV the base image bakes.
+    // Runs mise in container workspace; data dir and lockfile from image ENV.
     async fn mise_exec(&self, name: &str, mise_args: &[&str]) -> Result<String, RuntimeError> {
         check(self.podman(&["start", name]).await?)?;
         let mut args = vec!["exec", "--workdir", WORKSPACE_MOUNT, name, "mise"];
@@ -192,9 +172,7 @@ impl RuntimeManager for PodmanMiseRuntime {
         if manifest.exists() {
             return Ok(());
         }
-        // Written host-side: the workspace is bind-mounted into the container, so no container is
-        // needed (mise has no `init` subcommand; the config is otherwise created on first `mise use`).
-        // The empty `mise.lock` must exist for `MISE_LOCKFILE=1` installs to maintain the lockfile.
+        // Write host-side; workspace is bind-mounted so container init not needed.
         std::fs::create_dir_all(workspace)
             .and_then(|_| std::fs::write(&manifest, "[tools]\n"))
             .and_then(|_| std::fs::write(workspace.join(LOCKFILE_REL), ""))

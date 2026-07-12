@@ -1,9 +1,7 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { AgentAuthEvent } from "./types";
 
-// Module-scoped store (mirrors src/lib/workspace/state.svelte.ts): owns the single
-// `agent-auth-output-<sessionId>` subscription for the in-progress login, so
-// credentials/+page.svelte reads accessors instead of calling `listen()` itself.
+// Module-scoped store; owns the subscription for the in-progress login session.
 
 export type AuthPhase = "idle" | "starting" | "awaiting-url" | "awaiting-code" | "exited";
 

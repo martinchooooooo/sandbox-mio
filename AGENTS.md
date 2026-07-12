@@ -95,17 +95,39 @@ All `invoke()` catch blocks use `parseError(e).message` for display. Branch on `
 
 # Code Comments
 
-- Code should be self explanatory; Avoid comments as much as possible.
-- If a comment is needed, the total comment must not be longer than 2 lines.
-- Do not add comments that are referring to your current work or process, only leave comments that exaplin the WHY, not the WHAT.
+## Writing comments
+
+- Max 2 lines per comment (3 if the constraint genuinely needs it)
+- State the non-obvious contract or the WHY; never narrate the WHAT
+- Avoid implementation details
+- No source code in comments
+- One idea per sentence
+- Never write comments about your current work or process ("added X", "updated as requested", "new helper") — the git history is the record. The same applies at document scale: no work-log or change-summary files.
 - TODO's for future are the exception and definitely allowed
+- When two values in different files must stay equal, comment both ends with the other's path (pattern: `INFERENCE_VM_PORT` in `src-tauri/src/sync/mod.rs` ↔ `src/lib/agents/local-llm.ts`)
+- Reference resolved design decisions by doc path (`docs/features/<x>/02_dev.md, Resolved Decision N`) instead of restating the rationale inline
+- Exception: trait, interface, and public type declarations may carry fuller doc comments — they are the discovery surface for agents reading `types.rs`/module heads instead of whole files
+- Use doc-comment form (`///`, `/** */`) on public items so tooling and outlines surface them; plain `//` belongs inside function bodies
 
-here are futher guidelines to follow if comments are needed:
+## Editing code that has comments
 
-1. **one or two lines, not paragraphs.** State the non-obvious contract (idempotency, ordering constraints, what the return value represents). Skip anything the parameter names and return type already convey.
-2. **State the contract, not the implementation.** Describe what the function guarantees to the caller, not how it achieves it. Where the contract is non-obvious, state when the call returns or what it resolves to.
-3. **No source code in comments.** Reference other items by name and file path, never by quoting their body.
-4. **One sentence per idea.** No filler, no restating the function name.
+- Comments are part of the code you're editing: update or delete an adjacent comment that your change makes false. A stale comment is worse than none.
+- Never delete a comment stating an ordering constraint, invariant, or hard-won why unless you removed the constraint itself. If it's too long, compress it — don't drop it.
+
+## Example
+
+Bad — narrates the WHAT, adds process noise:
+
+```rust
+// Terminate the session and then flush. Updated to fix the undeploy bug.
+```
+
+Good — states the constraint the code can't show:
+
+```rust
+// Order is load-bearing: remove the container before terminating the session —
+// terminating drops Mutagen's SSH connections, briefly blocking a following `podman rm`.
+```
 
 # Common Gotchas
 

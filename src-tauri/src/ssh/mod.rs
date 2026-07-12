@@ -1,10 +1,4 @@
-//! App-managed OpenSSH config for Mutagen's transport.
-//!
-//! Mutagen's scp-style `alias:path` URLs carry no port or identity, so the app writes a `Host`
-//! alias per Podman host to its own `~/.ssh/sandbox-mio/config` and pulls it into the user's
-//! `~/.ssh/config` via a one-time `Include`. The app rewrites its own file freely but touches the
-//! user's config only for that idempotent insertion; both writes use [`atomic_write`] under
-//! [`CONFIG_LOCK`]. Rust port of `writeSshAlias`/`removeSshAlias` in `e2e/lib/mutagen.js`.
+//! App-managed OpenSSH config for Mutagen transport via Host aliases and Include insertion.
 
 pub mod types;
 
@@ -14,12 +8,8 @@ use std::sync::Mutex;
 
 use types::{SshAlias, SshError};
 
-/// The one-time line inserted into `~/.ssh/config`. OpenSSH resolves a relative `Include`
-/// against `~/.ssh`, so the path is given relative, not absolute.
 const INCLUDE_LINE: &str = "Include sandbox-mio/config";
 
-/// Serialises every write to the shared `~/.ssh/config`, so the one-time `Include` insertion can
-/// never race another write and corrupt the user's personal configuration.
 static CONFIG_LOCK: Mutex<()> = Mutex::new(());
 
 fn ssh_dir() -> Result<PathBuf, SshError> {
@@ -27,12 +17,10 @@ fn ssh_dir() -> Result<PathBuf, SshError> {
     Ok(home.join(".ssh"))
 }
 
-/// The user's personal OpenSSH config, modified only by the one-time `Include` insertion.
 fn user_config() -> Result<PathBuf, SshError> {
     Ok(ssh_dir()?.join("config"))
 }
 
-/// The app-owned config holding the managed `Host` aliases. Rewritten freely.
 fn managed_config() -> Result<PathBuf, SshError> {
     Ok(ssh_dir()?.join("sandbox-mio").join("config"))
 }
@@ -44,7 +32,6 @@ fn markers(alias: &str) -> (String, String) {
     )
 }
 
-/// Drop the marker-delimited block for `alias` from `text`, leaving every other line intact.
 fn strip_block(text: &str, alias: &str) -> String {
     let (begin, end) = markers(alias);
     let mut out = Vec::new();
@@ -66,8 +53,7 @@ fn strip_block(text: &str, alias: &str) -> String {
     out.join("\n")
 }
 
-/// Write `contents` to `path` via a temp file in the same directory and an atomic rename, so a
-/// reader never observes a half-written file. Creates parent directories as needed.
+// Writes via temp file and atomic rename so reader never sees half-written file.
 fn atomic_write(path: &std::path::Path, contents: &str) -> Result<(), SshError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)

@@ -35,10 +35,8 @@
     // Per-model download progress (0–100), keyed by model id; absent while not downloading.
     let downloadPct = $state<Record<string, number>>({});
 
-    // Live runtime-setup state for the model currently starting.
     let startingModel = $state<string | null>(null);
-    // The catalogue id whose setup checklist `setupEvents` belongs to. Outlives `startingModel`
-    // (which clears when start resolves) so the completed checklist stays scoped to one row.
+    // Catalogue id for the setup checklist; persists after startingModel clears.
     let setupModel = $state<string | null>(null);
     let setupSteps = $state<SetupStep[]>([]);
     let setupEvents = $state<RuntimeSetupEvent[]>([]);

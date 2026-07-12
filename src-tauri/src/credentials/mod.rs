@@ -1,12 +1,5 @@
-//! Host-side credential store for shared agent auth: captures a whole-directory snapshot of an
-//! agent's config (the directory holding its credential file, plus its account-source file if any)
-//! out of a container once, and re-injects a verbatim copy into other containers, so a user does
-//! not need to run the interactive login inside every sandbox. A full copy (rather than a merge of
-//! just the OAuth subtree) means the target inherits the source's completed onboarding state too —
-//! otherwise an agent's interactive UI can re-run first-run setup (including its own login-method
-//! prompt) even though the injected token is already valid. Bundles persist as a single
-//! `home.tar.gz` archive at `app_data_dir()/credentials/<service_id>/`, mirroring
-//! `inference::models_root`/`model_dir`. Registered via `mod credentials` in `lib.rs`.
+//! Host-side credential store: capture once, inject into any sandbox to skip interactive login.
+//! Stores full directory snapshot (preserves onboarding state) as `home.tar.gz` per service.
 
 pub mod types;
 
@@ -92,8 +85,7 @@ pub fn delete(app: &AppHandle, service_id: &str) -> Result<(), CredentialError> 
     }
 }
 
-/// Idempotent: create the named auth container if it doesn't exist (destroyed after every capture,
-/// so this is a safety net for failed captures).
+/// Create ephemeral auth container if absent (idempotent; destroyed after capture).
 pub async fn ensure_auth_container(
     name: &str,
     backend: &Arc<dyn SandboxBackend>,
@@ -108,8 +100,7 @@ pub async fn ensure_auth_container(
     Ok(())
 }
 
-/// Read credential and account-source files from container, tar the whole directories (see module
-/// doc for why), and persist the archive. Works for both auth containers and user sandboxes.
+/// Capture credential and account-source files into a tar archive. Works for both auth containers and user sandboxes.
 pub async fn capture(
     app: &AppHandle,
     name: &str,
@@ -152,7 +143,7 @@ pub async fn capture(
     Ok(manifest)
 }
 
-/// Write the stored bundle into container, extracting verbatim (never uses `podman cp`, see `tar_inject`).
+/// Extract stored credential archive into container at original paths and permissions.
 pub async fn inject(
     app: &AppHandle,
     name: &str,
@@ -172,8 +163,7 @@ pub async fn inject(
     tar_inject(connection, name, &archive).await
 }
 
-/// Mark first-run as complete so opening the terminal skips the onboarding wizard.
-/// Idempotent; safe after every injection since it restores the onboarding state that bare `auth login` never populates.
+/// Patch account-source file to skip onboarding wizard and trust the project (idempotent).
 pub async fn seed_onboarding(
     name: &str,
     seed: &OnboardingSeed,
@@ -222,7 +212,7 @@ pub async fn seed_onboarding(
     .await
 }
 
-/// Write file via stdin pipe (path is trusted catalogue constant, never user input).
+/// Write file via stdin to preserve permissions (path is constant, never user input).
 async fn write_file_via_stdin(
     connection: &str,
     name: &str,
@@ -269,7 +259,7 @@ fn tar_relative(path: &str) -> &str {
     path.strip_prefix('/').unwrap_or(path)
 }
 
-/// Use `tar` to capture files (not `podman cp`, which loses permissions; not `RuntimeManager::exec_in_container`, which corrupts binary gzip data).
+/// Capture files via tar to preserve permissions and binary data integrity.
 async fn tar_capture(connection: &str, name: &str, paths: &[String]) -> Result<Vec<u8>, CredentialError> {
     tokio::process::Command::new("podman")
         .no_window()
@@ -294,7 +284,7 @@ async fn tar_capture(connection: &str, name: &str, paths: &[String]) -> Result<V
     Ok(output.stdout)
 }
 
-/// Restore archive members at original absolute paths and permissions via stdin pipe.
+/// Extract tar archive at original absolute paths and permissions via stdin.
 async fn tar_inject(connection: &str, name: &str, archive: &[u8]) -> Result<(), CredentialError> {
     use tokio::io::AsyncWriteExt;
 

@@ -23,8 +23,8 @@ pub enum InferenceError {
     ModelNotFound(String),
 }
 
-/// Host capability probe returned by `detect_machine_specs`. Read on the host, never the
-/// container VM (whose 2 GiB cap is unrepresentative of what a model can use).
+/// Host hardware and software capabilities for model inference. Probed on the host (not the
+/// container VM, whose 2 GiB cap is unrepresentative). Static fields are cached; RAM is always fresh.
 #[derive(serde::Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct MachineSpecs {
@@ -32,14 +32,16 @@ pub struct MachineSpecs {
     pub total_ram_bytes: u64,
     pub free_ram_bytes: u64,
     pub gpu_names: Vec<String>,
-    /// A Copilot+-class accelerator (e.g. `Intel(R) AI Boost`) is present.
+    /// Copilot+-class NPU (e.g., `Intel(R) AI Boost`) detected.
     pub has_npu: bool,
     pub arch: String,
+    /// Local llama-server binary is present.
     pub foundry_installed: bool,
-    /// The `Microsoft.FoundryLocal` winget package resolves on this machine.
+    /// Foundry Local is available on winget for installation.
     pub foundry_installable: bool,
 }
 
+/// Local inference engine: either bundled llama-server or installed Foundry Local.
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum EngineKind {
@@ -74,19 +76,17 @@ pub struct InferenceStatus {
     pub base_url: Option<String>,
 }
 
-/// One running server. Held in Tauri state behind `Mutex<Option<ServerHandle>>`.
+/// One running local inference server. Held in Tauri state behind `Mutex<Option<ServerHandle>>`.
 pub struct ServerHandle {
     pub engine: EngineKind,
-    /// The model id consumers pass in `POST /v1/chat/completions` — for Foundry this is the
-    /// resolved device-specific id (e.g. `qwen2.5-0.5b-instruct-openvino-npu:5`), not the alias.
+    /// Model ID consumers pass to `/v1/chat/completions`. For Foundry, this is the device-specific
+    /// resolved ID (e.g., `qwen2.5-0.5b-instruct-openvino-npu:5`), not the catalogue alias.
     pub model_id: String,
     pub port: u16,
     pub base_url: String,
-    /// `None` for Foundry, whose service is OS-managed; only its loaded model is unloaded.
-    /// Spawned directly (not via the shell plugin, which is scoped to the Mutagen sidecar),
-    /// mirroring how `agents::start_auth` spawns `podman`.
+    /// `None` for Foundry (OS-managed service); spawned process for llama-server.
     pub child: Option<tokio::process::Child>,
-    /// The catalogue alias, retained so Foundry can `model unload <alias>` on stop.
+    /// Catalogue alias for model unload on stop (Foundry-specific).
     pub alias: String,
 }
 

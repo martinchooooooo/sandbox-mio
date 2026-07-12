@@ -1,5 +1,6 @@
 use crate::runtime::types::RuntimeError;
 
+/// Errors during agent package install, auth, or credential capture.
 #[derive(Debug, thiserror::Error)]
 pub enum AgentError {
     #[error("install failed: {0}")]
@@ -20,6 +21,7 @@ impl From<RuntimeError> for AgentError {
     }
 }
 
+/// Streamed progress events during package install. Emitted to frontend channel and/or activity center.
 #[derive(serde::Serialize, Clone)]
 #[serde(tag = "kind")]
 pub enum AgentInstallEvent {
@@ -30,6 +32,7 @@ pub enum AgentInstallEvent {
     Done,
 }
 
+/// Streamed output from an agent auth flow (e.g., PKCE browser redirect). Emitted to `agent-auth-output-<session_id>`.
 #[derive(serde::Serialize, Clone)]
 #[serde(tag = "kind")]
 pub enum AgentAuthEvent {
@@ -37,14 +40,19 @@ pub enum AgentAuthEvent {
     Exit { code: i32 },
 }
 
+/// Current auth state for one agent credential. Read from the agent's persisted credential file.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentAuthStatus {
+    /// Whether a valid (non-expired) credential exists.
     pub authenticated: bool,
+    /// Expiry time if set, allowing the UI to warn before expiration.
     pub expires_at_ms: Option<u64>,
+    /// Account email if the credential file stores it (varies by service).
     pub account_email: Option<String>,
 }
 
+/// An active auth subprocess. Holds its stdin for one-shot writes (PKCE flows).
 pub struct AuthSession {
     pub stdin: tokio::process::ChildStdin,
 }

@@ -1,13 +1,5 @@
 //! Mutagen file-sync engine, bundled as a Tauri sidecar.
-//!
-//! Mutagen ships as one self-contained binary that the app bundles via `externalBin` (see
-//! `tauri.conf.json`) and invokes through the shell plugin. Tauri resolves the platform binary
-//! (`mutagen-<target-triple>`) at runtime, so installs need no separately-installed Mutagen.
-//!
-//! Every invocation routes through [`command`], which pins `MUTAGEN_DATA_DIRECTORY` to an
-//! app-private directory. Mutagen is daemon-based — the CLI is a thin client over a background
-//! daemon that owns the sync sessions — and isolating the data directory keeps the app's daemon
-//! and sessions from colliding with a Mutagen the user installed themselves.
+//! Isolates the app's daemon via app-private MUTAGEN_DATA_DIRECTORY.
 
 pub mod types;
 
@@ -23,9 +15,6 @@ use types::{MutagenCli, SessionInfo, SyncEngine, SyncError, SyncStatus};
 /// Sidecar name as declared in `bundle.externalBin`.
 const SIDECAR: &str = "mutagen";
 
-/// App-private Mutagen state directory, created if absent. Isolating it from the default
-/// data directory is what prevents the app's daemon and sessions clashing with a
-/// user-installed Mutagen.
 fn data_dir<R: Runtime>(app: &AppHandle<R>) -> Result<std::path::PathBuf, SyncError> {
     let dir = app
         .path()
@@ -37,9 +26,6 @@ fn data_dir<R: Runtime>(app: &AppHandle<R>) -> Result<std::path::PathBuf, SyncEr
     Ok(dir)
 }
 
-/// A Mutagen sidecar command with the app-private data directory applied. Callers append the
-/// subcommand args and await `.output()`. The daemon auto-starts on the first session command,
-/// so no explicit `daemon start` is needed.
 pub fn command<R: Runtime>(app: &AppHandle<R>) -> Result<Command, SyncError> {
     let dir = data_dir(app)?;
     Ok(app
@@ -65,8 +51,6 @@ async fn run<R: Runtime>(app: &AppHandle<R>, args: &[&str]) -> Result<String, Sy
     }
 }
 
-/// Report the bundled Mutagen version. A smoke test that the sidecar is bundled, resolvable,
-/// and executable on this platform.
 pub async fn version<R: Runtime>(app: &AppHandle<R>) -> Result<String, SyncError> {
     run(app, &["version"]).await
 }
@@ -74,9 +58,6 @@ pub async fn version<R: Runtime>(app: &AppHandle<R>) -> Result<String, SyncError
 /// Serializes every terminate-then-create pair below.
 static FORWARD_CREATE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-/// Start a Mutagen forwarding session named `name`, listening on `local_port` on the Windows
-/// host and connecting to `remote_port` on `remote_alias`'s loopback. Terminates any prior
-/// session of the same name first so the call is idempotent across `open_terminal` retries.
 pub async fn forward_create<R: Runtime>(
     app: &AppHandle<R>,
     name: &str,
@@ -94,15 +75,11 @@ pub async fn forward_create<R: Runtime>(
         .map(|_| ())
 }
 
-/// App-owned VM port the inference reverse-forward listens on. Containers reach the host
-/// inference server at `http://host.containers.internal:<INFERENCE_VM_PORT>/v1`. Must equal the
-/// frontend `INFERENCE_VM_PORT` in `src/lib/agents/local-llm.ts`.
 pub const INFERENCE_VM_PORT: u16 = 51199;
 
-/// Reverse of [`forward_create`]: listen on `remote_alias`'s `0.0.0.0:remote_listen_port` and dial
-/// the host's `127.0.0.1:host_port`. The `0.0.0.0` bind is required so container netns can reach the
-/// listener via `host.containers.internal` (a `127.0.0.1` bind is VM-loopback-only; spiked
-/// 2026-06-29). Idempotent: terminates any prior session of `name` first.
+/// Reverse of `forward_create`: listen on the remote, dial the host. The `0.0.0.0` bind is
+/// required — a `127.0.0.1` bind is VM-loopback-only and unreachable from container netns via
+/// `host.containers.internal` (spiked 2026-06-29). Idempotent across retries.
 pub async fn forward_create_reverse<R: Runtime>(
     app: &AppHandle<R>,
     name: &str,
@@ -126,12 +103,7 @@ pub async fn forward_terminate<R: Runtime>(app: &AppHandle<R>, name: &str) {
     let _ = run(app, &["forward", "terminate", name]).await;
 }
 
-/// Terminate forwarding sessions orphaned by a previous app run: any `terminal-<sandbox>` /
-/// `agentweb-<sandbox>` session whose sandbox is not in `live_sandboxes`, plus every `expose-*`
-/// session unconditionally (user-exposed ports are relay processes inside the container and never
-/// survive a process restart, so any surviving `expose-*` session is orphaned by definition — see
-/// `crate::network`). The Mutagen daemon is a background process that outlives the app, so these
-/// leak whenever the app exits without teardown (crash, kill, the e2e harness).
+/// Terminates sessions orphaned by a previous app run; the Mutagen daemon outlives the app.
 pub async fn sweep_stale_forwards<R: Runtime>(app: &AppHandle<R>, live_sandboxes: &[String]) {
     let json = match run(app, &["forward", "list", "--template={{json .}}"]).await {
         Ok(j) if !j.is_empty() => j,
@@ -170,10 +142,7 @@ pub fn default_sync_engine(app: AppHandle) -> std::sync::Arc<dyn SyncEngine> {
     std::sync::Arc::new(MutagenCli { app })
 }
 
-/// Collapse one Mutagen session object (from `sync list --template='{{json .}}'`) into a
-/// [`SyncStatus`]: conflicts win over problems, problems over transient states, only an idle
-/// "watching" session is up to date. Key casing and the `status` type (string in recent Mutagen,
-/// numeric enum in older) vary by version, so both are accepted defensively.
+/// Collapses Mutagen session JSON to SyncStatus; handles version-specific key casing.
 fn status_from_session(session: &serde_json::Value) -> SyncStatus {
     let field = |name: &str| {
         // Accept either camelCase (recent daemon JSON) or PascalCase (template field names).

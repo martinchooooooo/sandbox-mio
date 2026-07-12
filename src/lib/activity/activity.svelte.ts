@@ -37,9 +37,7 @@ const ACTION_STATUS: Record<string, string> = {
     destroy: "removed",
 };
 
-// Paraglide generates one function per key, so an explicit kind→message map is required rather
-// than dynamic indexing of `m` (same constraint RuntimeSteps.svelte documents). A new TaskKind
-// with no entry renders blank — guarded by the e2e assertions.
+// Explicit map required for Paraglide; missing kinds render blank (guarded by e2e).
 const kindLabels: Record<TaskKind, () => string> = {
     "model-download": m.task_model_download_label,
     "inference-setup": m.task_inference_setup_label,

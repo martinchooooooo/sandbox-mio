@@ -3,136 +3,101 @@ use tauri::ipc::Channel;
 
 use crate::ssh::types::SshError;
 
-/// Errors produced by the sandbox backend ([`SandboxBackend`] and its helpers).
+/// Errors from sandbox backend operations.
 #[derive(Debug, thiserror::Error)]
 pub enum BackendError {
-    /// The sandbox name failed the character/length rules Podman requires.
+    /// Sandbox name failed Podman's character/length rules.
     #[error("invalid sandbox name {name:?}: use letters, digits, '_', '.' or '-', starting with a letter or digit")]
     InvalidName { name: String },
-    /// The platform Documents directory could not be resolved (e.g. running in a headless env).
+    /// Platform Documents directory not found (headless environment).
     #[error("could not resolve the Documents directory")]
     DocumentsDirNotFound,
-    /// Creating the sandbox's local workspace directory failed.
+    /// Failed to create sandbox's workspace directory.
     #[error("failed to create workspace {path}: {error}")]
     WorkspaceCreate { path: String, error: String },
-    /// An `existing_path` given to `create` does not resolve to a real path.
+    /// Provided existing_path does not exist.
     #[error("directory not found: {path}")]
     PathNotFound { path: String },
-    /// An `existing_path` given to `create` resolves to a file, not a directory.
+    /// Provided existing_path is a file, not a directory.
     #[error("not a directory: {path}")]
     PathNotADirectory { path: String },
-    /// An `existing_path` given to `create` is already a tracked sandbox workspace (inside
-    /// `workspace_root()`, or an exact match with another sandbox's workspace).
+    /// Provided existing_path is already tracked as a sandbox workspace.
     #[error("{path} is already a sandbox workspace")]
     PathAlreadyTracked { path: String },
-    /// A `podman` or `ssh` process failed to spawn, or exited with a non-zero status. The
-    /// captured stderr (or the spawn error) is in the payload.
+    /// Podman or SSH process failed or exited with non-zero status.
     #[error("{0}")]
     CommandFailed(String),
-    /// A JSON or URL parse step failed on output from `podman` or an SSH URL argument.
+    /// Failed to parse JSON or URL from podman output or SSH URL argument.
     #[error("{0}")]
     ParseError(String),
-    /// `deploy` was called with the backend's own connection as target — the local container
-    /// already lives there and a name collision would result.
+    /// Deploy target is the same connection as the local container.
     #[error("cannot deploy {name:?} onto its own connection {connection:?}; the local container already runs there")]
     SelfDeploy { name: String, connection: String },
-    /// The chosen deploy target has no SSH endpoint (e.g. a unix-socket-only local connection),
-    /// so the sync engine cannot reach it.
+    /// Deploy target has no SSH endpoint (e.g., unix-socket-only local connection).
     #[error("deploy target {connection:?} has no SSH endpoint to sync over")]
     NoSshEndpoint { connection: String },
-    /// An error propagated from SSH config management ([`crate::ssh`]).
+    /// Error from SSH config management.
     #[error(transparent)]
     Ssh(#[from] SshError),
 }
 
-/// A sandbox instance as seen by the frontend. Returned by all [`SandboxBackend`] operations.
-/// Field `status` is backend-defined (e.g. `"created"`, `"running"`, `"exited"`).
+/// A sandbox instance (returned by all backend operations).
 #[derive(Debug, Serialize, Clone)]
 pub struct Sandbox {
     pub id: String,
     pub name: String,
+    /// Backend-defined status (e.g., `"created"`, `"running"`, `"exited"`).
     pub status: String,
-    /// Laptop directory the user edits. For a sandbox later deployed to a remote host it is also
-    /// the sync engine's local (alpha) end; until then it is the bind-mount source (see
-    /// [`WorkspacePlan`]). Derived from the name, so it is set even for sandboxes only listed this
-    /// session.
+    /// Laptop workspace directory (the bind-mount source for local, sync alpha for deployed).
     pub workspace_path: String,
-    /// `None` for containers predating numeric versioning (image tags "zellij", "mise") or
-    /// non-sandbox-mio containers. Compare against [`crate::backends::BASE_IMAGE_VERSION`].
+    /// Image version for updates (None for legacy/non-mio containers).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image_version: Option<u32>,
 }
 
-/// The Mutagen endpoints a freshly deployed sandbox needs to seed its sync session. Returned by
-/// [`SandboxBackend::deploy`] and handed straight to `SyncEngine::create` by the `deploy_sandbox`
-/// command, so the backend never reaches into the sync engine.
+/// Mutagen endpoints for a freshly deployed sandbox (returned by `deploy`).
 pub struct RemoteDeployment {
-    /// Local (alpha) end: the laptop directory, which at deploy time holds the only copy of the
-    /// workspace files (including `mise.toml`/`mise.lock`) before the sync session seeds the remote.
+    /// Local (alpha) endpoint: the laptop workspace directory.
     pub alpha: String,
-    /// Remote (beta) end as a Mutagen scp-style `alias:path` URL, where `alias` is the target
-    /// connection's OpenSSH alias and `path` is the empty remote workspace the initial reconcile
-    /// seeds from `alpha`.
+    /// Remote (beta) endpoint: scp-style URL (`alias:path`).
     pub beta: String,
 }
 
-/// Where a sandbox's workspace lives and how it reaches the laptop. Returned by `resolve_workspace`
-/// and consumed by the deploy flow to compute the remote bind-mount source and SSH endpoint;
-/// `create` is always local and does not use it.
+/// Workspace location and sync strategy (used by deploy to compute bind-mount and SSH endpoint).
 pub(super) struct WorkspacePlan {
-    /// Path bind-mounted at `/root/work` on the host running the container. Equals `laptop_dir`
-    /// for a local sandbox; a remote-filesystem path for a remote one.
+    /// Path bind-mounted at `/root/work` in the container.
     pub bind_mount_source: String,
-    /// Laptop directory the user edits, and the sync engine's local (alpha) endpoint.
+    /// Laptop workspace directory (sync alpha endpoint for deployed sandboxes).
     pub laptop_dir: String,
     pub strategy: SyncStrategy,
 }
 
-/// How a sandbox's bind-mount source is reconciled with its laptop directory.
+/// How a sandbox's bind-mount source is synchronized with its laptop directory.
 pub(super) enum SyncStrategy {
-    /// Local connection: the two paths are the same directory, so there is nothing to sync.
+    /// Local: both paths are the same directory (no sync needed).
     Local,
-    /// Remote connection: the bind-mount source is on the remote host and must be mirrored to the
-    /// laptop directory by the sync engine over the given SSH connection.
+    /// Remote: bind-mount is on remote host, mirrored via sync engine over SSH.
     Remote(ConnectionInfo),
 }
 
-/// Live SSH endpoint of a Podman connection, read fresh from `podman system connection list`:
-/// a machine's port is assigned at boot, so a cached one goes stale after a restart.
+/// Live SSH endpoint for a Podman connection (read fresh, port changes at each boot).
 #[derive(Debug, Clone)]
 pub(super) struct ConnectionInfo {
     pub host: String,
     pub port: String,
     pub user: String,
-    /// Private key Podman registered for the connection; reused for the remote `mkdir` and sync.
+    /// Private key registered with Podman for this connection.
     pub identity: String,
 }
 
-/// Primary interface for sandbox lifecycle management.
-///
-/// Tauri state holds an `Arc<dyn SandboxBackend>` — commands receive it via [`tauri::State`]
-/// and delegate directly to these methods.
-///
-/// The only implementation is [`PodmanCliBackend`], which drives the `podman` CLI over a
-/// named **system connection**. The same code path serves the local Podman machine and any
-/// remote host: both are just connections, and `podman` itself performs the SSH transport.
-///
-/// To change the active connection at startup, set `PODMAN_CONNECTION` (see
-/// [`PodmanCliBackend`]). To swap the whole backend, change `default_backend()` in
-/// `backends/mod.rs`.
+/// Primary interface for sandbox lifecycle management. Each method maps to a `podman` CLI call
+/// on the configured system connection (local Podman machine or remote host over SSH).
 #[async_trait::async_trait]
 pub trait SandboxBackend: Send + Sync {
-    /// Build the mise-baked base image on the active connection if absent; a no-op once staged.
-    /// Idempotent, so callers invoke it before every [`SandboxBackend::create`] — the image is
-    /// never in a registry, so `create`'s `--pull` cannot supply it.
+    /// Build base image if absent (idempotent; image is never in a registry).
     async fn ensure_base_image(&self) -> Result<(), BackendError>;
-    /// Pull the base image if absent, then create a stopped container named `name`.
-    ///
-    /// Also ensures the sandbox's host workspace directory exists and bind-mounts it at
-    /// `/root/work`. With `existing_path: None`, the directory is `<Documents>/sandbox-mio/<name>`
-    /// (override the root with `SANDBOX_WORKSPACE_ROOT`), created if absent. With
-    /// `existing_path: Some(p)`, `p` is validated (exists, is a directory, is not already a
-    /// tracked workspace) and bind-mounted directly, skipping directory creation.
+    /// Create a stopped container with workspace directory bind-mounted at `/root/work`.
+    /// With `existing_path: None`, uses `<Documents>/sandbox-mio/<name>`; with Some, validates and uses it.
     async fn create(&self, name: &str, existing_path: Option<&str>) -> Result<Sandbox, BackendError>;
     /// Return all containers (running and stopped).
     async fn list(&self) -> Result<Vec<Sandbox>, BackendError>;
@@ -140,51 +105,33 @@ pub trait SandboxBackend: Send + Sync {
     async fn start(&self, name: &str) -> Result<(), BackendError>;
     /// Stop a running container.
     async fn stop(&self, name: &str) -> Result<(), BackendError>;
-    /// Remove the **local** container, stopping it first if running. The sandbox's workspace
-    /// directory is never deleted: for a deployed sandbox it may hold the only copy of unsynced
-    /// work. The `destroy_sandbox` command tears down the sync session and remote container first.
+    /// Remove the local container (workspace directory is left intact).
     async fn destroy(&self, name: &str) -> Result<(), BackendError>;
-    /// Stop the local container, create a remote container from the mise-baked base image, and
-    /// register the target's OpenSSH alias. Returns sync endpoints; software reproduction and
-    /// session seeding are done by the caller. Local container is left stopped so deploy is reversible.
+    /// Create remote container and return Mutagen sync endpoints.
+    /// Local container is left stopped (deploy is reversible).
     async fn deploy(
         &self,
         name: &str,
         target_connection: &str,
     ) -> Result<RemoteDeployment, BackendError>;
-    /// Remove the container named `name` on `connection` (the deploy target), used when destroying
-    /// or undeploying a deployed sandbox. The remote workspace directory is left intact.
+    /// Remove remote container (workspace directory left intact).
     async fn remove_remote(&self, name: &str, connection: &str) -> Result<(), BackendError>;
-    /// Stream container events to the frontend channel until the connection drops.
+    /// Stream container events to frontend channel.
     async fn listen_events(&self, on_event: Channel<serde_json::Value>) -> Result<(), BackendError>;
 
-    // --- Host (connection) management ---------------------------------------
-    // These operate on the Podman system-connection registry, independent of which
-    // connection the backend is currently bound to.
-
-    /// Return the names of all registered Podman system connections (local + remote).
+    /// Return names of all registered Podman system connections.
     async fn list_hosts(&self) -> Result<Vec<String>, BackendError>;
-    /// Register an existing remote host as a Podman system connection.
-    ///
-    /// `ssh_url` is the full `ssh://user@host[:port]/run/user/<uid>/podman/podman.sock`.
-    /// `identity` is an optional path to the SSH private key.
+    /// Register a remote host as a Podman system connection.
     async fn add_host(
         &self,
         name: &str,
         ssh_url: &str,
         identity: Option<&str>,
     ) -> Result<(), BackendError>;
-    /// Enable the rootless `podman.socket` and user lingering on an already-reachable host
-    /// over SSH. Exposed standalone (to prepare a host whose key is already authorized) and
-    /// reused as a step of [`SandboxBackend::provision_host`].
+    /// Enable rootless podman.socket and user lingering on a reachable remote host over SSH.
     async fn prepare_host(&self, ssh_url: &str, identity_path: &str) -> Result<(), BackendError>;
-    /// Guided "prepare + connect" flow for an external Linux server. Generates an SSH
-    /// key if absent, enables the remote `podman.socket` + user lingering, registers the
-    /// connection, and verifies it. Progress for each step is streamed to `on_progress`.
-    ///
-    /// Prerequisite: the public key must already be authorized on the remote
-    /// (`ssh-copy-id` is a one-time manual step — `ssh` reads passwords from the TTY,
-    /// not stdin, so it cannot be driven from here).
+    /// Guided setup for external Linux server: generate SSH key, enable socket, register, verify.
+    /// Prerequisite: public key must be pre-authorized (`ssh-copy-id` manually).
     async fn provision_host(
         &self,
         name: &str,
@@ -194,19 +141,9 @@ pub trait SandboxBackend: Send + Sync {
     ) -> Result<(), BackendError>;
 }
 
-/// Drives Podman by invoking the `podman` CLI against a named **system connection**.
-///
-/// Every lifecycle call runs `podman --connection <connection> <subcommand>`; `podman`
-/// performs the SSH transport, so the local machine and remote hosts are handled
-/// identically. JSON output is parsed with `--format json`.
-///
-/// `connection` is the Podman system-connection name. It defaults to
-/// `podman-machine-default` (the connection `podman machine init` creates for the local
-/// machine) and is overridden by the `PODMAN_CONNECTION` environment variable in
-/// `default_backend()`.
+/// Real [`SandboxBackend`] driving the `podman` CLI over a named system connection.
 pub(super) struct PodmanCliBackend {
     pub connection: String,
-    /// Serializes [`PodmanCliBackend::ensure_base_image`] so two concurrent `create` commands
-    /// cannot both find the image absent and race a build into the same context directory.
+    /// Serializes base image build to prevent concurrent races.
     pub(super) build_lock: tokio::sync::Mutex<()>,
 }

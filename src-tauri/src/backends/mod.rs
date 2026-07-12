@@ -15,18 +15,11 @@ use types::{
     SyncStrategy, WorkspacePlan,
 };
 
-/// mise-baked base image (debian-slim + mise + zellij). Must be staged on each connection; not
-/// pulled from a registry — [`PodmanCliBackend::ensure_base_image`] builds it from [`CONTAINERFILE`].
 const BASE_IMAGE: &str = "sandbox-mio/base";
-// Bump whenever the Containerfile changes. `ensure_base_image` short-circuits on
-// `podman image exists <tag>`, so an unchanged tag would silently keep stale images.
-// History: "zellij" (flox/Nix era), "mise" (debian-slim rewrite), 2 (bash + mise activate),
-// 3 (procps for paseo's `ps` dependency; paseo itself is mise-installed per workspace),
-// 4 (socat for the user-port-exposure relay, see crate::network).
+/// Bump whenever the Containerfile changes: `ensure_base_image` short-circuits on an existing
+/// tag, so an unchanged version silently keeps stale images.
 pub(crate) const BASE_IMAGE_VERSION: u32 = 4;
 
-/// The base-image recipe, baked into the binary so the build needs no resource-path resolution.
-/// Kept in sync with the spike reference at `docs/features/sandbox-runtime-management/spike/mise/Containerfile.glibc`.
 const CONTAINERFILE: &str = include_str!("../../resources/Containerfile");
 
 /// The connection `podman machine init` creates for the local machine.
@@ -40,29 +33,15 @@ fn parse_image_version(image: &str) -> Option<u32> {
     image.rsplit(':').next()?.parse().ok()
 }
 
-/// The container user's `~/work`, used as both the workspace bind-mount target and the
-/// `--workdir`. Spelled literally because `podman -v` rejects a bare `~` and does not expand
-/// `$HOME`, which is `/root` for the debian root user.
+/// Spelled literally because `podman -v` rejects a bare `~` and does not expand `$HOME`.
 const WORKSPACE_MOUNT: &str = "/root/work";
 
-/// Podman label recording a container's real workspace path verbatim. `list()` reads this back
-/// instead of re-deriving `workspace_path(name)`, since an `existing_path` sandbox's workspace is
-/// not under `workspace_root()` and cannot be reconstructed from the name alone. A container
-/// created before this label existed falls back to the name-derived path in `list()`.
 const WORKSPACE_LABEL: &str = "sandbox-mio.workspace";
 
-/// Container port the zellij web server binds (its default). Published to an ephemeral host
-/// loopback port at `create` so [`crate::runtime::types::RuntimeManager::open_terminal`] can reach
-/// the in-app terminal. Named once here and reused to build the `--publish` argument.
 const ZELLIJ_WEB_PORT: u16 = 8082;
 
-/// Container port the paseo daemon binds (its default) for the in-app agents web UI. Published
-/// alongside [`ZELLIJ_WEB_PORT`] at `create` so `RuntimeManager::prepare_agent_web` can reach it.
 const PASEO_WEB_PORT: u16 = 6767;
 
-/// Root holding every sandbox's workspace directory: `SANDBOX_WORKSPACE_ROOT` if set,
-/// else `<Documents>/sandbox-mio`. Documents is resolved at runtime because Windows may
-/// redirect it (e.g. under OneDrive).
 fn workspace_root() -> Result<std::path::PathBuf, BackendError> {
     if let Ok(root) = std::env::var("SANDBOX_WORKSPACE_ROOT") {
         return Ok(std::path::PathBuf::from(root));
@@ -71,10 +50,8 @@ fn workspace_root() -> Result<std::path::PathBuf, BackendError> {
     Ok(documents.join("sandbox-mio"))
 }
 
-/// Rejects names Podman would refuse. Also the path-safety gate for `workspace_path`, but only
-/// on the auto-create path (`create`'s `existing_path: None` branch) — the name becomes a path
-/// segment there, so barring `/` and `..` keeps the workspace inside its root. The `existing_path`
-/// branch bypasses `workspace_path` entirely, so this gate does not apply to it.
+/// Rejects names Podman would refuse. Also the path-safety gate for `workspace_path`: the name
+/// becomes a path segment, so barring `/` and `..` keeps auto-created workspaces inside the root.
 fn validate_name(name: &str) -> Result<(), BackendError> {
     let valid = name
         .chars()
@@ -86,9 +63,6 @@ fn validate_name(name: &str) -> Result<(), BackendError> {
     Ok(())
 }
 
-/// The workspace directory for `name`, forward-slashed so `podman -v` accepts it as a Windows
-/// path and translates it into the machine VM. Local-only for now; the seam remote support
-/// will swap behind to return a remote path.
 fn workspace_path(name: &str) -> Result<String, BackendError> {
     let path = workspace_root()?.join(name);
     Ok(path.to_string_lossy().replace('\\', "/"))
@@ -103,18 +77,10 @@ pub fn default_backend() -> std::sync::Arc<dyn SandboxBackend> {
     std::sync::Arc::new(PodmanCliBackend { connection, build_lock: tokio::sync::Mutex::new(()) })
 }
 
-/// True when `MIO_MOCK_BACKEND=1` is set, steering `default_backend`/`default_runtime`/
-/// `default_sync_engine` to their in-memory mocks and short-circuiting the machine-lifecycle
-/// free functions below, so the e2e "light" tier can drive real Tauri commands without podman.
-/// Read once per call (no caching), mirroring the `PODMAN_CONNECTION` idiom.
 pub(crate) fn mock_backend_enabled() -> bool {
     std::env::var("MIO_MOCK_BACKEND").ok().as_deref() == Some("1")
 }
 
-/// Bundled Podman resource directory (`<resources>/podman`, holding `podman.exe`, `gvproxy.exe`,
-/// `win-sshproxy.exe`), set once from `run()`'s `.setup()` via [`set_podman_resource_dir`]. Absent
-/// under `cargo test`/`cargo check` and the e2e mock tier, where [`podman_command`] falls back to
-/// resolving a system `podman` from `PATH`.
 static PODMAN_RESOURCE_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
 
 /// Record the bundled Podman resource directory for [`podman_command`] to use. Called exactly
@@ -123,12 +89,6 @@ pub fn set_podman_resource_dir(dir: std::path::PathBuf) {
     let _ = PODMAN_RESOURCE_DIR.set(dir);
 }
 
-/// Build a `Command` for the resolved podman binary: the bundled `podman.exe` when
-/// [`set_podman_resource_dir`] has run, otherwise the bare `"podman"` (PATH resolution). Also
-/// points `CONTAINERS_HELPER_BINARY_DIR` at the resource dir so podman finds its bundled
-/// `gvproxy`/`win-sshproxy` helpers without them being installed on PATH. Used by every subsystem
-/// that shells out to podman (`backends`, `runtime`, `machine`) instead of a bare
-/// `Command::new("podman")`, so packaging never depends on a system-installed Podman.
 pub(crate) fn podman_command() -> Command {
     let mut cmd = match PODMAN_RESOURCE_DIR.get() {
         Some(dir) => {
@@ -154,9 +114,6 @@ fn check(out: Output) -> Result<String, BackendError> {
     }
 }
 
-/// Splits an `ssh://user@host[:port]/path` URL into its `user@host` target and optional
-/// port. The socket path is dropped: it is meaningful to `podman` but not to a bare `ssh`
-/// invocation, which is all `prepare_host` needs. IPv6 literals are not handled.
 fn ssh_target(ssh_url: &str) -> Result<(String, Option<String>), BackendError> {
     let rest = ssh_url
         .strip_prefix("ssh://")
@@ -173,12 +130,6 @@ fn ssh_target(ssh_url: &str) -> Result<(String, Option<String>), BackendError> {
     Ok((authority.to_string(), None))
 }
 
-/// Pure core of [`PodmanCliBackend::remote_connection_info`]: the connection's parsed SSH
-/// endpoint, or `None` for a connection that is not reachable over SSH (e.g. a local unix-socket
-/// connection) and so cannot be a sync target. A Podman machine counts as a valid SSH endpoint:
-/// deploying to a machine other than the source is a supported scenario, since the container's
-/// workspace then lives in that machine's filesystem, distinct from the laptop directory. Split
-/// out to test without shelling to `podman`.
 fn parse_connection_entry(entry: &serde_json::Value) -> Result<Option<ConnectionInfo>, BackendError> {
     let uri = entry["URI"]
         .as_str()

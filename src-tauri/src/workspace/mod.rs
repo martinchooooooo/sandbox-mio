@@ -1,10 +1,4 @@
-//! The embedded AppContainer IS the app's main window: a bare container `Window` (label `main`,
-//! created in setup instead of tauri.conf.json) hosting the full SvelteKit app — NavigationPanel,
-//! switcher tab bar, and the active sandbox's Dashboard content — as one merged webview
-//! (`main-navigation-panel`), plus a Terminal/AgentWeb overlay child webview per sandbox whose
-//! pane is open. Nav/Switcher/Dashboard used to be three separate webviews
-//! (docs/features/embedded-windows/02_dev.md); consolidated by
-//! docs/features/consolidate-app-container/02_dev.md to remove open/close jitter.
+//! Embedded AppContainer: main window with merged NavigationPanel/Dashboard and overlay panes.
 
 pub mod types;
 
@@ -14,33 +8,13 @@ use tauri::{AppHandle, Emitter, Manager, Runtime, WindowEvent};
 
 use types::{AppKind, AppPane, Rect, TerminalPane, WorkspaceError, WorkspaceRegistry, WorkspaceState};
 
-/// Label of the main container window (bare `Window`, no webview of its own).
 pub const MAIN_WINDOW: &str = "main";
-/// Label of the merged NavigationPanel/Switcher/Dashboard child webview hosting the full app UI.
 pub const NAVIGATION_PANEL_LABEL: &str = "main-navigation-panel";
 
-/// NavigationPanel width when expanded, logical px. Cross-referenced by the `max-[420px]:` CSS
-/// breakpoint in `src/routes/projects/+page.svelte` and `src/routes/projects/SandboxItem.svelte`
-/// (docs/features/responsive-panel/02_dev.md, Resolved Decision 4) — that breakpoint must stay
-/// above this value if it ever changes. Also cross-referenced by the merged webview's own nav-rail
-/// CSS width, since this constant no longer drives that layout via `set_bounds`
-/// (docs/features/consolidate-app-container/02_dev.md Resolved Decision 1): if the two drift, the
-/// Terminal/AgentWeb overlay renders at the wrong x-offset.
 pub const NAVIGATION_PANEL_EXPANDED_W: f64 = 380.0;
-/// NavigationPanel width when collapsed to the thin rail (never zero: the rail keeps the expand
-/// button reachable), logical px.
 pub const NAVIGATION_PANEL_RAIL_W: f64 = 48.0;
-/// Switcher bar height across the top of the content area, logical px. 64 fits the two-level
-/// per-sandbox block (name row over app-tab row) without clipping
-/// (`docs/features/workspace-app-tabs/02_dev.md` Resolved Decision 5). Cross-referenced by the
-/// merged webview's own switcher-bar CSS height, same drift risk as `NAVIGATION_PANEL_EXPANDED_W`.
 pub const SWITCHER_H: f64 = 64.0;
 
-/// Compute the Terminal/AgentWeb overlay's rectangle from the container's logical size and the
-/// collapse flag: `(nav_width, switcher_h, width - nav_width, height - switcher_h)`. Pure so it is
-/// unit-testable without a window; every geometry change (embed, close, collapse toggle, OS
-/// resize) flows through here. The merged webview itself is never resized by this: it always
-/// fills the window, laying out nav/switcher/dashboard with ordinary CSS.
 pub fn workspace_layout(width: f64, height: f64, collapsed: bool) -> Rect {
     let navigation_panel_w =
         if collapsed { NAVIGATION_PANEL_RAIL_W } else { NAVIGATION_PANEL_EXPANDED_W }.min(width);
@@ -53,9 +27,6 @@ pub fn workspace_layout(width: f64, height: f64, collapsed: bool) -> Rect {
     }
 }
 
-/// Create the AppContainer window with its one merged chrome child. Called once from setup; the
-/// window replaces the `windows` entry that used to live in tauri.conf.json (a config window
-/// always gets its own webview, which this container must not have).
 pub fn create_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), WorkspaceError> {
     let win = |e: tauri::Error| WorkspaceError::Window(e.to_string());
 
@@ -82,9 +53,6 @@ pub fn create_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), Workspac
     *app.state::<WorkspaceRegistry>().lock().unwrap() =
         WorkspaceState { overlay, ..Default::default() };
 
-    // Child bounds are absolute and do not reflow: re-layout on every OS resize. Closing the main
-    // window exits the app, but the Mutagen forwards live in the daemon and would outlive it, so
-    // Destroyed still routes into best-effort teardown of every embedded pane.
     let handler_app = app.clone();
     window.on_window_event(move |event| match event {
         WindowEvent::Resized(size) => relayout(&handler_app, *size),

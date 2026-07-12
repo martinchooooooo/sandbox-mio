@@ -1,6 +1,3 @@
-//! Agent install and auth logic. Driven by Tauri commands in `lib.rs`; no trait abstraction
-//! because agent flows are command-specific and do not generalise across subsystems.
-
 pub mod types;
 
 use std::sync::Arc;
@@ -24,13 +21,10 @@ fn new_session_id() -> String {
     format!("{ts}-{count}")
 }
 
-/// Walk a dot-separated path into a JSON value (e.g. "claudeAiOauth.expiresAt"). Also reused by
-/// `credentials::capture` to read the same fields out of a captured file.
 pub(crate) fn json_path_get<'a>(val: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
     path.split('.').fold(Some(val), |acc, key| acc?.get(key))
 }
 
-/// Install each mise package in `packages` sequentially, streaming `AgentInstallEvent`s.
 pub async fn install_packages(
     name: &str,
     packages: &[String],
@@ -52,8 +46,6 @@ pub async fn install_packages(
     Ok(())
 }
 
-/// Run the npm postinstall script that mise skips with `--ignore-scripts=true`.
-/// Resolves the install dir via `mise where`, then runs `node <dir>/lib/node_modules/<pkg>/install.cjs`.
 pub async fn run_postinstall_npm(
     name: &str,
     npm_package: &str,
@@ -86,10 +78,6 @@ pub async fn run_postinstall_npm(
     Ok(())
 }
 
-/// Reads raw bytes rather than `BufReader::lines()` and flushes on a short idle gap, not just on
-/// `\n`. Interactive prompts (e.g. `claude auth login`'s "Paste code here if prompted > ") write
-/// without a trailing newline, expecting input on the same line, so a strict line reader blocks
-/// forever and the prompt never reaches the frontend.
 async fn stream_output<R, F>(mut reader: R, mut emit: F)
 where
     R: tokio::io::AsyncRead + Unpin,
@@ -121,9 +109,6 @@ where
     }
 }
 
-/// Spawn `mise exec -- <auth_command>` inside the container with piped stdin/stdout.
-/// Stores the stdin handle in `sessions` keyed by the returned session ID.
-/// Emits `AgentAuthEvent` to a Tauri app-wide event named `agent-auth-output-<session_id>`.
 pub async fn start_auth(
     name: &str,
     auth_command: &[String],
@@ -134,7 +119,6 @@ pub async fn start_auth(
     let connection = runtime.local_connection().to_string();
     let session_id = new_session_id();
 
-    // Ensure the container is running before exec.
     tokio::process::Command::new("podman")
         .no_window()
         .args(["--connection", &connection, "start", name])
@@ -188,7 +172,6 @@ pub async fn start_auth(
     let session_id_wait = session_id.clone();
     tokio::spawn(async move {
         let code = child.wait().await.ok().and_then(|s| s.code()).unwrap_or(-1);
-        // Drain remaining output before emitting Exit so the frontend sees all lines first.
         let _ = tokio::join!(stdout_handle, stderr_handle);
         sessions_wait.lock().await.remove(&session_id_wait);
         app_wait.emit(&event_name, &AgentAuthEvent::Exit { code }).ok();
@@ -197,7 +180,6 @@ pub async fn start_auth(
     Ok(session_id)
 }
 
-/// Write a line to the auth process stdin. Removes the session after writing — one-shot for PKCE.
 pub async fn send_auth_input(
     session_id: &str,
     input: &str,
@@ -214,18 +196,14 @@ pub async fn send_auth_input(
         .write_all(line.as_bytes())
         .await
         .map_err(|e| AgentError::AuthFailed(e.to_string()))?;
-    // stdin is dropped here, closing the pipe after the single write.
     Ok(())
 }
 
-/// Close the stdin pipe for a running auth session, causing the process to receive EOF.
 pub async fn cancel_auth(session_id: &str, sessions: &AuthSessionMap) -> Result<(), AgentError> {
     sessions.lock().await.remove(session_id);
     Ok(())
 }
 
-/// Read the agent credential file from the container and return auth status.
-/// Returns `authenticated: false` when the file is absent or unreadable.
 pub async fn get_auth_status(
     name: &str,
     credential_path: &str,

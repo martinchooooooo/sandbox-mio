@@ -2,15 +2,7 @@ import type { ModelDescriptor } from "./types";
 
 const GB = 1024 * 1024 * 1024;
 
-/**
- * Windows v1 model catalogue. Each entry pairs a llama GGUF source with a Foundry alias and a
- * numeric RAM floor (free host RAM required for a "recommended" rating). Co-located with the
- * `recommendModels` engine that ranks it.
- *
- * TODO(bring-up): `sha256` values are placeholders until each GGUF is first downloaded and hashed
- * (Phase D). `download_gguf` skips the checksum check while `sha256` is empty so the bring-up
- * download that establishes the real hash succeeds; fill them in afterwards.
- */
+// TODO(bring-up): `sha256` values are placeholders; checksums are skipped until Phase D.
 export const MODELS: ModelDescriptor[] = [
   {
     id: "qwen2.5-1.5b-instruct",
@@ -110,11 +102,7 @@ export const MODELS: ModelDescriptor[] = [
   },
 ];
 
-/**
- * A test-only model injected via the `MIO_TEST_MODEL` env var (parsed by the e2e harness and
- * passed to the route through a global), kept out of the shipped catalogue so a ~100 MB test GGUF
- * never leaks into the product. Returns `null` when no test model is configured.
- */
+// Parses `MIO_TEST_MODEL` env var for e2e; returns null if not configured or invalid.
 export function testModelFromEnv(raw: string | undefined): ModelDescriptor | null {
   if (!raw) return null;
   try {

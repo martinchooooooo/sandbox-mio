@@ -1,6 +1,4 @@
-//! Centralizes Mutagen-forward lifecycle and port allocation for the terminal/agent-web bridges
-//! and for user-exposed sandbox ports. Public surface is [`types::NetworkManager`], held in Tauri
-//! state as `Arc<dyn NetworkManager>` and registered in `src-tauri/src/lib.rs`.
+//! Mutagen-forward lifecycle and port allocation for terminal/agent-web and user-exposed ports.
 
 pub mod types;
 
@@ -20,27 +18,16 @@ use crate::process_ext::NoWindow;
 
 pub use types::EVENT_NAME;
 
-/// First container-side port in the pre-published relay pool (`crate::backends` publishes
-/// `RELAY_POOL_SIZE` consecutive ports starting here at `create`/`deploy`, each to an ephemeral
-/// host loopback port). `expose_port` bridges a user-chosen port to a free slot in this pool via
-/// an in-container `socat` relay, so exposing a new port never requires recreating the container.
 pub const RELAY_PORT_POOL_START: u16 = 40000;
 
-/// Number of relay-pool slots pre-published per sandbox, i.e. the max number of ports a single
-/// sandbox can have exposed to the host at once. Bump if this proves too small in practice.
 pub const RELAY_POOL_SIZE: u16 = 8;
 
-/// Build the `--publish 127.0.0.1::<port>` args for the whole relay pool, for
-/// `PodmanCliBackend::create`/`deploy` to append alongside the zellij/paseo publishes.
 pub fn relay_pool_publish_args() -> Vec<String> {
     (RELAY_PORT_POOL_START..RELAY_PORT_POOL_START + RELAY_POOL_SIZE)
         .map(|p| format!("127.0.0.1::{p}"))
         .collect()
 }
 
-/// The Mutagen forwarding session name for (`sandbox`, `kind`), e.g. `terminal-<sandbox>` or
-/// `expose-<sandbox>-<port>`. Also the prefix `crate::sync::sweep_stale_forwards` matches on to
-/// find orphaned sessions from a crashed previous run.
 fn forward_name(sandbox: &str, kind: ServiceKind) -> String {
     match kind {
         ServiceKind::Terminal => format!("terminal-{sandbox}"),
@@ -49,9 +36,6 @@ fn forward_name(sandbox: &str, kind: ServiceKind) -> String {
     }
 }
 
-/// Allocate an ephemeral Windows-host loopback port by binding and immediately releasing it before
-/// Mutagen binds it. The race window is negligible on loopback. Replaces the three copies of this
-/// trick that used to live in `lib.rs`.
 fn allocate_ephemeral_port() -> Result<u16, NetworkError> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0")
         .map_err(|e| NetworkError::PortAllocation(e.to_string()))?;
@@ -61,9 +45,6 @@ fn allocate_ephemeral_port() -> Result<u16, NetworkError> {
         .map_err(|e| NetworkError::PortAllocation(e.to_string()))
 }
 
-/// Parse the published host port from `podman port <name> <port>/tcp` output. Mirrors
-/// `runtime::parse_host_port`; kept as its own small copy rather than a shared helper, matching
-/// this codebase's existing per-module `podman` helper convention (see `backends`/`runtime`).
 fn parse_host_port(output: &str) -> Option<u16> {
     output
         .lines()

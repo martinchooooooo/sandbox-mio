@@ -132,8 +132,7 @@
         });
         installingAgent = null;
         if (success) {
-            // Triggers the `installedAgents` effect below, which re-checks auth status once the
-            // newly installed agent shows up in the shared packages store.
+            // Refreshes packages store so installedAgents effect re-checks auth status.
             await refreshPackages(sandboxName, workspacePath);
         }
     }

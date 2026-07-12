@@ -1,7 +1,6 @@
-//! Types for the global activity subsystem: the cross-kind `Task` envelope broadcast over
-//! `activity://task-updated` and returned by `list_tasks`. No prose lives here — the human-facing
-//! label is derived frontend-side from `kind` via Paraglide; `target`/`detail`/`error` are
-//! verbatim backend facts shown as-is (mirroring `RuntimeSetupEvent.detail`).
+//! Global activity center: long-running tasks broadcast over `activity://task-updated` and
+//! returned by `list_tasks`. Human-readable labels are derived frontend-side from `kind` via Paraglide;
+//! `target`/`detail`/`error` are verbatim backend facts displayed as-is.
 
 pub type TaskId = String;
 
@@ -33,23 +32,23 @@ impl TaskStatus {
     }
 }
 
-/// One long-running background operation. Broadcast verbatim over `activity://task-updated` and
-/// returned by `list_tasks`. The `version` stamp is a process-wide monotonic counter the frontend
-/// folds by strictly-greater value so the snapshot and the live stream are commutative.
+/// One long-running background operation broadcast over `activity://task-updated`.
+/// The `version` field is monotonically increasing; frontend folds by strictly-greater value.
 #[derive(serde::Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Task {
     pub id: TaskId,
     pub kind: TaskKind,
+    /// Process-wide monotonic version for deduplication.
     pub version: u64,
     pub status: TaskStatus,
-    /// 0.0..=1.0; `None` = indeterminate (step-based work without a fraction).
+    /// Progress as fraction (0.0..=1.0), or `None` for step-based work.
     pub progress: Option<f32>,
-    /// Verbatim subject shown next to the translated kind label, e.g. a model id.
+    /// Subject shown beside the translated kind (e.g., model id, step id).
     pub target: Option<String>,
-    /// Latest verbatim backend fact, e.g. "1.4 / 2.5 GB" or a setup step id.
+    /// Latest fact displayed to the user (e.g., "1.4 / 2.5 GB").
     pub detail: Option<String>,
-    /// Set only on `Failed`; the verbatim error message.
+    /// Error message set only when `status` is `Failed`.
     pub error: Option<String>,
     pub started_at_ms: u64,
     pub ended_at_ms: Option<u64>,

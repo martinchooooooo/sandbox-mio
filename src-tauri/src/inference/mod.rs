@@ -1,6 +1,4 @@
-//! Host-side local-inference subsystem: hardware probe, model download, and the two
-//! `InferenceEngine` implementations (bundled llama.cpp+Vulkan and Foundry Local). Registered in
-//! `lib.rs`; the single active server is held in Tauri state as [`types::ActiveServer`].
+//! Host-side local-inference: hardware probe, model download, and engine implementations.
 
 pub mod foundry;
 pub mod llama;
@@ -19,8 +17,6 @@ use types::{
     ModelDownloadEvent, StaticMachineSpecs,
 };
 
-/// Construct the chosen engine. Both impls hold the `AppHandle` (llama to resolve its bundled
-/// resource dir, Foundry to satisfy a uniform constructor).
 pub fn engine_for(kind: EngineKind, app: &AppHandle) -> Arc<dyn InferenceEngine> {
     match kind {
         EngineKind::Llama => Arc::new(llama::LlamaServerEngine { app: app.clone() }),
@@ -28,7 +24,6 @@ pub fn engine_for(kind: EngineKind, app: &AppHandle) -> Arc<dyn InferenceEngine>
     }
 }
 
-/// Root of the shared model store, `<app_data>/models`. Created if absent.
 pub fn models_root(app: &AppHandle) -> Result<std::path::PathBuf, InferenceError> {
     let dir = app
         .path()
@@ -39,14 +34,12 @@ pub fn models_root(app: &AppHandle) -> Result<std::path::PathBuf, InferenceError
     Ok(dir)
 }
 
-/// Per-model directory `<app_data>/models/<model_id>`. Created if absent.
 pub fn model_dir(app: &AppHandle, model_id: &str) -> Result<std::path::PathBuf, InferenceError> {
     let dir = models_root(app)?.join(model_id);
     std::fs::create_dir_all(&dir).map_err(|e| InferenceError::Download(e.to_string()))?;
     Ok(dir)
 }
 
-/// Catalogue model_ids with a verified local GGUF (a `.gguf` file in their model directory).
 pub fn downloaded(app: &AppHandle) -> Result<Vec<String>, InferenceError> {
     let root = models_root(app)?;
     let mut ids = Vec::new();
@@ -69,9 +62,6 @@ pub fn downloaded(app: &AppHandle) -> Result<Vec<String>, InferenceError> {
     Ok(ids)
 }
 
-/// Stream `https://huggingface.co/<repo>/resolve/main/<file>` into the model store, emitting
-/// [`ModelDownloadEvent`] progress, then verify sha256 and atomically rename into place. A no-op
-/// when the verified file already exists. The partial `.part` is deleted on any failure.
 pub async fn download_gguf(
     app: &AppHandle,
     model_id: &str,
@@ -109,13 +99,8 @@ pub async fn download_gguf(
     let mut file_out = tokio::fs::File::create(&part_path)
         .await
         .map_err(|e| InferenceError::Download(e.to_string()))?;
-    // Drives the global activity center in addition to the per-invoke `Channel` (which stays for
-    // the in-context `/models` progress bar). The id matches the one `download_model` opened.
     let task_id = format!("model-download:{model_id}");
     const GB: f64 = 1024.0 * 1024.0 * 1024.0;
-    // A fast connection can yield thousands of chunks/sec; emitting an IPC event (and the
-    // frontend re-render it triggers) per chunk floods the webview and freezes the UI. Throttle
-    // progress reporting to a fixed cadence instead.
     const PROGRESS_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
     let mut hasher = Sha256::new();
     let mut downloaded: u64 = 0;
@@ -161,8 +146,6 @@ pub async fn download_gguf(
 
     on_progress.send(serde_json::to_value(ModelDownloadEvent::Verifying).unwrap()).ok();
     let actual = format!("{:x}", hasher.finalize());
-    // An empty/placeholder catalogue sha256 means "not yet pinned"; skip the check rather than
-    // fail the first bring-up download that establishes the real hash.
     if !sha256.is_empty() && !actual.eq_ignore_ascii_case(sha256) {
         let _ = tokio::fs::remove_file(&part_path).await;
         return Err(InferenceError::ChecksumMismatch {
@@ -177,9 +160,6 @@ pub async fn download_gguf(
     Ok(())
 }
 
-/// Probe the hardware/OS-constant subset of `MachineSpecs`: CPU cores, and, on Windows, GPU/NPU
-/// and Foundry availability. This is the expensive half (four PowerShell/winget subprocess spawns
-/// on Windows), so callers cache the result across mounts via [`MachineSpecsCache`].
 fn probe_static() -> StaticMachineSpecs {
     use sysinfo::System;
     let mut sys = System::new();
@@ -196,10 +176,6 @@ fn probe_static() -> StaticMachineSpecs {
     }
 }
 
-/// Probe host CPU/RAM/GPU/NPU and Foundry availability. Run on the host, never the container VM
-/// (whose 2 GiB cap is misleading). The static subset (`probe_static`) is served from `cache` on
-/// a hit; RAM is always re-read fresh via `sysinfo`, since it is the one field a user opening
-/// `/models` is actively checking.
 pub fn detect_specs(cache: &MachineSpecsCache) -> MachineSpecs {
     let static_specs = {
         let mut guard = cache.lock().unwrap();
@@ -229,8 +205,6 @@ pub fn detect_specs(cache: &MachineSpecsCache) -> MachineSpecs {
     }
 }
 
-/// Clear the cached static probe and force a full re-probe, e.g. after the user installs
-/// Foundry Local mid-session and clicks the manual "re-detect hardware" affordance.
 pub fn redetect_specs(cache: &MachineSpecsCache) -> MachineSpecs {
     *cache.lock().unwrap() = None;
     detect_specs(cache)
@@ -255,7 +229,6 @@ fn gpu_names() -> Vec<String> {
 
 #[cfg(windows)]
 fn has_npu() -> bool {
-    // A Copilot+-class NPU exposes a PnP device whose name contains "AI Boost" / "NPU".
     powershell(
         "(Get-PnpDevice -Status OK -ErrorAction SilentlyContinue | \
          Where-Object { $_.FriendlyName -match 'AI Boost|Neural|NPU' } | Measure-Object).Count",
@@ -301,8 +274,6 @@ fn foundry_installable() -> bool {
     false
 }
 
-/// Install Foundry Local via `winget install Microsoft.FoundryLocal`, streaming raw CLI output
-/// lines to `on_progress` as `{ kind: "Output", line }` so the advanced-settings UI can show it.
 #[cfg(windows)]
 pub async fn install_foundry(on_progress: &Channel<serde_json::Value>) -> Result<(), InferenceError> {
     use tokio::io::AsyncBufReadExt;
