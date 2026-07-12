@@ -113,8 +113,13 @@ pub async fn download_gguf(
     // the in-context `/models` progress bar). The id matches the one `download_model` opened.
     let task_id = format!("model-download:{model_id}");
     const GB: f64 = 1024.0 * 1024.0 * 1024.0;
+    // A fast connection can yield thousands of chunks/sec; emitting an IPC event (and the
+    // frontend re-render it triggers) per chunk floods the webview and freezes the UI. Throttle
+    // progress reporting to a fixed cadence instead.
+    const PROGRESS_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
     let mut hasher = Sha256::new();
     let mut downloaded: u64 = 0;
+    let mut last_emit = std::time::Instant::now();
     let mut stream = resp.bytes_stream();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| InferenceError::Download(e.to_string()))?;
@@ -124,6 +129,10 @@ pub async fn download_gguf(
             .await
             .map_err(|e| InferenceError::Download(e.to_string()))?;
         downloaded += chunk.len() as u64;
+        if last_emit.elapsed() < PROGRESS_INTERVAL {
+            continue;
+        }
+        last_emit = std::time::Instant::now();
         on_progress
             .send(
                 serde_json::to_value(ModelDownloadEvent::Progress {
@@ -143,6 +152,12 @@ pub async fn download_gguf(
     }
     file_out.flush().await.map_err(|e| InferenceError::Download(e.to_string()))?;
     drop(file_out);
+    on_progress
+        .send(
+            serde_json::to_value(ModelDownloadEvent::Progress { downloaded_bytes: downloaded, total_bytes: total })
+                .unwrap(),
+        )
+        .ok();
 
     on_progress.send(serde_json::to_value(ModelDownloadEvent::Verifying).unwrap()).ok();
     let actual = format!("{:x}", hasher.finalize());
