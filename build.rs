@@ -52,7 +52,12 @@ fn main() {
             setup_e2e();
         }
         Some("e2e") => {
-            run(e2e_dir(), "pnpm", &["run", "test:standard"]);
+            let mut suite = "standard";
+            if args.len() > 2 {
+                suite = args.get(2).map(String::as_str).unwrap();
+            }
+
+            run(e2e_dir(), "pnpm", &["run", &format!("test:{}", suite)]);
         }
         Some("package") => {
             // Bundling copies from src-tauri/binaries at build time (unlike `dev`, which needs

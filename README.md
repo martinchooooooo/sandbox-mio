@@ -49,6 +49,12 @@ Tests use [WebdriverIO](https://webdriver.io/) via `tauri-driver`. For more info
 ./build e2e
 ```
 
+This will run the `standard` tests by default. To select a different suite, pass it in as another arg
+
+```sh
+./build e2e light
+```
+
 The test suite builds the debug binary automatically before launching the app.
 
 ## Packaging
