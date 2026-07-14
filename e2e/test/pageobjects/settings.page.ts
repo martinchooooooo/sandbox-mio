@@ -6,7 +6,7 @@ import AppPage, { type Element } from "./app.page.js";
 // src/lib/models/RuntimeSteps.svelte) so the page object never depends on CSS classes or copy.
 class SettingsPage extends AppPage {
   get navLink(): Element {
-    return $("a[href='/settings']");
+    return $("[role='tab'][data-value='/settings']");
   }
 
   // Wraps the engine buttons; its data-active-engine reflects the currently selected engine.

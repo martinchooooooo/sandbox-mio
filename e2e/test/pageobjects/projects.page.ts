@@ -5,7 +5,7 @@ import ProjectRow from "./project-row.component.js";
 // (see project-row.component.ts) for each one in the list.
 class ProjectsPage extends AppPage {
   get navLink(): Element {
-    return $("a[href='/projects']");
+    return $("[role='tab'][data-value='/projects']");
   }
 
   // The always-present create row, last <li> in the sandbox list (docs/features/sandbox-list-create).
@@ -58,8 +58,7 @@ class ProjectsPage extends AppPage {
     return $("button=Retry");
   }
 
-  // Navigates to the projects screen. No-ops when the browser is already on /projects
-  // (the nav link is only rendered on the home page, so waitForDisplayed would time out).
+  // Navigates to the projects screen. No-ops when the browser is already on /projects.
   async open(timeout = 10000): Promise<void> {
     const url = await browser.getUrl();
     if (url.includes("/projects")) return;

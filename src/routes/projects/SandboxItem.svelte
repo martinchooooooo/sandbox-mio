@@ -121,19 +121,23 @@
     }
 
     async function start() {
-        await action.run(
+        if (await action.run(
             "start",
             () => invoke("start_sandbox", { name: project.name }),
             { message: m.projects_status_starting() }
-        );
+        )) {
+            onChanged();
+        }
     }
 
     async function stop() {
-        await action.run(
+        if (await action.run(
             "stop",
             () => invoke("stop_sandbox", { name: project.name }),
             { message: m.projects_status_stopping() }
-        );
+        )) {
+            onChanged();
+        }
     }
 
     // Primary action: navigate the merged webview's client-side view to this sandbox's Dashboard

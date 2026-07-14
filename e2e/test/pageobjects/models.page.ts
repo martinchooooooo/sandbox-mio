@@ -5,7 +5,7 @@ import AppPage, { type Element } from "./app.page.js";
 // src/routes/models/+page.svelte) so the page object never depends on CSS classes or copy.
 class ModelsPage extends AppPage {
   get navLink(): Element {
-    return $("a[href='/models']");
+    return $("[role='tab'][data-value='/models']");
   }
 
   get specsPanel(): Element {
@@ -74,8 +74,7 @@ class ModelsPage extends AppPage {
     return (await this.chatPanel).isExisting();
   }
 
-  // Navigate to /models and wait for the host-specs probe to resolve. The nav link only exists on
-  // the home page, so callers must start from home (the app launches there). detect_machine_specs
+  // Navigate to /models and wait for the host-specs probe to resolve. detect_machine_specs
   // shells out (PowerShell/winget) so the populated panel can lag the container by seconds — wait
   // for [data-specs-ready], not just the [data-specs] placeholder, or callers race the probe.
   async open(timeout = 10000): Promise<void> {
