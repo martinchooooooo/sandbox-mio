@@ -7,19 +7,15 @@ description: >
 ---
 
 Write to `docs/features/<feature>/03_e2e.md`. Read the feature's `02_dev.md`
-first; the test plan covers only how to test the build it describes.
+first; the test plan covers only how to test the build it describes. Written for
+future AI agents; follow the `write-docs` skill conventions.
 
-## Audience and base conventions
+## Purpose
 
-Written for future AI agents. Every sentence must stand alone. Follow the
-`write-docs` skill conventions exactly.
-
-## Purpose of the e2e document
-
-Be the plan for proving the feature works through the **real application**, not a
-side-channel. State plainly which actual code path (which Tauri commands, which
-bundled binaries) the test exercises, so a future agent knows the test has teeth.
-Record any de-risking spike so a blocker found by hand is not rediscovered.
+Be the plan for proving the feature works through the **real application**, not
+a side-channel. State which actual code path (which Tauri commands, which
+bundled binaries) the test exercises, so a future agent knows the test has
+teeth.
 
 ## Tier selection
 
@@ -33,35 +29,25 @@ real spec — never as the only coverage for a new feature's main path.
 
 ## Structure
 
-1. **Overview paragraph** — what the document is the test plan for, which `02_dev.md` it depends on, and whether a spike has already been run.
-2. **Goal** — the exact real code path the test must prove (name the commands and the bundled components), and explicitly what a weaker test would *fail* to cover.
-3. **Existing test styles** — the test styles already in the repo (e.g. app-driven WebdriverIO specs vs standalone POCs), with paths, and which one the new test belongs to.
-4. **Chosen approach** — the tier (`standard` by default; see Tier selection above) and the spec to add (path, e.g. `e2e/test/specs/standard/<name>.spec.ts`), the topology it uses (e.g. a second local Podman machine as the deploy target, no external host), and why. If a `light` spec is also planned for an edge case or debug loop, name it and say what it covers that the `standard` spec doesn't.
-5. **Harness changes** — concrete edits to the harness (e.g. `e2e/wdio.conf.ts`): provisioning, cleanup honouring env flags, and any build/staging step the test needs.
-6. **Spec scenario** — the numbered steps the spec performs, each naming the UI action driven and the assertion made (read state back through the CLI and filesystem, mirroring an existing spec).
-7. **De-risking spike results** — if a spike was run, record the date, what cleared, and any blocker found. Mark a blocker as feature-fix-vs-test-concern and whether it must be fixed before the spec is worth writing.
-8. **Sequencing** — the order to implement fixes and the spec, especially when a spike inverted the original plan.
-9. **Environment notes** — state a future session needs (machines that exist, sidecars staged, ports, sockets to re-activate).
-10. **Common Gotchas** — final section, table format below.
+1. **Overview paragraph** — what the document is the test plan for, which `02_dev.md` it depends on, and whether a spike has been run.
+2. **Goal** — the exact real code path the test must prove (name the commands and bundled components), and explicitly what a weaker test would *fail* to cover.
+3. **Chosen approach** — the tier, the spec path (e.g. `e2e/test/specs/standard/<name>.spec.ts`), the topology it uses, and why. Note any harness or environment prerequisites (`e2e/wdio.conf.ts` edits, provisioning, cleanup, machines or sidecars a future session needs).
+4. **Spec scenario** — numbered steps, each naming the UI action driven and the assertion made (read state back through the CLI and filesystem, mirroring an existing spec).
+5. **De-risking spike results** — if a spike was run (see below).
+6. **Common Gotchas** — final section, table format defined in the `write-docs` skill.
 
 ## Recording a spike
 
-When a spike is run by hand, record it as evidence: the date, each risk that
-cleared (with the command that cleared it), and any blocker with its verbatim
-error. Classify each blocker as a **feature fix** or a **test concern** and say
-whether the spec should wait on it — a spec that would go red at a known blocker
-is not worth writing yet.
+Record a spike as evidence: the date, each risk that cleared (with the command
+that cleared it), and any blocker with its verbatim error. Classify each blocker
+as a **feature fix** or a **test concern** and say whether the spec should wait
+on it — a spec that would go red at a known blocker is not worth writing yet.
+Spike artefacts (throwaway scripts, probe specs, captured output) live in
+`docs/features/<feature>/spike/` — keep them after the spike concludes.
 
-## Common Gotchas Table
+## Out-of-scope improvements
 
-End the document with this table. Each row self-contained.
-
-```
-| Gotcha | Cause | Fix |
-|---|---|---|
-| <exact error or symptom> | <root cause — no pronouns> | <concrete action — no pronouns> |
-```
-
-- **Gotcha**: the exact error or observable symptom, quoted if a string.
-- **Cause**: the root cause in explicit nouns.
-- **Fix**: the concrete command, config change, or code location, with file paths.
+An improvement noticed while planning or running tests that is out of scope goes
+into `docs/features/<feature>/04_improvements.md` (one `##` section per
+improvement: what it is and why it was deferred). Improvements can be added
+during any phase of the feature workflow.
