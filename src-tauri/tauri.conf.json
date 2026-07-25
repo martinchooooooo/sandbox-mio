@@ -22,7 +22,8 @@
     "externalBin": ["binaries/mutagen"],
     "resources": {
       "binaries/llama": "llama",
-      "binaries/podman": "podman"
+      "binaries/podman": "podman",
+      "binaries/mutagen-agents.tar.gz": "mutagen-agents.tar.gz"
     },
     "icon": [
       "icons/32x32.png",

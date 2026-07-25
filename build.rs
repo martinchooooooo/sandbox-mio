@@ -46,6 +46,7 @@ fn main() {
             set_dev_diagnostics_env();
             stage_llama();
             stage_podman();
+            stage_mutagen_agents();
             run(root_dir(), "pnpm", &["run", "tauri", "dev"]);
         }
         Some("e2e") if args.get(2).map(String::as_str) == Some("--setup") => {
@@ -67,7 +68,7 @@ fn main() {
             fetch_podman();
             // `--no-default-features` drops the `devtools` feature (see src-tauri/Cargo.toml) so
             // the shipped binary carries no devtools code.
-            run(root_dir(), "pnpm", &["tauri", "build", "--no-default-features"]);
+            run(root_dir(), "pnpm", &["tauri", "build"]);
         }
         _ => {
             eprintln!("Usage:");
@@ -115,7 +116,8 @@ fn fetch_mutagen() {
     }
     let triple = format!("{}-pc-windows-msvc", env::consts::ARCH);
     let dest = binaries_dir().join(format!("mutagen-{triple}.exe"));
-    if dest.exists() {
+    let agents_dest = binaries_dir().join("mutagen-agents.tar.gz");
+    if dest.exists() && agents_dest.exists() {
         println!("Mutagen sidecar already staged: {}", dest.display());
         return;
     }
@@ -138,18 +140,27 @@ fn fetch_mutagen() {
     run(root_dir(), "curl", &["-fsSL", "-o", &zip_arg, &url]);
     run(root_dir(), &windows_tar(), &["-xf", &zip_arg, "-C", &extract_arg]);
 
-    // The archive holds a `mutagen.exe` plus a bundled agents tarball; only the executable is
-    // the sidecar — Mutagen ships the remote agents inside it.
+    // The archive holds `mutagen.exe` plus `mutagen-agents.tar.gz`. Mutagen does not embed remote
+    // agents in the exe (it's a 13 MB binary; the agents tarball alone is ~90 MB) — it looks for
+    // the tarball next to its own exe at runtime, so both files must ship together.
     let produced = extract.join("mutagen.exe");
+    let produced_agents = extract.join("mutagen-agents.tar.gz");
     assert!(
         produced.exists(),
         "expected mutagen.exe in extracted archive at {}",
         produced.display()
     );
+    assert!(
+        produced_agents.exists(),
+        "expected mutagen-agents.tar.gz in extracted archive at {}",
+        produced_agents.display()
+    );
     fs::copy(&produced, &dest).unwrap();
+    fs::copy(&produced_agents, &agents_dest).unwrap();
     let _ = fs::remove_dir_all(&extract);
     let _ = fs::remove_file(&zip);
     println!("Staged Mutagen sidecar: {}", dest.display());
+    println!("Staged Mutagen agent bundle: {}", agents_dest.display());
 }
 
 /// Download the prebuilt llama.cpp Vulkan release and extract its **entire** contents into
@@ -319,6 +330,35 @@ fn stage_llama() {
     copy_dir(&src, &dst)
         .unwrap_or_else(|e| panic!("failed to stage llama engine to {}: {}", dst.display(), e));
     println!("Staged llama.cpp engine: {}", dst.display());
+}
+
+/// Stage the Mutagen agent bundle next to the debug exe so the sidecar's own runtime search (it
+/// looks for `mutagen-agents.tar.gz` beside itself) resolves under `tauri dev`, mirroring
+/// `stage_llama`/`stage_podman`. Skipped with a warning when not staged (run `cargo run --bin
+/// build -- dev --setup` first).
+fn stage_mutagen_agents() {
+    let src = binaries_dir().join("mutagen-agents.tar.gz");
+    if !src.exists() {
+        println!(
+            "mutagen-agents.tar.gz not staged at {}; remote terminals will fail agent \
+             installation. Run `cargo run --bin build -- dev --setup` to fetch it.",
+            src.display()
+        );
+        return;
+    }
+    let dst = root_dir().join("src-tauri").join("target").join("debug").join("mutagen-agents.tar.gz");
+    if let Err(e) = fs::copy(&src, &dst) {
+        if dst.exists() {
+            println!(
+                "warning: could not update {} ({e}); it may be locked. Using the already-staged copy.",
+                dst.display()
+            );
+        } else {
+            panic!("failed to stage Mutagen agent bundle to {}: {}", dst.display(), e);
+        }
+    } else {
+        println!("Staged Mutagen agent bundle: {}", dst.display());
+    }
 }
 
 /// Recursively copy `src` into `dst`, overwriting existing files (std has no recursive copy).
