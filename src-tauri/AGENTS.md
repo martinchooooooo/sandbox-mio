@@ -4,17 +4,17 @@ The `src-tauri/src/` crate is the Tauri backend: every capability the frontend u
 
 ## Subsystem Pattern: Trait + Real Impl + Mock
 
-Every subsystem that touches external processes is a trait injected into Tauri state as `Arc<dyn Trait>`, constructed once at startup by a `default_*()` function that returns the in-memory mock when `MIO_MOCK_BACKEND=1` (checked by `mock_backend_enabled()` in `src-tauri/src/backends/mod.rs`):
+Every subsystem that touches external processes is a trait injected into Tauri state as `Arc<dyn Trait>`, constructed once at startup by a `default_*()` function. Under `MIO_MOCK_BACKEND=1` (checked by `mock_backend_enabled()` in `src-tauri/src/backends/mod.rs`) a subsystem takes one of two paths: the older ones swap in a hand-written in-memory mock struct, while `backends`/`machine`/`sync` keep their real struct and swap the `ProcessRunner` beneath it (see `mockctl/` below):
 
-| Trait | Declared in | Real impl (drives) | Mock | Constructor |
+| Trait | Declared in | Real impl (drives) | Under `MIO_MOCK_BACKEND=1` | Constructor |
 |---|---|---|---|---|
-| `SandboxBackend` | `backends/types.rs` | `PodmanCliBackend` (podman CLI over a named connection) | `backends/mock.rs` | `default_backend()` in `backends/mod.rs` |
+| `SandboxBackend` | `backends/types.rs` | `PodmanCliBackend` (podman CLI over a named connection) | same struct, `ScriptedPodmanRunner` | `default_backend()` in `backends/mod.rs` |
 | `RuntimeManager` | `runtime/types.rs` | `PodmanMiseRuntime` (mise + zellij inside the container) | `runtime/mock.rs` | `default_runtime()` in `runtime/mod.rs` |
-| `SyncEngine` | `sync/types.rs` | `MutagenCli` (bundled Mutagen sidecar) | `sync/mock.rs` | `default_sync_engine()` in `sync/mod.rs` |
-| `MachineManager` | `machine/types.rs` | podman machine / WSL lifecycle | `machine/mock.rs` | `default_machine_manager()` in `machine/mod.rs` |
+| `SyncEngine` | `sync/types.rs` | `MutagenCli` (bundled Mutagen sidecar) | same struct, `ScriptedMutagenRunner` | `default_sync_engine()` in `sync/mod.rs` |
+| `MachineManager` | `machine/types.rs` | podman machine / WSL lifecycle | same struct, `ScriptedPodmanRunner` | `default_machine_manager()` in `machine/mod.rs` |
 | `NetworkManager` | `network/types.rs` | `MutagenNetworkManager` (forward lifecycle, relay-pool port exposure) | `network/mock.rs` | `default_network_manager()` in `network/mod.rs` |
 
-Command handlers in `src-tauri/src/lib.rs` orchestrate across subsystems (e.g. deploy commands hold both `SandboxBackend` and `SyncEngine` state) so subsystems never depend on each other. When adding a new external-process capability, follow the trait + mock pattern rather than shelling out from `lib.rs` — otherwise the e2e `light` tier (see `e2e/AGENTS.md`) breaks for every flow touching the new capability.
+Command handlers in `src-tauri/src/lib.rs` orchestrate across subsystems (e.g. deploy commands hold both `SandboxBackend` and `SyncEngine` state) so subsystems never depend on each other. When adding a new external-process capability, route it through one of these traits rather than shelling out from `lib.rs` — otherwise the e2e `light` tier (see `e2e/AGENTS.md`) breaks for every flow touching the new capability. Prefer the runner path over a new mock struct: a hand-written mock reimplements the logic it stands in for and drifts from it (`docs/features/scriptable-mock-backend/02_dev.md`, "Superseded").
 
 ## Module Inventory
 
@@ -25,6 +25,14 @@ Modules follow one layout: `types.rs` declares the public types/trait, `mod.rs` 
 - `sync/` — Mutagen file-sync and low-level port-forwarding primitives (`forward_create`/`forward_terminate`/`sweep_stale_forwards`) for remote deploys and embedded panes.
 - `network/` — owns forward lifecycle/registry on top of `sync`'s primitives: terminal/agent-web forwards, and exposing an arbitrary user-chosen sandbox port to the host via a pre-published relay-pool slot + in-container `socat`, without recreating the container.
 - `machine/` — podman machine readiness/startup on the host (WSL on Windows).
+- `mockctl/` — runtime control plane for the e2e `light` tier: the `ProcessRunner` seam (one runner
+  pair per external tool — `SystemPodmanRunner`/`ScriptedPodmanRunner` and
+  `SystemMutagenRunner`/`ScriptedMutagenRunner`), `MockDirector` (override registry, keyed
+  `<binary>.<subcommand>`), the `Behaviour` enum, and the `KNOWN_CALLS` validator table. Exposed via
+  the `mock_configure`/`mock_reset` commands in `lib.rs`. `PodmanCliBackend`/`PodmanMachineManager`
+  share one podman runner and `MutagenCli` holds a mutagen one; all three run unmodified against
+  them, so there is no separate mock struct for `backends`/`machine`/`sync`. See
+  `docs/features/scriptable-mock-backend/02_dev.md`.
 - `activity/` — `TaskRegistry`, the source of truth for long-running task state; pushes `activity://task-updated` events consumed by `src/lib/activity/activity.svelte.ts`.
 - `agents/` — AI agent install/provisioning and interactive auth sessions (`AuthSessionMap`).
 - `credentials/` — shared agent credential bundles (capture from one sandbox, inject into another).
@@ -40,7 +48,7 @@ Modules follow one layout: `types.rs` declares the public types/trait, `mod.rs` 
 2. Add the `#[tauri::command]` fn in `src-tauri/src/lib.rs`, returning `Result<T, AppError>` — never `Result<T, String>`.
 3. Register the fn in `generate_handler![]` in `src-tauri/src/lib.rs`.
 4. New long-running work reports progress through `activity::TaskRegistry`, not ad-hoc events.
-5. Verify with `cargo check` in `src-tauri/`, then exercise via `pnpm run test:light` in `e2e/` if the mock covers the flow.
+5. Verify with `cargo check` in `src-tauri/`, then exercise via `./build e2e light` (repo root) if the mock covers the flow.
 
 ## Common Gotchas
 
@@ -51,4 +59,11 @@ Modules follow one layout: `types.rs` declares the public types/trait, `mod.rs` 
 | `podman -v` rejects the workspace mount path | Podman does not expand `~` or `$HOME`, and rejects backslash Windows paths | Use `WORKSPACE_MOUNT` (`/root/work`) and `workspace_path()` in `src-tauri/src/backends/mod.rs`, which forward-slashes the host path |
 | Container base-image change silently ignored | `ensure_base_image` short-circuits on `podman image exists <tag>` | Bump `BASE_IMAGE_VERSION` in `src-tauri/src/backends/mod.rs` together with any `src-tauri/resources/Containerfile` change |
 | Sandbox name accepted by UI but rejected by backend | `validate_name()` in `src-tauri/src/backends/mod.rs` bars non-ASCII-alphanumeric leading chars and path-unsafe chars because the name becomes a workspace path segment | Surface the `InvalidName` error via `parseError` on the frontend; do not loosen `validate_name()` without securing `workspace_path()` |
-| `check_podman_ready` / `start_podman_machine` do not hit the mock backend | Machine-lifecycle commands use `Arc<dyn MachineManager>`, not `SandboxBackend` | Extend `MockMachineManager` in `src-tauri/src/machine/mock.rs` for the mocked behaviour |
+| `check_podman_ready` / `start_podman_machine` behave unexpectedly under `MIO_MOCK_BACKEND=1` | Machine-lifecycle commands use `Arc<dyn MachineManager>` (`PodmanMachineManager`), routed through the same shared `ProcessRunner` as `backends` | Script `podman.machine-list`/`podman.machine-start` via `mock_configure`, or rely on `ScriptedPodmanRunner`'s built-in "already running" default (`src-tauri/src/mockctl/mod.rs`) |
+| `mock_configure` rejects a key that looks like a real `podman` call | The key is missing from `KNOWN_CALLS` in `src-tauri/src/mockctl/mod.rs` — only listed keys are scriptable | Add the key to `KNOWN_CALLS`; verify the derived key matches the matching strategy in `docs/features/scriptable-mock-backend/02_dev.md` |
+| A `light` run's activity scrollback shows container events for sandboxes no spec created, or a leftover `podman` process holds `target/debug` files locked | A subsystem method spawns a streamed child process, which `ProcessRunner::run` (`src-tauri/src/mockctl/mod.rs`) cannot represent because it models one-shot calls only, and no `mock_backend_enabled()` gate covers the spawn | Gate the spawning method on `mock_backend_enabled()`, as `PodmanCliBackend::listen_events` (`src-tauri/src/backends/mod.rs`) already does; clear a leftover process with `killStaleDevProcesses` in `e2e/wdio.conf.ts` |
+| A `light` spec restarts or reconfigures the developer's real Podman machine | A `podman` call that spawns a child rather than issuing a one-shot call bypasses the scripted `ProcessRunner` seam, so `MIO_MOCK_BACKEND=1` does not divert it | Gate the spawning method on `mock_backend_enabled()`, as `PodmanMachineManager::activate_podman_socket` and `run_host_wsl()` (`src-tauri/src/machine/mod.rs`) already do |
+| `provision_podman` fails with `PodmanRebootRequired` on a `light` run on a host without WSL installed | The mock path of `PodmanMachineManager::install_wsl` (`src-tauri/src/machine/mod.rs`) returns `Ok(true)`, which means reboot-required per the `MachineManager` contract in `src-tauri/src/machine/types.rs` | Return `Ok(false)` from the mock path of `install_wsl`; `wsl_is_ready` is deliberately ungated as a read-only probe, so the mock path is reachable on any host without WSL |
+| A panicking `wsl` blocking task reports success instead of an error | `run_host_wsl` (`src-tauri/src/machine/mod.rs`) maps a `tokio::task::JoinError` to the same `None` that signals the `MIO_MOCK_BACKEND=1` skip | Keep `None` reserved for the mock skip: `run_host_wsl` wraps a `JoinError` into an `std::io::Error` and returns `Some(Err(..))`, which callers map to `BackendError::CommandFailed` |
+| `podman_global_runner` panics with "set_podman_runner must run before any free-function podman call" | The `PODMAN_RUNNER` `OnceLock` in `src-tauri/src/backends/mod.rs` is unset because `set_podman_runner` was not called before the first free-function podman call in `run()` (`src-tauri/src/lib.rs`) | Call `set_podman_runner` before any Tauri state wiring in `run()`; a new podman call site on `PodmanCliBackend` must use `self.podman`/`self.podman_on`/`self.podman_unbound`, leaving the global to `ensure_connection_alias` |
+| `MockRuntime::list` returns no packages for a sandbox whose packages installed successfully | `workspace_name()` in `src-tauri/src/runtime/mock.rs` keys `list()` off the workspace path's final segment, which differs from the sandbox name when the sandbox was created from an `existing_path` argument to `resolve_create_workspace` (`src-tauri/src/backends/mod.rs`) | Assert light-tier package state only on sandboxes created without `existing_path`, as the `MockRuntime` doc comment requires; keying the map by sandbox name on both sides needs `RuntimeManager::list` (`src-tauri/src/runtime/types.rs`) widened, since it receives no name |

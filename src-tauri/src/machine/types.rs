@@ -29,4 +29,9 @@ pub trait MachineManager: Send + Sync {
 }
 
 /// The real [`MachineManager`], driving `podman machine` CLI, `wsl`, and the rootless API socket.
-pub(super) struct PodmanMachineManager;
+pub(super) struct PodmanMachineManager {
+    /// The process seam every `podman` call routes through — real in production, scripted under
+    /// `MIO_MOCK_BACKEND=1`. Shares one instance with `PodmanCliBackend` (see
+    /// `docs/features/scriptable-mock-backend/02_dev.md`, "shared runner").
+    pub(super) runner: std::sync::Arc<dyn crate::mockctl::types::ProcessRunner>,
+}

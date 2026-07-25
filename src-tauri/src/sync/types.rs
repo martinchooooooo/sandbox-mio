@@ -62,7 +62,11 @@ pub trait SyncEngine: Send + Sync {
     async fn shutdown(&self);
 }
 
-/// Real [`SyncEngine`] driving the bundled Mutagen sidecar.
+/// Real [`SyncEngine`] driving the bundled Mutagen sidecar. Runs unmodified in the e2e `light` tier
+/// against a scripted `runner`; there is no separate mock implementation of this trait.
 pub struct MutagenCli {
-    pub app: tauri::AppHandle,
+    /// Every `sync` subcommand this struct issues goes through here — real sidecar in production,
+    /// scripted in the `light` tier (`docs/features/scriptable-mock-backend/02_dev.md`, Phase C).
+    /// The runner owns the [`tauri::AppHandle`] the sidecar is resolved through.
+    pub runner: std::sync::Arc<dyn crate::mockctl::types::ProcessRunner>,
 }

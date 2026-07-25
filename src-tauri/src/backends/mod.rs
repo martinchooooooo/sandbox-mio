@@ -1,20 +1,21 @@
 pub mod types;
 
-mod mock;
-
 use std::process::{Output, Stdio};
+use std::sync::Arc;
 
 use tauri::ipc::Channel;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
-use mock::MockBackend;
+use crate::mockctl::types::ProcessRunner;
 use crate::process_ext::NoWindow;
 use types::{
     BackendError, ConnectionInfo, PodmanCliBackend, RemoteDeployment, Sandbox, SandboxBackend,
     SyncStrategy, WorkspacePlan,
 };
 
+// `readBaseImage()` in `e2e/lib/podman-machine.ts` regex-parses both declarations below, so their
+// literal form (name, type, `const`) is load-bearing beyond Rust.
 const BASE_IMAGE: &str = "sandbox-mio/base";
 /// Bump whenever the Containerfile changes: `ensure_base_image` short-circuits on an existing
 /// tag, so an unchanged version silently keeps stale images.
@@ -68,13 +69,14 @@ fn workspace_path(name: &str) -> Result<String, BackendError> {
     Ok(path.to_string_lossy().replace('\\', "/"))
 }
 
-pub fn default_backend() -> std::sync::Arc<dyn SandboxBackend> {
-    if mock_backend_enabled() {
-        return std::sync::Arc::new(MockBackend::new());
-    }
+pub fn default_backend(runner: Arc<dyn ProcessRunner>) -> std::sync::Arc<dyn SandboxBackend> {
     let connection =
         std::env::var("PODMAN_CONNECTION").unwrap_or_else(|_| DEFAULT_CONNECTION.to_string());
-    std::sync::Arc::new(PodmanCliBackend { connection, build_lock: tokio::sync::Mutex::new(()) })
+    std::sync::Arc::new(PodmanCliBackend {
+        connection,
+        build_lock: tokio::sync::Mutex::new(()),
+        runner,
+    })
 }
 
 pub(crate) fn mock_backend_enabled() -> bool {
@@ -100,6 +102,37 @@ pub(crate) fn podman_command() -> Command {
     };
     cmd.no_window();
     cmd
+}
+
+static PODMAN_RUNNER: std::sync::OnceLock<Arc<dyn ProcessRunner>> = std::sync::OnceLock::new();
+
+/// Record the shared `podman` [`ProcessRunner`] for the free functions that shell out to `podman`
+/// with no `PodmanCliBackend` instance to borrow a `runner` field from — `ensure_connection_alias`,
+/// called directly from Tauri command handlers in `lib.rs`, is the only such call site. Every
+/// `&self` method uses `self.runner` instead. Set once at startup from the same `Arc` passed to
+/// `default_backend`/`default_machine_manager`, so all `podman` calls share one director.
+pub fn set_podman_runner(runner: Arc<dyn ProcessRunner>) {
+    if PODMAN_RUNNER.set(runner).is_err() {
+        // A `OnceLock` cannot be replaced, so a second call is a wiring bug: the free-function call
+        // sites keep the runner recorded first and would silently escape a later director swap.
+        tracing::warn!(target: "backends", "set_podman_runner called more than once; keeping the first runner");
+    }
+}
+
+fn podman_global_runner() -> &'static Arc<dyn ProcessRunner> {
+    PODMAN_RUNNER
+        .get()
+        .expect("set_podman_runner must run before any free-function podman call")
+}
+
+async fn run_podman(
+    runner: &Arc<dyn ProcessRunner>,
+    args: &[&str],
+) -> Result<Output, BackendError> {
+    runner
+        .run(args)
+        .await
+        .map_err(|e| BackendError::CommandFailed(e.to_string()))
 }
 
 /// Returns stdout on success, or the captured stderr as `Err` on a non-zero exit.
@@ -162,31 +195,21 @@ impl PodmanCliBackend {
     }
 
     async fn podman(&self, args: &[&str]) -> Result<Output, BackendError> {
-        podman_command()
-            .arg("--connection")
-            .arg(&self.connection)
-            .args(args)
-            .output()
-            .await
-            .map_err(|e| BackendError::CommandFailed(e.to_string()))
+        self.podman_on(&self.connection, args).await
     }
 
     /// Runs `podman` without `--connection`, for system-connection registry operations
     /// that are not bound to the backend's active connection.
-    async fn podman_global(args: &[&str]) -> Result<Output, BackendError> {
-        podman_command()
-            .args(args)
-            .output()
-            .await
-            .map_err(|e| BackendError::CommandFailed(e.to_string()))
+    async fn podman_unbound(&self, args: &[&str]) -> Result<Output, BackendError> {
+        run_podman(&self.runner, args).await
     }
 
     /// Runs `podman --connection <connection> <args>` against an arbitrary connection. Used by
     /// deploy, whose target connection differs from the backend's pinned `self.connection`.
-    async fn podman_on(connection: &str, args: &[&str]) -> Result<Output, BackendError> {
+    async fn podman_on(&self, connection: &str, args: &[&str]) -> Result<Output, BackendError> {
         let mut full = vec!["--connection", connection];
         full.extend_from_slice(args);
-        Self::podman_global(&full).await
+        self.podman_unbound(&full).await
     }
 
     fn ensure_key(identity_path: &str) -> Result<(), BackendError> {
@@ -201,8 +224,8 @@ impl PodmanCliBackend {
         check(out).map(|_| ())
     }
 
-    async fn verify_host(name: &str) -> Result<(), BackendError> {
-        let out = Self::podman_global(&["--connection", name, "info", "--format", "json"]).await?;
+    async fn verify_host(&self, name: &str) -> Result<(), BackendError> {
+        let out = self.podman_on(name, &["info", "--format", "json"]).await?;
         check(out).map(|_| ())
     }
 
@@ -210,9 +233,9 @@ impl PodmanCliBackend {
     /// if absent. The image is never published to any registry, so absence always means build.
     /// Called by `ensure_base_image` (local, serialized under the build lock) and `deploy` (remote,
     /// no lock — concurrent deploys to the same target are harmless since `podman build` is idempotent).
-    async fn ensure_image_on(connection: &str) -> Result<(), BackendError> {
+    async fn ensure_image_on(&self, connection: &str) -> Result<(), BackendError> {
         let image = Self::image();
-        if Self::podman_on(connection, &["image", "exists", &image]).await?.status.success() {
+        if self.podman_on(connection, &["image", "exists", &image]).await?.status.success() {
             return Ok(());
         }
         // A temp context dir is needed because `podman build -` does not stream the Containerfile
@@ -227,15 +250,19 @@ impl PodmanCliBackend {
             .and_then(|_| std::fs::write(context.join("Containerfile"), CONTAINERFILE))
             .map_err(|e| BackendError::CommandFailed(e.to_string()))?;
         let context_arg = context.to_string_lossy().replace('\\', "/");
-        let result = check(Self::podman_on(connection, &["build", "--tag", &image, &context_arg]).await?).map(|_| ());
+        let result = check(self.podman_on(connection, &["build", "--tag", &image, &context_arg]).await?).map(|_| ());
         let _ = std::fs::remove_dir_all(&context);
         result
     }
 
     /// Live SSH endpoint for connection `name`, or `None` for a connection not reachable over SSH.
-    /// Read fresh every call: a machine's SSH port changes on each boot.
-    async fn remote_connection_info(name: &str) -> Result<Option<ConnectionInfo>, BackendError> {
-        let out = Self::podman_global(&["system", "connection", "list", "--format", "json"]).await?;
+    /// Read fresh every call: a machine's SSH port changes on each boot. Takes the runner as an
+    /// argument because both instance methods and `ensure_connection_alias` need it.
+    async fn remote_connection_info(
+        runner: &Arc<dyn ProcessRunner>,
+        name: &str,
+    ) -> Result<Option<ConnectionInfo>, BackendError> {
+        let out = run_podman(runner, &["system", "connection", "list", "--format", "json"]).await?;
         let entries: Vec<serde_json::Value> =
             serde_json::from_str(&check(out)?).map_err(|e| BackendError::ParseError(e.to_string()))?;
         let entry = entries
@@ -310,9 +337,13 @@ impl PodmanCliBackend {
     /// local connection returns equal paths and a no-op strategy; a remote connection returns a
     /// remote bind-mount source and the live SSH endpoint. Called by `deploy` against the chosen
     /// target connection to compute the remote endpoint; `create` is always local.
-    async fn resolve_workspace(name: &str, connection: &str) -> Result<WorkspacePlan, BackendError> {
+    async fn resolve_workspace(
+        &self,
+        name: &str,
+        connection: &str,
+    ) -> Result<WorkspacePlan, BackendError> {
         let laptop_dir = workspace_path(name)?;
-        let Some(info) = Self::remote_connection_info(connection).await? else {
+        let Some(info) = Self::remote_connection_info(&self.runner, connection).await? else {
             // Local machine: bind-mount source and laptop directory are the same, no sync.
             return Ok(WorkspacePlan {
                 bind_mount_source: laptop_dir.clone(),
@@ -350,7 +381,7 @@ impl SandboxBackend for PodmanCliBackend {
         // builder wins while the rest wait, then each re-checks `image exists` inside
         // `ensure_image_on` and returns immediately — without it they would race the build.
         let _guard = self.build_lock.lock().await;
-        Self::ensure_image_on(&self.connection).await
+        self.ensure_image_on(&self.connection).await
     }
 
     async fn create(&self, name: &str, existing_path: Option<&str>) -> Result<Sandbox, BackendError> {
@@ -473,7 +504,7 @@ impl SandboxBackend for PodmanCliBackend {
         }
         // Resolve the remote endpoint first, so an unreachable target fails before any mutation of
         // the local container.
-        let plan = Self::resolve_workspace(name, target_connection).await?;
+        let plan = self.resolve_workspace(name, target_connection).await?;
         let SyncStrategy::Remote(info) = plan.strategy else {
             return Err(BackendError::NoSshEndpoint {
                 connection: target_connection.to_string(),
@@ -498,7 +529,7 @@ impl SandboxBackend for PodmanCliBackend {
 
         // Ensure the base image exists on the remote. It is never published to any registry, so
         // absence means build — the same path `ensure_base_image` takes for the local connection.
-        Self::ensure_image_on(target_connection).await?;
+        self.ensure_image_on(target_connection).await?;
 
         // Create and start the remote container on the target connection, not self.connection.
         let volume = format!("{}:{WORKSPACE_MOUNT}", plan.bind_mount_source);
@@ -519,13 +550,13 @@ impl SandboxBackend for PodmanCliBackend {
             "--name".to_string(), name.to_string(), image.clone(), "/bin/sh".to_string(),
         ]);
         check(
-            Self::podman_on(
+            self.podman_on(
                 target_connection,
                 &create_args.iter().map(String::as_str).collect::<Vec<_>>(),
             )
             .await?,
         )?;
-        check(Self::podman_on(target_connection, &["start", name]).await?)?;
+        check(self.podman_on(target_connection, &["start", name]).await?)?;
 
         Ok(RemoteDeployment {
             alpha: plan.laptop_dir,
@@ -534,10 +565,16 @@ impl SandboxBackend for PodmanCliBackend {
     }
 
     async fn remove_remote(&self, name: &str, connection: &str) -> Result<(), BackendError> {
-        check(Self::podman_on(connection, &["rm", "--force", name]).await?).map(|_| ())
+        check(self.podman_on(connection, &["rm", "--force", name]).await?).map(|_| ())
     }
 
     async fn listen_events(&self, on_event: Channel<serde_json::Value>) -> Result<(), BackendError> {
+        // `ProcessRunner` (`src/mockctl/mod.rs`) models one-shot calls only, so the scripted-runner
+        // seam cannot stand in for a streamed child: this gate is what keeps the light tier off podman.
+        if mock_backend_enabled() {
+            return Ok(());
+        }
+
         let mut child = podman_command()
             .arg("--connection")
             .arg(&self.connection)
@@ -586,7 +623,7 @@ impl SandboxBackend for PodmanCliBackend {
     }
 
     async fn list_hosts(&self) -> Result<Vec<String>, BackendError> {
-        let out = Self::podman_global(&["system", "connection", "list", "--format", "json"]).await?;
+        let out = self.podman_unbound(&["system", "connection", "list", "--format", "json"]).await?;
         let stdout = check(out)?;
         let entries: Vec<serde_json::Value> =
             serde_json::from_str(&stdout).map_err(|e| BackendError::ParseError(e.to_string()))?;
@@ -609,7 +646,7 @@ impl SandboxBackend for PodmanCliBackend {
         }
         args.push(name);
         args.push(ssh_url);
-        check(Self::podman_global(&args).await?).map(|_| ())
+        check(self.podman_unbound(&args).await?).map(|_| ())
     }
 
     async fn prepare_host(&self, ssh_url: &str, identity_path: &str) -> Result<(), BackendError> {
@@ -664,7 +701,7 @@ impl SandboxBackend for PodmanCliBackend {
             "add_host",
             self.add_host(name, ssh_url, Some(identity_path)).await,
         )?;
-        step("verify_host", Self::verify_host(name).await)?;
+        step("verify_host", self.verify_host(name).await)?;
         progress(&on_progress, "done", "ok", "");
         Ok(())
     }
@@ -675,7 +712,9 @@ impl SandboxBackend for PodmanCliBackend {
 /// call so the port (reassigned on each machine boot) is always current. Called before any
 /// `mutagen forward create` that targets `connection`.
 pub async fn ensure_connection_alias(connection: &str) -> Result<(), BackendError> {
-    let Some(info) = PodmanCliBackend::remote_connection_info(connection).await? else {
+    let Some(info) =
+        PodmanCliBackend::remote_connection_info(podman_global_runner(), connection).await?
+    else {
         return Err(BackendError::NoSshEndpoint { connection: connection.to_string() });
     };
     crate::ssh::write_alias(&crate::ssh::types::SshAlias {

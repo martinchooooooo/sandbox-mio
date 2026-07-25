@@ -3,26 +3,40 @@
 
 pub mod types;
 
-mod mock;
-
 use std::process::Output;
+use std::sync::Arc;
 
 use crate::backends::types::BackendError;
-use crate::backends::{mock_backend_enabled, podman_command, DEFAULT_CONNECTION};
+use crate::backends::{podman_command, DEFAULT_CONNECTION};
+use crate::mockctl::types::ProcessRunner;
 use crate::process_ext::NoWindow;
 
-use mock::MockMachineManager;
 use types::{MachineManager, PodmanMachineManager};
 
 /// Rootless Podman API socket inside the default machine (UID 1000). Must be activated manually
 /// via `podman system service` because the machine's user systemd session does not start on boot.
 const PODMAN_SOCKET: &str = "/run/user/1000/podman/podman.sock";
 
-pub fn default_machine_manager() -> std::sync::Arc<dyn MachineManager> {
-    if mock_backend_enabled() {
-        return std::sync::Arc::new(MockMachineManager);
+pub fn default_machine_manager(runner: Arc<dyn ProcessRunner>) -> std::sync::Arc<dyn MachineManager> {
+    std::sync::Arc::new(PodmanMachineManager { runner })
+}
+
+/// Runs a host-mutating `wsl` call on the blocking pool, or no-ops under `MIO_MOCK_BACKEND=1` —
+/// without this gate, e2e's light tier would run `wsl --unregister podman-machine-default` for
+/// real, deleting the dev's machine and its disk. Read-only probes (`wsl --status`) skip this gate.
+///
+/// `None` means only "skipped, mock backend"; a panicked blocking task surfaces as `Some(Err(..))`
+/// so callers cannot mistake a failure for the skip.
+async fn run_host_wsl(args: &[&str]) -> Option<std::io::Result<Output>> {
+    if crate::backends::mock_backend_enabled() {
+        return None;
     }
-    std::sync::Arc::new(PodmanMachineManager)
+    let owned: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+    let joined = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("wsl").no_window().args(&owned).output()
+    })
+    .await;
+    Some(joined.unwrap_or_else(|e| Err(std::io::Error::other(e))))
 }
 
 /// Returns stdout on success, or the captured stderr as `Err` on a non-zero exit. Local to this
@@ -37,26 +51,26 @@ fn check(out: Output) -> Result<String, BackendError> {
     }
 }
 
-/// Runs `podman <args>` without `--connection`, for machine-lifecycle and system-registry
-/// operations that are not bound to any single connection.
-async fn podman(args: &[&str]) -> Result<Output, BackendError> {
-    podman_command()
-        .args(args)
-        .output()
-        .await
-        .map_err(|e| BackendError::CommandFailed(e.to_string()))
-}
-
 /// Probe a connection's live socket with `podman --connection <name> info`. Success means the
 /// rootless API answers — the readiness signal `poll_ready` polls for.
-async fn verify_host(name: &str) -> Result<(), BackendError> {
-    check(podman(&["--connection", name, "info", "--format", "json"]).await?).map(|_| ())
+async fn verify_host(runner: &Arc<dyn ProcessRunner>, name: &str) -> Result<(), BackendError> {
+    let out = runner
+        .run(&["--connection", name, "info", "--format", "json"])
+        .await
+        .map_err(|e| BackendError::CommandFailed(e.to_string()))?;
+    check(out).map(|_| ())
+}
+
+impl PodmanMachineManager {
+    async fn podman(&self, args: &[&str]) -> Result<Output, BackendError> {
+        self.runner.run(args).await.map_err(|e| BackendError::CommandFailed(e.to_string()))
+    }
 }
 
 #[async_trait::async_trait]
 impl MachineManager for PodmanMachineManager {
     async fn machine_is_running(&self) -> Result<bool, BackendError> {
-        let out = podman(&["machine", "list", "--format", "json"]).await?;
+        let out = self.podman(&["machine", "list", "--format", "json"]).await?;
         let stdout = check(out)?;
         let machines: Vec<serde_json::Value> =
             serde_json::from_str(&stdout).map_err(|e| BackendError::ParseError(e.to_string()))?;
@@ -66,7 +80,7 @@ impl MachineManager for PodmanMachineManager {
     }
 
     async fn check_other_machines_running(&self) -> bool {
-        let Ok(out) = podman(&["machine", "list", "--format", "json"]).await else {
+        let Ok(out) = self.podman(&["machine", "list", "--format", "json"]).await else {
             return false;
         };
         let Ok(stdout) = check(out) else {
@@ -81,21 +95,23 @@ impl MachineManager for PodmanMachineManager {
     }
 
     async fn run_machine_start(&self) -> Result<(), BackendError> {
-        check(podman(&["machine", "start", DEFAULT_CONNECTION]).await?).map(|_| ())
+        check(self.podman(&["machine", "start", DEFAULT_CONNECTION]).await?).map(|_| ())
     }
 
     async fn run_wsl_shutdown(&self) -> Result<(), BackendError> {
-        // Run on the blocking pool (synchronous `std::process::Command`). A shutdown failure is
-        // non-fatal — the caller retries the machine start regardless of the exit code.
-        let _ = tokio::task::spawn_blocking(|| {
-            std::process::Command::new("wsl").no_window().arg("--shutdown").output()
-        })
-        .await;
+        // A shutdown failure is non-fatal — the caller retries the machine start regardless.
+        let _ = run_host_wsl(&["--shutdown"]).await;
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         Ok(())
     }
 
     async fn activate_podman_socket(&self) -> Result<(), BackendError> {
+        // A spawned child, so the scripted `ProcessRunner` seam every other podman call here routes
+        // through cannot stand in for it: reaching it starts a service in the dev's real machine.
+        if crate::backends::mock_backend_enabled() {
+            return Ok(());
+        }
+
         // Activates socket manually; setsid survives SSH SIGHUP; script as single argv for Windows.
         let script = format!(
             "test -S {sock} || {{ mkdir -p $(dirname {sock}) && setsid env XDG_RUNTIME_DIR=/run/user/1000 podman system service --time=0 </dev/null >/tmp/podman-svc.log 2>&1 & }}",
@@ -118,7 +134,7 @@ impl MachineManager for PodmanMachineManager {
     async fn poll_ready(&self, attempts: usize) -> Result<(), BackendError> {
         let mut last = BackendError::CommandFailed("Podman socket is not ready".to_string());
         for attempt in 0..attempts {
-            match verify_host(DEFAULT_CONNECTION).await {
+            match verify_host(&self.runner, DEFAULT_CONNECTION).await {
                 Ok(()) => return Ok(()),
                 Err(e) => last = e,
             }
@@ -147,15 +163,12 @@ impl MachineManager for PodmanMachineManager {
         // needs a reboot before the kernel component is usable, so the reboot requirement is
         // assumed rather than probed — Windows gives no reliable signal short of trying and
         // failing, which would surface as a confusing `machine init` error instead.
-        let out = tokio::task::spawn_blocking(|| {
-            std::process::Command::new("wsl")
-                .no_window()
-                .args(["--install", "--no-distribution"])
-                .output()
-        })
-        .await
-        .map_err(|e| BackendError::CommandFailed(e.to_string()))?
-        .map_err(|e| BackendError::CommandFailed(e.to_string()))?;
+        let Some(result) = run_host_wsl(&["--install", "--no-distribution"]).await else {
+            // Mock backend: `false` is "installed, no reboot needed" — `true` would fail
+            // `provision_podman` with `PodmanRebootRequired` (`src-tauri/src/lib.rs`).
+            return Ok(false);
+        };
+        let out = result.map_err(|e| BackendError::CommandFailed(e.to_string()))?;
         if !out.status.success() {
             return Err(BackendError::CommandFailed(
                 String::from_utf8_lossy(&out.stderr).trim().to_string(),
@@ -165,7 +178,7 @@ impl MachineManager for PodmanMachineManager {
     }
 
     async fn machine_exists(&self) -> Result<bool, BackendError> {
-        let out = podman(&["machine", "list", "--format", "json"]).await?;
+        let out = self.podman(&["machine", "list", "--format", "json"]).await?;
         let stdout = check(out)?;
         let machines: Vec<serde_json::Value> =
             serde_json::from_str(&stdout).map_err(|e| BackendError::ParseError(e.to_string()))?;
@@ -173,24 +186,18 @@ impl MachineManager for PodmanMachineManager {
     }
 
     async fn init_machine(&self) -> Result<(), BackendError> {
-        check(podman(&["machine", "init", DEFAULT_CONNECTION]).await?).map(|_| ())
+        check(self.podman(&["machine", "init", DEFAULT_CONNECTION]).await?).map(|_| ())
     }
 
     async fn reset_stuck_machine(&self) -> Result<(), BackendError> {
         // Best-effort: a machine stuck mid-import may not appear in `podman machine list` at all,
         // so its absence here is not an error.
-        let _ = podman(&["machine", "rm", "-f", DEFAULT_CONNECTION]).await;
+        let _ = self.podman(&["machine", "rm", "-f", DEFAULT_CONNECTION]).await;
 
         // The actual fix: `wsl --import` leaves a partially-registered distro behind on failure,
         // and podman refuses to retry `machine init` while it's still registered. `wsl
         // --unregister` also exits non-zero when the distro is already gone, which is fine.
-        let _ = tokio::task::spawn_blocking(|| {
-            std::process::Command::new("wsl")
-                .no_window()
-                .args(["--unregister", DEFAULT_CONNECTION])
-                .output()
-        })
-        .await;
+        let _ = run_host_wsl(&["--unregister", DEFAULT_CONNECTION]).await;
         Ok(())
     }
 }

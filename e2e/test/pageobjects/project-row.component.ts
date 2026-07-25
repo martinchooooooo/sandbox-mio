@@ -64,6 +64,14 @@ export default class ProjectRow {
     return this.root.$(".text-muted-foreground");
   }
 
+  /**
+   * StatusRow's error line, rendered only while an action's last attempt failed
+   * (see createActionRunner() in src/lib/actions.svelte.ts).
+   */
+  get errorRow(): Element {
+    return this.root.$("div[role='status'].text-destructive");
+  }
+
   // The label naming the host a project is deployed to.
   deployedHostLabel(host: string): Element {
     return this.root.$(`span*=${host}`);
@@ -167,6 +175,24 @@ export default class ProjectRow {
 
   async isHostShown(host: string): Promise<boolean> {
     return (await this.deployedHostLabel(host)).isDisplayed();
+  }
+
+  /**
+   * Poll until StatusRow's error line shows exactly `expected`. Cannot be a bare assertion:
+   * createActionRunner() sets the error asynchronously, after the click handler's own await settles.
+   */
+  async waitForError(expected: string, timeoutMs = 10000): Promise<void> {
+    await browser.waitUntil(
+      async () => {
+        const el = await this.errorRow;
+        return (await el.isExisting()) && (await el.getText()) === expected;
+      },
+      {
+        timeout: timeoutMs,
+        interval: 500,
+        timeoutMsg: `error line did not become ${JSON.stringify(expected)} within ${timeoutMs}ms`,
+      }
+    );
   }
 
   /**

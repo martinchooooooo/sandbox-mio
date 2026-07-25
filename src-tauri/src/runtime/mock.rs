@@ -9,9 +9,15 @@ use super::types::{RegistryEntry, RuntimeError, RuntimeManager};
 
 /// Tracks installed packages per sandbox so the light e2e tier can prove per-sandbox package
 /// state actually round-trips (e.g. that switching sandboxes doesn't leak one's package list into
-/// another's). `install`/`uninstall` key by sandbox `name`; `list` keys by `workspace_host_path` —
-/// mirrored here via [`MockBackend`](crate::backends::mock::MockBackend)'s
-/// `/mock/workspace/{name}` convention, since the mock has no other way to relate the two.
+/// another's). `install`/`uninstall` key by sandbox `name` directly; `list` only receives
+/// `workspace_host_path`, so it keys off that path's final segment instead — which assumes the
+/// workspace basename equals the sandbox name.
+///
+/// That assumption holds only for sandboxes created without the `existing_path` argument to
+/// `resolve_create_workspace` (`backends/mod.rs`), which derives `workspace_root().join(name)`.
+/// An `existing_path` sandbox keeps the caller's directory, whose basename may differ, and then
+/// `list` reads back empty however many packages `install` recorded. Light-tier package assertions
+/// must therefore use sandboxes created without `existing_path`.
 pub(super) struct MockRuntime {
     packages: Mutex<HashMap<String, Vec<String>>>,
 }
@@ -22,6 +28,10 @@ impl MockRuntime {
     }
 }
 
+fn workspace_name(workspace_host_path: &str) -> &str {
+    workspace_host_path.trim_end_matches(['/', '\\']).rsplit(['/', '\\']).next().unwrap_or(workspace_host_path)
+}
+
 #[async_trait::async_trait]
 impl RuntimeManager for MockRuntime {
     async fn init(&self, _workspace_host_path: &str) -> Result<(), RuntimeError> {
@@ -30,7 +40,7 @@ impl RuntimeManager for MockRuntime {
 
     async fn install(&self, name: &str, package: &str) -> Result<(), RuntimeError> {
         let mut packages = self.packages.lock().await;
-        let installed = packages.entry(format!("/mock/workspace/{name}")).or_default();
+        let installed = packages.entry(name.to_string()).or_default();
         if !installed.iter().any(|p| p == package) {
             installed.push(package.to_string());
         }
@@ -39,14 +49,15 @@ impl RuntimeManager for MockRuntime {
 
     async fn uninstall(&self, name: &str, package: &str) -> Result<(), RuntimeError> {
         let mut packages = self.packages.lock().await;
-        if let Some(installed) = packages.get_mut(&format!("/mock/workspace/{name}")) {
+        if let Some(installed) = packages.get_mut(name) {
             installed.retain(|p| p != package);
         }
         Ok(())
     }
 
     async fn list(&self, workspace_host_path: &str) -> Result<Vec<String>, RuntimeError> {
-        Ok(self.packages.lock().await.get(workspace_host_path).cloned().unwrap_or_default())
+        let name = workspace_name(workspace_host_path);
+        Ok(self.packages.lock().await.get(name).cloned().unwrap_or_default())
     }
 
     async fn reproduce_remote(

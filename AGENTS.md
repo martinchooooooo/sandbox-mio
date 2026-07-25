@@ -7,7 +7,7 @@ Sandbox-mio is a Tauri 2 desktop app (Windows-first) that manages per-project "s
 | `src/` | SvelteKit + Svelte 5 frontend (static adapter, runs in the Tauri webview) | `src/AGENTS.md` |
 | `src-tauri/src/` | Rust backend: Tauri commands + trait-injected subsystems, each with an in-memory mock | `src-tauri/AGENTS.md` |
 | `e2e/` | WebdriverIO tests in three tiers (`light`/`standard`/`heavy`) | `e2e/AGENTS.md` |
-| `docs/features/<name>/` | Per-feature docs pipeline: `01_ideas.md` → `02_dev.md` → `03_e2e.md` | `docs/features/README.md` |
+| `docs/features/<name>/` | Per-feature docs pipeline: core `01_ideas.md` → `02_dev.md` → `03_e2e.md`, plus the optional follow-ons `04_improvements.md` and `05_dev_review.md` | `docs/features/README.md` |
 | `messages/` | Paraglide locale files (`en.json`, `de.json`, `ru.json`) | Translations section below |
 
 Read the orientation doc for an area before editing files in that area. `AGENTS.md` files in subdirectories override the root file for their subtree.
@@ -16,14 +16,30 @@ Read the orientation doc for an area before editing files in that area. `AGENTS.
 
 Features flow through the project skills, each writing one document under `docs/features/<feature>/`: `feature-ideas` (01_ideas.md, scoping) → `feature-dev` (02_dev.md, build plan) → `feature-implement` (code, phase by phase, keeps 02_dev.md status current) → `feature-e2e` (03_e2e.md, regression plan). When asked to build a feature, check for an existing `docs/features/<feature>/` directory first and resume from the most advanced document present. `02_dev.md` files record resolved design decisions — consult the feature's `02_dev.md` before changing behaviour that document specifies.
 
+Those three documents are the core pipeline. A feature may also carry two optional follow-ons, written only when there is something to record: `04_improvements.md` holds work deferred out of scope and known seam limitations discovered during implementation, and `05_dev_review.md` holds post-implementation code review findings together with their resolutions. Neither is a prerequisite for any pipeline step, and neither replaces `02_dev.md` as the record of settled design.
+
 # Verification Commands
 
 Run before declaring any change done:
 
 - `pnpm check` (repo root) — svelte-check over the frontend. Required after any `src/` change.
-- `cargo check` (in `src-tauri/`) — required after any Rust change. `cargo test` runs the unit tests (currently only `src-tauri/src/workspace/mod.rs` has any).
-- `pnpm run test:light` (in `e2e/`) — seconds, no Podman needed (`MIO_MOCK_BACKEND=1`); the cheapest end-to-end signal.
-- `pnpm test` (in `e2e/`) — the `standard` tier against a real Podman machine; minutes. See `e2e/AGENTS.md` for tier selection.
+- `cargo check` (in `src-tauri/`) — required after any Rust change. `cargo test` runs the unit tests (`src-tauri/src/workspace/mod.rs`). The mock control plane deliberately has none: its correctness is proven by light specs instead (`docs/features/scriptable-mock-backend/02_dev.md`, Resolved Decision 9).
+- `./build e2e light` (repo root; `build.exe` on Windows) — seconds, no Podman needed (`MIO_MOCK_BACKEND=1`); the cheapest end-to-end signal.
+- `./build e2e` (repo root) — the `standard` tier against a real Podman machine; minutes. See `e2e/AGENTS.md` for tier selection.
+
+## Tier cadence
+
+Lean on `light` for day-to-day feedback and reserve `standard`/`heavy` for a periodic cadence,
+not per change — `standard` proves real behaviour and remains the source of regression truth;
+`light` just gets there faster while iterating:
+
+- `./build e2e light` — every change that touches `src/` or a mocked `src-tauri/` subsystem.
+- `./build e2e` (`standard`) — at merge, or daily if merges are infrequent.
+- `./build e2e heavy` — weekly, or before a release.
+
+No CI pipeline enforces this today (none exists in the repository — see
+`docs/features/scriptable-mock-backend/04_improvements.md`); it is agent/developer habit codified
+here and in `e2e/AGENTS.md`'s decision rules.
 
 # Environment Variables
 
@@ -145,7 +161,7 @@ Good — states the constraint the code can't show:
 | New `AppError` variant does not compile | `kind()` in `src-tauri/src/error.rs` has an exhaustive match over variants | Add a `kind()` arm in `src-tauri/src/error.rs` and mirror the string in `AppErrorKind` in `src/lib/errors.ts` |
 | A status badge shows a raw English string like `up-to-date` in non-English locales | Backend emitted a status value with no `status_<value>` key | Add `status_<value>` to every file in `messages/` and an entry to the `map` in `translateStatus()` (`src/lib/sandbox.ts`) |
 | Containerfile change has no effect on new sandboxes | `ensure_base_image` short-circuits on `podman image exists`, so an unchanged image tag keeps the stale image | Bump `BASE_IMAGE_VERSION` in `src-tauri/src/backends/mod.rs` whenever `src-tauri/resources/Containerfile` changes |
-| Feature works with `pnpm run test:light` but fails against real Podman | The `light` tier runs entirely against in-memory mocks (`MIO_MOCK_BACKEND=1`) and proves UI/store logic only | Write or run the feature's `standard` tier spec (`e2e/test/specs/standard/`); `e2e/AGENTS.md` defines `standard` as the default tier |
+| Feature works with `./build e2e light` but fails against real Podman | The `light` tier runs entirely against in-memory mocks (`MIO_MOCK_BACKEND=1`) and proves UI/store logic only | Write or run the feature's `standard` tier spec (`e2e/test/specs/standard/`); `e2e/AGENTS.md` defines `standard` as the default tier |
 | A `$state` store resets on route change | Component-local state is destroyed by the router | Put shared state in a module-scoped `.svelte.ts` store under `src/lib/` (pattern: `src/lib/activity/activity.svelte.ts`); see `src/AGENTS.md` |
 | A component added via `pnpm dlx shadcn-svelte@latest add <name>` (no URL) looks visually inconsistent with the rest of the app | The plain command pulls from the default shadcn-svelte registry, not retro-ui-svelte | Always use `pnpm dlx shadcn-svelte@latest add https://retroui-svelte.netlify.app/r/<name>.json` |
 | `bg-destructive-hover`/`hover:bg-destructive-hover` has no visible hover effect on a retro-pulled `Button` | retro-ui-svelte's `button.svelte` references this class but never defines a `--destructive-hover` token in any of its 16 theme files (upstream gap) | `src/app.css` already defines `--destructive-hover`/`--color-destructive-hover`; if a future theme swap drops it, re-add a manually chosen darker/lighter destructive shade |

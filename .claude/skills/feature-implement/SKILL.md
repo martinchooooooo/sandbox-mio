@@ -16,8 +16,10 @@ out to be wrong during implementation, stop and say so — do not silently devia
 
 ## Before writing any code
 
-1. Read all three docs in `docs/features/<feature>/` (skip any that don't
-   exist). `02_dev.md`'s Resolved Decisions are binding; its Common Gotchas
+1. Read all docs in `docs/features/<feature>/` (skip any that don't exist): the
+   three core documents, plus `04_improvements.md` (deferred work and known seam
+   limitations) and `05_dev_review.md` (review findings and their resolutions)
+   when present. `02_dev.md`'s Resolved Decisions are binding; its Common Gotchas
    table is a checklist of mistakes already made once. Selectors or page-object
    contracts in `03_e2e.md` (e.g. `data-service`, `data-status` attributes) are
    requirements — build the UI to that contract verbatim.

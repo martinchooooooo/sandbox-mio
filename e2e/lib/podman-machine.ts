@@ -7,8 +7,9 @@ import { fileURLToPath } from "url";
 // remote stand-in run rootless, so the socket path is the same on each.
 export const PODMAN_SOCKET = "/run/user/1000/podman/podman.sock";
 
-// Base image for all sandboxes — mise + zellij baked in. Name and version are read directly from
-// src-tauri/src/backends/mod.rs so this file never needs a manual update when the version bumps.
+// Base image for all sandboxes — mise + zellij baked in. Parsed from `BASE_IMAGE`/
+// `BASE_IMAGE_VERSION` in src-tauri/src/backends/mod.rs, so a version bump needs no update here but
+// a renamed or retyped declaration there breaks the regexes below.
 function readBaseImage(): string {
   const src = readFileSync(
     fileURLToPath(new URL("../../src-tauri/src/backends/mod.rs", import.meta.url)),

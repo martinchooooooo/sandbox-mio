@@ -146,4 +146,7 @@ pub(super) struct PodmanCliBackend {
     pub connection: String,
     /// Serializes base image build to prevent concurrent races.
     pub(super) build_lock: tokio::sync::Mutex<()>,
+    /// The process seam every `podman` call routes through — real in production, scripted under
+    /// `MIO_MOCK_BACKEND=1`. See `docs/features/scriptable-mock-backend/02_dev.md`.
+    pub(super) runner: std::sync::Arc<dyn crate::mockctl::types::ProcessRunner>,
 }

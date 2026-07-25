@@ -2,11 +2,10 @@ import assert from "node:assert";
 
 import SettingsPage from "../../pageobjects/settings.page.js";
 
-// LIGHT spec for the Settings → "Advanced Debugging" section: proves the reset_stuck_podman_machine
-// command round-trips against the mock MachineManager (always Ok — see machine/mock.rs) and the UI
-// reflects completion. The real WSL/podman-side behaviour (unregistering a stuck machine's WSL
-// distro) is not exercisable in CI and is covered by the doc comments on
-// MachineManager::reset_stuck_machine in src-tauri/src/machine/types.rs instead.
+// LIGHT spec for Settings → "Advanced Debugging": proves reset_stuck_podman_machine round-trips
+// against the real PodmanMachineManager. `wsl --unregister` is gated off under MIO_MOCK_BACKEND=1
+// (run_host_wsl, src-tauri/src/machine/mod.rs) — without that gate this would delete the dev's
+// podman machine; the skipped WSL path is covered by MachineManager::reset_stuck_machine's doc comments instead.
 
 describe("Settings — Advanced Debugging (no backend task)", function () {
   this.timeout(60000);

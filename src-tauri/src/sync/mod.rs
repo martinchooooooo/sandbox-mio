@@ -3,13 +3,13 @@
 
 pub mod types;
 
-mod mock;
+use std::sync::Arc;
 
 use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_shell::process::Command;
 use tauri_plugin_shell::ShellExt;
 
-use mock::MockSync;
+use crate::mockctl::types::ProcessRunner;
 use types::{MutagenCli, SessionInfo, SyncEngine, SyncError, SyncStatus};
 
 /// Sidecar name as declared in `bundle.externalBin`.
@@ -35,11 +35,30 @@ pub fn command<R: Runtime>(app: &AppHandle<R>) -> Result<Command, SyncError> {
         .env("MUTAGEN_DATA_DIRECTORY", dir.to_string_lossy().to_string()))
 }
 
-/// Run a Mutagen subcommand and return trimmed stdout, or the captured stderr as `Err`.
+/// Run a Mutagen subcommand and return trimmed stdout, or the captured stderr as `Err`. Used by the
+/// `forward`/`version` free functions only; [`MutagenCli`]'s own calls go through [`run_via`] so the
+/// e2e `light` tier can script them (`docs/features/scriptable-mock-backend/02_dev.md`, Phase C).
 async fn run<R: Runtime>(app: &AppHandle<R>, args: &[&str]) -> Result<String, SyncError> {
     let output = command(app)?
         .args(args)
         .output()
+        .await
+        .map_err(|e| SyncError::Sidecar(e.to_string()))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        Err(SyncError::CommandFailed(
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ))
+    }
+}
+
+/// [`run`]'s contract over a [`ProcessRunner`]: identical stdout-trimming and stderr-on-failure
+/// mapping, so a scripted non-zero exit produces the same `SyncError::CommandFailed` a real sidecar
+/// failure does.
+async fn run_via(runner: &Arc<dyn ProcessRunner>, args: &[&str]) -> Result<String, SyncError> {
+    let output = runner
+        .run(args)
         .await
         .map_err(|e| SyncError::Sidecar(e.to_string()))?;
     if output.status.success() {
@@ -134,12 +153,10 @@ pub async fn sweep_stale_forwards<R: Runtime>(app: &AppHandle<R>, live_sandboxes
 }
 
 /// Construct the managed [`SyncEngine`] for Tauri state. Mirrors `default_backend` in
-/// `backends/mod.rs`, but needs the [`AppHandle`] because the sidecar is resolved through it.
-pub fn default_sync_engine(app: AppHandle) -> std::sync::Arc<dyn SyncEngine> {
-    if crate::backends::mock_backend_enabled() {
-        return std::sync::Arc::new(MockSync);
-    }
-    std::sync::Arc::new(MutagenCli { app })
+/// `backends/mod.rs`: one real struct either way, parameterized by which [`ProcessRunner`] it holds,
+/// so the `light` tier exercises `MutagenCli`'s real session parsing rather than a parallel mock.
+pub fn default_sync_engine(runner: Arc<dyn ProcessRunner>) -> Arc<dyn SyncEngine> {
+    Arc::new(MutagenCli { runner })
 }
 
 /// Collapses Mutagen session JSON to SyncStatus; handles version-specific key casing.
@@ -230,9 +247,9 @@ fn pascal_case(name: &str) -> String {
 impl SyncEngine for MutagenCli {
     async fn create(&self, name: &str, alpha: &str, beta: &str) -> Result<(), SyncError> {
         // Idempotent across restarts: drop any stale session of this name first.
-        let _ = run(&self.app, &["sync", "terminate", name]).await;
-        run(
-            &self.app,
+        let _ = run_via(&self.runner, &["sync", "terminate", name]).await;
+        run_via(
+            &self.runner,
             &[
                 "sync",
                 "create",
@@ -247,24 +264,24 @@ impl SyncEngine for MutagenCli {
     }
 
     async fn pause(&self, name: &str) -> Result<(), SyncError> {
-        run(&self.app, &["sync", "pause", name]).await.map(|_| ())
+        run_via(&self.runner, &["sync", "pause", name]).await.map(|_| ())
     }
 
     async fn resume(&self, name: &str) -> Result<(), SyncError> {
-        run(&self.app, &["sync", "resume", name]).await.map(|_| ())
+        run_via(&self.runner, &["sync", "resume", name]).await.map(|_| ())
     }
 
     async fn terminate(&self, name: &str) -> Result<(), SyncError> {
-        run(&self.app, &["sync", "terminate", name]).await.map(|_| ())
+        run_via(&self.runner, &["sync", "terminate", name]).await.map(|_| ())
     }
 
     async fn flush(&self, name: &str) -> Result<(), SyncError> {
-        run(&self.app, &["sync", "flush", name]).await.map(|_| ())
+        run_via(&self.runner, &["sync", "flush", name]).await.map(|_| ())
     }
 
     async fn status(&self, name: &str) -> Result<SyncStatus, SyncError> {
-        let json = run(
-            &self.app,
+        let json = run_via(
+            &self.runner,
             &["sync", "list", "--template={{json .}}", name],
         )
         .await?;
@@ -279,7 +296,7 @@ impl SyncEngine for MutagenCli {
     }
 
     async fn sessions(&self) -> Result<Vec<SessionInfo>, SyncError> {
-        let json = run(&self.app, &["sync", "list", "--template={{json .}}"]).await?;
+        let json = run_via(&self.runner, &["sync", "list", "--template={{json .}}"]).await?;
         // An empty data directory can render nothing rather than `[]`; treat that as no sessions.
         if json.is_empty() {
             return Ok(Vec::new());
@@ -293,6 +310,6 @@ impl SyncEngine for MutagenCli {
     }
 
     async fn shutdown(&self) {
-        let _ = run(&self.app, &["daemon", "stop"]).await;
+        let _ = run_via(&self.runner, &["daemon", "stop"]).await;
     }
 }

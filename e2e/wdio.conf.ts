@@ -47,11 +47,10 @@ const APP_DATA_DIR = path.join(
 );
 const APP_DATA_MODELS = path.join(APP_DATA_DIR, "models");
 
-// Kills podman/gvproxy/win-sshproxy processes running out of target/debug, left over from a
-// previous run's app process (win-sshproxy is designed to outlive its parent, so the app exiting
-// or a prior suite aborting doesn't stop it). A stale one holds those .exe files locked, which
-// fails the `tauri build` step below on Windows with "the process cannot access the file". Only
-// matches processes under target/debug, leaving a real Podman Desktop install alone.
+// Kills podman/gvproxy/win-sshproxy/sandbox-mio/mutagen processes left running out of target/debug
+// by a previous run (each is designed to, or can, outlive its parent — see sync/mod.rs `shutdown`).
+// A stale one locks its .exe, failing the `tauri build`/`cargo build` step below on Windows (LNK1104
+// or a PermissionDenied resource-copy panic). Only matches target/debug, leaving Podman Desktop alone.
 function killStaleDevProcesses(): void {
   if (process.platform !== "win32") return;
   spawnSync(
@@ -59,7 +58,7 @@ function killStaleDevProcesses(): void {
     [
       "-NoProfile",
       "-Command",
-      "Get-Process -Name podman,win-sshproxy,gvproxy -ErrorAction SilentlyContinue | " +
+      "Get-Process -Name podman,win-sshproxy,gvproxy,sandbox-mio,mutagen -ErrorAction SilentlyContinue | " +
         "Where-Object { $_.Path -and $_.Path -like '*\\target\\debug\\*' } | " +
         "Stop-Process -Force -ErrorAction SilentlyContinue",
     ],
@@ -72,23 +71,51 @@ let exit = false;
 
 const ext = process.platform === "win32" ? ".exe" : "";
 
-// True when invoked as `wdio run wdio.conf.ts --suite light` (see package.json's `test:light`).
-// The light suite runs against the in-memory mock backend (MIO_MOCK_BACKEND=1, see
-// src-tauri/src/backends/mod.rs), so onPrepare skips podman provisioning and beforeSession skips
-// pinning a real connection.
-const suiteFlagIndex = process.argv.indexOf("--suite");
-const IS_LIGHT_SUITE = suiteFlagIndex !== -1 && process.argv[suiteFlagIndex + 1] === "light";
+// Repeated or comma-separated CLI flag values in either form (`--spec a --spec b`, `--spec a,b`,
+// `--spec=a,b`). The equals form must parse too, or IS_LIGHT_RUN below silently reads false.
+function argValues(flag: string): string[] {
+  return process.argv
+    .flatMap((arg, i) => {
+      if (arg === flag) return [process.argv[i + 1] ?? ""];
+      return arg.startsWith(`${flag}=`) ? [arg.slice(flag.length + 1)] : [];
+    })
+    .flatMap((v) => v.split(","))
+    .filter(Boolean);
+}
+
+// The tier is a property of *where a spec lives*, not how the run was invoked: `--suite light`,
+// `--spec test/specs/light/<file>.ts`, and an ad-hoc single-file run must all get the mock, or a
+// light spec silently runs against real podman and mutates the developer's host.
+const isLightSpec = (spec: string) => spec.replace(/\\/g, "/").includes("/test/specs/light/");
+
+// Launcher-side view of the tier, for the hooks that run once per *run* (onPrepare/onComplete) and
+// so have no spec list to consult. Per-session hooks use `specs` instead — see beforeSession.
+const requestedSpecs = argValues("--spec");
+const requestedSuites = argValues("--suite");
+const IS_LIGHT_RUN =
+  requestedSpecs.length > 0
+    ? requestedSpecs.every(isLightSpec)
+    : requestedSuites.length > 0 && requestedSuites.every((s) => s === "light");
+
+// `--suite light --spec <file>` does not narrow the run — @wdio/cli resolves `suites` before
+// applying `--spec` (docs/features/scriptable-mock-backend/01_ideas.md Validation). MIO_SPEC
+// substring-filters the light suite's glob at config-load time instead.
+const MIO_SPEC = process.env.MIO_SPEC;
+const LIGHT_SPECS = MIO_SPEC
+  ? [`./test/specs/light/**/*${MIO_SPEC}*.ts`]
+  : ["./test/specs/light/**/*.ts"];
 
 export const config: WebdriverIO.Config = {
   hostname: "127.0.0.1",
   port: 4444,
-  // Default run: the standard tier only. `light/` (mocked, no podman) and `heavy/` (large-asset
-  // downloads) are excluded here and run via their own suites below — `pnpm run test:light`,
-  // `pnpm run test:heavy`, or `pnpm run test:llm` for just the local-llm spec. See e2e/AGENTS.md.
-  specs: ["./test/specs/standard/*.ts"],
+  // Default run: the standard tier only, against real podman. `light/` (always mocked, whichever
+  // command selects it) and `heavy/` (large-asset downloads) are excluded here and run via their own
+  // suites below — `pnpm run test:light` / `cargo run --bin build -- e2e light`, `pnpm run
+  // test:heavy`, or `pnpm run test:llm` for just the local-llm spec. See e2e/AGENTS.md.
+  specs: ["./test/specs/standard/**/*.ts"],
   suites: {
     heavy: ["./test/specs/heavy/**/*.ts"],
-    light: ["./test/specs/light/**/*.ts"],
+    light: LIGHT_SPECS,
   },
   maxInstances: 1,
   capabilities: [
@@ -113,7 +140,7 @@ export const config: WebdriverIO.Config = {
     // "llama"). Without this, a previous aborted run that saved "foundry" would pollute test 3's
     // Start-gate assertion (the gate only fires when engine === "llama").
     fs.rmSync(path.join(APP_DATA_DIR, "settings.json"), { force: true });
-    if (IS_LIGHT_SUITE) {
+    if (IS_LIGHT_RUN) {
       console.log("[e2e] light suite: skipping podman machine provisioning (MIO_MOCK_BACKEND=1).");
     } else {
       // Abort the entire suite on failure: WDIO catches onPrepare errors and logs "Error in hook"
@@ -201,6 +228,9 @@ export const config: WebdriverIO.Config = {
     }
   },
   beforeSession: (_config, _capabilities, specs) => {
+    // Decided from the resolved spec paths, not IS_LIGHT_RUN's CLI-flag approximation: this hook
+    // hands MIO_MOCK_BACKEND to the app, so a light spec must never reach a real podman.
+    const isLightSession = specs.length > 0 && specs.every(isLightSpec);
     // Seed the forward-sweep preconditions before the app process spawns (its startup sweep is
     // the thing under test): an orphan session with a swept prefix and a bystander outside the
     // prefixes, both in the app's private Mutagen daemon (the CLI auto-starts it; the vendored
@@ -208,7 +238,7 @@ export const config: WebdriverIO.Config = {
     // on both sides keep the create instant and SSH-free — the sweep terminates by name
     // regardless of connection state. Scoped to the worker running forward-sweep.spec.ts so the
     // sessions never linger past that spec's own cleanup.
-    if (!IS_LIGHT_SUITE && specs.some((s) => s.includes("forward-sweep"))) {
+    if (!isLightSession && specs.some((s) => s.includes("forward-sweep"))) {
       ensureMutagen();
       forwardCreate(SWEEP_ORPHAN_SESSION, "tcp:127.0.0.1:38471", "tcp:127.0.0.1:1");
       forwardCreate(SWEEP_KEEP_SESSION, "tcp:127.0.0.1:38473", "tcp:127.0.0.1:1");
@@ -221,7 +251,7 @@ export const config: WebdriverIO.Config = {
         env: {
           ...process.env,
           PODMAN_CONNECTION: LOCAL_CONNECTION,
-          ...(IS_LIGHT_SUITE ? { MIO_MOCK_BACKEND: "1" } : {}),
+          ...(isLightSession ? { MIO_MOCK_BACKEND: "1" } : {}),
         },
       }
     );
@@ -291,7 +321,7 @@ export const config: WebdriverIO.Config = {
 
     // Tear down the remote machine unless the caller wants to keep it. Never provisioned for the
     // light suite, so there is nothing to tear down.
-    if (!IS_LIGHT_SUITE) {
+    if (!IS_LIGHT_RUN) {
       if (MIO_REMOTE_REMOVE) removeMachine(REMOTE_CONNECTION);
       else if (!MIO_REMOTE_KEEP) stopMachine(REMOTE_CONNECTION);
     }

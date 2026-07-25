@@ -5,6 +5,7 @@ mod credentials;
 mod error;
 mod inference;
 mod machine;
+mod mockctl;
 mod network;
 mod process_ext;
 mod runtime;
@@ -1302,14 +1303,49 @@ fn init_logging(app: &tauri::AppHandle) {
     tracing::info!(log_dir = %log_dir.display(), "logging initialized");
 }
 
+/// Install one scripted mock behaviour (see `src-tauri/src/mockctl/mod.rs`). Test-only: hard-fails
+/// outside the light e2e tier so a stray call against a real backend is loud, not a silent no-op.
+#[tauri::command]
+fn mock_configure(
+    key: String,
+    behaviour: mockctl::types::Behaviour,
+    director: State<'_, Arc<mockctl::types::MockDirector>>,
+) -> Result<(), AppError> {
+    if !backends::mock_backend_enabled() {
+        return Err(AppError::MockControl(
+            "mock_configure is only available under MIO_MOCK_BACKEND=1".to_string(),
+        ));
+    }
+    director.configure(&key, behaviour).map_err(AppError::MockControl)
+}
+
+/// Clear every installed mock override. See [`mock_configure`].
+#[tauri::command]
+fn mock_reset(director: State<'_, Arc<mockctl::types::MockDirector>>) -> Result<(), AppError> {
+    if !backends::mock_backend_enabled() {
+        return Err(AppError::MockControl(
+            "mock_reset is only available under MIO_MOCK_BACKEND=1".to_string(),
+        ));
+    }
+    director.reset();
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[cfg(all(debug_assertions, feature = "devtools"))]
     let devtools = tauri_plugin_devtools::Builder::default().init();
 
-    let backend = backends::default_backend();
+    let mock_director = Arc::new(mockctl::types::MockDirector::new());
+    let podman_runner: Arc<dyn mockctl::types::ProcessRunner> = if backends::mock_backend_enabled() {
+        Arc::new(mockctl::types::ScriptedPodmanRunner::new(mock_director.clone()))
+    } else {
+        Arc::new(mockctl::types::SystemPodmanRunner)
+    };
+    backends::set_podman_runner(podman_runner.clone());
+    let backend = backends::default_backend(podman_runner.clone());
     let runtime = runtime::default_runtime();
-    let machine = machine::default_machine_manager();
+    let machine = machine::default_machine_manager(podman_runner.clone());
 
     let mut builder = tauri::Builder::default();
 
@@ -1327,14 +1363,21 @@ pub fn run() {
         .manage(backend)
         .manage(runtime)
         .manage(machine)
-        .setup(|app| {
+        .manage(mock_director.clone())
+        .setup(move |app| {
             init_logging(app.handle());
             if !backends::mock_backend_enabled() {
                 if let Ok(resource_dir) = app.path().resource_dir() {
                     backends::set_podman_resource_dir(resource_dir.join("podman"));
                 }
             }
-            app.manage(sync::default_sync_engine(app.handle().clone()));
+            let mutagen_runner: Arc<dyn mockctl::types::ProcessRunner> =
+                if backends::mock_backend_enabled() {
+                    Arc::new(mockctl::types::ScriptedMutagenRunner::new(mock_director.clone()))
+                } else {
+                    Arc::new(mockctl::types::SystemMutagenRunner::new(app.handle().clone()))
+                };
+            app.manage(sync::default_sync_engine(mutagen_runner));
             app.manage(network::default_network_manager(app.handle().clone()));
             app.manage(WorkspaceRegistry::default());
             app.manage(AuthSessionMap::default());
@@ -1424,7 +1467,9 @@ pub fn run() {
             install_foundry_local,
             test_model,
             get_settings,
-            set_settings
+            set_settings,
+            mock_configure,
+            mock_reset
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

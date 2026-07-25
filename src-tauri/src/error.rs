@@ -52,6 +52,10 @@ pub enum AppError {
     /// WSL2 installed; reboot required before machine init can proceed. Returned by provision_podman when install succeeds.
     #[error("Windows must be restarted to finish installing WSL2: {0}")]
     PodmanRebootRequired(String),
+    /// Mock control plane misuse: called outside `MIO_MOCK_BACKEND=1`, an unknown override key, or
+    /// a payload that doesn't match the key's real error/return-value shape.
+    #[error("mock control plane: {0}")]
+    MockControl(String),
 }
 
 impl AppError {
@@ -72,6 +76,7 @@ impl AppError {
             AppError::UnsyncedChanges { .. } => "UnsyncedChanges",
             AppError::PodmanUnavailable(_) => "PodmanUnavailable",
             AppError::PodmanRebootRequired(_) => "PodmanRebootRequired",
+            AppError::MockControl(_) => "MockControl",
         }
     }
 }

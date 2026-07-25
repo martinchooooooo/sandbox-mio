@@ -3,6 +3,7 @@ import assert from "node:assert";
 import ModelsPage from "../../pageobjects/models.page.js";
 import ProjectsPage from "../../pageobjects/projects.page.js";
 import ActivityCenter from "../../pageobjects/activity.page.js";
+import { invokeCmd } from "../../../lib/mock.js";
 
 // LIGHT spec for the activity center: runs in the default `pnpm test` suite. It proves the global
 // surface (the layout-mounted bell), the `list_tasks` round-trip (Phase A), and the store's fold /
@@ -38,15 +39,12 @@ function synthTask(version: number, status: string, extra: Record<string, unknow
 // Emit `activity://task-updated` from the webview via the documented event plugin command, the same
 // bus the store subscribes to. Returns whether the emit invoke resolved.
 async function emitTask(task: Record<string, unknown>): Promise<boolean> {
-  return browser.execute((payload) => {
-    // @ts-expect-error __TAURI_INTERNALS__ is injected into the webview at runtime.
-    const internals = window.__TAURI_INTERNALS__;
-    if (!internals?.invoke) return Promise.resolve(false);
-    return internals
-      .invoke("plugin:event|emit", { event: "activity://task-updated", payload })
-      .then(() => true)
-      .catch(() => false);
-  }, task);
+  try {
+    await invokeCmd("plugin:event|emit", { event: "activity://task-updated", payload: task });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 describe("Activity Center — UI sanity (no backend task)", function () {
