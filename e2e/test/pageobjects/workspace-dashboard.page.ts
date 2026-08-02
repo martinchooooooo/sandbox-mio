@@ -199,6 +199,12 @@ class WorkspaceDashboardPage {
     return $(`span=${kindLabel}`).$("..");
   }
 
+  // portRow() chains `.$("..")` onto the label span, which throws when missing instead of
+  // returning a not-existing element — that would abort waitUntil's poll instead of retrying.
+  #portLabelSpan(kindLabel: string): Element {
+    return $(`span=${kindLabel}`);
+  }
+
   async exposePort(port: number): Promise<void> {
     const input = await this.exposePortInput;
     await input.scrollIntoView();
@@ -207,7 +213,7 @@ class WorkspaceDashboardPage {
   }
 
   async waitForPortRow(kindLabel: string, timeoutMs = SUBPROCESS): Promise<void> {
-    await browser.waitUntil(async () => (await this.portRow(kindLabel)).isExisting(), {
+    await browser.waitUntil(async () => (await this.#portLabelSpan(kindLabel)).isExisting(), {
       timeout: timeoutMs,
       interval: 500,
       timeoutMsg: `port row "${kindLabel}" did not appear`,
@@ -215,9 +221,7 @@ class WorkspaceDashboardPage {
   }
 
   async waitForPortRowGone(kindLabel: string, timeoutMs = SUBPROCESS): Promise<void> {
-    // Checks the label span directly rather than portRow(): chaining `.$("..")` onto the missing
-    // span throws instead of yielding a not-existing element, failing on the very success awaited.
-    await browser.waitUntil(async () => !(await $(`span=${kindLabel}`).isExisting()), {
+    await browser.waitUntil(async () => !(await this.#portLabelSpan(kindLabel).isExisting()), {
       timeout: timeoutMs,
       interval: 500,
       timeoutMsg: `port row "${kindLabel}" is still displayed`,
