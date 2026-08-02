@@ -2,14 +2,9 @@ import ProjectsPage from "../../pageobjects/projects.page.js";
 import { configureMock, useMockControl } from "../../../lib/mock.js";
 import { MISE_BASE_IMAGE } from "../../../lib/podman-machine.js";
 
-// LIGHT spec for the scriptable-mock-backend feature's control plane
-// (docs/features/scriptable-mock-backend/02_dev.md, Phase C exit criterion). The real MutagenCli
-// runs unmodified here; only the `mutagen sync list --template={{json .}}` process call underneath
-// it is scripted, so the fixture below travels the genuine parse_session/status_from_session chain
-// into SessionInfo, out through sandbox_deployments, and onto the row's badge. A conflicted session
-// needs two divergent endpoints on a real deployed sandbox, which the standard tier cannot provoke
-// on demand (e2e/AGENTS.md's decision rule 3) — this is the only place the conflict rendering is
-// covered.
+// LIGHT spec for scriptable-mock-backend's control plane (docs/features/scriptable-mock-backend/02_dev.md,
+// Phase C; e2e/AGENTS.md decision rule 3). Only `mutagen sync list`'s process call is scripted — the real
+// parse_session/status_from_session chain runs unmodified; this is the only coverage of conflict rendering.
 describe("Sync status — conflict badge from a scripted mutagen sync list (mock backend)", function () {
   this.timeout(30000);
 

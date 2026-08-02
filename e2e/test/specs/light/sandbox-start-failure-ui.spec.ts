@@ -1,13 +1,9 @@
 import ProjectsPage from "../../pageobjects/projects.page.js";
 import { configureMock, useMockControl } from "../../../lib/mock.js";
 
-// LIGHT spec for the scriptable-mock-backend feature's control plane
-// (docs/features/scriptable-mock-backend/02_dev.md, Phase B exit criterion). The real
-// PodmanCliBackend::start runs unmodified here; only the `podman start` process call underneath it
-// is scripted, so a non-zero exit flows through the real `check()` function into the same
-// BackendError::CommandFailed a genuine failed `podman start` would produce — the real failure path
-// is only reachable against real infrastructure, which is slow and awkward to provoke on demand
-// (e2e/AGENTS.md's decision rule 3).
+// LIGHT spec for scriptable-mock-backend's control plane (docs/features/scriptable-mock-backend/02_dev.md,
+// Phase B; e2e/AGENTS.md decision rule 3 — real infra is too slow to provoke this on demand). Only
+// `podman start`'s process call is scripted; PodmanCliBackend::start's real check() still produces BackendError::CommandFailed.
 describe("Sandbox start failure — error line and retry (mock backend)", function () {
   this.timeout(30000);
 

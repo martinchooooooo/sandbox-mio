@@ -2,13 +2,9 @@ import ProjectsPage from "../../pageobjects/projects.page.js";
 import { configureMock, useMockControl } from "../../../lib/mock.js";
 import { MISE_BASE_IMAGE } from "../../../lib/podman-machine.js";
 
-// LIGHT spec for the scriptable-mock-backend feature's control plane
-// (docs/features/scriptable-mock-backend/02_dev.md, Phase B exit criterion). Scripts `podman.ps`
-// directly — no `createProject()` involved — so this proves the real `PodmanCliBackend::list()`
-// parsing/mapping logic (Names[0], the `sandbox-mio.workspace` label, State, the image-tag-derived
-// version) end to end from a fabricated `podman ps --all --format json` line, not
-// `ScriptedPodmanRunner`'s built-in create-tracking default (see sandbox-start-failure-ui.spec.ts
-// and `podman.rm`/`podman.start` for that path).
+// LIGHT spec for scriptable-mock-backend's control plane (docs/features/scriptable-mock-backend/02_dev.md,
+// Phase B). Scripts `podman.ps` directly (bypassing createProject()) to exercise the real
+// PodmanCliBackend::list() parsing against a fabricated line, not ScriptedPodmanRunner's create-tracking default.
 describe("Sandbox list — real list() parsing from a scripted podman.ps (mock backend)", function () {
   this.timeout(30000);
 

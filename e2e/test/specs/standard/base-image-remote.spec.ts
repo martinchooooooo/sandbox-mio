@@ -3,15 +3,12 @@ import { podman, podmanOk, LOCAL_CONNECTION, REMOTE_CONNECTION } from "../../../
 import { MISE_BASE_IMAGE } from "../../../lib/podman-machine.js";
 import { captureDiagOnFailure } from "../../../lib/diag.js";
 
-// Regression guard for the missing base-image build on the remote deploy path. The mise base image
-// is never published to a registry, so when it is absent on the target connection `podman create`
-// falls back to a registry pull that fails ("requested access to the resource is denied"). The fix
-// has `deploy` call `ensure_image_on` on the target connection before `podman create`; this spec
-// removes the image from the remote and asserts a deploy still succeeds.
+// Regression guard: the mise base image is never published to a registry, so when absent on the
+// target connection `podman create` falls back to a failing registry pull. deploy must call
+// ensure_image_on the target before podman create.
 //
-// Unlike base-image-build.spec.ts (which must sort first to run on a clean machine), this spec
-// removes the image only from the remote connection and re-leaves the local connection untouched,
-// so it has no ordering constraint with the rest of the suite.
+// Unlike base-image-build.spec.ts, this only touches the remote connection, so it has no ordering
+// constraint with the rest of the suite.
 describe("Base image bootstrap (remote)", () => {
   captureDiagOnFailure();
 

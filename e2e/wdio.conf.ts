@@ -29,18 +29,14 @@ const VERIFY_PASSES = 3;
 const MIO_REMOTE_KEEP = process.env.MIO_REMOTE_KEEP === "1";
 const MIO_REMOTE_REMOVE = process.env.MIO_REMOTE_REMOVE === "1";
 
-// Isolated workspace root for the app's per-sandbox directories. Set so specs know where the
-// app writes them and the developer's real Documents folder is left untouched. Kept under
-// $HOME because the podman machine only auto-mounts the user profile into its VM, which the
-// bind mount needs. Passed to the app process via SANDBOX_WORKSPACE_ROOT (read in
-// src-tauri/src/backends/) and read back by the workspace spec.
+// Isolated per-sandbox root so the developer's real Documents folder stays untouched. Under
+// $HOME because only the user profile is auto-mounted into the podman VM. Read via
+// SANDBOX_WORKSPACE_ROOT in src-tauri/src/backends/.
 const WORKSPACE_ROOT = path.join(os.homedir(), ".sandbox-mio-e2e");
 process.env.SANDBOX_WORKSPACE_ROOT = WORKSPACE_ROOT;
 
-// Tiny test-only GGUF the /models route offers via the `test_model` command (kept out of the
-// shipped catalogue so a ~100 MB model never leaks into the product). Values from the 2026-06-29
-// bring-up spike (docs/features/local-llm/03_e2e.md). Set in process.env so both this spec process
-// and the app (spawned with `...process.env` in beforeSession) see it.
+// Test-only GGUF for the `test_model` command, kept out of the shipped catalogue (see
+// docs/features/local-llm/03_e2e.md). Set in process.env so the spawned app sees it too.
 const TEST_MODEL = {
   id: "smollm2-135m",
   label: "SmolLM2 135M (test)",
@@ -60,12 +56,9 @@ const APP_DATA_DIR = path.join(
 );
 const APP_DATA_MODELS = path.join(APP_DATA_DIR, "models");
 
-// Captured agent credential bundles (src-tauri/src/credentials/mod.rs `store_dir`) are redirected
-// out of APP_DATA_DIR rather than cleaned inside it: a bundle saved by a real "Capture credentials"
-// run switches AgentManager's UI to "Use saved login" (AgentManager.svelte), whose button
-// agent-setup.spec.ts cannot find — but deleting the developer's real bundle to avoid that costs
-// them a full re-auth. Pointing the app at an e2e-owned store gets the same clean slate with
-// nothing of theirs at stake. Passed via MIO_CREDENTIALS_DIR, like SANDBOX_WORKSPACE_ROOT above.
+// Redirected out of APP_DATA_DIR (src-tauri/src/credentials/mod.rs `store_dir`) rather than
+// cleaned in place: a real captured bundle would flip AgentManager.svelte to "Use saved login",
+// breaking agent-setup.spec.ts, and clearing the developer's own bundle costs them a re-auth.
 const E2E_CREDENTIALS_DIR = path.join(os.homedir(), ".sandbox-mio-e2e-appdata", "credentials");
 process.env.MIO_CREDENTIALS_DIR = E2E_CREDENTIALS_DIR;
 
@@ -75,10 +68,9 @@ process.env.MIO_CREDENTIALS_DIR = E2E_CREDENTIALS_DIR;
 const E2E_SETTINGS_DIR = path.join(os.homedir(), ".sandbox-mio-e2e-appdata", "settings");
 process.env.MIO_SETTINGS_DIR = E2E_SETTINGS_DIR;
 
-// Kills podman/gvproxy/win-sshproxy/sandbox-mio/mutagen processes left running out of target/debug
-// by a previous run (each is designed to, or can, outlive its parent — see sync/mod.rs `shutdown`).
-// A stale one locks its .exe, failing the `tauri build`/`cargo build` step below on Windows (LNK1104
-// or a PermissionDenied resource-copy panic). Only matches target/debug, leaving Podman Desktop alone.
+// Kills target/debug processes left over from a previous run (they can outlive their parent,
+// sync/mod.rs `shutdown`) — a stale one locks its .exe and fails the build below (LNK1104).
+// Matches only target/debug paths, leaving Podman Desktop alone.
 function killStaleDevProcesses(): void {
   if (process.platform !== "win32") return;
   spawnSync(
@@ -140,10 +132,8 @@ const LIGHT_SPECS = MIO_SPEC
 export const config: WebdriverIO.Config = {
   hostname: "127.0.0.1",
   port: 4444,
-  // Default run: the standard tier only, against real podman. `light/` (always mocked, whichever
-  // command selects it) and `heavy/` (large-asset downloads) are excluded here and run via their own
-  // suites below — `pnpm run test:light` / `cargo run --bin build -- e2e light`, `pnpm run
-  // test:heavy`, or `pnpm run test:llm` for just the local-llm spec. See e2e/AGENTS.md.
+  // Default run: standard tier only, against real podman. `light/` and `heavy/` run via their
+  // own suites below (pnpm run test:light / test:heavy / test:llm). See e2e/AGENTS.md.
   specs: ["./test/specs/standard/**/*.ts"],
   suites: {
     heavy: ["./test/specs/heavy/**/*.ts"],
@@ -168,20 +158,17 @@ export const config: WebdriverIO.Config = {
   onPrepare: () => {
     fs.writeFileSync(FAILURES_LOG, "");
     fs.rmSync(WORKSPACE_ROOT, { recursive: true, force: true });
-    // Both directories belong to the suite, so they are wiped wholesale rather than cleaned inside
-    // APP_DATA_DIR. Settings must start from the Rust defaults (inferenceEngine: "llama") or a
-    // previous aborted run that saved "foundry" pollutes test 3's Start-gate assertion; credentials
-    // must start empty or AgentManager.svelte shows "Use saved login" and agent-setup.spec.ts fails.
+    // Wiped wholesale, not cleaned in place: settings must start from Rust defaults or a prior
+    // aborted run pollutes test assertions; credentials must start empty or agent-setup.spec.ts
+    // sees "Use saved login" and fails.
     fs.rmSync(E2E_SETTINGS_DIR, { recursive: true, force: true });
     fs.rmSync(E2E_CREDENTIALS_DIR, { recursive: true, force: true });
     if (IS_LIGHT_RUN) {
       console.log("[e2e] light suite: skipping podman machine provisioning (MIO_MOCK_BACKEND=1).");
     } else {
-      // check_podman_ready (src-tauri/src/machine/mod.rs) probes DEFAULT_MACHINE unconditionally,
-      // whatever PODMAN_CONNECTION says, so every standard spec needs it running or it hangs on the
-      // "Start Podman" recovery screen (podman-startup-recovery.spec.ts).
-      // Abort the entire suite on failure: WDIO catches onPrepare errors and logs "Error in hook"
-      // but continues running, so the app would start against the "Start Podman" gate.
+      // check_podman_ready probes DEFAULT_MACHINE unconditionally regardless of PODMAN_CONNECTION,
+      // so every standard spec needs it running. Abort on failure — WDIO logs onPrepare errors but
+      // keeps going, and the app would otherwise start against the "Start Podman" gate.
       try {
         provisionMachine(DEFAULT_MACHINE);
       } catch (e) {
@@ -196,10 +183,8 @@ export const config: WebdriverIO.Config = {
         console.error("[e2e] Aborting suite — cannot run without the local Podman connection.");
         process.exit(1);
       }
-      // The remote machine is used as a deploy target by deploy-remote.spec.ts. Provisioned here
-      // so the spec can assume it is up; cleaned up in onComplete.
-      // Abort the entire suite on failure: WDIO catches onPrepare errors and logs "Error in hook"
-      // but continues running, so remote-dependent specs would silently burn their full timeouts.
+      // Deploy target for deploy-remote.spec.ts; provisioned here, torn down in onComplete. Abort
+      // on failure — WDIO logs onPrepare errors but keeps going, burning remote specs' timeouts.
       try {
         provisionMachine(REMOTE_CONNECTION);
       } catch (e) {
@@ -207,10 +192,8 @@ export const config: WebdriverIO.Config = {
         console.error("[e2e] Aborting suite — remote-dependent specs cannot run without the connection.");
         process.exit(1);
       }
-      // Provisioning order does not protect the machines provisioned first: the `wsl --shutdown`
-      // recovery step stops every WSL instance, so a late recovery silently takes an
-      // already-started machine down with it and the suite meets the "Start Podman" gate mid-run.
-      // Re-verify all three and repair, until one whole pass finds every connection answering.
+      // A late recovery's `wsl --shutdown` stops every WSL instance, so machines provisioned first
+      // aren't safe from a later one going down. Re-verify all three and repair until one clean pass.
       for (let pass = 1; ; pass++) {
         const down = REQUIRED_MACHINES.filter((name) => !waitForConnection(name, VERIFY_TIMEOUT_MS));
         if (down.length === 0) break;
@@ -233,13 +216,9 @@ export const config: WebdriverIO.Config = {
       // Stage the mise base image on both connections before any spec runs.
       ensureMiseBaseImage(LOCAL_CONNECTION, [REMOTE_CONNECTION]);
     }
-    // Delete the existing debug exe before building. `tauri build` runs beforeBuildCommand
-    // (pnpm build) which regenerates ../build, but tauri-build does not emit a rerun-if-changed
-    // for those asset contents — so when only the frontend changed, cargo sees no Rust input
-    // change and skips relinking the bin, leaving whatever exe was last linked. If that leftover
-    // is a `tauri dev` binary, its webview points at devUrl (localhost:1420) and shows a
-    // "lost connection" page under wdio. Removing the output forces cargo to relink and re-embed
-    // the current assets every run.
+    // tauri-build has no rerun-if-changed for the regenerated ../build assets, so a frontend-only
+    // change leaves cargo relinking nothing — a stale `tauri dev` exe would point at devUrl and
+    // show "lost connection" under wdio. Deleting it forces a relink every run.
     killStaleDevProcesses();
     const appExe = path.resolve(__dirname, `../src-tauri/target/debug/sandbox-mio${ext}`);
     fs.rmSync(appExe, { force: true });
@@ -261,12 +240,9 @@ export const config: WebdriverIO.Config = {
       path.resolve(__dirname, "../tools/mutagen-agents.tar.gz"),
       path.resolve(__dirname, "../src-tauri/target/debug/mutagen-agents.tar.gz"),
     );
-    // Stage the bundled llama.cpp Vulkan engine next to the debug exe so resource_dir()/llama
-    // resolves: the --no-bundle build does not copy Tauri `resources`, and the engine launches
-    // llama-server from <resource_dir>/llama (src-tauri/src/inference/llama.rs). Mirrors the
-    // Mutagen sidecar staging requirement. Skipped with a warning when the binaries are not staged
-    // in the repo, so the rest of the suite still runs (local-llm.spec.ts then fails at sidecar
-    // resolution). See docs/features/local-llm/03_e2e.md.
+    // --no-bundle skips Tauri `resources`, so stage llama.cpp next to the exe for resource_dir()/llama
+    // (src-tauri/src/inference/llama.rs). Skipped with a warning if not staged, so only
+    // local-llm.spec.ts fails rather than the whole suite. See docs/features/local-llm/03_e2e.md.
     const llamaSrc = path.resolve(__dirname, "../src-tauri/binaries/llama");
     const llamaDst = path.resolve(__dirname, "../src-tauri/target/debug/llama");
     if (fs.existsSync(path.join(llamaSrc, `llama-server${ext}`))) {
@@ -282,13 +258,9 @@ export const config: WebdriverIO.Config = {
     // Decided from the resolved spec paths, not IS_LIGHT_RUN's CLI-flag approximation: this hook
     // hands MIO_MOCK_BACKEND to the app, so a light spec must never reach a real podman.
     const isLightSession = specs.length > 0 && specs.every(isLightSpec);
-    // Seed the forward-sweep preconditions before the app process spawns (its startup sweep is
-    // the thing under test): an orphan session with a swept prefix and a bystander outside the
-    // prefixes, both in the app's private Mutagen daemon (the CLI auto-starts it; the vendored
-    // v0.18.1 matches the sidecar, so the app attaches to the same daemon). Local tcp endpoints
-    // on both sides keep the create instant and SSH-free — the sweep terminates by name
-    // regardless of connection state. Scoped to the worker running forward-sweep.spec.ts so the
-    // sessions never linger past that spec's own cleanup.
+    // Seeds forward-sweep's preconditions before the app spawns (its startup sweep is what's under
+    // test): an orphan and a bystander session in the app's own Mutagen daemon. Local tcp endpoints
+    // keep session creation instant and SSH-free — the sweep matches by name only.
     if (!isLightSession && specs.some((s) => s.includes("forward-sweep"))) {
       ensureMutagen();
       forwardCreate(SWEEP_ORPHAN_SESSION, "tcp:127.0.0.1:38471", "tcp:127.0.0.1:1");
@@ -317,13 +289,9 @@ export const config: WebdriverIO.Config = {
       }
     });
   },
-  // The AppContainer is a bare Window hosting one merged chrome webview, `main-navigation-panel`
-  // (nav rail, switcher tab bar, and every sandbox's Dashboard are DOM regions of that one document,
-  // docs/features/consolidate-app-container/02_dev.md), plus a Terminal/AgentWeb overlay webview per
-  // open pane. Each webview is a WebDriver window handle and the session may attach to any of them,
-  // so pin the session to the app UI handle — the one whose page is neither the legacy
-  // /workspace/* chrome route (none exist any more, but the check is harmless) nor a remote
-  // terminal/agentweb origin.
+  // One merged chrome webview hosts the whole app UI (docs/features/consolidate-app-container/02_dev.md);
+  // each Terminal/AgentWeb pane opens its own overlay webview. Pin the session to the app UI
+  // handle so it doesn't land on a pane's window instead.
   before: async () => {
     for (const handle of await browser.getWindowHandles()) {
       await browser.switchToWindow(handle);

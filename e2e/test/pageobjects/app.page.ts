@@ -1,6 +1,6 @@
 import { UI_SETTLE } from "../../lib/timeouts.js";
 
-// A lazily-resolved WebdriverIO element chain, as returned by the global `$`.
+/** A lazily-resolved WebdriverIO element chain, as returned by the global `$`. */
 export type Element = ReturnType<typeof $>;
 
 /**
@@ -12,11 +12,8 @@ export default class AppPage {
     return $(selector);
   }
 
-  // Navigate to the home page via the global nav's project tab (GlobalNav is layout-mounted, so
-  // it's present on every route). Waits for the home nav to confirm the transition is complete —
-  // without this, a subsequent open() call may read a stale URL (still showing the previous
-  // route) and skip its own nav click, leaving the page in a transitioning state where key
-  // elements are not yet displayed.
+  // Waits for the destination nav before returning: a following open() would otherwise read the
+  // pre-transition URL and skip its own nav click.
   async goHome(): Promise<void> {
     if (/\/(models|settings|intro|projects)(\/|$)/.test(await browser.getUrl())) {
       const projectsTab = await $("[role='tab'][data-value='/projects']");

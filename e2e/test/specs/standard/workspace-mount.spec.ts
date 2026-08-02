@@ -26,18 +26,16 @@ describe("Sandbox workspace directory", () => {
     await ProjectsPage.open();
     const row = await ProjectsPage.createProject(projectName);
 
-    // 1. The host workspace directory exists on the laptop.
     expect(fs.existsSync(workspaceDir)).toBe(true);
 
-    // 2. The container is wired with a bind mount at /root/work (inspectable before start).
+    // The bind mount at /root/work is inspectable before the container even starts.
     const mounts: ContainerMount[] = JSON.parse(
       podman(LOCAL_CONNECTION, ["inspect", projectName, "--format", "json"])
     )[0].Mounts;
-    // The container should have a mount at /root/work.
     const workMount = mounts.find((m) => m.Destination === "/root/work");
     expect(workMount).toBeDefined();
 
-    // 3. The mount is live: a file written on the host is readable inside the container.
+    // Prove the mount is live: a file written on the host must be readable inside the container.
     const marker = "shared-from-host";
     fs.writeFileSync(path.join(workspaceDir, "marker.txt"), marker);
 

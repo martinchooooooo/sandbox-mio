@@ -8,7 +8,7 @@ import { podman, podmanOk, LOCAL_CONNECTION } from "../../../lib/podman-connecti
 import { captureDiagOnFailure } from "../../../lib/diag.js";
 import { useSandboxWorkspace } from "../../../lib/sandbox-suite.js";
 
-// Must equal INFERENCE_VM_PORT in src/lib/agents/opencode.ts and src-tauri/src/sync/mod.rs. The
+// Must equal INFERENCE_VM_PORT in src-tauri/src/sync/mod.rs and src/lib/agents/local-llm.ts. The
 // constant is asserted in the written config below so a drift between the two languages is caught.
 const INFERENCE_VM_PORT = 51199;
 const EXPECTED_BASE_URL = `http://host.containers.internal:${INFERENCE_VM_PORT}/v1`;
@@ -109,7 +109,7 @@ describe("OpenCode agent — install, provision, merge", function () {
       provider.options?.baseURL,
       EXPECTED_BASE_URL,
       `local-llm baseURL is "${provider.options?.baseURL}", expected "${EXPECTED_BASE_URL}". A ` +
-        "mismatch means INFERENCE_VM_PORT drifted between src/lib/agents/opencode.ts and the forward.",
+        "mismatch means INFERENCE_VM_PORT drifted between src/lib/agents/local-llm.ts and the forward.",
     );
     assert(
       provider.options?.apiKey,

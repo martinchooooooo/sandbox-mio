@@ -5,17 +5,13 @@ import ProjectsPage from "../../pageobjects/projects.page.js";
 import ActivityCenter from "../../pageobjects/activity.page.js";
 import { invokeCmd } from "../../../lib/mock.js";
 
-// LIGHT spec for the activity center: runs in the default `pnpm test` suite. It proves the global
-// surface (the layout-mounted bell), the `list_tasks` round-trip (Phase A), and the store's fold /
-// badge / toast / version-guard logic (Phases B–C) — WITHOUT downloading a GGUF or starting a
-// sidecar. The real Rust pipeline (registry → app.emit → survives reload) is the heavy spec
-// (test/specs/heavy/activity-center.spec.ts).
+// LIGHT spec for the activity center: proves the bell mounts globally, list_tasks round-trips, and
+// the store's fold/badge/toast/version-guard logic works, without a real backend task. The real Rust
+// pipeline (registry → app.emit → survives reload) is test/specs/heavy/activity-center.spec.ts.
 //
-// The store's fold logic is driven by a *synthetic* `activity://task-updated` event emitted from the
-// webview. A frontend `emit` round-trips through Rust and back to the store's `listen` (same event
-// bus the real backend uses), so this exercises the real fold/badge/toast code deterministically
-// and instantly — a synthetic task lives only in the frontend store and never enters the Rust
-// registry, so it does not pollute `list_tasks` or other specs.
+// Fold logic is driven by a synthetic `activity://task-updated` event emitted from the webview,
+// round-tripping through Rust to the store's `listen` — same bus, but the synthetic task never
+// enters the Rust registry, so it can't leak into list_tasks or other specs.
 
 const SYNTH_ID = "model-download:e2e-ui-synthetic";
 

@@ -3,9 +3,8 @@ import assert from "node:assert";
 import SettingsPage from "../../pageobjects/settings.page.js";
 
 // LIGHT spec for Settings → "Advanced Debugging": proves reset_stuck_podman_machine round-trips
-// against the real PodmanMachineManager. `wsl --unregister` is gated off under MIO_MOCK_BACKEND=1
-// (run_host_wsl, src-tauri/src/machine/mod.rs) — without that gate this would delete the dev's
-// podman machine; the skipped WSL path is covered by MachineManager::reset_stuck_machine's doc comments instead.
+// against the real PodmanMachineManager, with `wsl --unregister` gated off under MIO_MOCK_BACKEND=1
+// (run_host_wsl) to avoid nuking the dev's machine — that WSL path is covered by MachineManager::reset_stuck_machine's docs instead.
 
 describe("Settings — Advanced Debugging (no backend task)", function () {
   this.timeout(60000);

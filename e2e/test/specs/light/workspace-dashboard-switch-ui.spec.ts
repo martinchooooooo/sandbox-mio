@@ -4,14 +4,9 @@ import ProjectsPage from "../../pageobjects/projects.page.js";
 import workspaceDashboard from "../../pageobjects/workspace-dashboard.page.js";
 import { captureDiagOnFailure } from "../../../lib/diag.js";
 
-// LIGHT spec (mock backend) for the Dashboard's per-sandbox package/agent state
-// (src/lib/workspace/packages.svelte.ts). Reproduces the regression this store was added to fix:
-// SandboxItem.svelte's openWorkspace() calls `hide_active_pane` unconditionally, so switching
-// directly from one sandbox's Dashboard to another's (neither ever opening a Terminal/AgentWeb
-// pane) never passes `dashboardSandbox` through `null` — WorkspaceDashboard.svelte is reused, not
-// remounted, so any state fetched only in `onMount` (the pre-fix code) would keep showing the
-// previous sandbox's packages. MockRuntime (src-tauri/src/runtime/mock.rs) tracks installed
-// packages per sandbox so this actually has something sandbox-specific to leak.
+// LIGHT spec (mock backend) for src/lib/workspace/packages.svelte.ts. Reproduces the fixed regression:
+// switching directly between two Dashboards (no Terminal/AgentWeb pane ever opened) skipped the
+// `dashboardSandbox=null` reset, so the reused (non-remounted) WorkspaceDashboard kept the previous sandbox's state.
 describe("Dashboard package list follows the active sandbox on direct switch (mock backend)", function () {
   this.timeout(60000);
 

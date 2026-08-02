@@ -7,12 +7,10 @@ import ProjectsPage from "../../pageobjects/projects.page.js";
 import ActivityCenter from "../../pageobjects/activity.page.js";
 import { captureDiagOnFailure } from "../../../lib/diag.js";
 
-// HEAVY spec (docs/features/activity-center/03_e2e.md, Steps 1–8). A near-twin of local-llm.spec.ts:
-// it reuses the same staged llama sidecar and MIO_TEST_MODEL tiny GGUF as the work that *produces*
-// tasks, but its assertions read the global activity center **from a foreign route** and **after a
-// webview reload** — the two assertions with teeth that local-llm.spec.ts deliberately does not
-// make. Those prove the source of truth is the Rust TaskRegistry, not any route component.
-//
+// HEAVY spec (docs/features/activity-center/03_e2e.md, Steps 1–8). Reuses local-llm.spec.ts's
+// staged sidecar and test GGUF, but asserts the activity center from a foreign route and after a
+// webview reload — proving the Rust TaskRegistry, not a route component, is the source of truth.
+
 // Host-only for Steps 1–7 (no Podman). The conditional Step 8 touches Podman and self-skips.
 
 interface TestModel {

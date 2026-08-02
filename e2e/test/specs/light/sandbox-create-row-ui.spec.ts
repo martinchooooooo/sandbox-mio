@@ -3,20 +3,14 @@ import assert from "node:assert";
 import ProjectsPage from "../../pageobjects/projects.page.js";
 
 // LIGHT spec for docs/features/sandbox-list-create: runs against MIO_MOCK_BACKEND=1, no podman.
-// Covers the always-present create row on an empty list, one of the two UI/store-logic edge cases
-// 03_e2e.md scopes to this tier. The real bind-mount path (existing_path against a real directory)
-// is standard-tier coverage, not this spec's job.
+// Covers the always-present create row on an empty list; the real bind-mount path (existing_path
+// against a real directory) is standard-tier coverage instead.
 //
-// The second scoped scenario — client-side name-collision pre-check, no round trip — is NOT yet
-// covered here. A submit-the-same-name-twice repro against the mock backend reliably creates two
-// mock sandboxes with the identical name despite CreateSandboxItem's `projects.some(...)` guard
-// appearing correct by inspection; the cause was not isolated (ruled out so far: a stale `projects`
-// prop — a `data-projects-names` probe confirmed the child sees the freshly created entry before
-// the retry; an out-of-order `loadProjects()` response from onMount clobbering state — an explicit
-// settle-and-retry made no difference; and a text-selector false-positive from the guard's own error
-// message containing the sandbox name — fixed, but the duplicate row persisted anyway, confirming a
-// second sandbox is genuinely created). Needs further investigation before this scenario is added
-// back — see docs/features/sandbox-list-create/02_dev.md's Phase D notes.
+// TODO: the other scoped scenario — client-side name-collision pre-check — isn't covered here.
+// Submitting the same name twice reliably creates two mock sandboxes despite CreateSandboxItem's
+// `projects.some(...)` guard looking correct by inspection. Ruled out: a stale `projects` prop, an
+// out-of-order `loadProjects()` response, and a text-selector false-positive from the guard's own
+// error message. See docs/features/sandbox-list-create/02_dev.md Phase D notes before re-investigating.
 
 describe("Sandbox create row — UI sanity (mock backend)", function () {
   this.timeout(30000);
@@ -49,7 +43,6 @@ describe("Sandbox create row — UI sanity (mock backend)", function () {
         "be mutually exclusive.",
     );
 
-    // Back to "name" mode leaves no trace of the folder controls.
     await (await ProjectsPage.backToNameButton).click();
     assert(
       await (await ProjectsPage.nameInput).isDisplayed(),

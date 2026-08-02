@@ -3,11 +3,9 @@ import assert from "node:assert";
 import ModelsPage from "../../pageobjects/models.page.js";
 import SettingsPage from "../../pageobjects/settings.page.js";
 
-// LIGHT spec for the local-llm feature: runs in the default `pnpm test` suite. It proves the
-// routes render and the cheap Tauri commands round-trip (detect_machine_specs, downloaded_models,
-// inference_status, runtime_setup_steps, get/set_settings, test_model) plus the catalogue/recommend
-// and UI-gating logic — WITHOUT ever downloading a GGUF or starting a sidecar. The real
-// download → load → completion path is the heavy spec (test/specs/heavy/local-llm.spec.ts).
+// LIGHT spec for local-llm: proves routes render and the cheap Tauri commands, catalogue,
+// and UI-gating logic work, without downloading a GGUF or starting a sidecar.
+// Real download → load → completion path is covered by test/specs/heavy/local-llm.spec.ts.
 
 // The test-only model descriptor injected by wdio.conf.ts (MIO_TEST_MODEL). Its row is prepended to
 // the catalogue when set; the light spec only inspects its row, never downloads it.
@@ -89,8 +87,6 @@ describe("Local LLM — UI sanity (no download)", function () {
         "row means a step id was added without its Paraglide runtime_step_<id>_title key.",
     );
 
-    // Round-trip set_settings → get_settings: pick the engine the app is NOT currently on, save,
-    // reload the route, and assert the choice persisted.
     const before = await SettingsPage.activeEngine();
     const next = before === "llama" ? "foundry" : "llama";
     await SettingsPage.selectEngine(next as "llama" | "foundry");

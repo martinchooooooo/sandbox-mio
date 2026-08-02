@@ -2,12 +2,9 @@ import assert from "node:assert";
 
 import ModelsPage from "../../pageobjects/models.page.js";
 
-// LIGHT spec for the models-page-caching feature (docs/features/models-page-caching/03_e2e.md).
-// Exercises the real detect_machine_specs / redetect_machine_specs Tauri commands (Phases A–D)
-// and the /models spinner + manual re-detect button (Phase E) against the mock backend —
-// MIO_MOCK_BACKEND=1 swaps SandboxBackend/RuntimeManager/SyncEngine, none of which
-// detect_machine_specs touches, so the PowerShell/winget probe underneath it runs for real. No
-// podman machine, no MIO_TEST_MODEL, matching local-llm-ui.spec.ts's topology.
+// LIGHT spec for models-page-caching (docs/features/models-page-caching/03_e2e.md).
+// MIO_MOCK_BACKEND=1 mocks SandboxBackend/RuntimeManager/SyncEngine only — detect_machine_specs
+// still runs the real PowerShell/winget probe. No podman machine, no MIO_TEST_MODEL.
 
 type MachineSpecs = {
   cpuCores: number;
@@ -45,7 +42,6 @@ describe("Models page caching — MachineSpecsCache (no download)", function () 
     await ModelsPage.goHome();
     await ModelsPage.open();
 
-    // Force-warm a known-cold cache, then immediately read it back.
     const baseline = await invokeTimed("redetect_machine_specs");
     const cached = await invokeTimed("detect_machine_specs");
 

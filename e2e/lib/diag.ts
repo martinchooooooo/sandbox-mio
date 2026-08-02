@@ -1,20 +1,14 @@
 import fs from "fs";
 import path from "path";
 
-// Registers an `afterEach` that, only when the current test failed, dumps the webview URL + page
-// source + a screenshot to e2e/.diag (files stamped from the test title). This exact block was
-// copy-pasted verbatim across several standard/heavy specs before this helper existed; every spec
-// calls it directly now.
-//
-// `extra` runs after the page dump for specs that also want a sidecar artifact (e.g. local-llm
-// copies llama-server.log). It receives the same diag dir + stamp so its files land beside the page
-// dump, and runs inside its own try/catch so a failing extra step never masks the page dump.
-//
-// Non-arrow `afterEach(async function () { ... })` so `this.currentTest` stays bound — matching
-// every original copy.
+/**
+ * Registers an `afterEach` dumping the webview URL, page source and a screenshot to e2e/.diag when
+ * a test fails. `extra` adds a sidecar artifact beside that dump, isolated so it cannot mask it.
+ */
 export function captureDiagOnFailure(
   extra?: (diagDir: string, stamp: string) => void | Promise<void>,
 ): void {
+  // Non-arrow so Mocha keeps `this.currentTest` bound.
   afterEach(async function () {
     if (this.currentTest?.state !== "failed") return;
     const diag = path.join(process.cwd(), ".diag");

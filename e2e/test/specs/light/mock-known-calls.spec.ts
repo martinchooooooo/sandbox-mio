@@ -3,9 +3,8 @@ import assert from "node:assert";
 import { configureMock, configureMockExpectingError, useMockControl } from "../../../lib/mock.js";
 
 // LIGHT spec proving the mock control plane's own key validation
-// (docs/features/scriptable-mock-backend/02_dev.md, Resolved Decision 1 and 9). This feature writes
-// no Rust #[test] fns — mockctl's correctness is proven here, through the real mock_configure
-// command, so the IPC round-trip and the AppError mapping are covered in the same assertion.
+// (docs/features/scriptable-mock-backend/02_dev.md, Resolved Decision 1 and 9). This feature has no
+// Rust #[test] fns; mockctl's correctness is proven here via the real mock_configure IPC round-trip.
 
 // Must stay equal to KNOWN_CALLS in src-tauri/src/mockctl/mod.rs. A key added there but missed here
 // is a scriptable call with no coverage; a key here but not there fails this spec loudly.

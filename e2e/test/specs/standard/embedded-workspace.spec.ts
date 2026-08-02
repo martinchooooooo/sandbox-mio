@@ -40,11 +40,9 @@ async function waitForToken(name: string): Promise<void> {
   });
 }
 
-// A sandbox's Dashboard is DOM-derived client state, not a Rust-tracked pane
-// (docs/features/consolidate-app-container/02_dev.md Resolved Decision 2): the only way to prove it
-// is actually visible — as opposed to present-but-zero-height, the exact class of regression this
-// feature already produced once (WorkspaceSwitcher.svelte's h-screen/h-16 bug, 02_dev.md Common
-// Gotchas) — is to read the rendered DOM, not workspace_state() alone.
+// Dashboard is DOM-derived client state, not a Rust-tracked pane (docs/features/consolidate-app-
+// container/02_dev.md Resolved Decision 2), so only reading the rendered DOM — not workspace_state()
+// — can catch a present-but-zero-height regression (WorkspaceSwitcher.svelte's h-screen/h-16 bug).
 async function assertDashboardVisible(sandbox: string): Promise<void> {
   await workspaceDashboard.waitForRendered(sandbox);
   const input = await workspaceDashboard.packageInput;
@@ -115,10 +113,9 @@ describe("Embedded workspace (merged NavigationPanel/Switcher/Dashboard webview)
         "eagerly during open_workspace, defeating the lazy-Terminal goal.",
     );
 
-    // Structural layout proof (mirrors the Rust unit tests in workspace/mod.rs): the overlay rect
-    // — where a Terminal/AgentWeb pane would be positioned if one were active — starts exactly
-    // where the expanded nav column ends, and is SWITCHER_H tall from the top. This is always true
-    // regardless of whether any pane is active; the merged webview itself is never resized.
+    // Structural layout proof (mirrors the Rust unit tests in workspace/mod.rs): the overlay rect is
+    // always positioned at the nav column's edge and SWITCHER_H tall, regardless of active pane —
+    // the merged webview itself is never resized.
     assert.strictEqual(state.overlay.x, NAVIGATION_PANEL_EXPANDED_W);
     assert.strictEqual(state.overlay.y, SWITCHER_H);
   });
@@ -177,9 +174,8 @@ describe("Embedded workspace (merged NavigationPanel/Switcher/Dashboard webview)
     );
 
     // The projects-list row narrows once nameA's workspace is open (Track 1 + Resolved Decision 3,
-    // docs/features/responsive-panel/02_dev.md): the inline Package/Agent controls are gone, and
-    // the remaining buttons drop their text label at the panel's real 380px width
-    // (NAVIGATION_PANEL_EXPANDED_W, asserted above) — not a resized/simulated window.
+    // docs/features/responsive-panel/02_dev.md): inline Package/Agent controls disappear and button
+    // labels hide at the panel's real 380px width (NAVIGATION_PANEL_EXPANDED_W) — not a simulated resize.
     assert.strictEqual(
       await (await rowA.root.$("input[placeholder='package name']")).isExisting(),
       false,

@@ -8,10 +8,9 @@ import { podman, podmanOk, LOCAL_CONNECTION } from "../../../lib/podman-connecti
 import { captureDiagOnFailure } from "../../../lib/diag.js";
 import { useSandboxWorkspace } from "../../../lib/sandbox-suite.js";
 
-// `browser.url` rejects relative paths, and there is no wdio `baseUrl`: the app is served from a
-// Tauri custom-protocol origin (e.g. http://tauri.localhost). Resolve "/" against the live origin
-// so the navigation is a full reload to home, which remounts the projects page (onMount →
-// loadProjects → loadAgentStatuses).
+// `browser.url` rejects relative paths, and there is no wdio `baseUrl` — the app is served from a
+// Tauri custom-protocol origin. Resolve "/" against the live origin for a full reload to home,
+// remounting the projects page (onMount → loadProjects → loadAgentStatuses).
 async function navigateHome(): Promise<void> {
   const origin = new URL(await browser.getUrl()).origin;
   await browser.url(`${origin}/`);

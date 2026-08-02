@@ -1,12 +1,9 @@
 import { spawnSync } from "child_process";
 
-// Podman connection names the specs target.
 export const LOCAL_CONNECTION = "mio-tests";
 export const REMOTE_CONNECTION = "mio-tests-remote";
 
-// Run `podman --connection <connection> <...args>` and return trimmed stdout. Throws a diagnostic
-// error naming the connection and args when check is true and the command exits non-zero; pass
-// { check: false } for best-effort commands (e.g. cleanup) whose failure should be ignored.
+/** Returns trimmed stdout. Pass `{ check: false }` for best-effort commands such as cleanup. */
 export function podman(
   connection: string,
   args: string[],
@@ -24,7 +21,7 @@ export function podman(
   return out.stdout?.trim() ?? "";
 }
 
-// Returns true when the command exits 0 (e.g. the container/image exists), false otherwise.
+/** True when the command exits 0 — e.g. `image exists`. */
 export function podmanOk(connection: string, args: string[]): boolean {
   return (
     spawnSync("podman", ["--connection", connection, ...args], { shell: false }).status === 0

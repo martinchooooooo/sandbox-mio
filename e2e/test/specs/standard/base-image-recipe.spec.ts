@@ -1,17 +1,12 @@
 import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 
-// Regression guard for the base-image build failing on a floating version. mise and zellij are
-// fetched from GitHub releases; resolving "latest" (the `releases/latest` redirect, a `mise@latest`
-// install, or the `mise.run` script) hits the GitHub API, which is rate-limited to 60 requests/h per
-// unauthenticated IP — once the machine's egress IP trips that limit the build dies with HTTP 403,
-// non-deterministically, and a floating version is non-reproducible regardless. The fix pins both
-// the mise release (ARG MISE_VERSION=v…) and the zellij version (ARG ZELLIJ_VERSION=…) to exact
-// tags so the downloads address a known artifact with no version-listing call. This static guard
-// asserts the recipes stay pinned; it needs no podman machine, so it is cheap to keep.
+// Floating "latest" resolution for mise/zellij hits GitHub's 60 req/h unauthenticated rate limit and
+// fails the build non-deterministically; pinning exact versions avoids the version-listing call.
+// This static guard needs no podman machine, so it is cheap to run on every recipe.
 //
 // The recipe baked into the binary (CONTAINERFILE in src-tauri/src/backends/mod.rs) and the spike
-// references that document the build must stay in lockstep. All are checked.
+// docs that describe the build must stay pinned in lockstep — all are checked here.
 const CONTAINERFILES = [
   "../../../../src-tauri/resources/Containerfile",
   "../../../../docs/features/sandbox-runtime-management/spike/mise/Containerfile.glibc",

@@ -6,14 +6,10 @@ import { podman, LOCAL_CONNECTION } from "./podman-connection.js";
 
 const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
 
-// Every standard spec that drives a single throwaway sandbox copy-pasted the same three things: a
-// `<prefix>-<timestamp>` project name, a `before()` asserting SANDBOX_WORKSPACE_ROOT is set (so a
-// misconfigured run fails fast instead of producing a confusing ENOENT deep in a test body), and an
-// `after()` best-effort `podman rm -f` so a failed run doesn't leave the container behind. Call this
-// once per `describe` block. If a spec needs extra teardown (a remote rm -f, a forwardTerminate),
-// register it in your own `after()` alongside this — Mocha runs `after()` hooks in registration
-// order, and the cleanup here is a no-op-safe `{ check: false }` regardless of what runs before or
-// after it.
+/**
+ * Names, guards and tears down one throwaway sandbox; call once per `describe`. Extra teardown
+ * belongs in the spec's own `after()` — this one is `{ check: false }` and order-independent.
+ */
 export function useSandboxWorkspace(prefix: string): {
   projectName: string;
   row: ProjectRow;

@@ -1,9 +1,8 @@
 import AppPage, { type Element } from "./app.page.js";
 import { COMMAND, SUBPROCESS } from "../../lib/timeouts.js";
 
-// The /models screen: probes host specs, downloads a GGUF, starts/stops the host inference server,
-// and exposes a live base_url. Selectors are data-attribute based (set in
-// src/routes/models/+page.svelte) so the page object never depends on CSS classes or copy.
+// Selectors are data-attribute based (set in src/routes/models/+page.svelte) so this page object
+// never depends on CSS classes or copy.
 class ModelsPage extends AppPage {
   get navLink(): Element {
     return $("[role='tab'][data-value='/models']");
@@ -13,8 +12,8 @@ class ModelsPage extends AppPage {
     return $("[data-specs]");
   }
 
-  // Present only once detect_machine_specs has resolved and the host numbers render (replacing the
-  // "Detecting…" placeholder). Waited on in open() so callers never read the panel mid-probe.
+  // Present only once detect_machine_specs has resolved, so open() waits on it rather than the
+  // specsPanel placeholder — otherwise callers read the panel mid-probe.
   get specsReady(): Element {
     return $("[data-specs-ready]");
   }
@@ -27,13 +26,12 @@ class ModelsPage extends AppPage {
     return $("[data-base-url]");
   }
 
-  // The chat-test surface; only rendered while a server is running (status.running).
+  // Only rendered while a server is running.
   get chatPanel(): Element {
     return $("[data-chat]");
   }
 
-  // The manual "re-detect hardware" icon button in the specs section header. Only rendered once
-  // specs is non-null (see specsReady), so callers must open() first.
+  // Only rendered once specs resolve, so callers must open() first.
   get redetectButton(): Element {
     return $("[data-redetect]");
   }
@@ -44,12 +42,11 @@ class ModelsPage extends AppPage {
     await btn.click();
   }
 
-  // The row for a catalogue/test model, keyed by its stable id (data-model-id).
   row(modelId: string): Element {
     return $(`[data-model-id='${modelId}']`);
   }
 
-  // Every rendered catalogue row id (data-model-id), in display order.
+  /** In display order. */
   async modelIds(): Promise<string[]> {
     const rows = await $$("[data-model-id]");
     const ids: string[] = [];
@@ -57,17 +54,15 @@ class ModelsPage extends AppPage {
     return ids;
   }
 
-  // The rating badge text for a model row (e.g. "Recommended"). Asserts recommend.ts ran.
+  /** The badge text (e.g. "Recommended"); its presence proves recommend.ts ran. */
   async rating(modelId: string): Promise<string> {
     return (await (await this.row(modelId)).$("[data-rating]")).getText();
   }
 
-  // Whether a model row's Start button is enabled. Used to assert the not-downloaded gate.
   async startEnabled(modelId: string): Promise<boolean> {
     return (await (await this.row(modelId)).$("[data-start]")).isEnabled();
   }
 
-  // Whether the running-state UI is present (status panel / chat surface).
   async isRunningShown(): Promise<boolean> {
     return (await this.runningPanel).isExisting();
   }
@@ -75,9 +70,7 @@ class ModelsPage extends AppPage {
     return (await this.chatPanel).isExisting();
   }
 
-  // Navigate to /models and wait for the host-specs probe to resolve. detect_machine_specs
-  // shells out (PowerShell/winget) so the populated panel can lag the container by seconds — wait
-  // for [data-specs-ready], not just the [data-specs] placeholder, or callers race the probe.
+  /** Returns only once the host-specs probe has resolved; it shells out and can lag by seconds. */
   async open(timeout = COMMAND): Promise<void> {
     const url = await browser.getUrl();
     if (!url.includes("/models")) {
@@ -89,7 +82,6 @@ class ModelsPage extends AppPage {
     await (await this.specsReady).waitForDisplayed({ timeout: SUBPROCESS });
   }
 
-  // The rendered host-specs block; asserts the probe ran.
   async specsText(): Promise<string> {
     return (await this.specsPanel).getText();
   }
@@ -101,7 +93,6 @@ class ModelsPage extends AppPage {
     await btn.click();
   }
 
-  // Poll until the model's row shows the downloaded marker.
   async waitForDownloaded(modelId: string, timeoutMs: number): Promise<void> {
     const row = await this.row(modelId);
     await browser.waitUntil(async () => (await row.$("[data-downloaded]")).isExisting(), {
@@ -118,7 +109,6 @@ class ModelsPage extends AppPage {
     await btn.click();
   }
 
-  // Poll until the status panel reports a running server with a base_url.
   async waitForRunning(timeoutMs: number): Promise<void> {
     await browser.waitUntil(async () => (await this.runningPanel).isExisting(), {
       timeout: timeoutMs,
@@ -127,16 +117,14 @@ class ModelsPage extends AppPage {
     });
   }
 
-  // Reads the running endpoint's base_url. Waits for the element: it only renders inside the
-  // running model row ([data-running]), so a missing element means the row isn't running yet —
-  // surfacing as a timeout here rather than a bare "element not found" at the call site.
+  // Waits rather than reads: the element only renders inside a running row, so a not-yet-running
+  // server surfaces as a timeout here instead of "element not found" at the call site.
   async baseUrl(): Promise<string> {
     const el = await this.baseUrlEl;
     await el.waitForDisplayed({ timeout: COMMAND });
     return el.getText();
   }
 
-  // The non-empty titles of every rendered runtime-setup checklist row.
   async stepTitles(): Promise<string[]> {
     const titles = await $$("[data-step-id] [data-step-title]");
     const texts: string[] = [];
@@ -148,11 +136,8 @@ class ModelsPage extends AppPage {
     const btn = await (await this.runningPanel).$("button=Stop");
     await btn.waitForClickable({ timeout: COMMAND });
     await btn.click();
-    // stop_inference kills the llama child synchronously (fast) then drops the handle, but tears the
-    // reverse Mutagen forward down on a detached task (lib.rs) — `forward terminate` can take many
-    // seconds against the VM listener and must not block the command. So the command returns
-    // promptly, inference_status reports not-running, and [data-running] clears on the next poll. A
-    // timeout here means the command itself errored or never returned, not a slow forward teardown.
+    // stop_inference drops the server handle synchronously and tears the Mutagen forward down on a
+    // detached task, so a timeout here means the command errored, never a slow forward teardown.
     await browser.waitUntil(async () => !(await this.runningPanel).isExisting(), {
       timeout: SUBPROCESS,
       interval: 500,

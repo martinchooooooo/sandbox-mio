@@ -1,6 +1,5 @@
 import AppPage, { type Element } from "./app.page.js";
 
-// The greet screen: a text input, a submit button and the response paragraph.
 class GreetPage extends AppPage {
   get input(): Element {
     return $("#greet-input");

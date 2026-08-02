@@ -5,18 +5,15 @@ import path from "path";
 import ModelsPage from "../../pageobjects/models.page.js";
 import { captureDiagOnFailure } from "../../../lib/diag.js";
 
-// HEAVY spec (Steps 1–5 of docs/features/local-llm/03_e2e.md). Lives under specs/heavy/ because it
-// is the most expensive spec in the suite: a cold run downloads a ~100 MB test GGUF and loads it
-// into the bundled llama sidecar. The default `pnpm test` glob (./test/specs/*.ts) excludes this
-// subdirectory; run it with `pnpm run test:heavy` (or `pnpm run test:llm` for just this file).
-//
-// Host-only: no Podman. It drives the real detect → download → start → completion → stop path of
-// the llama engine against the tiny test GGUF injected via MIO_TEST_MODEL, and asserts on the host
-// filesystem and a real HTTP call to the inference endpoint rather than `podman exec`.
-//
-// The four steps are a single ordered flow (download → start → completion → stop) in one it():
-// they share state (the running sidecar, its base_url), so a failure must stop the chain rather
-// than cascade into a confusing low-level "element not found" on a later, decoupled test.
+// HEAVY spec (Steps 1–5 of docs/features/local-llm/03_e2e.md). Excluded from the default `pnpm
+// test` glob because a cold run downloads a GGUF and loads it into the sidecar; run via
+// `pnpm run test:heavy` or `pnpm run test:llm`.
+
+// Host-only: no Podman. Drives detect → download → start → completion → stop against the test
+// GGUF from MIO_TEST_MODEL, asserting on the host filesystem and a real HTTP call.
+
+// One it(): the four steps share state (the running sidecar, its base_url), so a failure should
+// stop the chain rather than cascade into a confusing low-level error later.
 
 interface TestModel {
   id: string;
@@ -65,10 +62,9 @@ describe("Local LLM — llama engine", function () {
     fs.rmSync(path.join(APP_DATA_MODELS, model.id), { recursive: true, force: true });
   });
 
-  // Capture webview state on any failure, plus the llama-server log the other specs don't need. The
-  // bundled llama engine tees llama-server's stdout/stderr into the model dir (see inference/llama.rs);
-  // on a "server didn't start" failure (health timeout, bad GGUF, no Vulkan device) this log holds
-  // the real reason, so copy it next to the page dump.
+  // llama-server's stdout/stderr is teed into the model dir (inference/llama.rs). On a "server
+  // didn't start" failure (health timeout, bad GGUF, no Vulkan device) this log holds the real
+  // reason, so copy it next to the page dump.
   captureDiagOnFailure((diag, stamp) => {
     const serverLog = path.join(APP_DATA_MODELS, model.id, "llama-server.log");
     if (fs.existsSync(serverLog)) {

@@ -163,10 +163,9 @@ describe("Exposing sandbox ports (network::expose_port / unexpose_port / watch_p
       timeoutMsg: `mutagen forward expose-${projectName}-${MANUAL_PORT} is still Connected after clicking its close button`,
     });
 
-    // No "No ports open." assertion here, unlike the opening test: by this point the workspace's
-    // Terminal/Agents forwards share the same list (PortsManager.svelte's `forwards.length > 0`),
-    // and the scan re-exposes the still-listening socat as `Auto :`. The row and forward checks
-    // above are the real outcomes. See docs/features/expose-ports/04_improvements.md.
+    // No "No ports open." assertion here: the workspace's Terminal/Agents forwards share the same list
+    // (PortsManager.svelte's `forwards.length > 0`), and the scan re-exposes the still-listening socat
+    // as `Auto :`. See docs/features/expose-ports/04_improvements.md.
   });
 
   it("destroy removes the container and its forwards stay gone", async () => {

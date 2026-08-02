@@ -6,15 +6,9 @@ import { COMMAND, DEPLOY, SUBPROCESS, SYNC_CONVERGE, UI_SETTLE } from "../../lib
 const ACTION_CLICK_ATTEMPTS = 3;
 
 /**
- * A single project's row in the projects list. Component object: it wraps one `<li>` and
- * exposes every control inside it (start/stop, deploy/undeploy, destroy, the sync switch,
- * the status indicators) plus the waits that go with them, so specs operate a project by
- * name without knowing the row's markup.
- *
- * The row is resolved lazily on each access via the `data-sandbox` hook the SandboxItem `<li>`
- * carries, so the component keeps working after the frontend re-renders the row in place. The
- * attribute (not a text match) is required because the create row shows "Creating <name>…" while
- * a sandbox is in flight, which a `li*=<name>` text selector would match instead of the real row.
+ * One project's `<li>` in the projects list, resolved lazily on each access so the component
+ * survives an in-place re-render. Keyed on `data-sandbox` rather than text because the create row
+ * shows "Creating <name>…" while a sandbox is in flight, which a text selector would match instead.
  */
 export default class ProjectRow {
   readonly projectName: string;
@@ -59,25 +53,14 @@ export default class ProjectRow {
     return this.root.$("button[role='switch']");
   }
 
-  // The green dot shown while the container is running.
   get runningIndicator(): Element {
     return this.root.$("span.bg-green-500");
   }
 
-  // The muted status text (e.g. "running") next to the project.
   get statusText(): Element {
     return this.root.$(".text-muted-foreground");
   }
 
-  /**
-   * StatusRow's error line, rendered only while an action's last attempt failed
-   * (see createActionRunner() in src/lib/actions.svelte.ts).
-   */
-  get errorRow(): Element {
-    return this.root.$("div[role='status'].text-destructive");
-  }
-
-  // The label naming the host a project is deployed to.
   deployedHostLabel(host: string): Element {
     return this.root.$(`span*=${host}`);
   }
@@ -90,7 +73,7 @@ export default class ProjectRow {
     await (await this.root).waitForExist({ timeout, reverse: true });
   }
 
-  // Click a button after scrolling it into view — the row's later controls can sit off-screen.
+  // Scrolls first: the row's later controls can sit off-screen.
   async #clickButton(button: Element): Promise<void> {
     const el = await button;
     await el.scrollIntoView();
@@ -143,9 +126,8 @@ export default class ProjectRow {
     await this.#clickButton(this.stopButton);
   }
 
-  // Clicks the "workspace" button, invoking open_workspace. The embedded terminal renders inside
-  // the main window's child webviews (docs/features/embedded-windows/02_dev.md), which
-  // tauri-driver cannot drive; specs read state back via workspace_state (e2e/lib/workspace.ts).
+  // tauri-driver cannot drive the child webview this opens; assert against workspace_state
+  // (e2e/lib/workspace.ts) instead.
   async openWorkspace(): Promise<void> {
     await this.#clickButton(this.workspaceButton);
   }
@@ -158,7 +140,7 @@ export default class ProjectRow {
     await (await this.runningIndicator).waitForExist({ timeout, reverse: true });
   }
 
-  // Deploys to the named host and resolves once the deployment is live (undeploy button shown).
+  /** Resolves only once the deployment is live and synced. */
   async deployTo(host: string, { timeout = DEPLOY }: { timeout?: number } = {}): Promise<void> {
     const start = Date.now();
     await this.#clickButton(this.deployButton);
@@ -237,6 +219,14 @@ export default class ProjectRow {
   }
 
   /**
+   * StatusRow's error line, rendered only while an action's last attempt failed
+   * (see createActionRunner() in src/lib/actions.svelte.ts).
+   */
+  get errorRow(): Element {
+    return this.root.$("div[role='status'].text-destructive");
+  }
+
+  /**
    * Poll until StatusRow's error line shows exactly `expected`. Cannot be a bare assertion:
    * createActionRunner() sets the error asynchronously, after the click handler's own await settles.
    */
@@ -254,11 +244,7 @@ export default class ProjectRow {
     );
   }
 
-  /**
-   * Poll the deployment status text until it equals `targetStatus`. The status span and the
-   * host label both carry text-muted-foreground + text-xs, so this checks every match rather
-   * than assuming a single one.
-   */
+  /** Checks every match: the status span and the host label share the same classes. */
   async waitForSyncStatus(targetStatus: string, timeoutMs = SYNC_CONVERGE): Promise<void> {
     await browser.waitUntil(
       async () => {

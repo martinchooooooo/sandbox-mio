@@ -1,18 +1,11 @@
 import { type Element } from "./app.page.js";
 import { AGENT_INSTALL, COMMAND, PACKAGE_INSTALL, PANEL_RENDER, SUBPROCESS } from "../../lib/timeouts.js";
 
-// Page object for a sandbox's Dashboard content (docs/features/consolidate-app-container/02_dev.md
-// Phase C): a DOM region of the single `main-navigation-panel` webview (WorkspaceDashboard.svelte),
-// not a separate webview any more — every getter here just queries that one document. WebDriver's
-// session never needs to switch windows to reach it.
+// A DOM region of the single `main-navigation-panel` webview, not a separate one — no window
+// switching needed (docs/features/consolidate-app-container/02_dev.md Phase C).
 class WorkspaceDashboardPage {
-  // Wait for this sandbox's Dashboard content to actually be rendered. Dashboard visibility is
-  // derived client-side state (activeAppLabel() === null && activeSandbox === sandbox,
-  // src/routes/+layout.svelte), and even once shown, WorkspaceDashboard.svelte's own onMount still
-  // needs to resolve `invoke("list_sandboxes")` and populate `workspacePath` before PackageManager/
-  // AgentManager/PortsManager mount. Wait for the package input — the first element of that gated
-  // block — so callers don't race ahead of it. `sandbox` is accepted (not read from the DOM) purely
-  // for the error message; callers are responsible for having navigated to the right sandbox first.
+  // The package input is the first element gated behind WorkspaceDashboard.svelte's `workspacePath`,
+  // so waiting on it also covers the managers below it. `sandbox` only names the error.
   async waitForRendered(sandbox: string): Promise<void> {
     await this.packageInput.waitForExist({
       timeout: PANEL_RENDER,
@@ -21,7 +14,6 @@ class WorkspaceDashboardPage {
   }
 
   // ── App launcher (docs/features/workspace-app-tabs/02_dev.md Phase D) ──────
-  // Each launchable app renders a `button[data-app="<kind>"]` above PackageManager/AgentManager.
 
   launcherButton(kind: "terminal" | "agentweb"): Element {
     return $(`button[data-app="${kind}"]`);
@@ -47,12 +39,8 @@ class WorkspaceDashboardPage {
     await el.click();
   }
 
-  // The dashboard is its own top-level WebView2 surface (not a DOM subtree of main-global), shown
-  // via the Rust side's `switch_pane`/`activate_pane`. A single WebDriver `click()` issued right
-  // after that pane becomes the active window can land before WebView2 has actually routed input
-  // focus into it — the click "succeeds" with no error, but the element never becomes
-  // `document.activeElement`, so the Svelte `onfocus` handler (which fetches suggestions) never
-  // fires. Retry the click until focus actually lands instead of trusting the first one.
+  // One click is not enough: a click landing before WebView2 has routed input focus reports success
+  // yet leaves the element unfocused, so the `onfocus` handler that fetches suggestions never fires.
   async #focusInput(input: Element): Promise<void> {
     const el = await input;
     await el.scrollIntoView();
@@ -93,7 +81,7 @@ class WorkspaceDashboardPage {
   }
 
   // ── Package autocomplete ────────────────────────────────────────────────────
-  // The suggestion dropdown is mounted to document.body via a Svelte portal action.
+  // Selectors are body-rooted, not input-rooted: the dropdown is portalled to document.body.
 
   async typeInPackageInput(text: string): Promise<void> {
     await this.#focusInput(this.packageInput);
@@ -192,9 +180,8 @@ class WorkspaceDashboardPage {
   }
 
   // ── Port management (PortsManager.svelte) ──────────────────────────────────
-  // Each open forward renders as a row keyed by its `kindLabel` text: the fixed port label
-  // (e.g. "Exposed :4000") for a manually-exposed port, or the `.mio/ports.json` label
-  // (e.g. "webapp") for a file-declared one. The row's link text is the host URL to dial.
+  // `kindLabel` keys a row: "Exposed :4000" for a manually-exposed port, or the `.mio/ports.json`
+  // label (e.g. "webapp") for a file-declared one.
 
   get exposePortInput(): Element {
     return $("input[placeholder='Expose a port (e.g. 3000)']");
@@ -208,7 +195,6 @@ class WorkspaceDashboardPage {
     return $("span=No ports open.");
   }
 
-  // The row div wrapping a given kindLabel's span (see PortsManager.svelte's `{#each}` block).
   portRow(kindLabel: string): Element {
     return $(`span=${kindLabel}`).$("..");
   }
@@ -229,10 +215,8 @@ class WorkspaceDashboardPage {
   }
 
   async waitForPortRowGone(kindLabel: string, timeoutMs = SUBPROCESS): Promise<void> {
-    // Check the label span directly, not `portRow()`'s `$("span=…").$("..")` parent chain: once the
-    // row is truly gone the base span no longer exists, and chaining `.$("..")` onto a missing
-    // element throws ("Can't call $ …") instead of yielding a not-existing element — which would
-    // make this negative wait fail on the very success it's waiting for.
+    // Checks the label span directly rather than portRow(): chaining `.$("..")` onto the missing
+    // span throws instead of yielding a not-existing element, failing on the very success awaited.
     await browser.waitUntil(async () => !(await $(`span=${kindLabel}`).isExisting()), {
       timeout: timeoutMs,
       interval: 500,
@@ -240,8 +224,6 @@ class WorkspaceDashboardPage {
     });
   }
 
-  // PortsManager.svelte renders the URL as a <button onclick={openUrl(...)}> with no href, so the
-  // port only exists in its text; `data-port-url` marks it and survives restyling (cf. `data-app`).
   async portRowHostPort(kindLabel: string): Promise<number> {
     const row = await this.portRow(kindLabel);
     const link = await row.$("button[data-port-url]");
@@ -251,7 +233,7 @@ class WorkspaceDashboardPage {
     return Number(match[1]);
   }
 
-  // Manually-exposed rows show a "Stop exposing" ✕ button; file-declared ones don't.
+  /** Only manually-exposed rows carry one; file-declared ports cannot be closed from the UI. */
   async hasCloseButton(kindLabel: string): Promise<boolean> {
     const row = await this.portRow(kindLabel);
     return (await row.$("button[title='Stop exposing']")).isExisting();

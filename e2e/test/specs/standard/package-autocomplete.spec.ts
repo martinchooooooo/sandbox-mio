@@ -94,8 +94,7 @@ describe("Package autocomplete", function () {
   });
 
   it("installs successfully after autocomplete selection", async () => {
-    // The input already contains PKG from the previous step; installPackage calls setValue(PKG)
-    // (idempotent) then clicks Install and waits for the package chip to appear.
+    // installPackage's setValue(PKG) is idempotent, so reusing the value left by the previous step is safe.
     await workspaceDashboard.installPackage(PKG);
 
     assert(

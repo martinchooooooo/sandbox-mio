@@ -3,16 +3,12 @@ import { podman, podmanOk, LOCAL_CONNECTION } from "../../../lib/podman-connecti
 import { MISE_BASE_IMAGE } from "../../../lib/podman-machine.js";
 import { captureDiagOnFailure } from "../../../lib/diag.js";
 
-// Regression guard for the missing base-image build. The mise base image is never published to a
-// registry, so when it is absent `podman create --pull=missing` falls back to a registry pull that
-// fails ("requested access to the resource is denied"). The fix has `create_sandbox` build the
-// image from the bundled Containerfile on first use; this spec removes the image and asserts a
-// sandbox can still be created, which fails against the unfixed backend.
+// Regression guard: the mise base image is never published to a registry, so when it is absent
+// `podman create --pull=missing` falls back to a failing registry pull. create_sandbox must instead
+// build it from the bundled Containerfile on first use.
 //
-// This file is named to sort first so it runs before any other spec creates a container: removing
-// the image force-removes containers built on it, so it must execute on an otherwise clean machine.
-// Removing and rebuilding the ~324 MB image is the unavoidable cost of exercising the build path —
-// the rebuilt image is left in place for the specs that follow.
+// Sorted to run first: removing the image force-removes containers built on it, so this needs an
+// otherwise-clean machine. The rebuilt ~324 MB image is left in place for later specs.
 describe("Base image bootstrap", () => {
   captureDiagOnFailure();
 

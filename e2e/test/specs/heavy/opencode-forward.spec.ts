@@ -8,14 +8,13 @@ import ModelsPage from "../../pageobjects/models.page.js";
 import { podman, podmanOk, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
 import { captureDiagOnFailure } from "../../../lib/diag.js";
 
-// HEAVY spec: realizes the dev plan's "assert the container reaches host.containers.internal:51199"
-// requirement (docs/features/opencode-agent/02_dev.md, Cross-Cutting Concerns). It is the only test
-// that exercises the full app-wide reverse-forward bridge: a running sandbox container on the
-// mio-tests machine reaching the host inference server through the fixed VM port. Excluded from the
-// default glob (downloads + loads a real GGUF and starts a container); run via `pnpm run test:heavy`.
+// HEAVY spec: covers docs/features/opencode-agent/02_dev.md, Cross-Cutting Concerns — the
+// container must reach host.containers.internal:51199. Only test exercising the full app-wide
+// reverse-forward bridge; excluded from the default glob (downloads a GGUF, starts a container).
 
 const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
-const INFERENCE_VM_PORT = 51199; // must equal sync::INFERENCE_VM_PORT and opencode.ts INFERENCE_VM_PORT
+// Must equal INFERENCE_VM_PORT in src-tauri/src/sync/mod.rs and src/lib/agents/local-llm.ts.
+const INFERENCE_VM_PORT = 51199;
 
 const APP_DATA_MODELS = path.join(
   process.env.APPDATA ?? path.join(process.env.USERPROFILE ?? "", "AppData", "Roaming"),

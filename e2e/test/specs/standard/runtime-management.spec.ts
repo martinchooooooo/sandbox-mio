@@ -8,11 +8,9 @@ import { podman, podmanOk, LOCAL_CONNECTION, REMOTE_CONNECTION } from "../../../
 import { captureDiagOnFailure } from "../../../lib/diag.js";
 import { useSandboxWorkspace } from "../../../lib/sandbox-suite.js";
 
-// The test tool: `jq` is a tiny static single-binary CLI (no runtime deps, so it runs on the glibc
-// base unmodified), resolves through mise's aqua backend, and `jq --version` prints a stable
-// "jq-<semver>" line. It is the tool the 2026-06-27 mise spike reproduced byte-identically across
-// machines, so its install and cross-machine reproduction are already hand-proven (see the "Spike
-// Validation" section of docs/features/sandbox-runtime-management/02_dev.md).
+// `jq` is a tiny static binary with no runtime deps and a stable "jq-<semver>" version line. It is
+// the tool the 2026-06-27 mise spike reproduced byte-identically across machines (Spike Validation,
+// docs/features/sandbox-runtime-management/02_dev.md), so its cross-machine reproduction is hand-proven.
 const PKG = "jq";
 // `jq --version` prints `jq-1.8.2`; the "jq-" prefix is stable across the patch version.
 const PKG_OUTPUT = "jq-";

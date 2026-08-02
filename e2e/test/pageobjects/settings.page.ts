@@ -1,16 +1,13 @@
 import AppPage, { type Element } from "./app.page.js";
 import { COMMAND } from "../../lib/timeouts.js";
 
-// The /settings screen: picks the inference engine, persists advanced llama options, and renders
-// the static runtime-setup explainer (the same RuntimeSteps component the /models page drives
-// live). Selectors are data-attribute based (set in src/routes/settings/+page.svelte and
-// src/lib/models/RuntimeSteps.svelte) so the page object never depends on CSS classes or copy.
+// Selectors are data-attribute based (src/routes/settings/+page.svelte,
+// src/lib/models/RuntimeSteps.svelte) so this page object never depends on CSS classes or copy.
 class SettingsPage extends AppPage {
   get navLink(): Element {
     return $("[role='tab'][data-value='/settings']");
   }
 
-  // Wraps the engine buttons; its data-active-engine reflects the currently selected engine.
   get engineGroup(): Element {
     return $("[data-active-engine]");
   }
@@ -31,8 +28,7 @@ class SettingsPage extends AppPage {
     return $("[data-reset-podman-machine-done]");
   }
 
-  // Navigate to /settings and wait for the engine group to render. The nav link only exists on the
-  // home page, so callers must start from home (the app launches there).
+  /** Callers must start from home: the nav link exists nowhere else. */
   async open(timeout = COMMAND): Promise<void> {
     const url = await browser.getUrl();
     if (!url.includes("/settings")) {
@@ -43,7 +39,6 @@ class SettingsPage extends AppPage {
     await (await this.engineGroup).waitForDisplayed({ timeout });
   }
 
-  // The engine currently shown as selected ("llama" | "foundry").
   async activeEngine(): Promise<string> {
     return (await (await this.engineGroup).getAttribute("data-active-engine")) ?? "";
   }
@@ -54,7 +49,6 @@ class SettingsPage extends AppPage {
     await btn.click();
   }
 
-  // The non-empty titles of every rendered runtime-setup checklist row (static explainer mode).
   async stepTitles(): Promise<string[]> {
     const titles = await $$("[data-step-id] [data-step-title]");
     const texts: string[] = [];
@@ -62,7 +56,6 @@ class SettingsPage extends AppPage {
     return texts;
   }
 
-  // Save the current settings and wait for the saved confirmation to appear.
   async save(): Promise<void> {
     const btn = await this.saveButton;
     await btn.waitForClickable({ timeout: COMMAND });
@@ -70,7 +63,6 @@ class SettingsPage extends AppPage {
     await (await this.savedMarker).waitForDisplayed({ timeout: COMMAND });
   }
 
-  // Advanced Debugging: run the stuck-Podman-machine reset and wait for the done confirmation.
   async resetPodmanMachine(): Promise<void> {
     const btn = await this.resetPodmanMachineButton;
     await btn.waitForClickable({ timeout: COMMAND });

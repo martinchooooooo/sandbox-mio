@@ -19,9 +19,8 @@ import {
 
 const PASEO_WEB_PORT = "6767";
 
-// Authenticated status probe — the exact request fetch_paseo_server_info (src-tauri/src/lib.rs)
-// must have already succeeded at for the pane to exist. Returns the serverId on HTTP 200, or
-// undefined on any failure.
+// Mirrors the auth check fetch_paseo_server_info makes (src-tauri/src/lib.rs) before a pane exists.
+// Returns the serverId on HTTP 200, undefined otherwise.
 async function fetchServerId(port: string, password: string): Promise<string | undefined> {
   try {
     const res = await fetch(`http://127.0.0.1:${port}/api/status`, {
@@ -93,11 +92,8 @@ describe("Agent web UI (paseo)", function () {
 
   it("installs the Pi agent so the Manage tab's Agents launcher becomes available", async () => {
     // LAUNCHABLE_APPS gates "agentweb" on installedAgents.length > 0 (src/lib/workspace/apps.ts,
-    // matching AgentManager.svelte's own predicate, docs/features/workspace-app-tabs/02_dev.md
-    // Decision 1) — the paseo web UI has nothing to show for a sandbox with no agent installed, so
-    // the launcher button does not render at all until one exists. Pi is the lightest catalogue
-    // entry (a single mise package, no postinstall steps, no auth flow), so it is installed here
-    // purely to satisfy the gate, not because this spec cares about Pi itself.
+    // docs/features/workspace-app-tabs/02_dev.md Decision 1) — the launcher does not render until an
+    // agent exists. Pi is installed purely to satisfy that gate (lightest catalogue entry, no auth flow).
     await workspaceDashboard.startAgentInstall("Pi");
     await workspaceDashboard.waitForAgentRow("Pi", 300000);
   });

@@ -1,8 +1,5 @@
-// Reads/drives the single AppContainer workspace registry (src-tauri/src/workspace/mod.rs) through
-// its Tauri commands. `main-navigation-panel` is the only chrome webview (nav rail, switcher tab
-// bar, and every sandbox's Dashboard are DOM regions of that one document,
-// docs/features/consolidate-app-container/02_dev.md Phase C); a Terminal/AgentWeb pane is the one
-// remaining genuine second native surface, positioned by Rust as `WorkspaceState.overlay`.
+// Drives the AppContainer workspace registry (src-tauri/src/workspace/mod.rs) through its Tauri
+// commands. Terminal/AgentWeb panes are the only native surface besides `main-navigation-panel`.
 
 export type AppKind = "terminal" | "agentweb";
 

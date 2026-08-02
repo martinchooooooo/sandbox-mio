@@ -9,19 +9,13 @@ import { COMMAND, PANEL_RENDER, PODMAN_RECOVERY, SUBPROCESS, UI_SETTLE } from ".
 import { captureDiagOnFailure } from "../../../lib/diag.js";
 
 // Proves the Podman startup-recovery feature end to end (docs/features/podman-startup-recovery):
-// with podman-machine-default stopped, /projects shows the recovery screen; clicking "Start Podman"
-// runs the real check_podman_ready/start_podman_machine commands (podman machine start + the setsid
-// socket-activation over `podman machine ssh` + poll_ready) and the page recovers. The decisive
-// proof is Step 6: `podman --connection podman-machine-default info` answering proves the rootless
-// socket was actually activated, not merely that the machine reports Running:true.
+// stopping podman-machine-default surfaces the recovery screen, and "Start Podman" must run the
+// real check_podman_ready/start_podman_machine path, not just report Running:true (Step 6 is decisive).
 //
-// The default suite spec (not heavy/): it downloads no artefacts but takes 30–60 s for the
-// stop/start cycle, so the suite timeout is widened to 120 s.
+// Takes 30-60s for the stop/start cycle (no artefact downloads), hence the widened 120s timeout.
 //
-// Topology mirrors production: sandboxes target mio-tests (the PODMAN_CONNECTION set in
-// beforeSession), while the startup probe targets podman-machine-default. Because mio-tests stays
-// running throughout, check_other_machines_running() returns true and the `wsl --shutdown` guard
-// correctly skips the reset — that path is out of scope here (see the e2e plan's Environment Notes).
+// Sandboxes target mio-tests (kept running throughout), so check_other_machines_running() skips the
+// `wsl --shutdown` reset — that path is out of scope here (see the e2e plan's Environment Notes).
 describe("Podman startup recovery", function () {
   this.timeout(120000);
 
@@ -43,12 +37,9 @@ describe("Podman startup recovery", function () {
   });
 
   after(() => {
-    // Restarting is not enough to undo this spec: check_podman_ready also runs poll_ready →
-    // `podman --connection <machine> info` (src-tauri/src/machine/mod.rs), so a machine that is
-    // Running with a dead rootless socket still fails the probe. A mid-spec failure can leave
-    // exactly that state, and this spec sits twelfth of fifteen in the alphabetical standard order,
-    // so the specs after it would each hit the "Start Podman" screen — one failure becoming four.
-    // Both steps are best-effort: warn rather than throw, so cleanup never masks a real failure.
+    // Restarting alone isn't enough: check_podman_ready also polls the rootless socket
+    // (src-tauri/src/machine/mod.rs), so a Running machine with a dead socket still fails the probe —
+    // and a mid-spec failure here would leave every later spec hitting the recovery screen. Warn, don't throw.
     spawnSync("podman", ["machine", "start", DEFAULT_MACHINE], {
       encoding: "utf8",
       shell: true,
@@ -85,8 +76,8 @@ describe("Podman startup recovery", function () {
     });
   });
 
-  // Step 3 — Clicking Start Podman puts the button into its loading/disabled state for the duration
-  // of start_podman_machine (loading={busy === "start"}, disabled={busy !== null}).
+  // Step 3 — Clicking Start Podman disables the button and marks it busy for the duration of
+  // start_podman_machine.
   it("clicking Start Podman enters a loading state", async () => {
     const startButton = await ProjectsPage.startPodmanButton;
     await startButton.click();
@@ -112,9 +103,9 @@ describe("Podman startup recovery", function () {
     await ActivityCenter.waitForTask("podman-startup", ["running", "succeeded"], SUBPROCESS);
   });
 
-  // Step 5 — Recovery completes: startPodman() set podmanUnavailable = false, removing the recovery
-  // screen. The disappearance of the Start Podman button is the discriminating signal (the Create
-  // form above the list stays mounted throughout, so Create appearing does not prove recovery).
+  // Step 5 — Recovery completes when startPodman() clears the podmanUnavailable flag. The Start Podman
+  // button's disappearance is the discriminating signal — Create stays mounted throughout, so its
+  // presence alone would not prove recovery.
   it("projects page loads after recovery completes", async () => {
     await ProjectsPage.startPodmanButton.waitForDisplayed({
       reverse: true,
