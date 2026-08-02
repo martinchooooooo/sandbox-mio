@@ -102,6 +102,20 @@ export function startPodmanSocket(machineName: string): void {
 
 const SOCKET_ATTEMPTS = 4;
 
+/**
+ * Launch-and-poll the rootless API socket, retried because it sometimes fails to bind on the first
+ * try on the WSL image. Cheap when already live — startPodmanSocket's `test -S` short-circuits.
+ */
+export function activatePodmanSocket(machineName: string, attempts = SOCKET_ATTEMPTS): boolean {
+  console.log(`Activating rootless Podman socket on "${machineName}"...`);
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    startPodmanSocket(machineName);
+    if (waitForConnection(machineName)) return true;
+    console.log(`  "${machineName}" not ready (attempt ${attempt}/${attempts}), retrying...`);
+  }
+  return false;
+}
+
 function tryStart(machineName: string) {
   return podmanHost(["machine", "start", machineName], {
     stdio: "inherit",
@@ -170,26 +184,13 @@ export function provisionMachine(machineName: string): void {
       startResult = tryStart(machineName);
     }
     if (startResult.status !== 0) {
-      // HCS_E_CONNECTION_TIMEOUT and similar WSL2 bootstrap failures leave the kernel service
-      // stuck; a shutdown resets it. Tried once only — a second failure means a broken machine.
-      console.log(`  machine start failed (exit ${startResult.status}), attempting wsl --shutdown recovery...`);
-      spawnSync("wsl", ["--shutdown"], { stdio: "inherit", shell: true });
-      sleepSync(2000);
-      spawnSync("podman", ["machine", "start", machineName], { stdio: "inherit", shell: true });
+      throw new Error(
+        `podman machine start "${machineName}" failed even after a full reset (${describeFailure(startResult)})`
+      );
     }
   }
 
-  console.log(`Activating rootless Podman socket on "${machineName}"...`);
-  // Retried: the socket intermittently fails to bind on the first try on the WSL image.
-  let ready = false;
-  for (let attempt = 1; attempt <= SOCKET_ATTEMPTS && !ready; attempt++) {
-    startPodmanSocket(machineName);
-    ready = waitForConnection(machineName);
-    if (!ready) {
-      console.log(`  "${machineName}" not ready (attempt ${attempt}/${SOCKET_ATTEMPTS}), retrying...`);
-    }
-  }
-  if (!ready) {
+  if (!activatePodmanSocket(machineName)) {
     throw new Error(`Podman connection "${machineName}" did not become ready after ${SOCKET_ATTEMPTS} attempts`);
   }
 }

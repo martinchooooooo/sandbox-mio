@@ -279,12 +279,15 @@ export const config: WebdriverIO.Config = {
       }
     );
     tauriDriver.on("error", (error) => {
-      console.error("tauri-driver error:", error);
+      // process.exit below used to fire with nothing else written: whatever spec was mid-test lost
+      // its evidence (no reporter line, no FAILURES_LOG entry — the exit cut mocha off first). Log
+      // here, synchronously, before the process dies.
+      logCrash(`tauri-driver error: ${error.message ?? error}`, specs);
       process.exit(1);
     });
     tauriDriver.on("exit", (code) => {
       if (!exit) {
-        console.error("tauri-driver exited with code:", code);
+        logCrash(`tauri-driver exited unexpectedly with code: ${code}`, specs);
         process.exit(1);
       }
     });
@@ -301,15 +304,13 @@ export const config: WebdriverIO.Config = {
     throw new Error("[e2e] no app webview found among the window handles");
   },
   afterTest(_test, _context, result) {
-    if (!result.passed && result.error) {
-      const err = result.error as Error & { stack?: string };
-      const stripAnsi = (s: string) => s.replace(/\x1B\[[0-9;]*[A-Za-z]/g, "");
-      const title = _test.fullTitle || `${_test.parent} > ${_test.title}`;
-      const message = stripAnsi(err.message ?? String(err));
-      const stack = stripAnsi(err.stack ?? "");
-      const lines = [`FAILED: ${title}`, message, stack, ""].join("\n");
-      fs.appendFileSync(FAILURES_LOG, lines);
-    }
+    logFailure(_test.fullTitle || `${_test.parent} > ${_test.title}`, result);
+  },
+  // Suite-level before/after hooks (e.g. podman-startup-recovery.spec.ts's `before()`) fail outside
+  // any `it()`, so afterTest above never sees them — without this, a hook failure left
+  // FAILURES_LOG empty and the reporter's only trace was mocha's own "N passing" summary.
+  afterHook(_test, _context, result, hookName) {
+    logFailure(`${_test.fullTitle || _test.parent} > ${hookName}`, result);
   },
   afterSession: () => {
     closeTauriDriver();
@@ -346,6 +347,23 @@ export const config: WebdriverIO.Config = {
     }
   },
 };
+
+const stripAnsi = (s: string) => s.replace(/\x1B\[[0-9;]*[A-Za-z]/g, "");
+
+// Shared by afterTest and afterHook so a suite hook failure is logged identically to a test failure.
+function logFailure(title: string, result: { passed: boolean; error?: Error }): void {
+  if (result.passed || !result.error) return;
+  const err = result.error as Error & { stack?: string };
+  const message = stripAnsi(err.message ?? String(err));
+  const stack = stripAnsi(err.stack ?? "");
+  fs.appendFileSync(FAILURES_LOG, [`FAILED: ${title}`, message, stack, ""].join("\n"));
+}
+
+// tauri-driver dying takes the whole worker down via process.exit before mocha can report
+// anything — write straight to FAILURES_LOG so the in-flight spec isn't a silent gap.
+function logCrash(message: string, specs: string[]): void {
+  fs.appendFileSync(FAILURES_LOG, [`FAILED: ${specs.join(", ") || "(unknown spec)"}`, message, ""].join("\n"));
+}
 
 function closeTauriDriver(): void {
   exit = true;
