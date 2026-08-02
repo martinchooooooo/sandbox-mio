@@ -1,6 +1,10 @@
 import { type Element } from "./app.page.js";
 import { COMMAND, DEPLOY, SUBPROCESS, SYNC_CONVERGE, UI_SETTLE } from "../../lib/timeouts.js";
 
+// Enough to outlast two of the deployment poll's 3 s re-render windows without masking a button that
+// is genuinely inert — a click lost to a re-render is rare, so needing all three means a real defect.
+const ACTION_CLICK_ATTEMPTS = 3;
+
 /**
  * A single project's row in the projects list. Component object: it wraps one `<li>` and
  * exposes every control inside it (start/stop, deploy/undeploy, destroy, the sync switch,
@@ -90,7 +94,45 @@ export default class ProjectRow {
   async #clickButton(button: Element): Promise<void> {
     const el = await button;
     await el.scrollIntoView();
+    // The projects list re-renders on a 3 s deployment poll (src/routes/projects/+page.svelte), so a
+    // click issued without this can land while the row is being swapped and never reach a handler.
+    await el.waitForClickable({ timeout: UI_SETTLE });
     await el.click();
+  }
+
+  /**
+   * Click a button that invokes a backend command, and confirm the command actually started —
+   * retrying the click when it did not. A click lost to the deployment poll's re-render leaves no
+   * trace: no busy state, no error, the row simply idle, which then burns the caller's whole budget.
+   */
+  async #clickAction(button: Element, action: string): Promise<void> {
+    for (let attempt = 1; attempt <= ACTION_CLICK_ATTEMPTS; attempt++) {
+      await this.#clickButton(button);
+      if (await this.#actionStarted(button)) return;
+      console.warn(`[e2e] "${action}" click ${attempt}/${ACTION_CLICK_ATTEMPTS} did not start the action, retrying...`);
+    }
+    throw new Error(
+      `"${action}" never started after ${ACTION_CLICK_ATTEMPTS} clicks — the row stayed idle with no busy state and no error`
+    );
+  }
+
+  // Whether the last click reached a handler: the row went busy, surfaced an error, or the button
+  // itself went away. Absence of all three within the window means the click was swallowed.
+  async #actionStarted(button: Element): Promise<boolean> {
+    try {
+      await browser.waitUntil(
+        async () => {
+          if (await (await this.errorRow).isExisting()) return true;
+          const el = await button;
+          if (!(await el.isExisting()) || !(await el.isDisplayed())) return true;
+          return (await el.getAttribute("aria-busy")) === "true";
+        },
+        { timeout: UI_SETTLE, interval: 200 }
+      );
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async start(): Promise<void> {
@@ -125,7 +167,7 @@ export default class ProjectRow {
     await select.waitForDisplayed({ timeout: UI_SETTLE });
     await select.selectByVisibleText(host);
 
-    await this.#clickButton(this.root.$("button=Deploy"));
+    await this.#clickAction(this.root.$("button=Deploy"), `deploy to "${host}"`);
 
     await this.#settle(
       async () => (await this.undeployButton).isDisplayed(),
@@ -140,7 +182,7 @@ export default class ProjectRow {
   // undeploy_sandbox (src-tauri/src/lib.rs) chains a flush, an SSH remove, Mutagen teardown and a
   // container start — same budget as deployTo.
   async undeploy(timeout = DEPLOY): Promise<void> {
-    await this.#clickButton(this.undeployButton);
+    await this.#clickAction(this.undeployButton, "undeploy");
     await this.#settle(async () => (await this.deployButton).isDisplayed(), "undeploy", timeout);
   }
 
