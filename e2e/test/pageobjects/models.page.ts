@@ -1,4 +1,5 @@
 import AppPage, { type Element } from "./app.page.js";
+import { COMMAND, SUBPROCESS } from "../../lib/timeouts.js";
 
 // The /models screen: probes host specs, downloads a GGUF, starts/stops the host inference server,
 // and exposes a live base_url. Selectors are data-attribute based (set in
@@ -39,7 +40,7 @@ class ModelsPage extends AppPage {
 
   async redetect(): Promise<void> {
     const btn = await this.redetectButton;
-    await btn.waitForClickable({ timeout: 10000 });
+    await btn.waitForClickable({ timeout: COMMAND });
     await btn.click();
   }
 
@@ -77,7 +78,7 @@ class ModelsPage extends AppPage {
   // Navigate to /models and wait for the host-specs probe to resolve. detect_machine_specs
   // shells out (PowerShell/winget) so the populated panel can lag the container by seconds — wait
   // for [data-specs-ready], not just the [data-specs] placeholder, or callers race the probe.
-  async open(timeout = 10000): Promise<void> {
+  async open(timeout = COMMAND): Promise<void> {
     const url = await browser.getUrl();
     if (!url.includes("/models")) {
       const link = await this.navLink;
@@ -85,7 +86,7 @@ class ModelsPage extends AppPage {
       await link.click();
     }
     await (await this.specsPanel).waitForDisplayed({ timeout });
-    await (await this.specsReady).waitForDisplayed({ timeout: 30000 });
+    await (await this.specsReady).waitForDisplayed({ timeout: SUBPROCESS });
   }
 
   // The rendered host-specs block; asserts the probe ran.
@@ -96,7 +97,7 @@ class ModelsPage extends AppPage {
   async startDownload(modelId: string): Promise<void> {
     const row = await this.row(modelId);
     const btn = await row.$("button=Download");
-    await btn.waitForDisplayed({ timeout: 10000 });
+    await btn.waitForDisplayed({ timeout: COMMAND });
     await btn.click();
   }
 
@@ -113,7 +114,7 @@ class ModelsPage extends AppPage {
   async startInference(modelId: string): Promise<void> {
     const row = await this.row(modelId);
     const btn = await row.$("[data-start]");
-    await btn.waitForClickable({ timeout: 10000 });
+    await btn.waitForClickable({ timeout: COMMAND });
     await btn.click();
   }
 
@@ -131,7 +132,7 @@ class ModelsPage extends AppPage {
   // surfacing as a timeout here rather than a bare "element not found" at the call site.
   async baseUrl(): Promise<string> {
     const el = await this.baseUrlEl;
-    await el.waitForDisplayed({ timeout: 10000 });
+    await el.waitForDisplayed({ timeout: COMMAND });
     return el.getText();
   }
 
@@ -145,7 +146,7 @@ class ModelsPage extends AppPage {
 
   async stopInference(): Promise<void> {
     const btn = await (await this.runningPanel).$("button=Stop");
-    await btn.waitForClickable({ timeout: 10000 });
+    await btn.waitForClickable({ timeout: COMMAND });
     await btn.click();
     // stop_inference kills the llama child synchronously (fast) then drops the handle, but tears the
     // reverse Mutagen forward down on a detached task (lib.rs) — `forward terminate` can take many
@@ -153,10 +154,10 @@ class ModelsPage extends AppPage {
     // promptly, inference_status reports not-running, and [data-running] clears on the next poll. A
     // timeout here means the command itself errored or never returned, not a slow forward teardown.
     await browser.waitUntil(async () => !(await this.runningPanel).isExisting(), {
-      timeout: 30000,
+      timeout: SUBPROCESS,
       interval: 500,
-      timeoutMsg: "status panel still shows running 30s after clicking Stop — stop_inference did " +
-        "not drop the server handle (the command errored or never returned).",
+      timeoutMsg: `status panel still shows running ${SUBPROCESS}ms after clicking Stop — stop_inference ` +
+        "did not drop the server handle (the command errored or never returned).",
     });
   }
 }

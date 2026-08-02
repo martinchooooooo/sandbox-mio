@@ -1,4 +1,5 @@
 import AppPage, { type Element } from "./app.page.js";
+import { COMMAND } from "../../lib/timeouts.js";
 
 // The /settings screen: picks the inference engine, persists advanced llama options, and renders
 // the static runtime-setup explainer (the same RuntimeSteps component the /models page drives
@@ -32,7 +33,7 @@ class SettingsPage extends AppPage {
 
   // Navigate to /settings and wait for the engine group to render. The nav link only exists on the
   // home page, so callers must start from home (the app launches there).
-  async open(timeout = 10000): Promise<void> {
+  async open(timeout = COMMAND): Promise<void> {
     const url = await browser.getUrl();
     if (!url.includes("/settings")) {
       const link = await this.navLink;
@@ -49,7 +50,7 @@ class SettingsPage extends AppPage {
 
   async selectEngine(engine: "llama" | "foundry"): Promise<void> {
     const btn = await $(`[data-engine='${engine}']`);
-    await btn.waitForClickable({ timeout: 10000 });
+    await btn.waitForClickable({ timeout: COMMAND });
     await btn.click();
   }
 
@@ -64,17 +65,17 @@ class SettingsPage extends AppPage {
   // Save the current settings and wait for the saved confirmation to appear.
   async save(): Promise<void> {
     const btn = await this.saveButton;
-    await btn.waitForClickable({ timeout: 10000 });
+    await btn.waitForClickable({ timeout: COMMAND });
     await btn.click();
-    await (await this.savedMarker).waitForDisplayed({ timeout: 10000 });
+    await (await this.savedMarker).waitForDisplayed({ timeout: COMMAND });
   }
 
   // Advanced Debugging: run the stuck-Podman-machine reset and wait for the done confirmation.
   async resetPodmanMachine(): Promise<void> {
     const btn = await this.resetPodmanMachineButton;
-    await btn.waitForClickable({ timeout: 10000 });
+    await btn.waitForClickable({ timeout: COMMAND });
     await btn.click();
-    await (await this.resetPodmanMachineDoneMarker).waitForDisplayed({ timeout: 10000 });
+    await (await this.resetPodmanMachineDoneMarker).waitForDisplayed({ timeout: COMMAND });
   }
 }
 

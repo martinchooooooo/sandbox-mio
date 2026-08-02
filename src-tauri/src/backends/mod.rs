@@ -7,6 +7,7 @@ use tauri::ipc::Channel;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
+use crate::env_ext::env_dir;
 use crate::mockctl::types::ProcessRunner;
 use crate::process_ext::NoWindow;
 use types::{
@@ -14,8 +15,8 @@ use types::{
     SyncStrategy, WorkspacePlan,
 };
 
-// `readBaseImage()` in `e2e/lib/podman-machine.ts` regex-parses both declarations below, so their
-// literal form (name, type, `const`) is load-bearing beyond Rust.
+// `e2e/lib/podman-machine.ts` regex-parses the two declarations below and `DEFAULT_MACHINE_NAME`,
+// so their literal form (name, type, `const`) is load-bearing beyond Rust.
 const BASE_IMAGE: &str = "sandbox-mio/base";
 /// Bump whenever the Containerfile changes: `ensure_base_image` short-circuits on an existing
 /// tag, so an unchanged version silently keeps stale images.
@@ -23,11 +24,18 @@ pub(crate) const BASE_IMAGE_VERSION: u32 = 4;
 
 const CONTAINERFILE: &str = include_str!("../../resources/Containerfile");
 
-/// The connection `podman machine init` creates for the local machine.
-pub(crate) const DEFAULT_CONNECTION: &str = "podman-machine-default";
+/// The connection `podman machine init` creates for the local machine. Renaming this const (not its
+/// value) breaks the regex parse in `e2e/lib/podman-machine.ts`, which mirrors it as `DEFAULT_MACHINE`.
+pub(crate) const DEFAULT_MACHINE_NAME: &str = "podman-machine-default";
 
 pub(crate) fn base_image() -> String {
     format!("{BASE_IMAGE}:{BASE_IMAGE_VERSION}")
+}
+
+/// The Podman connection/machine name to target: `PODMAN_CONNECTION` when set (e2e points this at
+/// a non-default machine, e.g. `mio-tests`)
+pub(crate) fn connection_name() -> String {
+    std::env::var("PODMAN_CONNECTION").unwrap_or_else(|_| DEFAULT_MACHINE_NAME.to_string())
 }
 
 fn parse_image_version(image: &str) -> Option<u32> {
@@ -44,8 +52,8 @@ const ZELLIJ_WEB_PORT: u16 = 8082;
 const PASEO_WEB_PORT: u16 = 6767;
 
 fn workspace_root() -> Result<std::path::PathBuf, BackendError> {
-    if let Ok(root) = std::env::var("SANDBOX_WORKSPACE_ROOT") {
-        return Ok(std::path::PathBuf::from(root));
+    if let Some(root) = env_dir("SANDBOX_WORKSPACE_ROOT") {
+        return Ok(root);
     }
     let documents = dirs::document_dir().ok_or(BackendError::DocumentsDirNotFound)?;
     Ok(documents.join("sandbox-mio"))
@@ -70,8 +78,7 @@ fn workspace_path(name: &str) -> Result<String, BackendError> {
 }
 
 pub fn default_backend(runner: Arc<dyn ProcessRunner>) -> std::sync::Arc<dyn SandboxBackend> {
-    let connection =
-        std::env::var("PODMAN_CONNECTION").unwrap_or_else(|_| DEFAULT_CONNECTION.to_string());
+    let connection = connection_name();
     std::sync::Arc::new(PodmanCliBackend {
         connection,
         build_lock: tokio::sync::Mutex::new(()),

@@ -1,3 +1,5 @@
+import { UI_SETTLE } from "../../lib/timeouts.js";
+
 // A lazily-resolved WebdriverIO element chain, as returned by the global `$`.
 export type Element = ReturnType<typeof $>;
 
@@ -18,9 +20,9 @@ export default class AppPage {
   async goHome(): Promise<void> {
     if (/\/(models|settings|intro|projects)(\/|$)/.test(await browser.getUrl())) {
       const projectsTab = await $("[role='tab'][data-value='/projects']");
-      await projectsTab.waitForDisplayed({ timeout: 5000 });
+      await projectsTab.waitForDisplayed({ timeout: UI_SETTLE });
       await projectsTab.click();
-      await $("[role='tab'][data-value='/settings']").waitForDisplayed({ timeout: 5000 });
+      await $("[role='tab'][data-value='/settings']").waitForDisplayed({ timeout: UI_SETTLE });
     }
   }
 }

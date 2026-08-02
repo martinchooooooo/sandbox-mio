@@ -4,12 +4,26 @@ import path from "path";
 import { spawn, spawnSync, type ChildProcess } from "child_process";
 import { fileURLToPath } from "url";
 
-import { provisionMachine, stopMachine, removeMachine, ensureMiseBaseImage } from "./lib/podman-machine.js";
+import {
+  DEFAULT_MACHINE,
+  provisionMachine,
+  stopMachine,
+  removeMachine,
+  ensureMiseBaseImage,
+  waitForConnection,
+} from "./lib/podman-machine.js";
 import { LOCAL_CONNECTION, REMOTE_CONNECTION } from "./lib/podman-connection.js";
 import { ensureMutagen, forwardCreate, SWEEP_ORPHAN_SESSION, SWEEP_KEEP_SESSION } from "./lib/mutagen.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const FAILURES_LOG = path.join(__dirname, "failures.log");
+
+// Every machine a standard run needs answering before the first spec starts.
+const REQUIRED_MACHINES = [DEFAULT_MACHINE, LOCAL_CONNECTION, REMOTE_CONNECTION];
+// Short per-machine probe: these are already provisioned, so this confirms rather than waits out a
+// boot. A repair pass can knock another machine down, so allow a few passes to reach a clean sweep.
+const VERIFY_TIMEOUT_MS = 5000;
+const VERIFY_PASSES = 3;
 
 // MIO_REMOTE_KEEP=1  — leave remote machine running after the suite (fast iteration)
 // MIO_REMOTE_REMOVE=1 — delete the remote machine's disk image entirely
@@ -46,6 +60,21 @@ const APP_DATA_DIR = path.join(
   "com.tincho.sandbox-mio",
 );
 const APP_DATA_MODELS = path.join(APP_DATA_DIR, "models");
+
+// Captured agent credential bundles (src-tauri/src/credentials/mod.rs `store_dir`) are redirected
+// out of APP_DATA_DIR rather than cleaned inside it: a bundle saved by a real "Capture credentials"
+// run switches AgentManager's UI to "Use saved login" (AgentManager.svelte), whose button
+// agent-setup.spec.ts cannot find — but deleting the developer's real bundle to avoid that costs
+// them a full re-auth. Pointing the app at an e2e-owned store gets the same clean slate with
+// nothing of theirs at stake. Passed via MIO_CREDENTIALS_DIR, like SANDBOX_WORKSPACE_ROOT above.
+const E2E_CREDENTIALS_DIR = path.join(os.homedir(), ".sandbox-mio-e2e-appdata", "credentials");
+process.env.MIO_CREDENTIALS_DIR = E2E_CREDENTIALS_DIR;
+
+// Persisted app settings (src-tauri/src/settings/mod.rs `settings_path`, normally app_config_dir()
+// = APP_DATA_DIR on Windows) are redirected for the same reason: each run must start from the Rust
+// defaults, and resetting them in place would delete the release build's real settings file.
+const E2E_SETTINGS_DIR = path.join(os.homedir(), ".sandbox-mio-e2e-appdata", "settings");
+process.env.MIO_SETTINGS_DIR = E2E_SETTINGS_DIR;
 
 // Kills podman/gvproxy/win-sshproxy/sandbox-mio/mutagen processes left running out of target/debug
 // by a previous run (each is designed to, or can, outlive its parent — see sync/mod.rs `shutdown`).
@@ -136,15 +165,27 @@ export const config: WebdriverIO.Config = {
   onPrepare: () => {
     fs.writeFileSync(FAILURES_LOG, "");
     fs.rmSync(WORKSPACE_ROOT, { recursive: true, force: true });
-    // Reset persisted app settings so each run starts from the Rust defaults (inferenceEngine:
-    // "llama"). Without this, a previous aborted run that saved "foundry" would pollute test 3's
-    // Start-gate assertion (the gate only fires when engine === "llama").
-    fs.rmSync(path.join(APP_DATA_DIR, "settings.json"), { force: true });
+    // Both directories belong to the suite, so they are wiped wholesale rather than cleaned inside
+    // APP_DATA_DIR. Settings must start from the Rust defaults (inferenceEngine: "llama") or a
+    // previous aborted run that saved "foundry" pollutes test 3's Start-gate assertion; credentials
+    // must start empty or AgentManager.svelte shows "Use saved login" and agent-setup.spec.ts fails.
+    fs.rmSync(E2E_SETTINGS_DIR, { recursive: true, force: true });
+    fs.rmSync(E2E_CREDENTIALS_DIR, { recursive: true, force: true });
     if (IS_LIGHT_RUN) {
       console.log("[e2e] light suite: skipping podman machine provisioning (MIO_MOCK_BACKEND=1).");
     } else {
+      // check_podman_ready (src-tauri/src/machine/mod.rs) probes DEFAULT_MACHINE unconditionally,
+      // whatever PODMAN_CONNECTION says, so every standard spec needs it running or it hangs on the
+      // "Start Podman" recovery screen (podman-startup-recovery.spec.ts).
       // Abort the entire suite on failure: WDIO catches onPrepare errors and logs "Error in hook"
-      // but continues running, so the app would start against a stopped machine.
+      // but continues running, so the app would start against the "Start Podman" gate.
+      try {
+        provisionMachine(DEFAULT_MACHINE);
+      } catch (e) {
+        console.error(`[e2e] ${DEFAULT_MACHINE} not ready: ${e instanceof Error ? e.message : String(e)}`);
+        console.error("[e2e] Aborting suite — the startup-recovery probe targets this machine unconditionally.");
+        process.exit(1);
+      }
       try {
         provisionMachine(LOCAL_CONNECTION);
       } catch (e) {
@@ -163,24 +204,31 @@ export const config: WebdriverIO.Config = {
         console.error("[e2e] Aborting suite — remote-dependent specs cannot run without the connection.");
         process.exit(1);
       }
+      // Provisioning order does not protect the machines provisioned first: the `wsl --shutdown`
+      // recovery step stops every WSL instance, so a late recovery silently takes an
+      // already-started machine down with it and the suite meets the "Start Podman" gate mid-run.
+      // Re-verify all three and repair, until one whole pass finds every connection answering.
+      for (let pass = 1; ; pass++) {
+        const down = REQUIRED_MACHINES.filter((name) => !waitForConnection(name, VERIFY_TIMEOUT_MS));
+        if (down.length === 0) break;
+        if (pass > VERIFY_PASSES) {
+          console.error(`[e2e] ${down.join(", ")} still unreachable after ${VERIFY_PASSES} repair passes.`);
+          console.error("[e2e] Aborting suite — a machine keeps going down as another one recovers.");
+          process.exit(1);
+        }
+        console.warn(`[e2e] ${down.join(", ")} went down during provisioning (pass ${pass}), repairing...`);
+        for (const name of down) {
+          try {
+            provisionMachine(name);
+          } catch (e) {
+            console.error(`[e2e] Could not repair ${name}: ${e instanceof Error ? e.message : String(e)}`);
+            process.exit(1);
+          }
+        }
+      }
+
       // Stage the mise base image on both connections before any spec runs.
       ensureMiseBaseImage(LOCAL_CONNECTION, [REMOTE_CONNECTION]);
-      // Guard: podman-startup-recovery.spec.ts needs podman-machine-default to be initialized (its
-      // own before() hook stops it but cannot init it). Warn (don't abort) so the rest of the suite
-      // still runs on machines where only mio-tests is provisioned — the spec then fails on Step 2
-      // navigation with a clear timeoutMsg instead of here.
-      const defaultMachineRaw = spawnSync(
-        "podman", ["machine", "list", "--format", "json"],
-        { encoding: "utf8", shell: true },
-      );
-      const defaultMachines: Array<{ Name: string }> = JSON.parse(defaultMachineRaw.stdout || "[]");
-      if (!defaultMachines.some((m) => m.Name === "podman-machine-default")) {
-        console.warn(
-          "[e2e] podman-machine-default is not initialized. " +
-            "podman-startup-recovery.spec.ts will fail on navigation. " +
-            "Run `podman machine init && podman machine start` once to initialize it.",
-        );
-      }
     }
     // Delete the existing debug exe before building. `tauri build` runs beforeBuildCommand
     // (pnpm build) which regenerates ../build, but tauri-build does not emit a rerun-if-changed

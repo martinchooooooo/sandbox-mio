@@ -158,6 +158,23 @@ standard failure-dump `afterEach`, same as any other spec.
 | A new launcher-side flag read through `argValues` (`e2e/wdio.conf.ts`) sees no value, so `IS_LIGHT_RUN` is false and `onPrepare` provisions a real Podman machine for a light run | `argValues` matches an exact flag argument or a `<flag>=` prefix only — a flag spelled any other way (a short alias, a differently punctuated form) falls through both branches | Pass `--suite`/`--spec` in either the space-separated or the `--flag=value` form, both of which `argValues` handles; a genuinely new spelling needs a new branch in `argValues` |
 | A light spec in a subdirectory of `test/specs/light/` never runs under `MIO_SPEC` | The filtered `LIGHT_SPECS` glob dropped the `**/` recursion the unfiltered glob has | Every tier glob in `e2e/wdio.conf.ts` is recursive (`./test/specs/light/**/*<MIO_SPEC>*.ts`, `./test/specs/standard/**/*.ts`, `./test/specs/heavy/**/*.ts`) — keep the `**/` when editing one, and keep the filtered and unfiltered light globs at the same depth |
 
+## Wait budgets: use the named constants from `lib/timeouts.ts`
+
+Every WebDriver wait takes its timeout from a named budget in `e2e/lib/timeouts.ts` rather than a
+literal. A budget names *what is being waited on* (`DEPLOY`, `PACKAGE_INSTALL`, `SUBPROCESS`), so
+two waits on the same kind of work stay equal by construction — `deployTo`/`undeploy` in
+`test/pageobjects/project-row.component.ts` are the pair that motivated the file. Pick the budget
+describing the slowest real step in the wait and let the number follow; add a new constant only when
+no existing one describes the work, and put the rationale for its size in its doc comment rather
+than at the call site.
+
+Raising a budget only makes a failing wait slower, while lowering one can break a passing spec — so
+when several literals collapse onto one name, take the largest of the group.
+
+Two things deliberately stay outside the file: mocha's `this.timeout(...)`, which is a per-spec
+ceiling over many waits rather than a wait, and the `spawnSync` budgets in `lib/podman-machine.ts`,
+which bound host provisioning that runs before WebDriver exists.
+
 ## Failure diagnostics: use `captureDiagOnFailure()` from `lib/diag.ts`
 
 Any spec that wants a page dump on failure (URL + page source + screenshot to `e2e/.diag`) should

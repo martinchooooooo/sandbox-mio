@@ -1,4 +1,9 @@
-import { spawnSync } from "child_process";
+import {
+  spawnSync,
+  type SpawnSyncOptions,
+  type SpawnSyncOptionsWithStringEncoding,
+  type SpawnSyncReturns,
+} from "child_process";
 import { readFileSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -7,20 +12,32 @@ import { fileURLToPath } from "url";
 // remote stand-in run rootless, so the socket path is the same on each.
 export const PODMAN_SOCKET = "/run/user/1000/podman/podman.sock";
 
+// Single source for every constant this file mirrors out of the Rust backend; a renamed or retyped
+// declaration there breaks the regexes below rather than silently desyncing.
+const BACKENDS_SRC = readFileSync(
+  fileURLToPath(new URL("../../src-tauri/src/backends/mod.rs", import.meta.url)),
+  "utf8"
+);
+
 // Base image for all sandboxes — mise + zellij baked in. Parsed from `BASE_IMAGE`/
-// `BASE_IMAGE_VERSION` in src-tauri/src/backends/mod.rs, so a version bump needs no update here but
-// a renamed or retyped declaration there breaks the regexes below.
+// `BASE_IMAGE_VERSION` in src-tauri/src/backends/mod.rs, so a version bump needs no update here.
 function readBaseImage(): string {
-  const src = readFileSync(
-    fileURLToPath(new URL("../../src-tauri/src/backends/mod.rs", import.meta.url)),
-    "utf8"
-  );
-  const name = src.match(/const BASE_IMAGE:\s*&str\s*=\s*"([^"]+)"/)?.[1];
-  const version = src.match(/const BASE_IMAGE_VERSION:\s*u32\s*=\s*(\d+)/)?.[1];
+  const name = BACKENDS_SRC.match(/const BASE_IMAGE:\s*&str\s*=\s*"([^"]+)"/)?.[1];
+  const version = BACKENDS_SRC.match(/const BASE_IMAGE_VERSION:\s*u32\s*=\s*(\d+)/)?.[1];
   if (!name || !version) throw new Error("Could not parse BASE_IMAGE / BASE_IMAGE_VERSION from backends/mod.rs");
   return `${name}:${version}`;
 }
 export const MISE_BASE_IMAGE = readBaseImage();
+
+// The machine the app's own startup probe hardcodes — not the connection the suite points the app
+// at (LOCAL_CONNECTION via PODMAN_CONNECTION), so both must be provisioned. Parsed from
+// `DEFAULT_MACHINE_NAME` in src-tauri/src/backends/mod.rs so a change there cannot desync silently.
+function readDefaultMachine(): string {
+  const name = BACKENDS_SRC.match(/const DEFAULT_MACHINE_NAME:\s*&str\s*=\s*"([^"]+)"/)?.[1];
+  if (!name) throw new Error("Could not parse DEFAULT_MACHINE_NAME from backends/mod.rs");
+  return name;
+}
+export const DEFAULT_MACHINE = readDefaultMachine();
 const RECIPE_DIR = path.resolve(
   fileURLToPath(new URL(".", import.meta.url)),
   "../../src-tauri/resources"
@@ -53,13 +70,23 @@ export function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+/**
+ * Runs the host `podman` CLI, defaulting to `shell: false` so argv reaches podman verbatim.
+ * The two calls that depend on that restate it explicitly rather than inherit it.
+ */
+function podmanHost(args: string[], opts: SpawnSyncOptionsWithStringEncoding): SpawnSyncReturns<string>;
+function podmanHost(args: string[], opts?: SpawnSyncOptions): SpawnSyncReturns<Buffer>;
+function podmanHost(args: string[], opts: SpawnSyncOptions = {}) {
+  return spawnSync("podman", args, { shell: false, ...opts });
+}
+
 // Poll `podman --connection <name> info` until it succeeds — the same readiness check the app
 // makes in verify_host. Returns true on success, false on timeout so the caller can re-launch
 // the service and retry.
 export function waitForConnection(connectionName: string, timeoutMs = 20000): boolean {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    if (spawnSync("podman", ["--connection", connectionName, "info"], { shell: true }).status === 0) {
+    if (podmanHost(["--connection", connectionName, "info"]).status === 0) {
       return true;
     }
     if (Date.now() >= deadline) {
@@ -87,8 +114,7 @@ export function waitForConnection(connectionName: string, timeoutMs = 20000): bo
 // the script before it reaches SSH. Spawning `podman` directly passes the command as one argv
 // element straight to the remote shell, which is the bash that must interpret it.
 export function startPodmanSocket(machineName: string): void {
-  spawnSync(
-    "podman",
+  podmanHost(
     [
       "machine", "ssh", machineName,
       `test -S ${PODMAN_SOCKET} || { mkdir -p $(dirname ${PODMAN_SOCKET}) && setsid env XDG_RUNTIME_DIR=/run/user/1000 podman system service --time=0 </dev/null >/tmp/podman-svc.log 2>&1 & }`,
@@ -97,14 +123,82 @@ export function startPodmanSocket(machineName: string): void {
   );
 }
 
-// Bring a podman machine up and ready: init if missing, start if stopped, activate the rootless
-// API socket (launch-and-poll, retried because the socket sometimes fails to bind first try on
-// the WSL image). Idempotent — safe to call every run.
-export function provisionMachine(machineName: string): void {
-  const listResult = spawnSync("podman", ["machine", "list", "--format", "json"], {
-    encoding: "utf8",
-    shell: true,
+const SOCKET_ATTEMPTS = 4;
+
+// Launch-and-poll the rootless API socket, retried because it sometimes fails to bind on the first
+// try on the WSL image. Returns whether the connection answered rather than throwing, so callers
+// choose: provisioning treats a dead socket as fatal, cleanup hooks only warn. Cheap when the
+// socket is already live — startPodmanSocket's `test -S` short-circuits and the first poll passes.
+export function activatePodmanSocket(machineName: string, attempts = SOCKET_ATTEMPTS): boolean {
+  console.log(`Activating rootless Podman socket on "${machineName}"...`);
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    startPodmanSocket(machineName);
+    if (waitForConnection(machineName)) return true;
+    console.log(`  "${machineName}" not ready (attempt ${attempt}/${attempts}), retrying...`);
+  }
+  return false;
+}
+
+// Bounds every `machine start` attempt: without a timeout, spawnSync blocks forever on a wedged
+// WSL2 boot (the failure this exists to recover from), hanging onPrepare — and the whole suite —
+// before a single test runs, with no error to explain why. A healthy start finishes well under it.
+const MACHINE_START_TIMEOUT_MS = 60000;
+
+// `shell` is intentionally false: under cmd.exe the timeout kills only cmd, leaving podman to
+// keep booting the distro that the last START_RECOVERY_STEPS entry then rm/unregisters underneath
+// it — manufacturing the desync that step exists to repair. Spawned directly, the timeout
+// kills podman itself (podman.exe still resolves via PATHEXT, as the shell-free calls elsewhere do).
+function tryStart(machineName: string) {
+  return podmanHost(["machine", "start", machineName], {
+    stdio: "inherit",
+    shell: false,
+    timeout: MACHINE_START_TIMEOUT_MS,
   });
+}
+
+// A timeout kill leaves status null and signal set, so failure is always `status !== 0`.
+function describeFailure(result: ReturnType<typeof tryStart>): string {
+  return result.signal ? `timed out after ${MACHINE_START_TIMEOUT_MS}ms` : `exit ${result.status}`;
+}
+
+interface RecoveryStep {
+  /** Announcement printed before the step runs, given the failure that triggered it. */
+  label: (failure: string) => string;
+  run: (machineName: string) => void;
+}
+
+// Escalating recovery for a failed `machine start`, tried in order until a start succeeds. Order is
+// load-bearing: each step is more destructive than the one before, so never reorder or skip ahead.
+const START_RECOVERY_STEPS: RecoveryStep[] = [
+  {
+    // HCS_E_CONNECTION_TIMEOUT and similar WSL2 bootstrap failures leave the WSL kernel service
+    // stuck; wsl --shutdown resets all instances cleanly and the next start gets a fresh window.
+    label: (failure) => `  machine start failed (${failure}), attempting wsl --shutdown recovery...`,
+    run: () => {
+      spawnSync("wsl", ["--shutdown"], { stdio: "inherit", shell: true });
+      sleepSync(2000);
+    },
+  },
+  {
+    // Surviving wsl --shutdown means the reset was cosmetic — most often WSL_E_DISTRO_NOT_FOUND,
+    // where podman's machine record and its backing WSL distro have gone out of sync. Only a
+    // teardown and reinit fixes that, mirroring reset_stuck_machine in
+    // src-tauri/src/machine/mod.rs. rm/unregister are best-effort: each errors when its target
+    // is already gone.
+    label: (failure) => `  machine start still failing (${failure}), resetting the machine record...`,
+    run: (machineName) => {
+      podmanHost(["machine", "rm", "-f", machineName], { stdio: "inherit" });
+      spawnSync("wsl", ["--unregister", machineName], { stdio: "inherit", shell: true });
+      console.log(`Recreating podman machine "${machineName}"...`);
+      podmanHost(["machine", "init", machineName], { stdio: "inherit" });
+    },
+  },
+];
+
+// Bring a podman machine up and ready: init if missing, start if stopped, activate the rootless
+// API socket. Idempotent — safe to call every run.
+export function provisionMachine(machineName: string): void {
+  const listResult = podmanHost(["machine", "list", "--format", "json"], { encoding: "utf8" });
 
   let machines: MachineListEntry[] = [];
   try {
@@ -117,35 +211,26 @@ export function provisionMachine(machineName: string): void {
 
   if (!machine) {
     console.log(`Creating podman machine "${machineName}"...`);
-    spawnSync("podman", ["machine", "init", machineName], { stdio: "inherit", shell: true });
+    podmanHost(["machine", "init", machineName], { stdio: "inherit" });
   }
 
   if (!machine?.Running) {
     console.log(`Starting podman machine "${machineName}"...`);
-    const startResult = spawnSync("podman", ["machine", "start", machineName], { stdio: "inherit", shell: true });
+    let startResult = tryStart(machineName);
+    for (const step of START_RECOVERY_STEPS) {
+      if (startResult.status === 0) break;
+      console.log(step.label(describeFailure(startResult)));
+      step.run(machineName);
+      startResult = tryStart(machineName);
+    }
     if (startResult.status !== 0) {
-      // HCS_E_CONNECTION_TIMEOUT and similar WSL2 bootstrap failures leave the WSL kernel service
-      // in a stuck state. A wsl --shutdown resets all instances cleanly; the machine can then be
-      // started on the next attempt. Only attempted once — if shutdown+start also fails, the
-      // machine is genuinely broken and we should not retry further.
-      console.log(`  machine start failed (exit ${startResult.status}), attempting wsl --shutdown recovery...`);
-      spawnSync("wsl", ["--shutdown"], { stdio: "inherit", shell: true });
-      sleepSync(2000);
-      spawnSync("podman", ["machine", "start", machineName], { stdio: "inherit", shell: true });
+      throw new Error(
+        `podman machine start "${machineName}" failed even after a full reset (${describeFailure(startResult)})`
+      );
     }
   }
 
-  console.log(`Activating rootless Podman socket on "${machineName}"...`);
-  const SOCKET_ATTEMPTS = 4;
-  let ready = false;
-  for (let attempt = 1; attempt <= SOCKET_ATTEMPTS && !ready; attempt++) {
-    startPodmanSocket(machineName);
-    ready = waitForConnection(machineName);
-    if (!ready) {
-      console.log(`  "${machineName}" not ready (attempt ${attempt}/${SOCKET_ATTEMPTS}), retrying...`);
-    }
-  }
-  if (!ready) {
+  if (!activatePodmanSocket(machineName)) {
     throw new Error(`Podman connection "${machineName}" did not become ready after ${SOCKET_ATTEMPTS} attempts`);
   }
 }
@@ -154,16 +239,13 @@ export function provisionMachine(machineName: string): void {
 // save|load. `podman image scp` is not used — it fails between machine connections on Windows.
 export function ensureMiseBaseImage(localName: string, remoteNames: string[] = []): void {
   const has = (name: string) =>
-    spawnSync("podman", ["--connection", name, "image", "exists", MISE_BASE_IMAGE], {
-      shell: false,
-    }).status === 0;
+    podmanHost(["--connection", name, "image", "exists", MISE_BASE_IMAGE]).status === 0;
 
   if (!has(localName)) {
     console.log(`Building ${MISE_BASE_IMAGE} on "${localName}" (one-time, ~324 MB)...`);
-    const build = spawnSync(
-      "podman",
+    const build = podmanHost(
       ["--connection", localName, "build", "-t", MISE_BASE_IMAGE, "-f", "Containerfile", "."],
-      { cwd: RECIPE_DIR, stdio: "inherit", shell: false }
+      { cwd: RECIPE_DIR, stdio: "inherit" }
     );
     if (build.status !== 0) {
       throw new Error(`Failed to build ${MISE_BASE_IMAGE} on "${localName}"`);
@@ -185,22 +267,19 @@ export function ensureMiseBaseImage(localName: string, remoteNames: string[] = [
 
 // Stop a machine without deleting it — leaves the WSL image on disk so the next run skips init.
 export function stopMachine(machineName: string): void {
-  spawnSync("podman", ["machine", "stop", machineName], { stdio: "inherit", shell: true });
+  podmanHost(["machine", "stop", machineName], { stdio: "inherit" });
 }
 
 // Delete a machine and its disk image (contrast stopMachine, which keeps the image).
 export function removeMachine(machineName: string): void {
-  spawnSync("podman", ["machine", "rm", "-f", machineName], { stdio: "inherit", shell: true });
+  podmanHost(["machine", "rm", "-f", machineName], { stdio: "inherit" });
 }
 
 // Parse the SSH transport details for a system connection from `podman system connection list`.
 // The port is assigned dynamically at machine boot, so this must be read fresh each run rather
 // than cached. Returns { user, host, port, identity }.
 export function connectionInfo(connectionName: string): ConnectionInfo {
-  const out = spawnSync("podman", ["system", "connection", "list", "--format", "json"], {
-    encoding: "utf8",
-    shell: true,
-  });
+  const out = podmanHost(["system", "connection", "list", "--format", "json"], { encoding: "utf8" });
   if (out.status !== 0) {
     throw new Error(`podman system connection list failed: ${out.stderr}`);
   }

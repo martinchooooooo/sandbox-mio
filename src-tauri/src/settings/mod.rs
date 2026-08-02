@@ -6,13 +6,20 @@ pub mod types;
 
 use tauri::{AppHandle, Manager};
 
+use crate::env_ext::env_dir;
 use types::{AppSettings, SettingsError};
 
+/// Directory holding `settings.json`. `MIO_SETTINGS_DIR` relocates it (see
+/// [`crate::env_ext::env_dir`]): an e2e run resetting settings to a known state would otherwise
+/// wipe the developer's real ones.
 fn settings_path(app: &AppHandle) -> Result<std::path::PathBuf, SettingsError> {
-    let dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|e| SettingsError::Io(e.to_string()))?;
+    let dir = match env_dir("MIO_SETTINGS_DIR") {
+        Some(dir) => dir,
+        None => app
+            .path()
+            .app_config_dir()
+            .map_err(|e| SettingsError::Io(e.to_string()))?,
+    };
     std::fs::create_dir_all(&dir).map_err(|e| SettingsError::Io(e.to_string()))?;
     Ok(dir.join("settings.json"))
 }

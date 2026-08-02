@@ -4,6 +4,8 @@ import { spawnSync } from "child_process";
 import ProjectsPage from "../../pageobjects/projects.page.js";
 import ActivityCenter from "../../pageobjects/activity.page.js";
 import { podman, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
+import { activatePodmanSocket, DEFAULT_MACHINE } from "../../../lib/podman-machine.js";
+import { COMMAND, PANEL_RENDER, PODMAN_RECOVERY, SUBPROCESS, UI_SETTLE } from "../../../lib/timeouts.js";
 
 // Proves the Podman startup-recovery feature end to end (docs/features/podman-startup-recovery):
 // with podman-machine-default stopped, /projects shows the recovery screen; clicking "Start Podman"
@@ -23,7 +25,7 @@ describe("Podman startup recovery", function () {
   this.timeout(120000);
 
   before(() => {
-    const stop = spawnSync("podman", ["machine", "stop", "podman-machine-default"], {
+    const stop = spawnSync("podman", ["machine", "stop", DEFAULT_MACHINE], {
       encoding: "utf8",
       shell: true,
     });
@@ -31,19 +33,29 @@ describe("Podman startup recovery", function () {
     // re-run after a failed recovery still proceeds (the recovery screen needs only a down machine).
     if (stop.status !== 0) {
       console.warn(
-        `[e2e] podman machine stop podman-machine-default exited ${stop.status}: ${stop.stderr.trim()}. ` +
+        `[e2e] podman machine stop ${DEFAULT_MACHINE} exited ${stop.status}: ${stop.stderr.trim()}. ` +
           "Proceeding — the machine may already be stopped.",
       );
     }
   });
 
   after(() => {
-    // The recovery flow should have left the machine running; if a mid-spec failure left it stopped,
-    // best-effort restart so subsequent manual runs are not affected.
-    spawnSync("podman", ["machine", "start", "podman-machine-default"], {
+    // Restarting is not enough to undo this spec: check_podman_ready also runs poll_ready →
+    // `podman --connection <machine> info` (src-tauri/src/machine/mod.rs), so a machine that is
+    // Running with a dead rootless socket still fails the probe. A mid-spec failure can leave
+    // exactly that state, and this spec sits twelfth of fifteen in the alphabetical standard order,
+    // so the specs after it would each hit the "Start Podman" screen — one failure becoming four.
+    // Both steps are best-effort: warn rather than throw, so cleanup never masks a real failure.
+    spawnSync("podman", ["machine", "start", DEFAULT_MACHINE], {
       encoding: "utf8",
       shell: true,
     });
+    if (!activatePodmanSocket(DEFAULT_MACHINE)) {
+      console.warn(
+        `[e2e] ${DEFAULT_MACHINE}'s rootless socket did not come up after this spec. ` +
+          "Specs following this one will show the 'Start Podman' recovery screen.",
+      );
+    }
   });
 
   // Step 1 — Land on home so the projects onMount fires fresh on the next step. onMount only runs on
@@ -51,7 +63,7 @@ describe("Podman startup recovery", function () {
   it("navigates home so the projects onMount fires fresh on the next step", async () => {
     await ProjectsPage.goHome();
     const homeHeading = $("h1");
-    await homeHeading.waitForDisplayed({ timeout: 5000 });
+    await homeHeading.waitForDisplayed({ timeout: UI_SETTLE });
   });
 
   // Step 2 — Entering /projects probes check_podman_ready, which detects the stopped machine and
@@ -59,13 +71,13 @@ describe("Podman startup recovery", function () {
   it("shows the 'Start Podman' screen when the machine is stopped", async () => {
     await ProjectsPage.open();
     await ProjectsPage.startPodmanButton.waitForDisplayed({
-      timeout: 15000,
+      timeout: PANEL_RENDER,
       timeoutMsg:
         "Expected 'Start Podman' button but it did not appear. check_podman_ready may have " +
         "returned Ok (machine still running) or the button label may have changed.",
     });
     await ProjectsPage.podmanNotRunningText.waitForDisplayed({
-      timeout: 5000,
+      timeout: UI_SETTLE,
       timeoutMsg: "Explanation text 'Podman machine is not running' not visible alongside the Start Podman button.",
     });
   });
@@ -82,7 +94,7 @@ describe("Podman startup recovery", function () {
         return busy === "true" || disabled !== null;
       },
       {
-        timeout: 5000,
+        timeout: UI_SETTLE,
         interval: 200,
         timeoutMsg: "Button did not enter a loading/disabled state after click.",
       },
@@ -94,23 +106,21 @@ describe("Podman startup recovery", function () {
   // panel poll may first observe the task after it has already completed.
   it("activity center shows the 'podman-startup' task", async () => {
     await ActivityCenter.openPanel();
-    await ActivityCenter.waitForTask("podman-startup", ["running", "succeeded"], 30000);
+    await ActivityCenter.waitForTask("podman-startup", ["running", "succeeded"], SUBPROCESS);
   });
 
   // Step 5 — Recovery completes: startPodman() set podmanUnavailable = false, removing the recovery
   // screen. The disappearance of the Start Podman button is the discriminating signal (the Create
   // form above the list stays mounted throughout, so Create appearing does not prove recovery).
-  // 90 s covers podman machine start (≤30 s) + socket activation (≤7 s) + poll (4 × 0.5 s) + event
-  // delivery.
   it("projects page loads after recovery completes", async () => {
     await ProjectsPage.startPodmanButton.waitForDisplayed({
       reverse: true,
-      timeout: 90000,
+      timeout: PODMAN_RECOVERY,
       timeoutMsg:
         "Recovery screen did not clear after Start Podman. start_podman_machine may have failed — " +
         "check the activity center panel for a failed 'podman-startup' task.",
     });
-    await ProjectsPage.createButton.waitForDisplayed({ timeout: 5000 });
+    await ProjectsPage.createButton.waitForDisplayed({ timeout: UI_SETTLE });
   });
 
   // Step 6 — The decisive CLI assertion: the rootless socket answers, proving activate_podman_socket
@@ -119,12 +129,12 @@ describe("Podman startup recovery", function () {
   it("podman-machine-default is reachable after recovery", async () => {
     const info = spawnSync(
       "podman",
-      ["--connection", "podman-machine-default", "info", "--format", "json"],
+      ["--connection", DEFAULT_MACHINE, "info", "--format", "json"],
       { encoding: "utf8", shell: false },
     );
     assert(
       info.status === 0,
-      `podman --connection podman-machine-default info failed (exit ${info.status}): ${info.stderr.trim()}. ` +
+      `podman --connection ${DEFAULT_MACHINE} info failed (exit ${info.status}): ${info.stderr.trim()}. ` +
         "The socket may not have been activated — check activate_podman_socket and poll_ready in backends/mod.rs.",
     );
   });
@@ -135,7 +145,7 @@ describe("Podman startup recovery", function () {
     const name = `e2e-recovery-${Date.now()}`;
     try {
       const row = await ProjectsPage.createProject(name, { timeout: 600000 });
-      await row.waitForDisplayed(10000);
+      await row.waitForDisplayed(COMMAND);
     } finally {
       // Best-effort cleanup of the container on mio-tests; the workspace dir is left for onComplete.
       podman(LOCAL_CONNECTION, ["rm", "-f", name], { check: false });

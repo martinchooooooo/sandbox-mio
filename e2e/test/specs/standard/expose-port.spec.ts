@@ -9,6 +9,7 @@ import { podman, podmanOk, LOCAL_CONNECTION } from "../../../lib/podman-connecti
 import { forwardList, forwardTerminate } from "../../../lib/mutagen.js";
 import { captureDiagOnFailure } from "../../../lib/diag.js";
 import { useSandboxWorkspace } from "../../../lib/sandbox-suite.js";
+import { COMMAND, SUBPROCESS } from "../../../lib/timeouts.js";
 
 // Two distinct sandbox-side ports: one exposed manually via the "Expose a port" UI, one declared
 // through `.mio/ports.json` to exercise the `watch_ports_file` auto-expose/auto-unexpose path.
@@ -75,7 +76,7 @@ describe("Exposing sandbox ports (network::expose_port / unexpose_port / watch_p
 
     await row.openWorkspace();
     await workspaceDashboard.waitForRendered(projectName);
-    await (await workspaceDashboard.noPortsText).waitForDisplayed({ timeout: 10000 });
+    await (await workspaceDashboard.noPortsText).waitForDisplayed({ timeout: COMMAND });
   });
 
   it("exposes a port via the UI and reaches the real service through the forward", async () => {
@@ -119,8 +120,9 @@ describe("Exposing sandbox ports (network::expose_port / unexpose_port / watch_p
     existing[String(FILE_PORT)] = "webapp";
     fs.writeFileSync(portsJsonPath, JSON.stringify(existing));
 
-    // poll_ports_file ticks every 2s (PORTS_FILE_POLL_INTERVAL, src-tauri/src/network/mod.rs).
-    await workspaceDashboard.waitForPortRow("webapp", 15000);
+    // Beyond poll_ports_file's 2s tick (PORTS_FILE_POLL_INTERVAL, src-tauri/src/network/mod.rs),
+    // the noticing tick still has to take a relay-pool slot and stand up a Mutagen forward.
+    await workspaceDashboard.waitForPortRow("webapp", SUBPROCESS);
 
     assert(
       !(await workspaceDashboard.hasCloseButton("webapp")),
@@ -141,10 +143,10 @@ describe("Exposing sandbox ports (network::expose_port / unexpose_port / watch_p
     delete existing[String(FILE_PORT)];
     fs.writeFileSync(portsJsonPath, JSON.stringify(existing));
 
-    await workspaceDashboard.waitForPortRowGone("webapp", 15000);
+    await workspaceDashboard.waitForPortRowGone("webapp", SUBPROCESS);
 
     await browser.waitUntil(() => !forwardList(`expose-${projectName}-${FILE_PORT}`).includes("Connected"), {
-      timeout: 15000,
+      timeout: SUBPROCESS,
       interval: 1000,
       timeoutMsg: `mutagen forward expose-${projectName}-${FILE_PORT} is still Connected after removing its ports.json entry`,
     });
@@ -156,12 +158,15 @@ describe("Exposing sandbox ports (network::expose_port / unexpose_port / watch_p
     await workspaceDashboard.waitForPortRowGone(label);
 
     await browser.waitUntil(() => !forwardList(`expose-${projectName}-${MANUAL_PORT}`).includes("Connected"), {
-      timeout: 15000,
+      timeout: SUBPROCESS,
       interval: 1000,
       timeoutMsg: `mutagen forward expose-${projectName}-${MANUAL_PORT} is still Connected after clicking its close button`,
     });
 
-    await (await workspaceDashboard.noPortsText).waitForDisplayed({ timeout: 10000 });
+    // No "No ports open." assertion here, unlike the opening test: by this point the workspace's
+    // Terminal/Agents forwards share the same list (PortsManager.svelte's `forwards.length > 0`),
+    // and the scan re-exposes the still-listening socat as `Auto :`. The row and forward checks
+    // above are the real outcomes. See docs/features/expose-ports/04_improvements.md.
   });
 
   it("destroy removes the container and its forwards stay gone", async () => {

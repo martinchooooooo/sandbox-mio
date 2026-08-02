@@ -1,4 +1,5 @@
 import { type Element } from "./app.page.js";
+import { PANEL_RENDER } from "../../lib/timeouts.js";
 
 // Page object for the switcher tab bar (SandboxSwitcherGroup.svelte), a DOM region of the single
 // `main-navigation-panel` webview (docs/features/consolidate-app-container/02_dev.md Phase C) —
@@ -25,14 +26,14 @@ class WorkspaceSwitcherPage {
 
   async clickTab(sandbox: string, kind: "dashboard" | "terminal" | "agentweb"): Promise<void> {
     const tab = await this.tab(sandbox, kind);
-    await tab.waitForExist({ timeout: 15000 });
+    await tab.waitForExist({ timeout: PANEL_RENDER });
     await tab.scrollIntoView();
     await tab.click();
   }
 
   async clickCloseTab(sandbox: string, kind: "terminal" | "agentweb"): Promise<void> {
     const button = await this.closeTabButton(sandbox, kind);
-    await button.waitForExist({ timeout: 15000 });
+    await button.waitForExist({ timeout: PANEL_RENDER });
     await button.scrollIntoView();
     await button.click();
   }

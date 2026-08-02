@@ -7,7 +7,7 @@ use std::process::Output;
 use std::sync::Arc;
 
 use crate::backends::types::BackendError;
-use crate::backends::{podman_command, DEFAULT_CONNECTION};
+use crate::backends::{podman_command, DEFAULT_MACHINE_NAME};
 use crate::mockctl::types::ProcessRunner;
 use crate::process_ext::NoWindow;
 
@@ -75,7 +75,7 @@ impl MachineManager for PodmanMachineManager {
         let machines: Vec<serde_json::Value> =
             serde_json::from_str(&stdout).map_err(|e| BackendError::ParseError(e.to_string()))?;
         Ok(machines.iter().any(|m| {
-            m["Name"].as_str() == Some(DEFAULT_CONNECTION) && m["Running"].as_bool() == Some(true)
+            m["Name"].as_str() == Some(DEFAULT_MACHINE_NAME) && m["Running"].as_bool() == Some(true)
         }))
     }
 
@@ -90,12 +90,12 @@ impl MachineManager for PodmanMachineManager {
             return false;
         };
         machines.iter().any(|m| {
-            m["Name"].as_str() != Some(DEFAULT_CONNECTION) && m["Running"].as_bool() == Some(true)
+            m["Name"].as_str() != Some(DEFAULT_MACHINE_NAME) && m["Running"].as_bool() == Some(true)
         })
     }
 
     async fn run_machine_start(&self) -> Result<(), BackendError> {
-        check(self.podman(&["machine", "start", DEFAULT_CONNECTION]).await?).map(|_| ())
+        check(self.podman(&["machine", "start", DEFAULT_MACHINE_NAME]).await?).map(|_| ())
     }
 
     async fn run_wsl_shutdown(&self) -> Result<(), BackendError> {
@@ -118,7 +118,7 @@ impl MachineManager for PodmanMachineManager {
             sock = PODMAN_SOCKET,
         );
         let Ok(mut child) = podman_command()
-            .args(["machine", "ssh", DEFAULT_CONNECTION])
+            .args(["machine", "ssh", DEFAULT_MACHINE_NAME])
             .arg(&script)
             .spawn()
         else {
@@ -134,7 +134,7 @@ impl MachineManager for PodmanMachineManager {
     async fn poll_ready(&self, attempts: usize) -> Result<(), BackendError> {
         let mut last = BackendError::CommandFailed("Podman socket is not ready".to_string());
         for attempt in 0..attempts {
-            match verify_host(&self.runner, DEFAULT_CONNECTION).await {
+            match verify_host(&self.runner, DEFAULT_MACHINE_NAME).await {
                 Ok(()) => return Ok(()),
                 Err(e) => last = e,
             }
@@ -182,22 +182,22 @@ impl MachineManager for PodmanMachineManager {
         let stdout = check(out)?;
         let machines: Vec<serde_json::Value> =
             serde_json::from_str(&stdout).map_err(|e| BackendError::ParseError(e.to_string()))?;
-        Ok(machines.iter().any(|m| m["Name"].as_str() == Some(DEFAULT_CONNECTION)))
+        Ok(machines.iter().any(|m| m["Name"].as_str() == Some(DEFAULT_MACHINE_NAME)))
     }
 
     async fn init_machine(&self) -> Result<(), BackendError> {
-        check(self.podman(&["machine", "init", DEFAULT_CONNECTION]).await?).map(|_| ())
+        check(self.podman(&["machine", "init", DEFAULT_MACHINE_NAME]).await?).map(|_| ())
     }
 
     async fn reset_stuck_machine(&self) -> Result<(), BackendError> {
         // Best-effort: a machine stuck mid-import may not appear in `podman machine list` at all,
         // so its absence here is not an error.
-        let _ = self.podman(&["machine", "rm", "-f", DEFAULT_CONNECTION]).await;
+        let _ = self.podman(&["machine", "rm", "-f", DEFAULT_MACHINE_NAME]).await;
 
         // The actual fix: `wsl --import` leaves a partially-registered distro behind on failure,
         // and podman refuses to retry `machine init` while it's still registered. `wsl
         // --unregister` also exits non-zero when the distro is already gone, which is fine.
-        let _ = run_host_wsl(&["--unregister", DEFAULT_CONNECTION]).await;
+        let _ = run_host_wsl(&["--unregister", DEFAULT_MACHINE_NAME]).await;
         Ok(())
     }
 }

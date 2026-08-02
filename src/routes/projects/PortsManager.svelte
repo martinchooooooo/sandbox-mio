@@ -78,8 +78,11 @@
             {#each forwards as fwd (fwd.forwardName)}
                 <div class="flex items-center gap-2 rounded bg-muted px-2 py-1 text-xs">
                     <span class="w-24 shrink-0 font-mono">{kindLabel(fwd)}</span>
+                    <!-- `data-port-url` is the e2e hook (e2e/test/pageobjects/workspace-dashboard.page.ts):
+                         the ✕ beside it is a type="button" too, so only this marker tells them apart. -->
                     <button
                         type="button"
+                        data-port-url
                         onclick={() => openUrl(`http://127.0.0.1:${fwd.hostPort}/`)}
                         class="flex-1 truncate text-left text-blue-600 hover:underline dark:text-blue-400"
                     >

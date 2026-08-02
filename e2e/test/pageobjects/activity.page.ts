@@ -1,4 +1,5 @@
 import AppPage, { type Element } from "./app.page.js";
+import { COMMAND } from "../../lib/timeouts.js";
 
 // The global activity center, mounted once in src/routes/+layout.svelte so it is present on every
 // route. This page object *observes* background tasks globally; ModelsPage *starts* the work.
@@ -44,7 +45,7 @@ class ActivityCenter extends AppPage {
   // Open the panel from any route. The panel's open/closed state is component-local UI (reset by a
   // reload/navigation), so callers re-open after every browser.refresh() or nav. Opening also calls
   // markSeen() in the store, zeroing the unseen-failure badge.
-  async openPanel(timeout = 10000): Promise<void> {
+  async openPanel(timeout = COMMAND): Promise<void> {
     const t = await this.toggle;
     await t.waitForClickable({ timeout });
     if (!(await (await this.panel).isExisting())) {
@@ -82,7 +83,7 @@ class ActivityCenter extends AppPage {
   // The verbatim backend detail line for a task row (progress text, base_url, or error).
   async taskDetail(id: string): Promise<string> {
     const el = await (await this.taskRow(id)).$("[data-task-detail]");
-    await el.waitForExist({ timeout: 10000 });
+    await el.waitForExist({ timeout: COMMAND });
     return (await el.getText()).trim();
   }
 

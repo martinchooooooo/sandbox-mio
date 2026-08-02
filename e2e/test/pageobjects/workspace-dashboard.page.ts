@@ -1,4 +1,5 @@
 import { type Element } from "./app.page.js";
+import { AGENT_INSTALL, COMMAND, PACKAGE_INSTALL, PANEL_RENDER, SUBPROCESS } from "../../lib/timeouts.js";
 
 // Page object for a sandbox's Dashboard content (docs/features/consolidate-app-container/02_dev.md
 // Phase C): a DOM region of the single `main-navigation-panel` webview (WorkspaceDashboard.svelte),
@@ -14,7 +15,7 @@ class WorkspaceDashboardPage {
   // for the error message; callers are responsible for having navigated to the right sandbox first.
   async waitForRendered(sandbox: string): Promise<void> {
     await this.packageInput.waitForExist({
-      timeout: 15000,
+      timeout: PANEL_RENDER,
       timeoutMsg: `dashboard content for "${sandbox}" never rendered (workspacePath likely never resolved)`,
     });
   }
@@ -62,14 +63,14 @@ class WorkspaceDashboardPage {
         return browser.execute((node) => document.activeElement === node, el);
       },
       {
-        timeout: 10000,
+        timeout: COMMAND,
         interval: 300,
         timeoutMsg: "input never gained document focus after switching to the dashboard webview",
       },
     );
   }
 
-  async installPackage(pkg: string, { timeout = 180000 }: { timeout?: number } = {}): Promise<void> {
+  async installPackage(pkg: string, { timeout = PACKAGE_INSTALL }: { timeout?: number } = {}): Promise<void> {
     await this.#focusInput(this.packageInput);
     await (await this.packageInput).setValue(pkg);
     await this.#clickButton(this.installButton);
@@ -83,7 +84,7 @@ class WorkspaceDashboardPage {
     return names;
   }
 
-  async waitForPackage(pkg: string, timeoutMs = 180000): Promise<void> {
+  async waitForPackage(pkg: string, timeoutMs = PACKAGE_INSTALL): Promise<void> {
     await browser.waitUntil(async () => (await this.installedPackages()).includes(pkg), {
       timeout: timeoutMs,
       interval: 2000,
@@ -169,7 +170,7 @@ class WorkspaceDashboardPage {
     await this.#clickButton(this.agentInstallButton(agentLabel));
   }
 
-  async waitForAgentRow(agentLabel: string, timeoutMs = 600000): Promise<void> {
+  async waitForAgentRow(agentLabel: string, timeoutMs = AGENT_INSTALL): Promise<void> {
     await browser.waitUntil(async () => (await $(`span=${agentLabel}`)).isExisting(), {
       timeout: timeoutMs,
       interval: 3000,
@@ -177,7 +178,7 @@ class WorkspaceDashboardPage {
     });
   }
 
-  async waitForAgentStatus(agentLabel: string, text: string, timeoutMs = 10000): Promise<void> {
+  async waitForAgentStatus(agentLabel: string, text: string, timeoutMs = COMMAND): Promise<void> {
     await browser.waitUntil(
       async () => {
         try {
@@ -219,7 +220,7 @@ class WorkspaceDashboardPage {
     await this.#clickButton(this.exposeButton);
   }
 
-  async waitForPortRow(kindLabel: string, timeoutMs = 15000): Promise<void> {
+  async waitForPortRow(kindLabel: string, timeoutMs = SUBPROCESS): Promise<void> {
     await browser.waitUntil(async () => (await this.portRow(kindLabel)).isExisting(), {
       timeout: timeoutMs,
       interval: 500,
@@ -227,7 +228,7 @@ class WorkspaceDashboardPage {
     });
   }
 
-  async waitForPortRowGone(kindLabel: string, timeoutMs = 15000): Promise<void> {
+  async waitForPortRowGone(kindLabel: string, timeoutMs = SUBPROCESS): Promise<void> {
     // Check the label span directly, not `portRow()`'s `$("span=…").$("..")` parent chain: once the
     // row is truly gone the base span no longer exists, and chaining `.$("..")` onto a missing
     // element throws ("Can't call $ …") instead of yielding a not-existing element — which would
@@ -239,15 +240,15 @@ class WorkspaceDashboardPage {
     });
   }
 
-  // The `http://127.0.0.1:<hostPort>/` link's href carries the host port to dial.
+  // PortsManager.svelte renders the URL as a <button onclick={openUrl(...)}> with no href, so the
+  // port only exists in its text; `data-port-url` marks it and survives restyling (cf. `data-app`).
   async portRowHostPort(kindLabel: string): Promise<number> {
     const row = await this.portRow(kindLabel);
-    const link = await row.$("a");
-    const href = await link.getAttribute("href");
-    if (!href) throw new Error(`port row "${kindLabel}" link has no href`);
-    const port = new URL(href).port;
-    if (!port) throw new Error(`port row "${kindLabel}" link has no port in href "${href}"`);
-    return Number(port);
+    const link = await row.$("button[data-port-url]");
+    const text = await link.getText();
+    const match = text.match(/:(\d+)\/?$/);
+    if (!match) throw new Error(`port row "${kindLabel}" button text "${text}" has no port`);
+    return Number(match[1]);
   }
 
   // Manually-exposed rows show a "Stop exposing" ✕ button; file-declared ones don't.

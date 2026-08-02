@@ -1,4 +1,5 @@
 import { type Element } from "./app.page.js";
+import { COMMAND, DEPLOY, SUBPROCESS, SYNC_CONVERGE, UI_SETTLE } from "../../lib/timeouts.js";
 
 /**
  * A single project's row in the projects list. Component object: it wraps one `<li>` and
@@ -77,11 +78,11 @@ export default class ProjectRow {
     return this.root.$(`span*=${host}`);
   }
 
-  async waitForDisplayed(timeout = 10000): Promise<void> {
+  async waitForDisplayed(timeout = COMMAND): Promise<void> {
     await (await this.root).waitForDisplayed({ timeout });
   }
 
-  async waitForGone(timeout = 15000): Promise<void> {
+  async waitForGone(timeout = SUBPROCESS): Promise<void> {
     await (await this.root).waitForExist({ timeout, reverse: true });
   }
 
@@ -107,58 +108,74 @@ export default class ProjectRow {
     await this.#clickButton(this.workspaceButton);
   }
 
-  async waitForRunning(timeout = 10000): Promise<void> {
+  async waitForRunning(timeout = SUBPROCESS): Promise<void> {
     await (await this.runningIndicator).waitForExist({ timeout });
   }
 
-  async waitForStopped(timeout = 20000): Promise<void> {
+  async waitForStopped(timeout = SUBPROCESS): Promise<void> {
     await (await this.runningIndicator).waitForExist({ timeout, reverse: true });
   }
 
   // Deploys to the named host and resolves once the deployment is live (undeploy button shown).
-  async deployTo(host: string, { timeout = 120000 }: { timeout?: number } = {}): Promise<void> {
+  async deployTo(host: string, { timeout = DEPLOY }: { timeout?: number } = {}): Promise<void> {
     const start = Date.now();
     await this.#clickButton(this.deployButton);
 
     const select = await this.hostSelect;
-    await select.waitForDisplayed({ timeout: 5000 });
+    await select.waitForDisplayed({ timeout: UI_SETTLE });
     await select.selectByVisibleText(host);
 
     await this.#clickButton(this.root.$("button=Deploy"));
 
-    // Race: undeploy button (success) vs error div (backend failure). Without this, a failed
-    // deploy (SSH not reachable, image build error, …) silently burns the full timeout because
-    // the undeploy button never appears.
+    await this.#settle(
+      async () => (await this.undeployButton).isDisplayed(),
+      `deploy to "${host}"`,
+      timeout
+    );
+
+    const remaining = timeout - (Date.now() - start);
+    await this.waitForSyncStatus("up-to-date", Math.max(remaining, SYNC_CONVERGE));
+  }
+
+  // undeploy_sandbox (src-tauri/src/lib.rs) chains a flush, an SSH remove, Mutagen teardown and a
+  // container start — same budget as deployTo.
+  async undeploy(timeout = DEPLOY): Promise<void> {
+    await this.#clickButton(this.undeployButton);
+    await this.#settle(async () => (await this.deployButton).isDisplayed(), "undeploy", timeout);
+  }
+
+  /**
+   * Wait for a deploy-direction action to either succeed or surface StatusRow's error line, and
+   * throw with that line's text when it does. Without the error branch a backend failure burns the
+   * whole budget and reports only that a button never appeared, discarding the reason.
+   *
+   * Both directions share this so neither can regain a blind wait the other has already lost.
+   */
+  async #settle(succeeded: () => Promise<boolean>, action: string, timeout: number): Promise<void> {
     let errorText = "";
     await browser.waitUntil(
       async () => {
-        const err = await this.root.$("div.text-destructive.text-xs");
+        const err = await this.errorRow;
         if (await err.isExisting()) {
           errorText = await err.getText();
           return true;
         }
-        return (await this.undeployButton).isDisplayed();
+        return succeeded();
       },
       {
         timeout,
         interval: 1000,
-        timeoutMsg: `deploy to "${host}" did not complete within ${timeout}ms — undeploy button never appeared and no error was shown`,
+        timeoutMsg: `${action} did not complete within ${timeout}ms — it neither finished nor showed an error`,
       }
     );
-    if (errorText) throw new Error(`deploy to "${host}" failed: ${errorText}`);
-
-    const remaining = timeout - (Date.now() - start);
-    await this.waitForSyncStatus("up-to-date", Math.max(remaining, 60000));
+    if (errorText) throw new Error(`${action} failed: ${errorText}`);
   }
 
-  async undeploy(timeout = 30000): Promise<void> {
-    await this.#clickButton(this.undeployButton);
-    await (await this.deployButton).waitForDisplayed({ timeout });
-  }
-
-  async destroy(): Promise<void> {
+  // `podman rm --force` must stop a container that may hold a live foreground process
+  // (agent-setup.spec.ts), so it can take the full kill grace.
+  async destroy(timeout = SUBPROCESS): Promise<void> {
     await this.#clickButton(this.destroyButton);
-    await this.waitForGone();
+    await this.waitForGone(timeout);
   }
 
   async toggleSyncOffOn(pauseMs = 500): Promise<void> {
@@ -181,7 +198,7 @@ export default class ProjectRow {
    * Poll until StatusRow's error line shows exactly `expected`. Cannot be a bare assertion:
    * createActionRunner() sets the error asynchronously, after the click handler's own await settles.
    */
-  async waitForError(expected: string, timeoutMs = 10000): Promise<void> {
+  async waitForError(expected: string, timeoutMs = COMMAND): Promise<void> {
     await browser.waitUntil(
       async () => {
         const el = await this.errorRow;
@@ -200,7 +217,7 @@ export default class ProjectRow {
    * host label both carry text-muted-foreground + text-xs, so this checks every match rather
    * than assuming a single one.
    */
-  async waitForSyncStatus(targetStatus: string, timeoutMs = 60000): Promise<void> {
+  async waitForSyncStatus(targetStatus: string, timeoutMs = SYNC_CONVERGE): Promise<void> {
     await browser.waitUntil(
       async () => {
         const divs = await this.root.$$("div.text-muted-foreground.text-xs");

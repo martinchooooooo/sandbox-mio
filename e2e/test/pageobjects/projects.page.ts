@@ -1,5 +1,6 @@
 import AppPage, { type Element } from "./app.page.js";
 import ProjectRow from "./project-row.component.js";
+import { COMMAND, PODMAN_RECOVERY, UI_SETTLE } from "../../lib/timeouts.js";
 
 // The projects screen: reached via the nav link, creates projects and hands out a ProjectRow
 // (see project-row.component.ts) for each one in the list.
@@ -59,7 +60,7 @@ class ProjectsPage extends AppPage {
   }
 
   // Navigates to the projects screen. No-ops when the browser is already on /projects.
-  async open(timeout = 10000): Promise<void> {
+  async open(timeout = COMMAND): Promise<void> {
     const url = await browser.getUrl();
     if (url.includes("/projects")) return;
     const link = await this.navLink;
@@ -73,7 +74,7 @@ class ProjectsPage extends AppPage {
   // This drives the app's own recovery — which activates the rootless socket that a bare
   // `podman machine start` can leave down — and resolves once the page is usable. No-op (after the
   // probe window) when Podman is already ready. Call after open(), before createProject.
-  async ensurePodmanReady(probeWindow = 10000, recoverTimeout = 90000): Promise<void> {
+  async ensurePodmanReady(probeWindow = COMMAND, recoverTimeout = PODMAN_RECOVERY): Promise<void> {
     const btn = await this.startPodmanButton;
     try {
       await btn.waitForDisplayed({ timeout: probeWindow });
@@ -89,13 +90,13 @@ class ProjectsPage extends AppPage {
         "start or its rootless socket never came up (see start_podman_machine / activate_podman_socket " +
         "in src-tauri, and the activity center for a failed 'podman-startup' task).",
     });
-    await this.createButton.waitForDisplayed({ timeout: 5000 });
+    await this.createButton.waitForDisplayed({ timeout: UI_SETTLE });
   }
 
   // Creates the project and returns its row once the row is displayed. `timeout` covers the wait
   // for the row: the first sandbox on a connection triggers the one-time base-image build, so the
   // row can take minutes to appear and callers must widen the wait accordingly.
-  async createProject(name: string, { timeout = 10000 }: { timeout?: number } = {}): Promise<ProjectRow> {
+  async createProject(name: string, { timeout = COMMAND }: { timeout?: number } = {}): Promise<ProjectRow> {
     await (await this.nameInput).setValue(name);
     await (await this.createButton).click();
 

@@ -9,6 +9,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
 use crate::backends::types::SandboxBackend;
+use crate::env_ext::env_dir;
 use crate::process_ext::NoWindow;
 use crate::runtime::types::RuntimeManager;
 use types::{CredentialError, CredentialManifest, OnboardingSeed};
@@ -18,12 +19,18 @@ fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
 }
 
+/// Root of the bundle store. `MIO_CREDENTIALS_DIR` relocates it wholesale (see
+/// [`crate::env_ext::env_dir`]): without an override the e2e suite would operate on the developer's
+/// real captured logins, and clearing one to reach a known-unauthenticated state costs a re-auth.
 pub fn store_dir(app: &AppHandle) -> Result<PathBuf, CredentialError> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| CredentialError::Io(e.to_string()))?
-        .join("credentials");
+    let dir = match env_dir("MIO_CREDENTIALS_DIR") {
+        Some(root) => root,
+        None => app
+            .path()
+            .app_data_dir()
+            .map_err(|e| CredentialError::Io(e.to_string()))?
+            .join("credentials"),
+    };
     std::fs::create_dir_all(&dir).map_err(|e| CredentialError::Io(e.to_string()))?;
     Ok(dir)
 }

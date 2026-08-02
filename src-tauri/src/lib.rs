@@ -2,6 +2,7 @@ mod activity;
 mod agents;
 mod backends;
 mod credentials;
+mod env_ext;
 mod error;
 mod inference;
 mod machine;
