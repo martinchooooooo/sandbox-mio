@@ -30,6 +30,37 @@ first.
    edge case or gives a fast debug loop (e.g. `heavy/local-llm.spec.ts`'s real download→load→infer
    path paired with `light/local-llm-ui.spec.ts`'s catalogue/gating-logic edge cases).
 
+## Running tiers from multiple worktrees
+
+Many worktrees can run `./build e2e light` concurrently; `standard`/`heavy` are safe alongside those
+`light` runs but limited to one at a time host-wide. Every per-run path and port derives from one
+run slug in `e2e/lib/run-identity.ts` (`RUN_SLUG`, hashed from the worktree's absolute root plus its
+directory basename) — `onPrepare` logs it, along with the port pair, workspace root, and app-data
+root, in one line at the start of every run. A light failure's `mio.log`, `settings.json`, and
+sandbox workspace directories all live under that slug-keyed app-data/workspace root, not the
+familiar `%APPDATA%` path or `~/.sandbox-mio-e2e`.
+
+Two file locks enforce the concurrency rules: a worktree lock (under the slug-keyed app-data root)
+refuses a second light run in the same worktree, and a host lock (a fixed path under `$HOME`) taken
+only by non-light runs refuses a second concurrent `standard`/`heavy` run anywhere on the host —
+`mio-tests`/`mio-tests-remote` and the deploy flow's `~/.ssh` files cannot be split per worktree.
+Either lock names the holding process id (and, for the host lock, the holding worktree) in its
+failure message; a lock whose holder has actually exited is reclaimed automatically.
+
+A fresh worktree cannot run any tier until staged: `tools/msedgedriver.exe` and all of
+`src-tauri/binaries/` are `.gitignore`d. `build dev --setup-worktree [<path>]` is the first command
+to run in a new worktree, before `dev` or any e2e tier — it hard-links the assets from a sibling
+worktree when one has them already, `pnpm install`s, and only re-downloads when no sibling does.
+Invoke it as `./build dev --setup-worktree <path>` from an already-staged worktree, since the target
+worktree has no `build.exe` of its own yet, or as `cargo run --bin build -- dev --setup-worktree`
+once inside it.
+
+Two concurrent debug builds will print `Blocking waiting for file lock on package cache` — that is
+cargo's global registry-access lock serializing, not a hang; each worktree's own `src-tauri/target`
+means the builds themselves never contend. See `docs/features/parallel-worktree-e2e/02_dev.md` for
+the full design and `03_e2e.md` for the manual procedures (P1–P5) that exercise the locks and the
+process-filter isolation directly.
+
 ## Writing a light spec
 
 Only reach for this once you've confirmed the corresponding real (`standard`/`heavy`) coverage

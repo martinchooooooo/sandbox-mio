@@ -4,6 +4,8 @@ import path from "path";
 import { spawnSync, type SpawnSyncReturns } from "child_process";
 import { fileURLToPath } from "url";
 
+import { APP_DATA_ROOT } from "./run-identity.js";
+
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
 // Must match the app's sidecar mutagen, so the CLI and the app share one daemon.
@@ -66,12 +68,10 @@ export function syncTerminate(name: string): void {
 }
 
 // Mirrors the MUTAGEN_DATA_DIRECTORY the app sets. Helpers that touch the app's sessions must pass
-// it, or the CLI talks to a different daemon than the app.
-const APP_MUTAGEN_DIR = path.join(
-  process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming"),
-  "com.tincho.sandbox-mio",
-  "mutagen"
-);
+// it, or the CLI talks to a different daemon than the app. Derived from the slug-keyed app-data
+// root the launcher hands the app via MIO_APP_DATA_DIR (src-tauri/src/paths.rs), not from
+// %APPDATA%/<bundle identifier> — that is where the app writes only when the override is unset.
+const APP_MUTAGEN_DIR = path.join(APP_DATA_ROOT, "mutagen");
 
 /** Combined stdout+stderr of `mutagen forward list`, or empty when the session does not exist. */
 export function forwardList(name: string): string {

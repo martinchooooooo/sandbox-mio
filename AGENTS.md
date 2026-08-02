@@ -41,6 +41,13 @@ No CI pipeline enforces this today (none exists in the repository — see
 `docs/features/scriptable-mock-backend/04_improvements.md`); it is agent/developer habit codified
 here and in `e2e/AGENTS.md`'s decision rules.
 
+A feature is typically developed in its own git worktree, driven almost entirely by
+`./build e2e light` — many worktrees can run the `light` tier concurrently, each isolated by a
+per-worktree run slug (`e2e/lib/run-identity.ts`; see `e2e/AGENTS.md`). When a feature's light
+specs are green, run `./build e2e` (`standard`) once at the end — `standard`/`heavy` runs are safe
+alongside other worktrees' `light` runs, but only one `standard`/`heavy` run is allowed host-wide at
+a time (`docs/features/parallel-worktree-e2e/02_dev.md`).
+
 # Environment Variables
 
 All read via `std::env::var` at call time, never cached:
@@ -49,6 +56,12 @@ All read via `std::env::var` at call time, never cached:
 - `SANDBOX_WORKSPACE_ROOT` — root for sandbox workspace directories; default `<Documents>/sandbox-mio` (`workspace_root()` in `src-tauri/src/backends/mod.rs`).
 - `MIO_MOCK_BACKEND=1` — swaps every subsystem trait to its in-memory mock; used by the e2e `light` tier (`mock_backend_enabled()` in `src-tauri/src/backends/mod.rs`).
 - `MIO_TEST_MODEL` — overrides the model used by inference e2e specs.
+- `MIO_APP_DATA_DIR` — app-data and log root; default the compiled-in `app_data_dir()`, and for logs `app_log_dir()` (`src-tauri/src/paths.rs`, `init_logging()` in `src-tauri/src/lib.rs`). Set by the e2e harness to a per-worktree directory, never by a shipped install.
+- `MIO_SETTINGS_DIR` — relocates `settings.json`; takes precedence over `MIO_APP_DATA_DIR` (`settings_path()` in `src-tauri/src/settings/mod.rs`).
+- `MIO_CREDENTIALS_DIR` — relocates the credential bundle store; takes precedence over `MIO_APP_DATA_DIR` (`store_dir()` in `src-tauri/src/credentials/mod.rs`).
+- `MIO_PORT_BASE` — base of the e2e WebDriver port band each worktree's run claims a 16-port window from; default `45000` (`e2e/lib/run-identity.ts`).
+- `MIO_DRIVER_PORT` — harness-set, not read by the Rust side: the `tauri-driver` WebDriver port allocated for the session (`beforeSession` in `e2e/wdio.conf.ts`, asserted by `e2e/test/specs/light/run-identity.spec.ts`).
+- `MIO_NATIVE_PORT` — harness-set, not read by the Rust side: the `msedgedriver` native port paired with `MIO_DRIVER_PORT` (`e2e/wdio.conf.ts`).
 
 # UI Components
 

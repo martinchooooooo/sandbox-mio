@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
 use tauri::ipc::Channel;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 use tokio::io::AsyncWriteExt;
 
 use crate::process_ext::NoWindow;
@@ -24,10 +24,10 @@ pub fn engine_for(kind: EngineKind, app: &AppHandle) -> Arc<dyn InferenceEngine>
     }
 }
 
+/// `MIO_APP_DATA_DIR` relocates the model store (see [`crate::paths::app_data_root`]); no
+/// subsystem-specific override exists for this one.
 pub fn models_root(app: &AppHandle) -> Result<std::path::PathBuf, InferenceError> {
-    let dir = app
-        .path()
-        .app_data_dir()
+    let dir = crate::paths::app_data_root(app)
         .map_err(|e| InferenceError::Download(e.to_string()))?
         .join("models");
     std::fs::create_dir_all(&dir).map_err(|e| InferenceError::Download(e.to_string()))?;

@@ -7,6 +7,7 @@ import ProjectRow from "../../pageobjects/project-row.component.js";
 import ModelsPage from "../../pageobjects/models.page.js";
 import { podman, podmanOk, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
 import { captureDiagOnFailure } from "../../../lib/diag.js";
+import { APP_DATA_ROOT } from "../../../lib/run-identity.js";
 
 // HEAVY spec: covers docs/features/opencode-agent/02_dev.md, Cross-Cutting Concerns — the
 // container must reach host.containers.internal:51199. Only test exercising the full app-wide
@@ -16,11 +17,9 @@ const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
 // Must equal INFERENCE_VM_PORT in src-tauri/src/sync/mod.rs and src/lib/agents/local-llm.ts.
 const INFERENCE_VM_PORT = 51199;
 
-const APP_DATA_MODELS = path.join(
-  process.env.APPDATA ?? path.join(process.env.USERPROFILE ?? "", "AppData", "Roaming"),
-  "com.tincho.sandbox-mio",
-  "models",
-);
+// The app writes models under the slug-keyed app-data root the launcher sets via MIO_APP_DATA_DIR
+// (src-tauri/src/paths.rs), not under %APPDATA%/<bundle identifier>.
+const APP_DATA_MODELS = path.join(APP_DATA_ROOT, "models");
 
 // A raw HTTP/1.0 GET over bash's /dev/tcp, so no curl/wget needs to exist in the base image. Prints
 // the full response (status line + body) on success; exits non-zero (printing nothing) when the

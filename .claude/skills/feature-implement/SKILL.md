@@ -43,6 +43,16 @@ An improvement noticed during implementation that is out of scope goes into
 what it is and why it was deferred) — not into the code as a TODO comment and
 not silently built.
 
+## Parallel-worktree constraints
+
+The isolation rules the plan settled are binding at the keyboard too — the `feature-dev` skill lists
+them, `e2e/AGENTS.md` explains the workflow they protect. Two slips account for most breakage: a
+host path built from `%APPDATA%`, the bundle identifier, or a fixed `$HOME` name instead of
+`app_data_dir()` in `src-tauri/src/paths.rs`; and a hard-coded host port instead of one from the
+run's window. Both compile, both pass a single-worktree run, and both corrupt a neighbouring
+worktree's run. Grep new code for the bundle identifier and for literal port numbers before calling a
+phase done.
+
 ## i18n: hard-code English first, Paraglide last
 
 Paraglide strings are deliberately deferred: every key added to

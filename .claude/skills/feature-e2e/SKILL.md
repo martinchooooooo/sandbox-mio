@@ -36,6 +36,22 @@ real spec — never as the only coverage for a new feature's main path.
 5. **De-risking spike results** — if a spike was run (see below).
 6. **Common Gotchas** — final section, table format defined in the `write-docs` skill.
 
+## Parallel-worktree constraints
+
+Other worktrees are running their own `light` tier while this spec runs, so a spec that reaches a
+fixed host path passes or fails depending on what a neighbouring worktree is doing. Three rules
+follow, and the test plan states any decision that touches them:
+
+- Derive every host path from `e2e/lib/run-identity.ts` (`APP_DATA_ROOT`, `WORKSPACE_ROOT`). Never
+  rebuild `%APPDATA%/<bundle identifier>` or a fixed `$HOME` name in a spec or helper — the app is
+  not writing there.
+- Assert that a path was **not modified during this run**, not that it does not exist. A machine that
+  ran an earlier version of the suite still carries its leftovers, and an absence assertion fails for
+  reasons unrelated to the code under test.
+- Choosing `standard` or `heavy` means the run takes the host lock and serialises against every other
+  real-infra run on the machine. That is the intended cost of real coverage; it is worth noting in
+  the plan when a feature would otherwise have been testable at the `light` tier.
+
 ## Recording a spike
 
 Record a spike as evidence: the date, each risk that cleared (with the command

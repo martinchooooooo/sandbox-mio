@@ -30,6 +30,40 @@ State build status precisely and per-phase via the section headings. When a
 refactor supersedes an earlier approach, record the old approach and why it was
 replaced, so a future agent does not reintroduce the removed code.
 
+## Parallel-worktree constraints
+
+Several worktrees of this repository run their `light` e2e tier simultaneously on one machine, and a
+single `standard`/`heavy` run may run host-wide alongside them. A plan that introduces new
+host-global state breaks that workflow silently: the failure surfaces as one worktree's run
+corrupting another's, never as a compile error. `e2e/AGENTS.md` owns the operational rules and
+`docs/features/parallel-worktree-e2e/02_dev.md` the design; what follows is what a *plan* must
+settle.
+
+State each of the following explicitly — in Resolved Decisions, or in the phase that introduces it:
+
+- **A new path the app reads or writes.** Route it through `app_data_dir()` in
+  `src-tauri/src/paths.rs`, which honours the per-worktree `MIO_APP_DATA_DIR` override. A path
+  assembled from the bundle identifier, from `%APPDATA%`, or from a fixed name under `$HOME` bypasses
+  the override, and every run on the machine then shares one directory.
+- **A new host port.** Allocate from the run's window (`allocatePortPair()` in
+  `e2e/lib/run-identity.ts`) instead of pinning a constant. A fixed port *inside* a sandbox or podman
+  machine is fine — the collision exists only on the host.
+- **A new host-global external resource** — a podman machine or connection name, an SSH alias, a
+  named Mutagen session, a Windows service. These cannot be slug-keyed cheaply, so a feature needing
+  one confines its specs to the host-locked tier and serialises against every other real-infra run on
+  the machine. Say so in the plan: it is a schedule cost, not an implementation detail.
+- **A new bundled binary under `src-tauri/binaries/`.** Give it its own asset group in `build.rs`: a
+  pinned version constant, a sentinel file, and a `fetch_*` that records the version into the
+  staged-versions manifest. Without the group, a fresh worktree cannot be staged, and a hard link
+  from a sibling worktree can hand over a version this checkout does not pin.
+- **New teardown that deletes host-global state.** Gate it on the tier, as the `~/.ssh` cleanup in
+  `e2e/wdio.conf.ts` is. Ungated, it destroys state belonging to a run in another worktree.
+- **A new environment variable the harness sets.** Document it in the root `AGENTS.md`, marked
+  harness-set when the Rust side does not read it.
+
+Stray-process cleanup is already worktree-scoped by an absolute `target\debug\` prefix match. A plan
+that adds process killing uses the same filter rather than matching on process name alone.
+
 ## Out-of-scope improvements
 
 An improvement noticed while planning that is out of scope goes into

@@ -1,4 +1,5 @@
 import fs from "fs";
+import net from "net";
 import os from "os";
 import path from "path";
 import { spawn, spawnSync, type ChildProcess } from "child_process";
@@ -14,6 +15,21 @@ import {
 } from "./lib/podman-machine.js";
 import { LOCAL_CONNECTION, REMOTE_CONNECTION } from "./lib/podman-connection.js";
 import { ensureMutagen, forwardCreate, SWEEP_ORPHAN_SESSION, SWEEP_KEEP_SESSION } from "./lib/mutagen.js";
+import {
+  RUN_SLUG,
+  APP_DATA_ROOT,
+  WORKSPACE_ROOT,
+  DEBUG_DIR,
+  IS_LAUNCHER,
+  acquireWorktreeLock,
+  releaseWorktreeLock,
+  acquireHostLock,
+  releaseHostLock,
+  allocatePortPair,
+  PORT_WINDOW_BASE,
+  PORT_WINDOW_INDEX,
+  MIO_PORT_BASE,
+} from "./lib/run-identity.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
@@ -29,10 +45,9 @@ const VERIFY_PASSES = 3;
 const MIO_REMOTE_KEEP = process.env.MIO_REMOTE_KEEP === "1";
 const MIO_REMOTE_REMOVE = process.env.MIO_REMOTE_REMOVE === "1";
 
-// Isolated per-sandbox root so the developer's real Documents folder stays untouched. Under
-// $HOME because only the user profile is auto-mounted into the podman VM. Read via
+// Slug-keyed so two worktrees never share a sandbox root. Under $HOME because only the user
+// profile is auto-mounted into the podman VM (needed by the standard tier's bind mount). Read via
 // SANDBOX_WORKSPACE_ROOT in src-tauri/src/backends/.
-const WORKSPACE_ROOT = path.join(os.homedir(), ".sandbox-mio-e2e");
 process.env.SANDBOX_WORKSPACE_ROOT = WORKSPACE_ROOT;
 
 // Test-only GGUF for the `test_model` command, kept out of the shipped catalogue (see
@@ -47,30 +62,32 @@ const TEST_MODEL = {
 };
 process.env.MIO_TEST_MODEL = JSON.stringify(TEST_MODEL);
 
-// The debug build writes models under app_data_dir() = %APPDATA%/<bundle identifier>/models
-// (identifier com.tincho.sandbox-mio in src-tauri/tauri.conf.json). Only the test model's own
-// subdirectory is cleaned up, never the whole store, since debug and release share the identifier.
-const APP_DATA_DIR = path.join(
-  process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming"),
-  "com.tincho.sandbox-mio",
-);
-const APP_DATA_MODELS = path.join(APP_DATA_DIR, "models");
+// The app writes app-data (settings, credentials, models, Mutagen data, logs) under this slug-keyed
+// root instead of the developer's real %APPDATA%/com.tincho.sandbox-mio (src-tauri/src/paths.rs).
+// Only the test model's own subdirectory is cleaned up in onComplete — re-downloading a ~100 MB
+// GGUF per run is not worth the disk it saves.
+process.env.MIO_APP_DATA_DIR = APP_DATA_ROOT;
+const APP_DATA_MODELS = path.join(APP_DATA_ROOT, "models");
 
-// Redirected out of APP_DATA_DIR (src-tauri/src/credentials/mod.rs `store_dir`) rather than
-// cleaned in place: a real captured bundle would flip AgentManager.svelte to "Use saved login",
-// breaking agent-setup.spec.ts, and clearing the developer's own bundle costs them a re-auth.
-const E2E_CREDENTIALS_DIR = path.join(os.homedir(), ".sandbox-mio-e2e-appdata", "credentials");
+// Redirected rather than cleaned in place: a real captured bundle would flip AgentManager.svelte to
+// "Use saved login", breaking agent-setup.spec.ts. Subsystem-specific override
+// (src-tauri/src/credentials/mod.rs `store_dir`) takes precedence over MIO_APP_DATA_DIR, so this
+// still has to be set explicitly.
+const E2E_CREDENTIALS_DIR = path.join(APP_DATA_ROOT, "credentials");
 process.env.MIO_CREDENTIALS_DIR = E2E_CREDENTIALS_DIR;
 
-// Persisted app settings (src-tauri/src/settings/mod.rs `settings_path`, normally app_config_dir()
-// = APP_DATA_DIR on Windows) are redirected for the same reason: each run must start from the Rust
-// defaults, and resetting them in place would delete the release build's real settings file.
-const E2E_SETTINGS_DIR = path.join(os.homedir(), ".sandbox-mio-e2e-appdata", "settings");
+// Persisted app settings (src-tauri/src/settings/mod.rs `settings_path`) are redirected for the
+// same reason: each run must start from the Rust defaults, and resetting them in place would
+// delete the release build's real settings file.
+const E2E_SETTINGS_DIR = path.join(APP_DATA_ROOT, "settings");
 process.env.MIO_SETTINGS_DIR = E2E_SETTINGS_DIR;
 
 // Kills target/debug processes left over from a previous run (they can outlive their parent,
 // sync/mod.rs `shutdown`) — a stale one locks its .exe and fails the build below (LNK1104).
-// Matches only target/debug paths, leaving Podman Desktop alone.
+// Matched against this worktree's own absolute src-tauri\target\debug\ path (via env var, compared
+// with StartsWith/OrdinalIgnoreCase — not PowerShell -like, which gives `[`, `]`, `*`, `?` wildcard
+// meaning) so a run in one worktree never kills another worktree's stray processes, including a
+// worktree nested under this one's .claude/worktrees/.
 function killStaleDevProcesses(): void {
   if (process.platform !== "win32") return;
   spawnSync(
@@ -79,11 +96,38 @@ function killStaleDevProcesses(): void {
       "-NoProfile",
       "-Command",
       "Get-Process -Name podman,win-sshproxy,gvproxy,sandbox-mio,mutagen -ErrorAction SilentlyContinue | " +
-        "Where-Object { $_.Path -and $_.Path -like '*\\target\\debug\\*' } | " +
+        "Where-Object { $_.Path -and $_.Path.StartsWith($env:MIO_DEBUG_DIR, [StringComparison]::OrdinalIgnoreCase) } | " +
         "Stop-Process -Force -ErrorAction SilentlyContinue",
     ],
-    { stdio: "ignore" },
+    { stdio: "ignore", env: { ...process.env, MIO_DEBUG_DIR: DEBUG_DIR } },
   );
+}
+
+// Hard-links (falling back to a byte copy) when the destination is missing or a different size —
+// the assets are version-pinned, so a same-size destination is already the right file. Skipping the
+// re-copy is what keeps a light run from moving ~180 MB of pinned assets on every iteration of the
+// loop this feature exists to serve (docs/features/parallel-worktree-e2e/02_dev.md Phase F).
+function stageIfMissing(src: string, dst: string): void {
+  if (fs.existsSync(dst) && fs.statSync(dst).size === fs.statSync(src).size) return;
+  fs.rmSync(dst, { force: true });
+  try {
+    fs.linkSync(src, dst);
+  } catch {
+    fs.copyFileSync(src, dst);
+  }
+}
+
+function stageTreeIfMissing(src: string, dst: string): void {
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const from = path.join(src, entry.name);
+    const to = path.join(dst, entry.name);
+    if (entry.isDirectory()) {
+      fs.mkdirSync(to, { recursive: true });
+      stageTreeIfMissing(from, to);
+    } else {
+      stageIfMissing(from, to);
+    }
+  }
 }
 
 let tauriDriver: ChildProcess | undefined;
@@ -129,9 +173,15 @@ const LIGHT_SPECS = MIO_SPEC
   ? [`./test/specs/light/**/*${MIO_SPEC}*.ts`]
   : ["./test/specs/light/**/*.ts"];
 
+// Starting value only. A freshly forked worker inherits the pair the launcher allocated (process.env
+// as of onPrepare's return — see run-identity.ts IS_LAUNCHER), and the launcher's own first parse
+// runs before onPrepare so it falls back to the window base. Either way `beforeSession` overwrites
+// `config.port` before a session is created.
+const PORT = Number(process.env.MIO_DRIVER_PORT ?? PORT_WINDOW_BASE);
+
 export const config: WebdriverIO.Config = {
   hostname: "127.0.0.1",
-  port: 4444,
+  port: PORT,
   // Default run: standard tier only, against real podman. `light/` and `heavy/` run via their
   // own suites below (pnpm run test:light / test:heavy / test:llm). See e2e/AGENTS.md.
   specs: ["./test/specs/standard/**/*.ts"],
@@ -155,7 +205,41 @@ export const config: WebdriverIO.Config = {
     // 3 min: deploy involves an image save/load + Mutagen session startup, which can run long.
     timeout: 180000,
   },
-  onPrepare: () => {
+  onPrepare: async (wdioConfig) => {
+    // Taken before any deletion below, so a second run in this worktree (or a second real-infra run
+    // anywhere on the host) aborts before it can destroy this run's directories.
+    if (IS_LAUNCHER) {
+      try {
+        acquireWorktreeLock();
+      } catch (e) {
+        console.error(e instanceof Error ? e.message : String(e));
+        process.exit(1);
+      }
+      if (!IS_LIGHT_RUN) {
+        try {
+          acquireHostLock();
+        } catch (e) {
+          console.error(e instanceof Error ? e.message : String(e));
+          releaseWorktreeLock();
+          process.exit(1);
+        }
+      }
+    }
+
+    // Provisional: the pair a worker inherits, and what the line below reports. `beforeSession` is
+    // the authority — it re-probes and reassigns `config.port` per session, because only that hook
+    // can keep a retry's new port and the session's client in step (see spawnTauriDriver).
+    const { driverPort, nativePort } = await allocatePortPair();
+    process.env.MIO_DRIVER_PORT = String(driverPort);
+    process.env.MIO_NATIVE_PORT = String(nativePort);
+    wdioConfig.port = driverPort;
+
+    console.log(
+      `[e2e] run slug=${RUN_SLUG} ports=${driverPort}/${nativePort} ` +
+        `(window #${PORT_WINDOW_INDEX} base ${PORT_WINDOW_BASE}, MIO_PORT_BASE=${MIO_PORT_BASE}) ` +
+        `workspace=${WORKSPACE_ROOT} appData=${APP_DATA_ROOT}`,
+    );
+
     fs.writeFileSync(FAILURES_LOG, "");
     fs.rmSync(WORKSPACE_ROOT, { recursive: true, force: true });
     // Wiped wholesale, not cleaned in place: settings must start from Rust defaults or a prior
@@ -224,29 +308,50 @@ export const config: WebdriverIO.Config = {
     fs.rmSync(appExe, { force: true });
     // Abort on a failed build: spawnSync does not throw on a non-zero exit, and a silent failure
     // would leave no exe (or a stale one) for tauri-driver to launch.
-    const build = spawnSync("pnpm", ["tauri", "build", "--debug", "--no-bundle"], {
-      cwd: path.resolve(__dirname, ".."),
-      stdio: "inherit",
-      shell: true,
-    });
+    //
+    // --no-default-features drops the `devtools` feature (src-tauri/Cargo.toml): tauri-plugin-devtools
+    // claims the process's one global tracing subscriber before `init_logging()` runs, so with it
+    // present `init_logging()`'s own `try_init()` silently no-ops and mio.log is never written —
+    // confirmed by running the debug exe standalone (docs/features/parallel-worktree-e2e/03_e2e.md,
+    // De-risking spike results). Nothing under e2e/test/specs/ exercises devtools.
+    const build = spawnSync(
+      "pnpm",
+      // `--no-default-features` is a cargo flag, not a tauri one: it must come after `--` or the
+      // tauri CLI rejects it as an unexpected argument.
+      ["tauri", "build", "--debug", "--no-bundle", "--", "--no-default-features"],
+      {
+        cwd: path.resolve(__dirname, ".."),
+        stdio: "inherit",
+        shell: true,
+      },
+    );
     if (build.status !== 0 || !fs.existsSync(appExe)) {
       console.error(`[e2e] tauri build --debug failed (exit ${build.status}); ${appExe} not produced.`);
       console.error("[e2e] Aborting suite — cannot run specs without a freshly built app binary.");
       process.exit(1);
     }
     // Mutagen needs its agent bundle adjacent to the sidecar binary to install agents on new SSH
-    // endpoints. The bundle is in tools/ but Tauri's build does not copy it to target/debug/.
-    fs.copyFileSync(
-      path.resolve(__dirname, "../tools/mutagen-agents.tar.gz"),
-      path.resolve(__dirname, "../src-tauri/target/debug/mutagen-agents.tar.gz"),
-    );
+    // endpoints. Sourced from src-tauri/binaries/, which `build dev --setup-worktree` and
+    // `build dev --setup` both stage — not tools/, which carries a second, unused copy
+    // (docs/features/parallel-worktree-e2e/04_improvements.md).
+    const mutagenAgentsSrc = path.resolve(__dirname, "../src-tauri/binaries/mutagen-agents.tar.gz");
+    const mutagenAgentsDst = path.resolve(__dirname, "../src-tauri/target/debug/mutagen-agents.tar.gz");
+    if (fs.existsSync(mutagenAgentsSrc)) {
+      stageIfMissing(mutagenAgentsSrc, mutagenAgentsDst);
+    } else {
+      console.warn(
+        `[e2e] ${mutagenAgentsSrc} not staged; run \`build dev --setup-worktree\` (or \`build dev --setup\`` +
+          " in an already-staged worktree) to fetch it.",
+      );
+    }
     // --no-bundle skips Tauri `resources`, so stage llama.cpp next to the exe for resource_dir()/llama
     // (src-tauri/src/inference/llama.rs). Skipped with a warning if not staged, so only
     // local-llm.spec.ts fails rather than the whole suite. See docs/features/local-llm/03_e2e.md.
     const llamaSrc = path.resolve(__dirname, "../src-tauri/binaries/llama");
     const llamaDst = path.resolve(__dirname, "../src-tauri/target/debug/llama");
     if (fs.existsSync(path.join(llamaSrc, `llama-server${ext}`))) {
-      fs.cpSync(llamaSrc, llamaDst, { recursive: true });
+      fs.mkdirSync(llamaDst, { recursive: true });
+      stageTreeIfMissing(llamaSrc, llamaDst);
     } else {
       console.warn(
         `[e2e] llama-server not staged at ${llamaSrc}; local-llm.spec.ts will fail at sidecar ` +
@@ -254,7 +359,7 @@ export const config: WebdriverIO.Config = {
       );
     }
   },
-  beforeSession: (_config, _capabilities, specs) => {
+  beforeSession: async (sessionConfig, _capabilities, specs) => {
     // Decided from the resolved spec paths, not IS_LIGHT_RUN's CLI-flag approximation: this hook
     // hands MIO_MOCK_BACKEND to the app, so a light spec must never reach a real podman.
     const isLightSession = specs.length > 0 && specs.every(isLightSpec);
@@ -266,31 +371,7 @@ export const config: WebdriverIO.Config = {
       forwardCreate(SWEEP_ORPHAN_SESSION, "tcp:127.0.0.1:38471", "tcp:127.0.0.1:1");
       forwardCreate(SWEEP_KEEP_SESSION, "tcp:127.0.0.1:38473", "tcp:127.0.0.1:1");
     }
-    tauriDriver = spawn(
-      path.resolve(os.homedir(), ".cargo", "bin", `tauri-driver${ext}`),
-      ["--native-driver", "../tools/msedgedriver.exe"],
-      {
-        stdio: [null, process.stdout, process.stderr],
-        env: {
-          ...process.env,
-          PODMAN_CONNECTION: LOCAL_CONNECTION,
-          ...(isLightSession ? { MIO_MOCK_BACKEND: "1" } : {}),
-        },
-      }
-    );
-    tauriDriver.on("error", (error) => {
-      // process.exit below used to fire with nothing else written: whatever spec was mid-test lost
-      // its evidence (no reporter line, no FAILURES_LOG entry — the exit cut mocha off first). Log
-      // here, synchronously, before the process dies.
-      logCrash(`tauri-driver error: ${error.message ?? error}`, specs);
-      process.exit(1);
-    });
-    tauriDriver.on("exit", (code) => {
-      if (!exit) {
-        logCrash(`tauri-driver exited unexpectedly with code: ${code}`, specs);
-        process.exit(1);
-      }
-    });
+    await spawnTauriDriver(sessionConfig, specs, isLightSession);
   },
   // One merged chrome webview hosts the whole app UI (docs/features/consolidate-app-container/02_dev.md);
   // each Terminal/AgentWeb pane opens its own overlay webview. Pin the session to the app UI
@@ -319,31 +400,38 @@ export const config: WebdriverIO.Config = {
     fs.rmSync(WORKSPACE_ROOT, { recursive: true, force: true });
 
     // Remove the downloaded test GGUF so it does not persist or grow the disk across runs. Only
-    // the test model's own subdirectory is deleted (debug and release share the app-data store).
+    // the test model's own subdirectory is deleted.
     fs.rmSync(path.join(APP_DATA_MODELS, TEST_MODEL.id), { recursive: true, force: true });
 
-    // Remove the SSH alias block the app's deploy flow wrote under ~/.ssh/sandbox-mio/config
-    // and strip the one-time Include line from ~/.ssh/config so the user's file is left clean.
-    const sshDir = path.join(os.homedir(), ".ssh");
-    const managedConfig = path.join(sshDir, "sandbox-mio", "config");
-    fs.rmSync(managedConfig, { force: true });
-    const userConfig = path.join(sshDir, "config");
-    if (fs.existsSync(userConfig)) {
-      const cleaned = fs
-        .readFileSync(userConfig, "utf8")
-        .split(/\r?\n/)
-        .filter((l) => l.trim() !== "Include sandbox-mio/config")
-        .join("\n")
-        .replace(/\n{3,}/g, "\n\n")
-        .trimEnd();
-      fs.writeFileSync(userConfig, cleaned ? `${cleaned}\n` : "", "ascii");
-    }
-
-    // Tear down the remote machine unless the caller wants to keep it. Never provisioned for the
-    // light suite, so there is nothing to tear down.
+    // Tear down real-infra-only state. A light run writes neither the SSH alias nor the remote
+    // machine, so both used to be pure collateral damage against a concurrent standard-tier run in
+    // another worktree; the host lock above now also means no *other* real-infra run can be mid-way
+    // through writing them when this runs.
     if (!IS_LIGHT_RUN) {
+      // Remove the SSH alias block the app's deploy flow wrote under ~/.ssh/sandbox-mio/config
+      // and strip the one-time Include line from ~/.ssh/config so the user's file is left clean.
+      const sshDir = path.join(os.homedir(), ".ssh");
+      const managedConfig = path.join(sshDir, "sandbox-mio", "config");
+      fs.rmSync(managedConfig, { force: true });
+      const userConfig = path.join(sshDir, "config");
+      if (fs.existsSync(userConfig)) {
+        const cleaned = fs
+          .readFileSync(userConfig, "utf8")
+          .split(/\r?\n/)
+          .filter((l) => l.trim() !== "Include sandbox-mio/config")
+          .join("\n")
+          .replace(/\n{3,}/g, "\n\n")
+          .trimEnd();
+        fs.writeFileSync(userConfig, cleaned ? `${cleaned}\n` : "", "ascii");
+      }
+
       if (MIO_REMOTE_REMOVE) removeMachine(REMOTE_CONNECTION);
       else if (!MIO_REMOTE_KEEP) stopMachine(REMOTE_CONNECTION);
+    }
+
+    if (IS_LAUNCHER) {
+      releaseWorktreeLock();
+      if (!IS_LIGHT_RUN) releaseHostLock();
     }
   },
 };
@@ -363,6 +451,132 @@ function logFailure(title: string, result: { passed: boolean; error?: Error }): 
 // anything — write straight to FAILURES_LOG so the in-flight spec isn't a silent gap.
 function logCrash(message: string, specs: string[]): void {
   fs.appendFileSync(FAILURES_LOG, [`FAILED: ${specs.join(", ") || "(unknown spec)"}`, message, ""].join("\n"));
+}
+
+// How long a driver gets to bind its port before the attempt counts as failed. Generous: the
+// readiness poll ends the wait as soon as the port is taken, so this only bounds the pathological
+// case.
+const DRIVER_READY_TIMEOUT_MS = 20000;
+const DRIVER_READY_POLL_MS = 100;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Connects rather than probing with isPortFree(): that one answers by *binding*, which during
+// startup races the driver for the very port it is trying to claim.
+function isPortListening(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.connect({ port, host: "127.0.0.1" });
+    const done = (listening: boolean) => {
+      socket.destroy();
+      resolve(listening);
+    };
+    socket.once("connect", () => done(true));
+    socket.once("error", () => done(false));
+    socket.setTimeout(1000, () => done(false));
+  });
+}
+
+// Resolves true once the driver has taken `port`, false as soon as it is clear it never will (the
+// child exited, spawn failed, or the timeout elapsed). An explicit readiness check rather than the
+// old "did it exit within 5 s" heuristic, so the retry decision is "did it come up" instead of
+// "how fast did it die".
+async function waitForDriverReady(
+  child: ChildProcess,
+  port: number,
+  spawnFailure: () => string | undefined,
+): Promise<boolean> {
+  const deadline = Date.now() + DRIVER_READY_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    if (spawnFailure() !== undefined) return false;
+    if (child.exitCode !== null || child.signalCode !== null) return false;
+    if (await isPortListening(port)) return true;
+    await sleep(DRIVER_READY_POLL_MS);
+  }
+  return false;
+}
+
+// Allocates the session's port pair, spawns tauri-driver on it, and assigns it to `config.port`.
+//
+// Allocation lives here, not in onPrepare, because this hook owns the config the WebdriverIO
+// session is built from: a retry that rebinds the driver to a different port must move the client
+// with it, or the session dials the dead port and a clear "driver exited" failure degrades into a
+// connection timeout. A port window is a strong default, not a guarantee two worktrees never
+// collide (run-identity.ts), so a driver that never comes up is retried once on a freshly probed
+// pair — both before this promise resolves, hence before the session exists.
+async function spawnTauriDriver(
+  // Structural, not `WebdriverIO.Config`: beforeSession is handed an `Omit<Testrunner,
+  // "capabilities">`, and `port` is the only field this touches.
+  config: { port?: number },
+  specs: string[],
+  isLightSession: boolean,
+): Promise<void> {
+  const ATTEMPTS = 2;
+  for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
+    const { driverPort, nativePort } = await allocatePortPair();
+    // Published for the app and for light/run-identity.spec.ts's port assertion; config.port is
+    // what the session itself connects to.
+    process.env.MIO_DRIVER_PORT = String(driverPort);
+    process.env.MIO_NATIVE_PORT = String(nativePort);
+    config.port = driverPort;
+
+    let spawnFailure: string | undefined;
+    const child = spawn(
+      path.resolve(os.homedir(), ".cargo", "bin", `tauri-driver${ext}`),
+      [
+        "--port",
+        String(driverPort),
+        "--native-port",
+        String(nativePort),
+        "--native-driver",
+        "../tools/msedgedriver.exe",
+      ],
+      {
+        stdio: [null, process.stdout, process.stderr],
+        env: {
+          ...process.env,
+          PODMAN_CONNECTION: LOCAL_CONNECTION,
+          ...(isLightSession ? { MIO_MOCK_BACKEND: "1" } : {}),
+        },
+      },
+    );
+    tauriDriver = child;
+    // Captured rather than fatal while the readiness poll is still running: a failure here is one
+    // failed attempt, and the retry below decides whether it ends the run.
+    child.on("error", (error) => {
+      spawnFailure = `tauri-driver error: ${error.message ?? error}`;
+    });
+
+    if (await waitForDriverReady(child, driverPort, () => spawnFailure)) {
+      // From here on, any exit is unexpected. process.exit takes the worker down before mocha can
+      // report anything, so the crash is written to FAILURES_LOG synchronously first — otherwise
+      // the in-flight spec leaves no trace at all.
+      if (spawnFailure !== undefined) {
+        logCrash(spawnFailure, specs);
+        process.exit(1);
+      }
+      child.on("error", (error) => {
+        logCrash(`tauri-driver error: ${error.message ?? error}`, specs);
+        process.exit(1);
+      });
+      child.on("exit", (code) => {
+        if (exit) return;
+        logCrash(`tauri-driver exited unexpectedly with code: ${code}`, specs);
+        process.exit(1);
+      });
+      return;
+    }
+
+    child.kill();
+    const why = spawnFailure ?? `it did not bind the port (exit code ${child.exitCode})`;
+    if (attempt === ATTEMPTS) {
+      logCrash(`tauri-driver failed to start on ports ${driverPort}/${nativePort}: ${why}`, specs);
+      process.exit(1);
+    }
+    console.warn(
+      `[e2e] tauri-driver did not come up on ports ${driverPort}/${nativePort} (${why}); ` +
+        "retrying once against a freshly probed pair.",
+    );
+  }
 }
 
 function closeTauriDriver(): void {
@@ -387,4 +601,11 @@ function onShutdown(fn: () => void): void {
 
 onShutdown(() => {
   closeTauriDriver();
+  // The config module (and this registration) runs in every worker too, not only the launcher; an
+  // ungated release would drop the lock as soon as the first spec file's worker exited
+  // (docs/features/parallel-worktree-e2e/02_dev.md, Resolved Decision 8).
+  if (IS_LAUNCHER) {
+    releaseWorktreeLock();
+    if (!IS_LIGHT_RUN) releaseHostLock();
+  }
 });

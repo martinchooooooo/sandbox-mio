@@ -5,7 +5,7 @@ pub mod types;
 
 use std::sync::Arc;
 
-use tauri::{AppHandle, Manager, Runtime};
+use tauri::{AppHandle, Runtime};
 use tauri_plugin_shell::process::Command;
 use tauri_plugin_shell::ShellExt;
 
@@ -15,10 +15,10 @@ use types::{MutagenCli, SessionInfo, SyncEngine, SyncError, SyncStatus};
 /// Sidecar name as declared in `bundle.externalBin`.
 const SIDECAR: &str = "mutagen";
 
+/// `MIO_APP_DATA_DIR` relocates the Mutagen data directory (see [`crate::paths::app_data_root`]);
+/// no subsystem-specific override exists for this one.
 fn data_dir<R: Runtime>(app: &AppHandle<R>) -> Result<std::path::PathBuf, SyncError> {
-    let dir = app
-        .path()
-        .app_data_dir()
+    let dir = crate::paths::app_data_root(app)
         .map_err(|e| SyncError::DataDir(e.to_string()))?
         .join("mutagen");
     std::fs::create_dir_all(&dir)

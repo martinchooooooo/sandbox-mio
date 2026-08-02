@@ -18,6 +18,7 @@ fn e2e_dir() -> PathBuf { PathBuf::from(env::current_dir().unwrap()).join("e2e")
 fn tools_dir() -> PathBuf { PathBuf::from(env::current_dir().unwrap()).join("tools") }
 fn binaries_dir() -> PathBuf { root_dir().join("src-tauri").join("binaries") }
 fn root_dir() -> PathBuf { env::current_dir().unwrap() }
+fn debug_dir() -> PathBuf { root_dir().join("src-tauri").join("target").join("debug") }
 
 /// Absolute path to the bsdtar that ships in `System32`. A bare `tar` on PATH may resolve to msys
 /// or GNU tar (e.g. from Git for Windows), which cannot extract zip archives and reads `C:\...`
@@ -41,6 +42,11 @@ fn main() {
             fetch_llama();
             fetch_podman();
         }
+        // The entry point for a fresh worktree, ahead of every other arm: nothing else — `dev`,
+        // `e2e`, `package` — can run until this has staged the gitignored assets.
+        Some("dev") if args.get(2).map(String::as_str) == Some("--setup-worktree") => {
+            setup_worktree(args.get(3).cloned());
+        }
         Some("dev") => {
             kill_stale_dev_processes();
             set_dev_diagnostics_env();
@@ -52,6 +58,8 @@ fn main() {
         Some("e2e") if args.get(2).map(String::as_str) == Some("--setup") => {
             setup_e2e();
         }
+        // Any further `e2e --<flag>` arm belongs above this one, which forwards its second argument
+        // straight into `pnpm run test:{suite}` — an arm added below would run `pnpm run test:--<flag>`.
         Some("e2e") => {
             let mut suite = "standard";
             if args.len() > 2 {
@@ -72,6 +80,11 @@ fn main() {
         }
         _ => {
             eprintln!("Usage:");
+            eprintln!("  build dev --setup-worktree [<path>]");
+            eprintln!("                     - first command to run in a fresh worktree: stage tools/ +");
+            eprintln!("                       src-tauri/binaries/ (hard-linked from a sibling worktree when");
+            eprintln!("                       possible) and run `pnpm install` into <path>, defaulting to");
+            eprintln!("                       the invoking worktree");
             eprintln!("  build dev          - run `pnpm run tauri dev`");
             eprintln!("  build dev --setup  - install app dependencies and stage the Mutagen sidecar + llama.cpp engine + Podman");
             eprintln!("  build e2e          - run `pnpm test` in the e2e folder");
@@ -110,6 +123,239 @@ fn setup_e2e() {
     }
 }
 
+/// Sibling git worktrees of `target_root` (`git worktree list --porcelain`), `target_root` itself
+/// excluded. Empty on any git failure rather than an error — a missing sibling just means
+/// `setup_worktree()` falls back to `fetch_*`.
+fn sibling_worktrees(target_root: &Path) -> Vec<PathBuf> {
+    let Ok(output) = Command::new("git")
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(target_root)
+        .output()
+    else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    let target_canonical = fs::canonicalize(target_root).ok();
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.strip_prefix("worktree "))
+        .map(PathBuf::from)
+        .filter(|p| fs::canonicalize(p).ok() != target_canonical)
+        .collect()
+}
+
+/// Hard-links `dst` from `src` (falling back to a byte copy across volumes), removing an existing
+/// `dst` first. Hard links make staged assets shared mutable state between worktrees; without the
+/// removal, `fs::copy` on Windows would write into an existing destination in place rather than
+/// replacing it, silently rewriting through the link (Resolved Decision 11).
+fn link_or_copy(src: &Path, dst: &Path) {
+    if let Some(parent) = dst.parent() {
+        fs::create_dir_all(parent).unwrap();
+    }
+    let _ = fs::remove_file(dst);
+    if fs::hard_link(src, dst).is_err() {
+        fs::copy(src, dst)
+            .unwrap_or_else(|e| panic!("failed to stage {} -> {}: {}", src.display(), dst.display(), e));
+    }
+}
+
+/// Recursively `link_or_copy`s every entry of `src` into `dst`.
+///
+/// Adds and overwrites only — a file present in `dst` but absent from `src` is left in place, so a
+/// renamed or dropped asset lingers in a target worktree that was staged before the rename. Harmless
+/// today (every consumer resolves assets by name), but a full mirror would have to prune.
+fn link_or_copy_tree(src: &Path, dst: &Path) {
+    fs::create_dir_all(dst).unwrap();
+    for entry in fs::read_dir(src).unwrap() {
+        let entry = entry.unwrap();
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            link_or_copy_tree(&from, &to);
+        } else {
+            link_or_copy(&from, &to);
+        }
+    }
+}
+
+/// Records which pinned version each `fetch_*` last staged into `src-tauri/binaries`, so
+/// `setup_worktree()` can tell whether a sibling's binaries match *this* checkout's constants before
+/// hard-linking them (a sibling worktree sits on its own commit; the file merely existing says
+/// nothing about its version).
+const STAGED_VERSIONS: &str = ".staged-versions.json";
+
+/// The version `key` was staged at in `binaries`, or `None` when unrecorded — an unknown version is
+/// never linkable, so the caller falls back to fetching.
+///
+/// Flat `{"key":"value"}` only, parsed by splitting on the quote character: every quoted token lands
+/// at an odd index, so keys are at 1, 5, 9... and their values two tokens later. Version strings and
+/// keys are `[A-Za-z0-9.-]`, so there is nothing to unescape.
+fn staged_version(binaries: &Path, key: &str) -> Option<String> {
+    let text = fs::read_to_string(binaries.join(STAGED_VERSIONS)).ok()?;
+    let tokens: Vec<&str> = text.split('"').collect();
+    (1..tokens.len())
+        .step_by(4)
+        .find(|&i| tokens[i] == key)
+        .and_then(|i| tokens.get(i + 2))
+        .map(|v| v.to_string())
+}
+
+/// Upsert `key = version` into this checkout's manifest, leaving other keys intact.
+fn record_staged_version(key: &str, version: &str) {
+    record_staged_version_in(&binaries_dir(), key, version);
+}
+
+fn record_staged_version_in(binaries: &Path, key: &str, version: &str) {
+    let mut entries: Vec<(String, String)> = ["mutagen", "llama", "podman"]
+        .iter()
+        .filter_map(|k| staged_version(binaries, k).map(|v| (k.to_string(), v)))
+        .collect();
+    match entries.iter_mut().find(|(k, _)| k == key) {
+        Some(entry) => entry.1 = version.to_string(),
+        None => entries.push((key.to_string(), version.to_string())),
+    }
+    let body = entries
+        .iter()
+        .map(|(k, v)| format!("\"{k}\":\"{v}\""))
+        .collect::<Vec<_>>()
+        .join(",");
+    fs::create_dir_all(binaries).unwrap();
+    let _ = fs::write(binaries.join(STAGED_VERSIONS), format!("{{{body}}}"));
+}
+
+/// One independently stageable set of files under `src-tauri/binaries`. Probed and linked per group
+/// rather than as one tree: a sibling commonly has Mutagen staged but not llama (`fetch_llama` skips
+/// when already present, and the heavy tier treats llama as optional), and linking the whole tree off
+/// a single sentinel silently produced a partially staged target whose `fetch_*` fallback never ran.
+struct AssetGroup {
+    key: &'static str,
+    version: &'static str,
+    /// Existence check, relative to `src-tauri/binaries`.
+    sentinel: &'static str,
+    /// Files and directories to link, relative to `src-tauri/binaries`.
+    paths: Vec<String>,
+    fetch: fn(),
+}
+
+fn asset_groups() -> Vec<AssetGroup> {
+    let mutagen_exe = format!("mutagen-{}-pc-windows-msvc.exe", env::consts::ARCH);
+    vec![
+        AssetGroup {
+            key: "mutagen",
+            version: MUTAGEN_VERSION,
+            sentinel: "mutagen-agents.tar.gz",
+            paths: vec!["mutagen-agents.tar.gz".into(), mutagen_exe],
+            fetch: fetch_mutagen,
+        },
+        AssetGroup {
+            key: "llama",
+            version: LLAMA_VERSION,
+            sentinel: "llama/llama-server.exe",
+            paths: vec!["llama".into()],
+            fetch: fetch_llama,
+        },
+        AssetGroup {
+            key: "podman",
+            version: PODMAN_VERSION,
+            sentinel: "podman/podman.exe",
+            paths: vec!["podman".into()],
+            fetch: fetch_podman,
+        },
+    ]
+}
+
+/// Stages `tools/msedgedriver.exe` and all of `src-tauri/binaries/` into `target` (defaulting to
+/// the invoking worktree), plus `pnpm install` (one install covers `e2e/` too, via
+/// `pnpm-workspace.yaml`). A fresh worktree has neither: both are `.gitignore`d, so `tauri-driver`
+/// has no native driver and the Mutagen agent-bundle copy in `e2e/wdio.conf.ts`'s `onPrepare` has no
+/// source file (docs/features/parallel-worktree-e2e/02_dev.md, Phase F).
+///
+/// Per asset group, prefers a hard link from the first sibling worktree whose `STAGED_VERSIONS`
+/// manifest agrees with this checkout's pinned version — costs no disk for the large
+/// llama.cpp/Podman/agent-bundle payloads. The manifest is what makes the link safe: parallel
+/// feature branches are exactly the case where two worktrees sit on different commits, and linking
+/// on mere existence would hand this checkout a binary its own `MUTAGEN_VERSION`/`LLAMA_VERSION`/
+/// `PODMAN_VERSION` does not pin, which no later `fetch_*` would correct.
+///
+/// Falls back to `fetch_mutagen`/`fetch_llama`/`fetch_podman` per group when no sibling qualifies —
+/// those are not safe to run concurrently with another worktree's fetch, since each extracts through
+/// a fixed, shared `env::temp_dir()` path it removes first.
+fn setup_worktree(target: Option<String>) {
+    let target_root = target.map(PathBuf::from).unwrap_or_else(root_dir);
+    let target_root = fs::canonicalize(&target_root)
+        .unwrap_or_else(|e| panic!("cannot resolve target worktree {}: {}", target_root.display(), e));
+
+    run(target_root.clone(), "pnpm", &["install"]);
+
+    let siblings = sibling_worktrees(&target_root);
+
+    let target_tools = target_root.join("tools");
+    match siblings
+        .iter()
+        .map(|s| s.join("tools").join("msedgedriver.exe"))
+        .find(|p| p.exists())
+    {
+        Some(src) => link_or_copy(&src, &target_tools.join("msedgedriver.exe")),
+        None => {
+            // `setup_e2e()` installs msedgedriver-tool into ~/.cargo/bin globally, so a missing
+            // sibling is a fetch away rather than a dead end — mirroring how the binaries groups
+            // below fall back to their own `fetch_*`.
+            fs::create_dir_all(&target_tools).unwrap();
+            println!("no sibling worktree has tools/msedgedriver.exe staged; fetching it directly");
+            if !try_run(target_tools, "msedgedriver-tool.exe", &[]) {
+                println!(
+                    "could not run msedgedriver-tool.exe; run `cargo run --bin build -- e2e --setup` \
+                     in {} to install it and fetch the driver",
+                    target_root.display()
+                );
+            }
+        }
+    }
+
+    let target_binaries = target_root.join("src-tauri").join("binaries");
+    for group in asset_groups() {
+        let source = siblings
+            .iter()
+            .map(|s| s.join("src-tauri").join("binaries"))
+            .find(|b| {
+                b.join(group.sentinel).exists()
+                    && staged_version(b, group.key).as_deref() == Some(group.version)
+            });
+        match source {
+            Some(src) => {
+                for rel in &group.paths {
+                    let from = src.join(rel);
+                    let to = target_binaries.join(rel);
+                    if from.is_dir() {
+                        link_or_copy_tree(&from, &to);
+                    } else if from.exists() {
+                        link_or_copy(&from, &to);
+                    }
+                }
+                record_staged_version_in(&target_binaries, group.key, group.version);
+                println!("Linked {} {} from {}", group.key, group.version, src.display());
+            }
+            None => {
+                println!(
+                    "no sibling worktree has {} {} staged; fetching directly into {} — do not run \
+                     this concurrently with another worktree's fetch (02_dev.md Phase F)",
+                    group.key,
+                    group.version,
+                    target_root.display()
+                );
+                let cwd = env::current_dir().unwrap();
+                env::set_current_dir(&target_root).unwrap();
+                (group.fetch)();
+                env::set_current_dir(cwd).unwrap();
+            }
+        }
+    }
+
+    println!("Worktree staged: {}", target_root.display());
+}
+
 fn fetch_mutagen() {
     if !cfg!(windows) {
         todo!("Mutagen sidecar fetch is implemented for Windows only");
@@ -118,6 +364,10 @@ fn fetch_mutagen() {
     let dest = binaries_dir().join(format!("mutagen-{triple}.exe"));
     let agents_dest = binaries_dir().join("mutagen-agents.tar.gz");
     if dest.exists() && agents_dest.exists() {
+        // Recorded on this path too: the manifest states what this checkout's constants assert about
+        // the files present, which is exactly the claim `setup_worktree()` needs to compare against.
+        // Without it, a worktree staged before the manifest existed could never be linked from.
+        record_staged_version("mutagen", MUTAGEN_VERSION);
         println!("Mutagen sidecar already staged: {}", dest.display());
         return;
     }
@@ -155,10 +405,18 @@ fn fetch_mutagen() {
         "expected mutagen-agents.tar.gz in extracted archive at {}",
         produced_agents.display()
     );
+    // Remove an existing destination before writing: a hard-linked destination (from
+    // `setup_worktree()`) is shared mutable state, and `fs::copy` on Windows writes into an
+    // existing destination in place rather than replacing it, which would silently rewrite a
+    // sibling worktree's staged asset too (docs/features/parallel-worktree-e2e/02_dev.md, Resolved
+    // Decision 11).
+    let _ = fs::remove_file(&dest);
+    let _ = fs::remove_file(&agents_dest);
     fs::copy(&produced, &dest).unwrap();
     fs::copy(&produced_agents, &agents_dest).unwrap();
     let _ = fs::remove_dir_all(&extract);
     let _ = fs::remove_file(&zip);
+    record_staged_version("mutagen", MUTAGEN_VERSION);
     println!("Staged Mutagen sidecar: {}", dest.display());
     println!("Staged Mutagen agent bundle: {}", agents_dest.display());
 }
@@ -178,9 +436,14 @@ fn fetch_llama() {
     let dest_dir = binaries_dir().join("llama");
     let server = dest_dir.join("llama-server.exe");
     if server.exists() {
+        record_staged_version("llama", LLAMA_VERSION);
         println!("llama.cpp engine already staged: {}", server.display());
         return;
     }
+    // A hard-linked destination is shared mutable state, and this extracts straight into
+    // `dest_dir`, overwriting in place — remove it first so a re-fetch cannot rewrite a sibling
+    // worktree's staged copy through the link (Resolved Decision 11, as above).
+    let _ = fs::remove_dir_all(&dest_dir);
     fs::create_dir_all(&dest_dir).unwrap();
 
     let asset = format!("llama-{LLAMA_VERSION}-bin-win-vulkan-{arch}.zip");
@@ -204,6 +467,7 @@ fn fetch_llama() {
         server.display()
     );
     let _ = fs::remove_file(&zip);
+    record_staged_version("llama", LLAMA_VERSION);
     println!("Staged llama.cpp engine: {}", dest_dir.display());
 }
 
@@ -218,6 +482,7 @@ fn fetch_podman() {
     let dest_dir = binaries_dir().join("podman");
     let podman_exe = dest_dir.join("podman.exe");
     if podman_exe.exists() {
+        record_staged_version("podman", PODMAN_VERSION);
         println!("Podman already staged: {}", podman_exe.display());
         return;
     }
@@ -244,10 +509,13 @@ fn fetch_podman() {
         let found = find_file(&extract, name).unwrap_or_else(|| {
             panic!("expected {} in extracted Podman archive at {}", name, extract.display())
         });
+        // See the Mutagen fetch above: remove a possibly hard-linked destination before writing.
+        let _ = fs::remove_file(dest_dir.join(name));
         fs::copy(&found, dest_dir.join(name)).unwrap();
     }
     let _ = fs::remove_dir_all(&extract);
     let _ = fs::remove_file(&zip);
+    record_staged_version("podman", PODMAN_VERSION);
     println!("Staged Podman: {}", dest_dir.display());
 }
 
@@ -267,22 +535,32 @@ fn find_file(dir: &Path, name: &str) -> Option<PathBuf> {
     None
 }
 
-/// Kill lingering `podman`/`gvproxy`/`win-sshproxy` processes running out of `target/debug` from a
-/// previous `dev` run. Unlike the app's normal shutdown (where these are meant to outlive the app
-/// so the podman machine keeps running), a dev restart re-stages the same binaries every time, so a
-/// stale process still holding one open causes the next `stage_podman` copy - or a `cargo clean` -
-/// to fail with a Windows file-lock error. Only processes whose exe path is under `target/debug`
-/// are targeted, so a real Podman Desktop install is left alone.
+/// Kill lingering `podman`/`gvproxy`/`win-sshproxy` processes running out of *this worktree's own*
+/// `target/debug` from a previous `dev` run. Unlike the app's normal shutdown (where these are meant
+/// to outlive the app so the podman machine keeps running), a dev restart re-stages the same
+/// binaries every time, so a stale process still holding one open causes the next `stage_podman`
+/// copy - or a `cargo clean` - to fail with a Windows file-lock error.
+///
+/// Matched against the full absolute `src-tauri\target\debug\` path via an environment variable,
+/// compared with `StartsWith`/`OrdinalIgnoreCase` rather than PowerShell `-like` (which gives `[`,
+/// `]`, `*`, `?` wildcard meaning and breaks on a `'` in the path) — so a `build dev` in one worktree
+/// never kills another worktree's e2e podman processes, including one nested under this worktree's
+/// own `.claude/worktrees/` (a root-prefix filter would still match those).
 fn kill_stale_dev_processes() {
     if !cfg!(windows) {
         return;
     }
+    let mut dir = debug_dir().to_string_lossy().into_owned();
+    if !dir.ends_with('\\') {
+        dir.push('\\');
+    }
     let script = r#"
         Get-Process -Name podman,win-sshproxy,gvproxy -ErrorAction SilentlyContinue |
-            Where-Object { $_.Path -and $_.Path -like '*\target\debug\*' } |
+            Where-Object { $_.Path -and $_.Path.StartsWith($env:MIO_DEBUG_DIR, [StringComparison]::OrdinalIgnoreCase) } |
             Stop-Process -Force -ErrorAction SilentlyContinue
     "#;
     let _ = Command::new("powershell")
+        .env("MIO_DEBUG_DIR", &dir)
         .args(["-NoProfile", "-Command", script])
         .status();
 }
@@ -388,6 +666,25 @@ fn copy_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// `run` without the panic: returns whether the command both launched and exited successfully, for
+/// callers that have a printable fallback.
+fn try_run(dir: PathBuf, cmd: &str, args: &[&str]) -> bool {
+    let mut command = if cfg!(windows) {
+        let mut c = Command::new("cmd");
+        c.arg("/C").arg(cmd).args(args);
+        c
+    } else {
+        let mut c = Command::new(cmd);
+        c.args(args);
+        c
+    };
+    command
+        .current_dir(dir)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 fn run(dir: PathBuf, cmd: &str, args: &[&str]) {

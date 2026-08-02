@@ -6,7 +6,7 @@ pub mod types;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 use crate::backends::types::SandboxBackend;
 use crate::env_ext::env_dir;
@@ -20,14 +20,13 @@ fn now_ms() -> u64 {
 }
 
 /// Root of the bundle store. `MIO_CREDENTIALS_DIR` relocates it wholesale (see
-/// [`crate::env_ext::env_dir`]): without an override the e2e suite would operate on the developer's
-/// real captured logins, and clearing one to reach a known-unauthenticated state costs a re-auth.
+/// [`crate::env_ext::env_dir`]), else `MIO_APP_DATA_DIR` (see [`crate::paths::app_data_root`]):
+/// without an override the e2e suite would operate on the developer's real captured logins, and
+/// clearing one to reach a known-unauthenticated state costs a re-auth.
 pub fn store_dir(app: &AppHandle) -> Result<PathBuf, CredentialError> {
     let dir = match env_dir("MIO_CREDENTIALS_DIR") {
         Some(root) => root,
-        None => app
-            .path()
-            .app_data_dir()
+        None => crate::paths::app_data_root(app)
             .map_err(|e| CredentialError::Io(e.to_string()))?
             .join("credentials"),
     };

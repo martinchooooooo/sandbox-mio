@@ -6,6 +6,7 @@ import ModelsPage from "../../pageobjects/models.page.js";
 import ProjectsPage from "../../pageobjects/projects.page.js";
 import ActivityCenter from "../../pageobjects/activity.page.js";
 import { captureDiagOnFailure } from "../../../lib/diag.js";
+import { APP_DATA_ROOT } from "../../../lib/run-identity.js";
 
 // HEAVY spec (docs/features/activity-center/03_e2e.md, Steps 1–8). Reuses local-llm.spec.ts's
 // staged sidecar and test GGUF, but asserts the activity center from a foreign route and after a
@@ -22,12 +23,9 @@ interface TestModel {
   sizeBytes: number;
 }
 
-// The debug build writes models under app_data_dir() = %APPDATA%/<bundle identifier>/models.
-const APP_DATA_MODELS = path.join(
-  process.env.APPDATA ?? path.join(process.env.USERPROFILE ?? "", "AppData", "Roaming"),
-  "com.tincho.sandbox-mio",
-  "models",
-);
+// The app writes models under the slug-keyed app-data root the launcher sets via MIO_APP_DATA_DIR
+// (src-tauri/src/paths.rs), not under %APPDATA%/<bundle identifier>.
+const APP_DATA_MODELS = path.join(APP_DATA_ROOT, "models");
 
 describe("Activity Center — global task tracking", function () {
   this.timeout(600000); // a cold run downloads the test GGUF and loads it into the sidecar

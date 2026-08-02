@@ -4,6 +4,7 @@ import path from "path";
 
 import ModelsPage from "../../pageobjects/models.page.js";
 import { captureDiagOnFailure } from "../../../lib/diag.js";
+import { APP_DATA_ROOT } from "../../../lib/run-identity.js";
 
 // HEAVY spec (Steps 1–5 of docs/features/local-llm/03_e2e.md). Excluded from the default `pnpm
 // test` glob because a cold run downloads a GGUF and loads it into the sidecar; run via
@@ -24,13 +25,9 @@ interface TestModel {
   sizeBytes: number;
 }
 
-// The debug build writes models under app_data_dir() = %APPDATA%/<bundle identifier>/models.
-// The identifier is com.tincho.sandbox-mio (src-tauri/tauri.conf.json).
-const APP_DATA_MODELS = path.join(
-  process.env.APPDATA ?? path.join(process.env.USERPROFILE ?? "", "AppData", "Roaming"),
-  "com.tincho.sandbox-mio",
-  "models",
-);
+// The app writes models under the slug-keyed app-data root the launcher sets via MIO_APP_DATA_DIR
+// (src-tauri/src/paths.rs), not under %APPDATA%/<bundle identifier>.
+const APP_DATA_MODELS = path.join(APP_DATA_ROOT, "models");
 
 describe("Local LLM — llama engine", function () {
   this.timeout(600000); // cold run downloads the test GGUF and loads it into the sidecar
