@@ -1,6 +1,9 @@
 import ProjectsPage from "../../pageobjects/projects.page.js";
+import { captureDiagOnFailure } from "../../../lib/diag.js";
 
 describe("Project start and stop", () => {
+  captureDiagOnFailure();
+
   it("creates a project, starts it (indicator goes green), then stops it", async () => {
     const projectName = `e2e-${Date.now()}`;
 

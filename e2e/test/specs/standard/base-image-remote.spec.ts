@@ -1,6 +1,7 @@
 import ProjectsPage from "../../pageobjects/projects.page.js";
 import { podman, podmanOk, LOCAL_CONNECTION, REMOTE_CONNECTION } from "../../../lib/podman-connection.js";
 import { MISE_BASE_IMAGE } from "../../../lib/podman-machine.js";
+import { captureDiagOnFailure } from "../../../lib/diag.js";
 
 // Regression guard for the missing base-image build on the remote deploy path. The mise base image
 // is never published to a registry, so when it is absent on the target connection `podman create`
@@ -12,6 +13,8 @@ import { MISE_BASE_IMAGE } from "../../../lib/podman-machine.js";
 // removes the image only from the remote connection and re-leaves the local connection untouched,
 // so it has no ordering constraint with the rest of the suite.
 describe("Base image bootstrap (remote)", () => {
+  captureDiagOnFailure();
+
   it("builds the mise base image on first remote deploy when it is absent on the target", async function () {
     // The base-image build on the remote downloads and bakes mise + zellij (~324 MB); generous
     // ceiling covers both the local create and the remote build.

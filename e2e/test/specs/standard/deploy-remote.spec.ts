@@ -5,6 +5,7 @@ import path from "path";
 import ProjectsPage from "../../pageobjects/projects.page.js";
 import { podman, podmanOk, LOCAL_CONNECTION, REMOTE_CONNECTION } from "../../../lib/podman-connection.js";
 import { useSandboxWorkspace } from "../../../lib/sandbox-suite.js";
+import { captureDiagOnFailure } from "../../../lib/diag.js";
 
 // node:assert is used instead of expect().toBe(true) because expect-webdriverio's withMessage()
 // is only supported on async element matchers, not on plain JS value assertions — node:assert's
@@ -18,6 +19,8 @@ describe("Deploy sandbox to remote machine", () => {
     // one is already handled by useSandboxWorkspace's teardown).
     podman(REMOTE_CONNECTION, ["rm", "-f", projectName], { check: false });
   });
+
+  captureDiagOnFailure();
 
   it("creates a local project and writes a marker file to its workspace", async () => {
     await ProjectsPage.open();

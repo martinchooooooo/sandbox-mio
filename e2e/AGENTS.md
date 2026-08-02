@@ -183,3 +183,13 @@ block used to be copy-pasted verbatim across five places and is exactly the kind
 duplication this helper removes. `useDashboardWebview()` already calls it, so dashboard specs get it
 for free. For a spec that also needs a sidecar artifact (e.g. `heavy/local-llm.spec.ts` copies
 `llama-server.log`), pass an `extra(diagDir, stamp)` callback — it runs after the page dump, beside it.
+
+Every spec that drives the UI calls it. The two that do not — `standard/base-image-recipe.spec.ts`
+(parses files, never opens a page) and `standard/forward-sweep.spec.ts` (uses `browser` only to poll
+Mutagen state) — would capture whatever route happened to be loaded, which is noise rather than
+evidence. A spec without it burns its full budget and reports only that an element never appeared:
+that is how a real `undeploy` failure was lost twice.
+
+The per-run failure list is written to `e2e/failures-<tier>.log`, split by tier because `onPrepare`
+truncates it. A light run is the usual way to sanity-check a fix, and a single shared file meant that
+run wiped the standard failure being investigated before anyone read it.

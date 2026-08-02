@@ -6,6 +6,7 @@ import ActivityCenter from "../../pageobjects/activity.page.js";
 import { podman, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
 import { activatePodmanSocket, DEFAULT_MACHINE } from "../../../lib/podman-machine.js";
 import { COMMAND, PANEL_RENDER, PODMAN_RECOVERY, SUBPROCESS, UI_SETTLE } from "../../../lib/timeouts.js";
+import { captureDiagOnFailure } from "../../../lib/diag.js";
 
 // Proves the Podman startup-recovery feature end to end (docs/features/podman-startup-recovery):
 // with podman-machine-default stopped, /projects shows the recovery screen; clicking "Start Podman"
@@ -23,6 +24,8 @@ import { COMMAND, PANEL_RENDER, PODMAN_RECOVERY, SUBPROCESS, UI_SETTLE } from ".
 // correctly skips the reset — that path is out of scope here (see the e2e plan's Environment Notes).
 describe("Podman startup recovery", function () {
   this.timeout(120000);
+
+  captureDiagOnFailure();
 
   before(() => {
     const stop = spawnSync("podman", ["machine", "stop", DEFAULT_MACHINE], {

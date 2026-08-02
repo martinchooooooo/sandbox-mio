@@ -16,7 +16,6 @@ import { LOCAL_CONNECTION, REMOTE_CONNECTION } from "./lib/podman-connection.js"
 import { ensureMutagen, forwardCreate, SWEEP_ORPHAN_SESSION, SWEEP_KEEP_SESSION } from "./lib/mutagen.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
-const FAILURES_LOG = path.join(__dirname, "failures.log");
 
 // Every machine a standard run needs answering before the first spec starts.
 const REQUIRED_MACHINES = [DEFAULT_MACHINE, LOCAL_CONNECTION, REMOTE_CONNECTION];
@@ -125,6 +124,10 @@ const IS_LIGHT_RUN =
   requestedSpecs.length > 0
     ? requestedSpecs.every(isLightSpec)
     : requestedSuites.length > 0 && requestedSuites.every((s) => s === "light");
+
+// Per tier, because onPrepare truncates it: a light run is the usual way to sanity-check a fix and
+// would otherwise wipe the standard failure being investigated before it could be read.
+const FAILURES_LOG = path.join(__dirname, `failures-${IS_LIGHT_RUN ? "light" : "standard"}.log`);
 
 // `--suite light --spec <file>` does not narrow the run — @wdio/cli resolves `suites` before
 // applying `--spec` (docs/features/scriptable-mock-backend/01_ideas.md Validation). MIO_SPEC

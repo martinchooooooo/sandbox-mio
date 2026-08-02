@@ -1,6 +1,7 @@
 import ProjectsPage from "../../pageobjects/projects.page.js";
 import { podman, podmanOk, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
 import { MISE_BASE_IMAGE } from "../../../lib/podman-machine.js";
+import { captureDiagOnFailure } from "../../../lib/diag.js";
 
 // Regression guard for the missing base-image build. The mise base image is never published to a
 // registry, so when it is absent `podman create --pull=missing` falls back to a registry pull that
@@ -13,6 +14,8 @@ import { MISE_BASE_IMAGE } from "../../../lib/podman-machine.js";
 // Removing and rebuilding the ~324 MB image is the unavoidable cost of exercising the build path —
 // the rebuilt image is left in place for the specs that follow.
 describe("Base image bootstrap", () => {
+  captureDiagOnFailure();
+
   it("builds the mise base image on first sandbox create when it is absent", async function () {
     // The base-image build downloads and bakes mise + zellij (~324 MB), longer than the suite default.
     this.timeout(900000);
