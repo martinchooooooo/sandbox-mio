@@ -32,6 +32,12 @@ export const SUBPROCESS = 30_000;
 export const SYNC_CONVERGE = 60_000;
 
 /**
+ * Destroying a container that may hold a live foreground process: pane/forward teardown before
+ * `podman rm --force` even runs, then the full SIGTERM grace for a process that may not exit clean.
+ */
+export const DESTROY_GRACE = 60_000;
+
+/**
  * `podman machine start` plus rootless socket activation, driven through the app's recovery flow.
  * Covers machine start (≤30 s) + socket activation (≤7 s) + poll (4 × 0.5 s) + event delivery.
  */

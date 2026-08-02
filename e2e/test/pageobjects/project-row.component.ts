@@ -1,5 +1,5 @@
 import { type Element } from "./app.page.js";
-import { COMMAND, DEPLOY, SUBPROCESS, SYNC_CONVERGE, UI_SETTLE } from "../../lib/timeouts.js";
+import { COMMAND, DEPLOY, DESTROY_GRACE, SUBPROCESS, SYNC_CONVERGE, UI_SETTLE } from "../../lib/timeouts.js";
 
 // Enough to outlast two of the deployment poll's 3 s re-render windows without masking a button that
 // is genuinely inert — a click lost to a re-render is rare, so needing all three means a real defect.
@@ -195,9 +195,7 @@ export default class ProjectRow {
     if (errorText) throw new Error(`${action} failed: ${errorText}`);
   }
 
-  // `podman rm --force` must stop a container that may hold a live foreground process
-  // (agent-setup.spec.ts), so it can take the full kill grace.
-  async destroy(timeout = SUBPROCESS): Promise<void> {
+  async destroy(timeout = DESTROY_GRACE): Promise<void> {
     await this.#clickButton(this.destroyButton);
     await this.waitForGone(timeout);
   }

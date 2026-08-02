@@ -88,7 +88,9 @@ class ProjectsPage extends AppPage {
   // build, so the row can take minutes to appear.
   async createProject(name: string, { timeout = COMMAND }: { timeout?: number } = {}): Promise<ProjectRow> {
     await (await this.nameInput).setValue(name);
-    await (await this.createButton).click();
+    const btn = await this.createButton;
+    await btn.waitForClickable({ timeout: UI_SETTLE });
+    await btn.click();
 
     const row = this.row(name);
     await row.waitForDisplayed(timeout);
