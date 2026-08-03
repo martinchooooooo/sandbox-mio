@@ -24,6 +24,9 @@
         inferenceEngine: EngineKind;
         llamaGpuLayers: number | null;
         llamaCtxSize: number | null;
+        // `set_settings` replaces the whole file, and any field this page omits comes back as its
+        // serde default — which would silently un-onboard the user (`onboardingCompleted`).
+        [key: string]: unknown;
     }
 
     const action = createActionRunner();
@@ -36,6 +39,10 @@
     let installLog = $state<string[]>([]);
     let installing = $state(false);
     let saved = $state(false);
+
+    // The last full object read from `get_settings`, so `save()` can round-trip the fields this
+    // page does not edit instead of dropping them.
+    let loaded: AppSettings = { inferenceEngine: "llama", llamaGpuLayers: null, llamaCtxSize: null };
 
     async function loadSteps(forEngine: EngineKind) {
         try {
@@ -53,6 +60,7 @@
 
     async function save() {
         const settings: AppSettings = {
+            ...loaded,
             inferenceEngine: engine,
             llamaGpuLayers: gpuLayers.trim() === "" ? null : Number(gpuLayers),
             llamaCtxSize: ctxSize.trim() === "" ? null : Number(ctxSize),
@@ -84,6 +92,7 @@
     onMount(async () => {
         try {
             const s = await invoke<AppSettings>("get_settings");
+            loaded = s;
             engine = s.inferenceEngine;
             gpuLayers = s.llamaGpuLayers === null ? "" : String(s.llamaGpuLayers);
             ctxSize = s.llamaCtxSize === null ? "" : String(s.llamaCtxSize);

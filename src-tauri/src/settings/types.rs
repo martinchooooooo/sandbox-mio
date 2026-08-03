@@ -20,4 +20,7 @@ pub struct AppSettings {
     pub llama_gpu_layers: Option<u32>,
     /// Llama-specific: context window size; `None` = model default.
     pub llama_ctx_size: Option<u32>,
+    /// Whether the user has finished the welcome/onboarding flow. Absent from a settings file
+    /// written before the feature, so an existing install deserializes as not yet onboarded.
+    pub onboarding_completed: bool,
 }

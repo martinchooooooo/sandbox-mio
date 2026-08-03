@@ -39,13 +39,20 @@ use crate::workspace::types::{AppKind, TerminalPane, WorkspaceRegistry, Workspac
 const INFERENCE_FORWARD: &str = "inference-reverse";
 
 #[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
+fn base_image_version() -> u32 {
+    backends::BASE_IMAGE_VERSION
+}
+
+/// Stages the base image on its own, without creating a sandbox: the onboarding flow's "download
+/// necessities" step. Deliberately skips `create_sandbox`'s `runtime.init` — no workspace exists yet.
+#[tauri::command]
+async fn build_base_image(store: State<'_, Arc<dyn SandboxBackend>>) -> Result<(), AppError> {
+    Ok(store.ensure_base_image().await?)
 }
 
 #[tauri::command]
-fn base_image_version() -> u32 {
-    backends::BASE_IMAGE_VERSION
+async fn base_image_ready(store: State<'_, Arc<dyn SandboxBackend>>) -> Result<bool, AppError> {
+    Ok(store.base_image_ready().await?)
 }
 
 #[tauri::command]
@@ -1408,8 +1415,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            greet,
             base_image_version,
+            build_base_image,
+            base_image_ready,
             get_dismissed_image_version,
             dismiss_image_update,
             mutagen_version,
