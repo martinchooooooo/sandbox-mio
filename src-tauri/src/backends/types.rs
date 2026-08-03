@@ -96,6 +96,10 @@ pub(super) struct ConnectionInfo {
 pub trait SandboxBackend: Send + Sync {
     /// Build base image if absent (idempotent; image is never in a registry).
     async fn ensure_base_image(&self) -> Result<(), BackendError>;
+    /// Whether the base image already exists on the active connection, without building it.
+    /// Query-only counterpart to `ensure_base_image` for UI that must distinguish "already done"
+    /// from "not started yet" (the welcome/onboarding replay screen).
+    async fn base_image_ready(&self) -> Result<bool, BackendError>;
     /// Create a stopped container with workspace directory bind-mounted at `/root/work`.
     /// With `existing_path: None`, uses `<Documents>/sandbox-mio/<name>`; with Some, validates and uses it.
     async fn create(&self, name: &str, existing_path: Option<&str>) -> Result<Sandbox, BackendError>;

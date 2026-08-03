@@ -31,7 +31,7 @@ so specs read as high-level actions and a UI change touches one place.
 ### Layout
 
 - `app.page.js` — base class the concrete pages extend.
-- `*.page.js` — one module per screen (e.g. `greet.page.js`, `projects.page.js`). Each exports a
+- `*.page.js` — one module per screen (e.g. `projects.page.js`, `settings.page.js`). Each exports a
   singleton instance.
 - `*.component.js` — a component object wrapping one repeated UI fragment rather than a whole
   screen (e.g. `project-row.component.js`, one project's `<li>` in the list). Constructed per

@@ -1,41 +1,39 @@
 <script lang="ts">
+    import { onMount } from "svelte";
     import Button from "$lib/components/ui/button/button.svelte";
-    import * as Field from "$lib/components/ui/field";
-    import { Input } from "$lib/components/ui/input";
-    import { m } from "$lib/paraglide/messages.js";
+    import WelcomeFlow from "$lib/welcome/WelcomeFlow.svelte";
+    import {
+        ensureOnboardingState,
+        onboardingCompleted,
+        resetOnboarding,
+    } from "$lib/settings/onboarding.svelte";
 
-    import { invoke } from "@tauri-apps/api/core";
-
-    let name = $state("");
-    let greetMsg = $state("");
-
-    async function greet(event: Event) {
-        event.preventDefault();
-        // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-        greetMsg = await invoke("greet", { name });
-    }
+    onMount(ensureOnboardingState);
 </script>
 
-<main class="m-0 pt-[10vh] flex flex-col items-center justify-center text-center">
-    <h1 class="text-3xl">{m.home_title()}</h1>
+<div class="relative min-h-full">
+    {#if onboardingCompleted() === false}
+        <WelcomeFlow variant="onboarding" />
+    {:else if onboardingCompleted()}
+        <main class="min-h-full flex flex-col items-center justify-center gap-4 p-8 text-center">
+            <!-- TODO(i18n) -->
+            <h1 class="text-3xl font-bold">You're all set</h1>
+            <!-- TODO(i18n) -->
+            <p class="text-muted-foreground max-w-md">
+                Everything is ready. Create your first sandbox to start working in it.
+            </p>
+            <!-- TODO(i18n) -->
+            <Button href="/projects">Get started with your first sandbox</Button>
+        </main>
+    {/if}
 
-    <form class="flex flex-col items-center w-full mt-8" onsubmit={greet}>
-        <Field.Set class="w-full max-w-sm">
-            <Field.Group>
-                <Field.Field>
-                    <Field.Label>{m.greet_label()}</Field.Label>
-                    <div class="flex w-full gap-2">
-                        <Input
-                            id="greet-input"
-                            placeholder={m.greet_placeholder()}
-                            bind:value={name}
-                        />
-                        <Button type="submit">{m.greet_button()}</Button>
-                    </div>
-                </Field.Field>
-            </Field.Group>
-        </Field.Set>
-    </form>
-
-    <p>{greetMsg}</p>
-</main>
+    <!-- Debug aid, ungated: this route is not reachable from any nav tab once onboarding is
+         complete (docs/features/welcome-onboarding/02_dev.md, Resolved Decisions). -->
+    <Button
+        variant="outline"
+        size="sm"
+        class="fixed bottom-3 left-3 opacity-60"
+        onclick={resetOnboarding}
+        data-restart-onboarding
+    >Restart onboarding</Button>
+</div>

@@ -247,6 +247,14 @@ export const config: WebdriverIO.Config = {
     // sees "Use saved login" and fails.
     fs.rmSync(E2E_SETTINGS_DIR, { recursive: true, force: true });
     fs.rmSync(E2E_CREDENTIALS_DIR, { recursive: true, force: true });
+    // The one field not left at its Rust default: `onboardingCompleted: false` hides the nav chrome
+    // (src/routes/+layout.svelte), which every spec navigating by tab depends on. A welcome-flow
+    // spec resets the flag itself to reach the first-run path.
+    fs.mkdirSync(E2E_SETTINGS_DIR, { recursive: true });
+    fs.writeFileSync(
+      path.join(E2E_SETTINGS_DIR, "settings.json"),
+      JSON.stringify({ onboardingCompleted: true }),
+    );
     if (IS_LIGHT_RUN) {
       console.log("[e2e] light suite: skipping podman machine provisioning (MIO_MOCK_BACKEND=1).");
     } else {

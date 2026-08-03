@@ -4,7 +4,18 @@
     import { onMount, onDestroy } from "svelte";
     import { parseError } from "$lib/errors";
     import { m } from "$lib/paraglide/messages.js";
-    import { createActionRunner } from "$lib/actions.svelte";
+    import {
+        checkPodman,
+        podmanUnavailable,
+        podmanNeedsSetup,
+        podmanRebootRequired,
+        setupBusy,
+        setupError,
+        startBusy,
+        startError,
+        startPodman as startPodmanMachine,
+        setupPodman as provisionPodmanMachine,
+    } from "$lib/podman/setup.svelte";
     import SandboxItem from "./SandboxItem.svelte";
     import CreateSandboxItem from "./CreateSandboxItem.svelte";
     import { activityEvents, containerStatusFor } from "$lib/activity/activity.svelte";
@@ -19,27 +30,6 @@
     // changes outside our event stream.
     let hosts = $state<string[]>([]);
     let deployments = $state<Record<string, Deployment>>({});
-
-    // Startup gate: set when `check_podman_ready` reports the machine/socket is down. While true the
-    // sandbox list is replaced by the "Start Podman" screen and the deployment poll is not started
-    // (polling a down Podman floods the backend with failing invocations).
-    let podmanUnavailable = $state(false);
-
-    // First-run gate: set when the default Podman machine has never been created (`machine_needs_init`
-    // returns true). Takes priority over `podmanUnavailable`'s plain "Start Podman" screen, since
-    // starting a machine that was never initialized cannot succeed.
-    let podmanNeedsSetup = $state(false);
-
-    // Set when `provision_podman` reports a fresh WSL2 install needs a Windows restart before it can
-    // continue. Shown instead of a generic setup failure so the user knows to reboot, not retry blindly.
-    let podmanRebootRequired = $state(false);
-
-    const startAction = createActionRunner();
-
-    // Not `createActionRunner`-driven: that helper only keeps the error message, but this flow
-    // needs the structured `kind` to tell a reboot requirement apart from a generic failure.
-    let setupBusy = $state(false);
-    let setupError = $state("");
 
     async function loadProjects() {
         try {
@@ -95,64 +85,32 @@
         invoke<number>("base_image_version").then((v) => (currentImageVersion = v)).catch(() => {});
     }
 
+    // Only started once Podman is confirmed ready: polling a down Podman floods the backend with
+    // failing invocations.
+    function startLoadAndPoll() {
+        loadAll();
+        pollId = setInterval(loadDeployments, 3000);
+    }
+
     onMount(async () => {
         // Probe Podman before anything else: a stopped machine after a host restart should show the
         // "Start Podman" screen, not a wall of failing load errors.
         try {
-            await invoke("check_podman_ready");
+            await checkPodman();
         } catch (e) {
-            if (parseError(e).kind === "PodmanUnavailable") {
-                // Distinguish "never initialized" (first run) from "just stopped": starting a
-                // machine that was never created cannot succeed, so route to the setup flow instead.
-                try {
-                    podmanNeedsSetup = await invoke<boolean>("machine_needs_init");
-                } catch {
-                    podmanNeedsSetup = false;
-                }
-                podmanUnavailable = true;
-                return; // skip the load sequence; the deployment poll stays unstarted
-            }
             error = parseError(e).message;
             return;
         }
-        loadAll();
-        pollId = setInterval(loadDeployments, 3000);
+        if (podmanUnavailable()) return;
+        startLoadAndPoll();
     });
 
-    // Drive the startup sequence from the "Start Podman" button. On success, clear the gate and run
-    // the normal load + poll; on failure `startAction.error` surfaces a Retry button.
     async function startPodman() {
-        const ok = await startAction.run(
-            "start",
-            () => invoke("start_podman_machine"),
-            { message: m.podman_starting() }
-        );
-        if (ok) {
-            podmanUnavailable = false;
-            loadAll();
-            pollId = setInterval(loadDeployments, 3000);
-        }
+        if (await startPodmanMachine()) startLoadAndPoll();
     }
 
-    // Drive first-run provisioning (WSL2 + `podman machine init` + start) from the setup screen.
-    // A `PodmanRebootRequired` error keeps the screen up with a reboot prompt instead of a bare retry.
     async function setupPodman() {
-        podmanRebootRequired = false;
-        setupError = "";
-        setupBusy = true;
-        try {
-            await invoke("provision_podman");
-            podmanNeedsSetup = false;
-            podmanUnavailable = false;
-            loadAll();
-            pollId = setInterval(loadDeployments, 3000);
-        } catch (e) {
-            const err = parseError(e);
-            podmanRebootRequired = err.kind === "PodmanRebootRequired";
-            setupError = err.message;
-        } finally {
-            setupBusy = false;
-        }
+        if (await provisionPodmanMachine()) startLoadAndPoll();
     }
 
     onDestroy(() => clearInterval(pollId));
@@ -186,33 +144,33 @@
             <p class="text-destructive mt-4 text-sm">{error}</p>
         {/if}
 
-        {#if podmanUnavailable && podmanNeedsSetup}
+        {#if podmanUnavailable() && podmanNeedsSetup()}
             <div class="mt-8 text-center space-y-4">
                 <h2 class="text-lg font-medium">{m.podman_setup_title()}</h2>
                 <p class="text-muted-foreground">{m.podman_setup_description()}</p>
-                {#if podmanRebootRequired}
+                {#if podmanRebootRequired()}
                     <p class="text-destructive text-sm">{m.podman_reboot_required()}</p>
                     <Button onclick={setupPodman}>{m.podman_reboot_retry()}</Button>
                 {:else}
-                    <Button loading={setupBusy} disabled={setupBusy} onclick={setupPodman}
+                    <Button loading={setupBusy()} disabled={setupBusy()} onclick={setupPodman}
                         >{m.podman_setup_button()}</Button
                     >
-                    {#if setupError}
-                        <p class="text-destructive text-sm">{setupError}</p>
+                    {#if setupError()}
+                        <p class="text-destructive text-sm">{setupError()}</p>
                         <Button variant="outline" onclick={setupPodman}>{m.retry()}</Button>
                     {/if}
                 {/if}
             </div>
-        {:else if podmanUnavailable}
+        {:else if podmanUnavailable()}
             <div class="mt-8 text-center space-y-4">
                 <p class="text-muted-foreground">{m.podman_not_running()}</p>
                 <Button
-                    loading={startAction.busy === "start"}
-                    disabled={startAction.busy !== null}
+                    loading={startBusy()}
+                    disabled={startBusy()}
                     onclick={startPodman}
                 >{m.podman_start_button()}</Button>
-                {#if startAction.error}
-                    <p class="text-destructive text-sm">{startAction.error}</p>
+                {#if startError()}
+                    <p class="text-destructive text-sm">{startError()}</p>
                     <Button variant="outline" onclick={startPodman}>{m.retry()}</Button>
                 {/if}
             </div>

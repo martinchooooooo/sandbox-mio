@@ -16,6 +16,7 @@
     import NavigationColumn from "$lib/workspace/NavigationColumn.svelte";
     import WorkspaceContent from "$lib/workspace/WorkspaceContent.svelte";
     import { ensureNetworkState } from "$lib/network/state.svelte";
+    import { ensureOnboardingState, onboardingCompleted } from "$lib/settings/onboarding.svelte";
     import { m } from "$lib/paraglide/messages.js";
     import type { Snippet } from "svelte";
 
@@ -94,6 +95,7 @@
             }
             await ensureWorkspaceState();
             await ensureNetworkState();
+            await ensureOnboardingState();
             if (isNavigationPanel) checkForUpdate();
         })();
     });
@@ -102,11 +104,21 @@
 <ModeWatcher />
 <Toaster />
 
+<!-- Gated on `!== false` so the still-loading state matches the eventual `false` case rather than
+     flashing chrome that then hides. NavigationColumn *wraps* the routed page, so the chromeless
+     branch has to re-render `children` itself — and keeps `@container`, which components below
+     resolve their container queries against. -->
 <div class="flex h-screen overflow-hidden">
-    <NavigationColumn {collapsed} showControls={showWorkspaceChrome} onToggleCollapsed={toggleCollapsed}>
-        {@render children?.()}
-    </NavigationColumn>
-    {#if showWorkspaceChrome}
-        <WorkspaceContent {hasTabs} {dashboardSandbox} />
+    {#if onboardingCompleted() !== false}
+        <NavigationColumn {collapsed} showControls={showWorkspaceChrome} onToggleCollapsed={toggleCollapsed}>
+            {@render children?.()}
+        </NavigationColumn>
+        {#if showWorkspaceChrome}
+            <WorkspaceContent {hasTabs} {dashboardSandbox} />
+        {/if}
+    {:else}
+        <div class="@container flex-1 overflow-y-auto">
+            {@render children?.()}
+        </div>
     {/if}
 </div>

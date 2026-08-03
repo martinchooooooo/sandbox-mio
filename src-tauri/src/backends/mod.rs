@@ -236,13 +236,17 @@ impl PodmanCliBackend {
         check(out).map(|_| ())
     }
 
+    async fn image_exists_on(&self, connection: &str) -> Result<bool, BackendError> {
+        Ok(self.podman_on(connection, &["image", "exists", &Self::image()]).await?.status.success())
+    }
+
     /// Ensures the mise base image exists on `connection`, building from the bundled Containerfile
     /// if absent. The image is never published to any registry, so absence always means build.
     /// Called by `ensure_base_image` (local, serialized under the build lock) and `deploy` (remote,
     /// no lock — concurrent deploys to the same target are harmless since `podman build` is idempotent).
     async fn ensure_image_on(&self, connection: &str) -> Result<(), BackendError> {
         let image = Self::image();
-        if self.podman_on(connection, &["image", "exists", &image]).await?.status.success() {
+        if self.image_exists_on(connection).await? {
             return Ok(());
         }
         // A temp context dir is needed because `podman build -` does not stream the Containerfile
@@ -389,6 +393,10 @@ impl SandboxBackend for PodmanCliBackend {
         // `ensure_image_on` and returns immediately — without it they would race the build.
         let _guard = self.build_lock.lock().await;
         self.ensure_image_on(&self.connection).await
+    }
+
+    async fn base_image_ready(&self) -> Result<bool, BackendError> {
+        self.image_exists_on(&self.connection).await
     }
 
     async fn create(&self, name: &str, existing_path: Option<&str>) -> Result<Sandbox, BackendError> {
