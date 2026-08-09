@@ -11,6 +11,7 @@
     "test:llm": "wdio run wdio.conf.ts --spec ./test/specs/light/local-llm-ui.spec.ts",
     "test:activity": "wdio run wdio.conf.ts --spec ./test/specs/heavy/activity-center.spec.ts",
     "test:port": "wdio run wdio.conf.ts --spec ./test/specs/standard/expose-port.spec.ts",
+    "test:agentweb": "wdio run wdio.conf.ts --spec ./test/specs/standard/agent-web.spec.ts",
     "test:opencode-forward": "wdio run wdio.conf.ts --spec ./test/specs/heavy/opencode-forward.spec.ts",
     "test:failures": "node -e \"const fs=require('fs');try{const c=fs.readFileSync('failures.log','utf8');process.stdout.write(c||'No failures\\n')}catch{console.log('Run pnpm test first')}\"",
     "typecheck": "tsc --noEmit"

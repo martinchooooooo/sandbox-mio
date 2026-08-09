@@ -55,20 +55,25 @@ pub trait RuntimeManager: Send + Sync {
     ) -> Result<(), RuntimeError>;
 
     /// Start zellij web server in sandbox, mint login token, return `(token, container_port)`.
-    /// Caller bridges container_port to Windows loopback via Mutagen forward.
+    /// Caller bridges container_port to Windows loopback via Mutagen forward. `exec_capable`
+    /// selects which `PortTransport` resolves the returned port — see
+    /// `docs/features/podman-exec-transport/02_dev.md`.
     async fn prepare_terminal(
         &self,
         name: &str,
         connection: &str,
         workspace_host_path: &str,
+        exec_capable: bool,
     ) -> Result<(String, u16), RuntimeError>;
 
-    /// Start paseo agent-web daemon in sandbox, return published container port.
+    /// Start paseo agent-web daemon in sandbox, return published container port. `exec_capable`
+    /// selects which `PortTransport` resolves the returned port.
     async fn prepare_agent_web(
         &self,
         name: &str,
         connection: &str,
         password: &str,
+        exec_capable: bool,
     ) -> Result<u16, RuntimeError>;
 
     /// The Podman connection this runtime is pinned to. Fallback for local sandboxes.
@@ -90,4 +95,8 @@ pub trait RuntimeManager: Send + Sync {
 pub struct PodmanMiseRuntime {
     pub connection: String,
     pub registry_cache: tokio::sync::OnceCell<Vec<RegistryEntry>>,
+    /// `podman port`-based lookup, used for a sandbox on the publish+relay reachability model.
+    pub published_port_transport: std::sync::Arc<dyn crate::transport::types::PortTransport>,
+    /// Trivial passthrough, used for a sandbox on the podman-exec-transport reachability model.
+    pub exec_port_transport: std::sync::Arc<dyn crate::transport::types::PortTransport>,
 }

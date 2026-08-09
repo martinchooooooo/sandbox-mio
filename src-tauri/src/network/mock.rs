@@ -89,6 +89,7 @@ impl NetworkManager for MockNetworkManager {
         target_port: u16,
         label: Option<String>,
         auto_detected: bool,
+        _exec_capable: bool,
     ) -> Result<u16, NetworkError> {
         let used: std::collections::HashSet<u16> = self
             .forwards
@@ -140,6 +141,7 @@ impl NetworkManager for MockNetworkManager {
         sandbox: &str,
         workspace_path: &str,
         connection: &str,
+        exec_capable: bool,
     ) {
         let mut watches = self.ports_watch.lock().unwrap();
         if watches.contains_key(sandbox) {
@@ -191,7 +193,7 @@ impl NetworkManager for MockNetworkManager {
 
                 for (port, label) in declared.into_iter().filter(|(p, _)| !already_exposed.contains(p)) {
                     let _ = manager
-                        .expose_port(&task_sandbox, &connection, &workspace_path, port, Some(label), false)
+                        .expose_port(&task_sandbox, &connection, &workspace_path, port, Some(label), false, exec_capable)
                         .await;
                 }
             }

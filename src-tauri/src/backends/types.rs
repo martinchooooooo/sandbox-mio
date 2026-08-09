@@ -55,6 +55,16 @@ pub struct Sandbox {
     pub image_version: Option<u32>,
 }
 
+impl Sandbox {
+    /// Whether this sandbox was built from an image new enough to have `sshd`/
+    /// `sshd_config.container` baked in, and so can use the podman-exec-transport reachability
+    /// model (`SshAlias::Proxied` + `PassthroughPortTransport`) instead of publish+relay.
+    pub fn supports_exec_transport(&self) -> bool {
+        self.image_version
+            .is_some_and(|v| v >= crate::backends::EXEC_TRANSPORT_MIN_IMAGE_VERSION)
+    }
+}
+
 /// Mutagen endpoints for a freshly deployed sandbox (returned by `deploy`).
 pub struct RemoteDeployment {
     /// Local (alpha) endpoint: the laptop workspace directory.
@@ -78,6 +88,10 @@ pub(super) enum SyncStrategy {
     Local,
     /// Remote: bind-mount is on remote host, mirrored via sync engine over SSH.
     Remote(ConnectionInfo),
+    /// A Mutagen-managed volume owned by the provider itself, not a bind-mountable directory.
+    /// Unconstructed until a provider needs it (`docs/features/mutagen-transport/02_dev.md`).
+    #[allow(dead_code)]
+    Volume(ConnectionInfo),
 }
 
 /// Live SSH endpoint for a Podman connection (read fresh, port changes at each boot).
@@ -153,4 +167,7 @@ pub(super) struct PodmanCliBackend {
     /// The process seam every `podman` call routes through — real in production, scripted under
     /// `MIO_MOCK_BACKEND=1`. See `docs/features/scriptable-mock-backend/02_dev.md`.
     pub(super) runner: std::sync::Arc<dyn crate::mockctl::types::ProcessRunner>,
+    /// Resolves `crate::paths::app_data_root` for per-sandbox exec-transport SSH identities
+    /// (`ensure_sandbox_identity`). Not used by any pre-existing method.
+    pub(super) app: tauri::AppHandle,
 }

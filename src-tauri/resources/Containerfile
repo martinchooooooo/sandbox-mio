@@ -9,9 +9,39 @@ FROM docker.io/library/debian:12-slim
 # socat relays a pre-published pool slot to a user-exposed port on the sandbox's own loopback,
 # so the app can expose an arbitrary port (e.g. a dev server the user started) over Mutagen
 # without recreating the container — see src-tauri/src/network/mod.rs.
+# openssh-server backs the podman-exec-transport reachability model: the host's outer ssh/Mutagen
+# client tunnels through `podman exec -i <sandbox> sshd -i`, so no port is ever published — see
+# docs/features/podman-exec-transport/02_dev.md.
+# socat above stays for sandboxes created from an older image, which keep the publish+relay model.
 RUN apt-get update -qq \
- && apt-get install -y -qq --no-install-recommends curl git ca-certificates xz-utils procps socat \
+ && apt-get install -y -qq --no-install-recommends curl git ca-certificates xz-utils procps socat openssh-server \
  && rm -rf /var/lib/apt/lists/*
+
+# Static sshd config for the podman-exec-transport model: `sshd -i` reads it via `-f` and needs no
+# Port/ListenAddress in inetd mode. `StrictModes no` is load-bearing: AuthorizedKeysFile arrives via
+# `podman cp` from Windows, whose permission bits sshd would otherwise reject as too open.
+# Host keys are baked at build time — they identify sshd to the client, not the reverse, and a
+# `podman exec` pipe has no network path for a third party to intercept.
+# The `mio-sshd` launcher exists for its `mkdir`: sshd aborts without /run/sshd, and /run is a fresh
+# tmpfs at container start, so the directory cannot be baked in. ensure_sandbox_alias execs it.
+# The sftp subsystem is not optional here: Mutagen installs its remote agent with `scp`, which
+# speaks the SFTP protocol, and this config replaces Debian's default rather than extending it.
+RUN ssh-keygen -A \
+ && printf '%s\n' \
+    'AuthorizedKeysFile /etc/ssh/authorized_keys.container' \
+    'PasswordAuthentication no' \
+    'PubkeyAuthentication yes' \
+    'StrictModes no' \
+    'UsePAM no' \
+    'Subsystem sftp /usr/lib/openssh/sftp-server' \
+    > /etc/ssh/sshd_config.container \
+ && touch /etc/ssh/authorized_keys.container \
+ && printf '%s\n' \
+    '#!/bin/sh' \
+    'mkdir -p /run/sshd' \
+    'exec /usr/sbin/sshd -i -f /etc/ssh/sshd_config.container' \
+    > /usr/local/bin/mio-sshd \
+ && chmod +x /usr/local/bin/mio-sshd
 
 # Bake the mise binary into the image so `create` pays no download. Pinned to an exact release so the
 # build never hits GitHub's version-listing API (rate-limited to 60 req/h unauthenticated, returns

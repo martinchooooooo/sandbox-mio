@@ -14,6 +14,7 @@ mod runtime;
 mod settings;
 mod ssh;
 mod sync;
+mod transport;
 mod workspace;
 
 use std::sync::Arc;
@@ -106,12 +107,48 @@ async fn uninstall_package(
     Ok(runtime.uninstall(&name, &package).await?)
 }
 
+/// Which of the two reachability models `name` was built for — the single predicate every
+/// transport-sensitive command branches on (`docs/features/podman-exec-transport/02_dev.md`).
+/// A sandbox the backend no longer lists is treated as pre-feature, the conservative default.
+async fn sandbox_exec_capable(
+    store: &Arc<dyn SandboxBackend>,
+    name: &str,
+) -> Result<bool, AppError> {
+    Ok(store
+        .list()
+        .await?
+        .into_iter()
+        .find(|s| s.name == name)
+        .is_some_and(|s| s.supports_exec_transport()))
+}
+
+/// The SSH alias a sandbox's Mutagen forwards tunnel over: the sandbox itself when exec-capable,
+/// the shared Podman connection otherwise. Rewrites the managed `~/.ssh` block on every call —
+/// unlike the container, that file is not guaranteed to survive between app runs.
+async fn ensure_forward_alias(
+    name: &str,
+    connection: &str,
+    exec_capable: bool,
+    app: &tauri::AppHandle,
+) -> Result<String, AppError> {
+    if exec_capable {
+        let identity_path = crate::backends::ensure_sandbox_identity(app, name)?;
+        crate::backends::ensure_sandbox_alias(name, connection, &identity_path).await?;
+        Ok(name.to_string())
+    } else {
+        crate::backends::ensure_connection_alias(connection).await?;
+        Ok(connection.to_string())
+    }
+}
+
 async fn prepare_terminal_webview(
     name: &str,
     workspace_path: &str,
     runtime: &Arc<dyn RuntimeManager>,
     engine: &Arc<dyn SyncEngine>,
     network: &Arc<dyn NetworkManager>,
+    store: &Arc<dyn SandboxBackend>,
+    app: &tauri::AppHandle,
 ) -> Result<TerminalPane, AppError> {
     let connection = engine
         .sessions()
@@ -121,13 +158,16 @@ async fn prepare_terminal_webview(
         .map(|s| s.host)
         .unwrap_or_else(|| runtime.local_connection().to_string());
 
-    crate::backends::ensure_connection_alias(&connection).await?;
+    let exec_capable = sandbox_exec_capable(store, name).await?;
+    let forward_alias = ensure_forward_alias(name, &connection, exec_capable, app).await?;
 
-    let (token, container_port) = runtime.prepare_terminal(name, &connection, workspace_path).await?;
+    let (token, container_port) = runtime
+        .prepare_terminal(name, &connection, workspace_path, exec_capable)
+        .await?;
 
     let forward_name = format!("terminal-{name}");
     let windows_port = network
-        .open_forward(name, ServiceKind::Terminal, &connection, container_port)
+        .open_forward(name, ServiceKind::Terminal, &forward_alias, container_port)
         .await
         .map_err(|e| crate::runtime::types::RuntimeError::TerminalUnavailable(e.to_string()))?;
     let mut url = tauri::Url::parse(&format!("http://127.0.0.1:{windows_port}/"))
@@ -225,6 +265,8 @@ async fn prepare_agent_web_pane(
     runtime: &Arc<dyn RuntimeManager>,
     engine: &Arc<dyn SyncEngine>,
     network: &Arc<dyn NetworkManager>,
+    store: &Arc<dyn SandboxBackend>,
+    app: &tauri::AppHandle,
 ) -> Result<TerminalPane, AppError> {
     let unavailable =
         |e: String| crate::runtime::types::RuntimeError::AgentWebUnavailable(e);
@@ -236,16 +278,20 @@ async fn prepare_agent_web_pane(
         .find(|s| s.name == name)
         .map(|s| s.host)
         .unwrap_or_else(|| runtime.local_connection().to_string());
-    crate::backends::ensure_connection_alias(&connection).await?;
+
+    let exec_capable = sandbox_exec_capable(store, name).await?;
+    let forward_alias = ensure_forward_alias(name, &connection, exec_capable, app).await?;
 
     let password = read_paseo_password(workspace_path)
         .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
 
-    let container_port = runtime.prepare_agent_web(name, &connection, &password).await?;
+    let container_port = runtime
+        .prepare_agent_web(name, &connection, &password, exec_capable)
+        .await?;
 
     let forward_name = format!("agentweb-{name}");
     let windows_port = network
-        .open_forward(name, ServiceKind::AgentWeb, &connection, container_port)
+        .open_forward(name, ServiceKind::AgentWeb, &forward_alias, container_port)
         .await
         .map_err(|e| unavailable(e.to_string()))?;
     let url = format!("http://127.0.0.1:{windows_port}/");
@@ -304,6 +350,7 @@ async fn open_agent_web(
     runtime: State<'_, Arc<dyn RuntimeManager>>,
     engine: State<'_, Arc<dyn SyncEngine>>,
     network: State<'_, Arc<dyn NetworkManager>>,
+    store: State<'_, Arc<dyn SandboxBackend>>,
     workspaces: State<'_, WorkspaceRegistry>,
     app: tauri::AppHandle,
 ) -> Result<(), AppError> {
@@ -317,7 +364,9 @@ async fn open_agent_web(
         return workspace::switch_pane(&app, &name, AppKind::AgentWeb).map_err(Into::into);
     }
 
-    let pane = prepare_agent_web_pane(&name, &workspace_path, &runtime, &engine, &network).await?;
+    let pane =
+        prepare_agent_web_pane(&name, &workspace_path, &runtime, &engine, &network, &store, &app)
+            .await?;
     workspace::embed_agent_web(&app, &name, &workspace_path, pane)?;
     Ok(())
 }
@@ -330,6 +379,7 @@ async fn open_terminal(
     runtime: State<'_, Arc<dyn RuntimeManager>>,
     engine: State<'_, Arc<dyn SyncEngine>>,
     network: State<'_, Arc<dyn NetworkManager>>,
+    store: State<'_, Arc<dyn SandboxBackend>>,
     app: tauri::AppHandle,
 ) -> Result<(), AppError> {
     let label = format!("terminal-{name}");
@@ -342,7 +392,8 @@ async fn open_terminal(
     }
 
     let pane =
-        prepare_terminal_webview(&name, &workspace_path, &runtime, &engine, &network).await?;
+        prepare_terminal_webview(&name, &workspace_path, &runtime, &engine, &network, &store, &app)
+            .await?;
     tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::External(pane.url))
         .title(format!("{name} — terminal"))
         .initialization_script(&pane.init_script)
@@ -360,12 +411,20 @@ async fn open_workspace(
     runtime: State<'_, Arc<dyn RuntimeManager>>,
     engine: State<'_, Arc<dyn SyncEngine>>,
     network: State<'_, Arc<dyn NetworkManager>>,
+    store: State<'_, Arc<dyn SandboxBackend>>,
+    app: tauri::AppHandle,
 ) -> Result<(), AppError> {
     let connection = resolve_connection(&name, &runtime, &engine).await?;
+    let exec_capable = sandbox_exec_capable(&store, &name).await?;
+    // The poll loop auto-exposes ports over this alias without going through `expose_port`'s
+    // command handler, so it has to exist before the loop's first tick.
+    if exec_capable {
+        ensure_forward_alias(&name, &connection, exec_capable, &app).await?;
+    }
     network
         .inner()
         .clone()
-        .watch_ports_file(&name, &workspace_path, &connection)
+        .watch_ports_file(&name, &workspace_path, &connection, exec_capable)
         .await;
     Ok(())
 }
@@ -378,6 +437,7 @@ async fn open_terminal_pane(
     runtime: State<'_, Arc<dyn RuntimeManager>>,
     engine: State<'_, Arc<dyn SyncEngine>>,
     network: State<'_, Arc<dyn NetworkManager>>,
+    store: State<'_, Arc<dyn SandboxBackend>>,
     workspaces: State<'_, WorkspaceRegistry>,
     app: tauri::AppHandle,
 ) -> Result<(), AppError> {
@@ -392,7 +452,8 @@ async fn open_terminal_pane(
     }
 
     let pane =
-        prepare_terminal_webview(&name, &workspace_path, &runtime, &engine, &network).await?;
+        prepare_terminal_webview(&name, &workspace_path, &runtime, &engine, &network, &store, &app)
+            .await?;
     workspace::embed_terminal(&app, &name, &workspace_path, pane)?;
     Ok(())
 }
@@ -598,10 +659,16 @@ async fn expose_port(
     runtime: State<'_, Arc<dyn RuntimeManager>>,
     engine: State<'_, Arc<dyn SyncEngine>>,
     network: State<'_, Arc<dyn NetworkManager>>,
+    store: State<'_, Arc<dyn SandboxBackend>>,
+    app: tauri::AppHandle,
 ) -> Result<u16, AppError> {
     let connection = resolve_connection(&name, &runtime, &engine).await?;
+    let exec_capable = sandbox_exec_capable(&store, &name).await?;
+    if exec_capable {
+        ensure_forward_alias(&name, &connection, exec_capable, &app).await?;
+    }
     Ok(network
-        .expose_port(&name, &connection, &workspace_path, target_port, None, false)
+        .expose_port(&name, &connection, &workspace_path, target_port, None, false, exec_capable)
         .await?)
 }
 
@@ -1360,8 +1427,8 @@ pub fn run() {
         Arc::new(mockctl::types::SystemPodmanRunner)
     };
     backends::set_podman_runner(podman_runner.clone());
-    let backend = backends::default_backend(podman_runner.clone());
-    let runtime = runtime::default_runtime();
+    let port_transport = transport::default_port_transport();
+    let runtime = runtime::default_runtime(port_transport.clone());
     let machine = machine::default_machine_manager(podman_runner.clone());
 
     let mut builder = tauri::Builder::default();
@@ -1377,12 +1444,15 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .manage(backend)
         .manage(runtime)
         .manage(machine)
         .manage(mock_director.clone())
         .setup(move |app| {
             app.manage(init_logging(app.handle()));
+            // Needs `app.handle()` to resolve `crate::paths::app_data_root` for per-sandbox SSH
+            // identities, so `default_backend` is constructed here rather than before the builder,
+            // unlike the other subsystems above (none of which need an `AppHandle`).
+            app.manage(backends::default_backend(podman_runner.clone(), app.handle().clone()));
             if !backends::mock_backend_enabled() {
                 if let Ok(resource_dir) = app.path().resource_dir() {
                     backends::set_podman_resource_dir(resource_dir.join("podman"));
@@ -1395,7 +1465,7 @@ pub fn run() {
                     Arc::new(mockctl::types::SystemMutagenRunner::new(app.handle().clone()))
                 };
             app.manage(sync::default_sync_engine(mutagen_runner));
-            app.manage(network::default_network_manager(app.handle().clone()));
+            app.manage(network::default_network_manager(app.handle().clone(), port_transport.clone()));
             app.manage(WorkspaceRegistry::default());
             app.manage(AuthSessionMap::default());
             app.manage(ActiveServer::default());

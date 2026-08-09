@@ -70,21 +70,35 @@ fn atomic_write(path: &std::path::Path, contents: &str) -> Result<(), SshError> 
         .map_err(|e| SshError::WriteError(format!("failed to replace {path:?}: {e}")))
 }
 
-/// Render the managed `Host` block for `alias`.
+/// Render the managed `Host` block for `alias`. `Direct` and `Proxied` emit mutually exclusive
+/// OpenSSH stanzas so a caller can never populate both `HostName`/`Port` and `ProxyCommand`.
 fn render_block(a: &SshAlias) -> String {
-    let (begin, end) = markers(&a.alias);
-    [
-        begin.as_str(),
-        &format!("Host {}", a.alias),
-        &format!("    HostName {}", a.host),
-        &format!("    Port {}", a.port),
-        &format!("    User {}", a.user),
-        &format!("    IdentityFile {}", a.identity),
-        "    IdentitiesOnly yes",
-        "    StrictHostKeyChecking accept-new",
-        end.as_str(),
-    ]
-    .join("\n")
+    let (begin, end) = markers(a.alias());
+    let body: Vec<String> = match a {
+        SshAlias::Direct { alias, host, port, user, identity } => vec![
+            format!("Host {alias}"),
+            format!("    HostName {host}"),
+            format!("    Port {port}"),
+            format!("    User {user}"),
+            format!("    IdentityFile {identity}"),
+            "    IdentitiesOnly yes".to_string(),
+            "    StrictHostKeyChecking accept-new".to_string(),
+        ],
+        SshAlias::Proxied { alias, command, user, identity, known_hosts } => vec![
+            format!("Host {alias}"),
+            format!("    ProxyCommand {command}"),
+            format!("    User {user}"),
+            format!("    IdentityFile {identity}"),
+            format!("    UserKnownHostsFile {known_hosts}"),
+            "    IdentitiesOnly yes".to_string(),
+            "    StrictHostKeyChecking accept-new".to_string(),
+        ],
+    };
+    std::iter::once(begin)
+        .chain(body)
+        .chain(std::iter::once(end))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Insert the `Include` at the top of `~/.ssh/config` exactly once; a no-op if already present.
@@ -110,7 +124,7 @@ pub fn ensure_include() -> Result<(), SshError> {
 pub fn write_alias(alias: &SshAlias) -> Result<(), SshError> {
     let path = managed_config()?;
     let existing = std::fs::read_to_string(&path).unwrap_or_default();
-    let base = strip_block(&existing, &alias.alias);
+    let base = strip_block(&existing, alias.alias());
     let base = base.trim_end();
     let block = render_block(alias);
     let updated = if base.is_empty() {

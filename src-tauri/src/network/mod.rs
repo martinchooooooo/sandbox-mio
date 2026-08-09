@@ -36,6 +36,13 @@ fn forward_name(sandbox: &str, kind: ServiceKind) -> String {
     }
 }
 
+/// Whether an `Exposed` forward went through a relay-pool slot and so has a `socat` to kill.
+/// Derived rather than stored: only the relay branch of `expose_port` records a `remote_port`
+/// different from the target port (an exec-capable forward reaches `target_port` directly).
+fn is_relayed(entry: &ForwardInfo, target_port: u16) -> bool {
+    entry.remote_port != target_port
+}
+
 fn allocate_ephemeral_port() -> Result<u16, NetworkError> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0")
         .map_err(|e| NetworkError::PortAllocation(e.to_string()))?;
@@ -43,14 +50,6 @@ fn allocate_ephemeral_port() -> Result<u16, NetworkError> {
         .local_addr()
         .map(|a| a.port())
         .map_err(|e| NetworkError::PortAllocation(e.to_string()))
-}
-
-fn parse_host_port(output: &str) -> Option<u16> {
-    output
-        .lines()
-        .map(str::trim)
-        .filter_map(|l| l.strip_prefix("127.0.0.1:"))
-        .find_map(|p| p.parse().ok())
 }
 
 async fn podman(connection: &str, args: &[&str]) -> Result<Output, NetworkError> {
@@ -103,6 +102,11 @@ pub struct MutagenNetworkManager {
     /// One poll-loop task per sandbox currently being watched by `watch_ports_file`, so a second
     /// call for the same sandbox is a no-op and `close_sandbox` can cancel it.
     ports_watch: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
+    /// `podman port`-based lookup, used for a sandbox on the publish+relay reachability model. An
+    /// exec-capable sandbox's `expose_port` branch needs no lookup at all (the container's own
+    /// loopback is reached directly), so unlike `PodmanMiseRuntime` there is no second
+    /// `exec_port_transport` field here — see `docs/features/podman-exec-transport/02_dev.md`.
+    published_port_transport: std::sync::Arc<dyn crate::transport::types::PortTransport>,
 }
 
 impl MutagenNetworkManager {
@@ -185,11 +189,14 @@ impl NetworkManager for MutagenNetworkManager {
         }
         for entry in &entries {
             crate::sync::forward_terminate(&self.app, &entry.forward_name).await;
-            if let ServiceKind::Exposed(_) = entry.kind {
-                // Best-effort: the container may already be gone (destroy) or stopped (undeploy),
-                // either of which already kills the relay process for free.
-                let pattern = format!("TCP-LISTEN:{}", entry.remote_port);
-                let _ = podman(&entry.connection, &["exec", sandbox, "pkill", "-f", &pattern]).await;
+            if let ServiceKind::Exposed(port) = entry.kind {
+                if is_relayed(entry, port) {
+                    // Best-effort: the container may already be gone (destroy) or stopped
+                    // (undeploy), either of which already kills the relay process for free.
+                    let pattern = format!("TCP-LISTEN:{}", entry.remote_port);
+                    let _ =
+                        podman(&entry.connection, &["exec", sandbox, "pkill", "-f", &pattern]).await;
+                }
             }
         }
         self.emit_forwards();
@@ -211,41 +218,62 @@ impl NetworkManager for MutagenNetworkManager {
         target_port: u16,
         label: Option<String>,
         auto_detected: bool,
+        exec_capable: bool,
     ) -> Result<u16, NetworkError> {
         let _guard = self.expose_lock.lock().await;
-        let slot = self.free_slot(sandbox).ok_or_else(|| NetworkError::NoFreeSlot {
-            sandbox: sandbox.to_string(),
-            limit: RELAY_POOL_SIZE as usize,
-        })?;
-
-        check(podman(connection, &["start", sandbox]).await?)?;
-
-        // `fork` handles one client per accepted connection; `reuseaddr` lets a restarted relay
-        // rebind immediately after a prior one was killed. The relay runs inside the same netns as
-        // the user's server, so dialing its own loopback reaches it regardless of whether that
-        // server bound `127.0.0.1` or `0.0.0.0`.
-        let listen_spec = format!("TCP-LISTEN:{slot},fork,reuseaddr");
-        let dial_spec = format!("TCP:127.0.0.1:{target_port}");
-        check(
-            podman(
-                connection,
-                &["exec", "-d", sandbox, "socat", &listen_spec, &dial_spec],
-            )
-            .await?,
-        )?;
-
-        let port_spec = format!("{slot}/tcp");
-        let port_out = check(podman(connection, &["port", sandbox, &port_spec]).await?)?;
-        let slot_host_port = parse_host_port(&port_out).ok_or_else(|| {
-            NetworkError::CommandFailed(format!(
-                "no 127.0.0.1 host mapping for relay slot {slot}; output:\n{port_out}"
-            ))
-        })?;
-
         let kind = ServiceKind::Exposed(target_port);
+
+        // `poll_ports_file` picks its scan candidates before taking this lock, so a manual or
+        // file-declared expose can land in the gap. Re-checking here keeps the deliberate forward
+        // (and its "Stop exposing" button) instead of demoting it to an auto-detected one.
+        if auto_detected {
+            let existing = self.forwards.lock().unwrap().get(&(sandbox.to_string(), kind)).map(|f| f.host_port);
+            if let Some(host_port) = existing {
+                return Ok(host_port);
+            }
+        }
+
         let name = forward_name(sandbox, kind);
         let host_port = allocate_ephemeral_port()?;
-        crate::sync::forward_create(&self.app, &name, host_port, connection, slot_host_port).await?;
+
+        let remote_port = if exec_capable {
+            // No relay-pool slot, no socat: the container's own loopback is reachable directly
+            // over the exec-transport `Proxied` alias once `sandbox` is running.
+            check(podman(connection, &["start", sandbox]).await?)?;
+            crate::sync::forward_create(&self.app, &name, host_port, sandbox, target_port).await?;
+            target_port
+        } else {
+            let slot = self.free_slot(sandbox).ok_or_else(|| NetworkError::NoFreeSlot {
+                sandbox: sandbox.to_string(),
+                limit: RELAY_POOL_SIZE as usize,
+            })?;
+
+            check(podman(connection, &["start", sandbox]).await?)?;
+
+            // `fork` handles one client per accepted connection; `reuseaddr` lets a restarted relay
+            // rebind immediately after a prior one was killed. The relay runs inside the same netns
+            // as the user's server, so dialing its own loopback reaches it regardless of whether
+            // that server bound `127.0.0.1` or `0.0.0.0`.
+            let listen_spec = format!("TCP-LISTEN:{slot},fork,reuseaddr");
+            let dial_spec = format!("TCP:127.0.0.1:{target_port}");
+            check(
+                podman(
+                    connection,
+                    &["exec", "-d", sandbox, "socat", &listen_spec, &dial_spec],
+                )
+                .await?,
+            )?;
+
+            let slot_host_port = self
+                .published_port_transport
+                .resolve_remote_port(sandbox, connection, slot)
+                .await
+                .map_err(|e| NetworkError::CommandFailed(e.to_string()))?;
+
+            crate::sync::forward_create(&self.app, &name, host_port, connection, slot_host_port).await?;
+            slot
+        };
+
         self.forwards.lock().unwrap().insert(
             (sandbox.to_string(), kind),
             ForwardInfo {
@@ -253,7 +281,7 @@ impl NetworkManager for MutagenNetworkManager {
                 kind,
                 host_port,
                 connection: connection.to_string(),
-                remote_port: slot,
+                remote_port,
                 forward_name: name,
                 label: label.clone(),
                 auto_detected,
@@ -269,8 +297,10 @@ impl NetworkManager for MutagenNetworkManager {
         let entry = self.forwards.lock().unwrap().remove(&(sandbox.to_string(), kind));
         let Some(entry) = entry else { return };
         crate::sync::forward_terminate(&self.app, &entry.forward_name).await;
-        let pattern = format!("TCP-LISTEN:{}", entry.remote_port);
-        let _ = podman(&entry.connection, &["exec", sandbox, "pkill", "-f", &pattern]).await;
+        if is_relayed(&entry, target_port) {
+            let pattern = format!("TCP-LISTEN:{}", entry.remote_port);
+            let _ = podman(&entry.connection, &["exec", sandbox, "pkill", "-f", &pattern]).await;
+        }
         self.emit_forwards();
     }
 
@@ -279,6 +309,7 @@ impl NetworkManager for MutagenNetworkManager {
         sandbox: &str,
         workspace_path: &str,
         connection: &str,
+        exec_capable: bool,
     ) {
         let mut watches = self.ports_watch.lock().unwrap();
         if watches.contains_key(sandbox) {
@@ -290,7 +321,7 @@ impl NetworkManager for MutagenNetworkManager {
         let manager = self.clone();
         let task_sandbox = sandbox.clone();
         let handle = tokio::spawn(async move {
-            poll_ports_file(manager, task_sandbox, workspace_path, connection).await;
+            poll_ports_file(manager, task_sandbox, workspace_path, connection, exec_capable).await;
         });
         watches.insert(sandbox, handle);
     }
@@ -354,6 +385,7 @@ async fn poll_ports_file(
     sandbox: String,
     workspace_path: String,
     connection: String,
+    exec_capable: bool,
 ) {
     let path = std::path::Path::new(&workspace_path).join(".mio").join("ports.json");
     loop {
@@ -394,7 +426,7 @@ async fn poll_ports_file(
 
                 for (port, label) in declared.into_iter().filter(|(p, _)| !already_exposed.contains(p)) {
                     let _ = manager
-                        .expose_port(&sandbox, &connection, &workspace_path, port, Some(label), false)
+                        .expose_port(&sandbox, &connection, &workspace_path, port, Some(label), false, exec_capable)
                         .await;
                 }
             }
@@ -414,8 +446,13 @@ async fn poll_ports_file(
                     _ => None,
                 })
                 .collect();
-            let mut exclude: std::collections::HashSet<u16> =
-                (RELAY_PORT_POOL_START..RELAY_PORT_POOL_START + RELAY_POOL_SIZE).collect();
+            // The pool slots are `socat` relays this loop opened, not user servers — but only a
+            // publish+relay sandbox has any, so an exec-capable one may legitimately serve there.
+            let mut exclude: std::collections::HashSet<u16> = if exec_capable {
+                std::collections::HashSet::new()
+            } else {
+                (RELAY_PORT_POOL_START..RELAY_PORT_POOL_START + RELAY_POOL_SIZE).collect()
+            };
             exclude.extend(exposed_for_sandbox.iter().map(|f| match f.kind {
                 ServiceKind::Exposed(p) => p,
                 ServiceKind::Terminal | ServiceKind::AgentWeb => f.remote_port,
@@ -429,7 +466,7 @@ async fn poll_ports_file(
 
         for port in scanned.into_iter().filter(|p| !exclude.contains(p)) {
             let _ = manager
-                .expose_port(&sandbox, &connection, &workspace_path, port, None, true)
+                .expose_port(&sandbox, &connection, &workspace_path, port, None, true, exec_capable)
                 .await;
         }
     }
@@ -437,7 +474,10 @@ async fn poll_ports_file(
 
 /// Construct the managed [`NetworkManager`] for Tauri state. Mirrors `default_sync_engine` in
 /// `sync/mod.rs`.
-pub fn default_network_manager(app: AppHandle) -> std::sync::Arc<dyn NetworkManager> {
+pub fn default_network_manager(
+    app: AppHandle,
+    published_port_transport: std::sync::Arc<dyn crate::transport::types::PortTransport>,
+) -> std::sync::Arc<dyn NetworkManager> {
     if crate::backends::mock_backend_enabled() {
         return std::sync::Arc::new(MockNetworkManager::new(app));
     }
@@ -446,5 +486,6 @@ pub fn default_network_manager(app: AppHandle) -> std::sync::Arc<dyn NetworkMana
         forwards: Mutex::new(HashMap::new()),
         expose_lock: tokio::sync::Mutex::new(()),
         ports_watch: Mutex::new(HashMap::new()),
+        published_port_transport,
     })
 }

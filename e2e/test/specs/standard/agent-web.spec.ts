@@ -8,6 +8,7 @@ import { captureDiagOnFailure } from "../../../lib/diag.js";
 import { useSandboxWorkspace } from "../../../lib/sandbox-suite.js";
 import { podman, podmanOk, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
 import { forwardList } from "../../../lib/mutagen.js";
+import { MANAGED_SSH_CONFIG, sshAliasBlock } from "../../../lib/ssh.js";
 import {
   workspaceState,
   panesFor,
@@ -16,8 +17,6 @@ import {
   closeWorkspace,
   hideActivePane,
 } from "../../../lib/workspace.js";
-
-const PASEO_WEB_PORT = "6767";
 
 // Mirrors the auth check fetch_paseo_server_info makes (src-tauri/src/lib.rs) before a pane exists.
 // Returns the serverId on HTTP 200, undefined otherwise.
@@ -45,35 +44,68 @@ describe("Agent web UI (paseo)", function () {
 
   captureDiagOnFailure();
 
-  it("creates a local sandbox with the paseo port published", async () => {
+  it("creates a local sandbox that publishes nothing and gets an exec-transport SSH alias", async () => {
     await ProjectsPage.open();
     await ProjectsPage.createProject(projectName, { timeout: 600000 });
 
+    // An exec-capable sandbox publishes no ports at all — paseo is reached through the
+    // `podman exec`-tunneled sshd instead (docs/features/podman-exec-transport/02_dev.md).
     const bindings = podman(LOCAL_CONNECTION, [
       "inspect",
       projectName,
       "--format",
-      `{{json (index .HostConfig.PortBindings "${PASEO_WEB_PORT}/tcp")}}`,
-    ]);
-    let hostIps: string[] = [];
-    try {
-      const parsed = JSON.parse(bindings) as { HostIp?: string }[] | null;
-      hostIps = (parsed ?? []).map((b) => b.HostIp ?? "");
-    } catch {
-      // Leave hostIps empty; the assertion below reports the raw output.
-    }
+      "{{json .HostConfig.PortBindings}}",
+    ]).trim();
     assert(
-      hostIps.includes("127.0.0.1"),
-      `Container "${projectName}" has no 127.0.0.1 binding for port ${PASEO_WEB_PORT}. Output:\n${bindings}\n` +
-        "This can happen when create did not pass --publish 127.0.0.1::6767 (agent-web-ui Phase A) " +
-        "or the sandbox was created from base image version 2."
+      bindings === "null" || bindings === "{}",
+      `Container "${projectName}" published ports: ${bindings}\n` +
+        "create must pass no --publish for a sandbox on the exec transport."
     );
+
+    const block = sshAliasBlock(projectName);
+    assert(
+      block !== undefined,
+      `No "Host ${projectName}" block in ${MANAGED_SSH_CONFIG}. ` +
+        "create must call ensure_sandbox_alias for an exec-capable sandbox."
+    );
+    for (const keyword of ["ProxyCommand", "User root", "IdentityFile", "UserKnownHostsFile"]) {
+      assert(
+        block.includes(keyword),
+        `The "Host ${projectName}" alias has no ${keyword}. Block:\n${block}`
+      );
+    }
   });
 
-  it("starts the sandbox", async () => {
+  it("starts the sandbox with the per-sandbox public key installed in the image's sshd", async () => {
     await row.start();
     await row.waitForRunning();
     await expect(row.statusText).toHaveText(/running/);
+
+    // install_sandbox_key + the Containerfile's baked config are the two halves of the handshake
+    // every later step's forward depends on; asserting them here localises a failure.
+    const authorized = podman(LOCAL_CONNECTION, [
+      "exec",
+      projectName,
+      "cat",
+      "/etc/ssh/authorized_keys.container",
+    ]);
+    assert(
+      authorized.includes("ssh-ed25519"),
+      `/etc/ssh/authorized_keys.container holds no ed25519 key. Contents:\n${authorized}\n` +
+        "install_sandbox_key must podman cp the sandbox's public key after create."
+    );
+    const sshdConfig = podman(LOCAL_CONNECTION, [
+      "exec",
+      projectName,
+      "cat",
+      "/etc/ssh/sshd_config.container",
+    ]);
+    assert(
+      sshdConfig.includes("AuthorizedKeysFile /etc/ssh/authorized_keys.container"),
+      `/etc/ssh/sshd_config.container is missing or wrong. Contents:\n${sshdConfig}\n` +
+        "This can happen when the sandbox was built from a base image older than " +
+        "EXEC_TRANSPORT_MIN_IMAGE_VERSION."
+    );
   });
 
   it("opens the workspace showing only the Dashboard — no pane registered yet, no Terminal pane yet", async () => {

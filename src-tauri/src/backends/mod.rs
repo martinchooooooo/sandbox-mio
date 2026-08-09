@@ -20,7 +20,13 @@ use types::{
 const BASE_IMAGE: &str = "sandbox-mio/base";
 /// Bump whenever the Containerfile changes: `ensure_base_image` short-circuits on an existing
 /// tag, so an unchanged version silently keeps stale images.
-pub(crate) const BASE_IMAGE_VERSION: u32 = 4;
+pub(crate) const BASE_IMAGE_VERSION: u32 = 6;
+
+/// The `image_version` a sandbox needs to have `sshd`/`sshd_config.container` baked in and use the
+/// podman-exec-transport reachability model (`Sandbox::supports_exec_transport`). Fixed at the value
+/// this feature shipped with — kept separate from `BASE_IMAGE_VERSION`, which will keep bumping for
+/// unrelated Containerfile changes.
+pub(crate) const EXEC_TRANSPORT_MIN_IMAGE_VERSION: u32 = 6;
 
 const CONTAINERFILE: &str = include_str!("../../resources/Containerfile");
 
@@ -46,6 +52,10 @@ fn parse_image_version(image: &str) -> Option<u32> {
 const WORKSPACE_MOUNT: &str = "/root/work";
 
 const WORKSPACE_LABEL: &str = "sandbox-mio.workspace";
+
+/// The account the exec-transport SSH session authenticates as. Must match the base image, which
+/// runs everything as root (`WORKSPACE_MOUNT` lives under `/root`).
+const CONTAINER_USER: &str = "root";
 
 const ZELLIJ_WEB_PORT: u16 = 8082;
 
@@ -77,12 +87,16 @@ fn workspace_path(name: &str) -> Result<String, BackendError> {
     Ok(path.to_string_lossy().replace('\\', "/"))
 }
 
-pub fn default_backend(runner: Arc<dyn ProcessRunner>) -> std::sync::Arc<dyn SandboxBackend> {
+pub fn default_backend(
+    runner: Arc<dyn ProcessRunner>,
+    app: tauri::AppHandle,
+) -> std::sync::Arc<dyn SandboxBackend> {
     let connection = connection_name();
     std::sync::Arc::new(PodmanCliBackend {
         connection,
         build_lock: tokio::sync::Mutex::new(()),
         runner,
+        app,
     })
 }
 
@@ -109,6 +123,19 @@ pub(crate) fn podman_command() -> Command {
     };
     cmd.no_window();
     cmd
+}
+
+/// The literal argv token for the bundled `podman.exe`, for embedding in an OpenSSH `ProxyCommand`
+/// string — [`podman_command`] returns a `tokio::process::Command`, which cannot be. Forward-slashed
+/// deliberately (`docs/features/podman-exec-transport/02_dev.md`, Resolved Decision 5).
+fn podman_literal_path() -> String {
+    match PODMAN_RESOURCE_DIR.get() {
+        Some(dir) => {
+            let path = dir.join("podman.exe").to_string_lossy().replace('\\', "/");
+            format!("\"{path}\"")
+        }
+        None => "podman".to_string(),
+    }
 }
 
 static PODMAN_RUNNER: std::sync::OnceLock<Arc<dyn ProcessRunner>> = std::sync::OnceLock::new();
@@ -229,6 +256,30 @@ impl PodmanCliBackend {
             .output()
             .map_err(|e| BackendError::CommandFailed(format!("failed to run ssh-keygen: {e}")))?;
         check(out).map(|_| ())
+    }
+
+    /// Copies `<identity_path>.pub` into the container at the fixed path
+    /// `sshd_config.container`'s `AuthorizedKeysFile` references. Mirrors `seed_paseo_projects`'s
+    /// temp-file + `podman cp` pattern (`src-tauri/src/runtime/mod.rs`). The container need only
+    /// exist, not be running — `podman cp` works against a created-but-stopped container.
+    async fn install_sandbox_key(
+        &self,
+        connection: &str,
+        name: &str,
+        identity_path: &str,
+    ) -> Result<(), BackendError> {
+        let pub_key = std::fs::read_to_string(format!("{identity_path}.pub"))
+            .map_err(|e| BackendError::CommandFailed(format!("failed to read {identity_path}.pub: {e}")))?;
+        let tmp_path = std::env::temp_dir().join(format!("sandbox-mio-authorized-keys-{name}"));
+        std::fs::write(&tmp_path, &pub_key)
+            .map_err(|e| BackendError::CommandFailed(format!("failed to write {tmp_path:?}: {e}")))?;
+        let dest = format!("{name}:/etc/ssh/authorized_keys.container");
+        let result = check(
+            self.podman_on(connection, &["cp", &tmp_path.to_string_lossy(), &dest])
+                .await?,
+        );
+        let _ = std::fs::remove_file(&tmp_path);
+        result.map(|_| ())
     }
 
     async fn verify_host(&self, name: &str) -> Result<(), BackendError> {
@@ -419,17 +470,43 @@ impl SandboxBackend for PodmanCliBackend {
         // pre-publishes a small pool of container-side ports (crate::network::RELAY_POOL_SIZE) that
         // `NetworkManager::expose_port` can later bridge to an arbitrary user-chosen port via an
         // in-container `socat` relay, without ever recreating the container.
-        let publish = format!("127.0.0.1::{ZELLIJ_WEB_PORT}");
-        let publish_paseo = format!("127.0.0.1::{PASEO_WEB_PORT}");
-        let relay_publishes = crate::network::relay_pool_publish_args();
+        let exec_capable = BASE_IMAGE_VERSION >= EXEC_TRANSPORT_MIN_IMAGE_VERSION;
         let mut args = vec![
             "create".to_string(), "--pull=missing".to_string(), "--tty".to_string(),
-            "--network".to_string(), "pasta:--host-lo-to-ns-lo".to_string(),
-            "--publish".to_string(), publish, "--publish".to_string(), publish_paseo,
         ];
-        for p in &relay_publishes {
+        if exec_capable {
+            // No `--network pasta:--host-lo-to-ns-lo`, no `--publish` at all: reachability goes
+            // through `podman exec`-tunneled `sshd`, not a published loopback port — see
+            // docs/features/podman-exec-transport/02_dev.md.
+            args.push("--network".to_string());
+            args.push("pasta".to_string());
+        } else {
+            // Publish zellij's web port to an ephemeral host-loopback port. `--host-lo-to-ns-lo` is
+            // the decisive pasta flag: it forwards the host-loopback-published port to the
+            // container's loopback, where zellij binds; without it pasta forwards to the
+            // container's eth0 and the loopback-bound server is unreachable. The host side is
+            // pinned to 127.0.0.1 so nothing is exposed on the local network.
+            //
+            // Podman only forwards ports it is explicitly told about (confirmed: with no
+            // `--publish` it invokes pasta with `-t none -u none`, forwarding nothing) — there is
+            // no way to reach a container's port from outside its netns without publishing it
+            // first. `relay_publishes` pre-publishes a small pool of container-side ports
+            // (crate::network::RELAY_POOL_SIZE) that `NetworkManager::expose_port` can later
+            // bridge to an arbitrary user-chosen port via an in-container `socat` relay, without
+            // ever recreating the container.
+            let publish = format!("127.0.0.1::{ZELLIJ_WEB_PORT}");
+            let publish_paseo = format!("127.0.0.1::{PASEO_WEB_PORT}");
+            let relay_publishes = crate::network::relay_pool_publish_args();
+            args.push("--network".to_string());
+            args.push("pasta:--host-lo-to-ns-lo".to_string());
             args.push("--publish".to_string());
-            args.push(p.clone());
+            args.push(publish);
+            args.push("--publish".to_string());
+            args.push(publish_paseo);
+            for p in &relay_publishes {
+                args.push("--publish".to_string());
+                args.push(p.clone());
+            }
         }
         args.extend([
             "--volume".to_string(), volume, "--workdir".to_string(), WORKSPACE_MOUNT.to_string(),
@@ -441,6 +518,12 @@ impl SandboxBackend for PodmanCliBackend {
             .podman(&args.iter().map(String::as_str).collect::<Vec<_>>())
             .await?;
         let id = check(out)?.trim().to_string();
+        if exec_capable {
+            let identity_path = ensure_sandbox_identity(&self.app, name)?;
+            forget_sandbox_host_key(&identity_path);
+            self.install_sandbox_key(&self.connection, name, &identity_path).await?;
+            ensure_sandbox_alias(name, &self.connection, &identity_path).await?;
+        }
         Ok(Sandbox {
             id,
             name: name.to_string(),
@@ -534,7 +617,7 @@ impl SandboxBackend for PodmanCliBackend {
 
         // Create the remote workspace and register the OpenSSH alias so Mutagen can reach it.
         Self::remote_mkdir(&info, &plan.bind_mount_source).await?;
-        crate::ssh::write_alias(&crate::ssh::types::SshAlias {
+        crate::ssh::write_alias(&crate::ssh::types::SshAlias::Direct {
             alias: target_connection.to_string(),
             host: info.host.clone(),
             port: info.port.clone(),
@@ -547,18 +630,26 @@ impl SandboxBackend for PodmanCliBackend {
         self.ensure_image_on(target_connection).await?;
 
         // Create and start the remote container on the target connection, not self.connection.
+        let exec_capable = BASE_IMAGE_VERSION >= EXEC_TRANSPORT_MIN_IMAGE_VERSION;
         let volume = format!("{}:{WORKSPACE_MOUNT}", plan.bind_mount_source);
-        let publish = format!("127.0.0.1::{ZELLIJ_WEB_PORT}");
-        let publish_paseo = format!("127.0.0.1::{PASEO_WEB_PORT}");
-        let relay_publishes = crate::network::relay_pool_publish_args();
-        let mut create_args = vec![
-            "create".to_string(), "--tty".to_string(), "--network".to_string(),
-            "pasta:--host-lo-to-ns-lo".to_string(), "--publish".to_string(), publish,
-            "--publish".to_string(), publish_paseo,
-        ];
-        for p in &relay_publishes {
+        let mut create_args = vec!["create".to_string(), "--tty".to_string()];
+        if exec_capable {
+            create_args.push("--network".to_string());
+            create_args.push("pasta".to_string());
+        } else {
+            let publish = format!("127.0.0.1::{ZELLIJ_WEB_PORT}");
+            let publish_paseo = format!("127.0.0.1::{PASEO_WEB_PORT}");
+            let relay_publishes = crate::network::relay_pool_publish_args();
+            create_args.push("--network".to_string());
+            create_args.push("pasta:--host-lo-to-ns-lo".to_string());
             create_args.push("--publish".to_string());
-            create_args.push(p.clone());
+            create_args.push(publish);
+            create_args.push("--publish".to_string());
+            create_args.push(publish_paseo);
+            for p in &relay_publishes {
+                create_args.push("--publish".to_string());
+                create_args.push(p.clone());
+            }
         }
         create_args.extend([
             "--volume".to_string(), volume, "--workdir".to_string(), WORKSPACE_MOUNT.to_string(),
@@ -572,6 +663,12 @@ impl SandboxBackend for PodmanCliBackend {
             .await?,
         )?;
         check(self.podman_on(target_connection, &["start", name]).await?)?;
+        if exec_capable {
+            let identity_path = ensure_sandbox_identity(&self.app, name)?;
+            forget_sandbox_host_key(&identity_path);
+            self.install_sandbox_key(target_connection, name, &identity_path).await?;
+            ensure_sandbox_alias(name, target_connection, &identity_path).await?;
+        }
 
         Ok(RemoteDeployment {
             alpha: plan.laptop_dir,
@@ -732,7 +829,7 @@ pub async fn ensure_connection_alias(connection: &str) -> Result<(), BackendErro
     else {
         return Err(BackendError::NoSshEndpoint { connection: connection.to_string() });
     };
-    crate::ssh::write_alias(&crate::ssh::types::SshAlias {
+    crate::ssh::write_alias(&crate::ssh::types::SshAlias::Direct {
         alias: connection.to_string(),
         host: info.host,
         port: info.port,
@@ -740,4 +837,68 @@ pub async fn ensure_connection_alias(connection: &str) -> Result<(), BackendErro
         identity: info.identity,
     })?;
     Ok(())
+}
+
+/// Per-sandbox ed25519 keypair for the exec-transport `Proxied` alias, generated once and reused
+/// for the sandbox's lifetime. Lives under app data (not `~/.ssh`), per-sandbox and
+/// per-worktree-isolatable via `MIO_APP_DATA_DIR`. Returns the private key path. Free function
+/// (not a `PodmanCliBackend` method) so `lib.rs`'s terminal/agent-web/expose-port command handlers
+/// can re-derive an already-created sandbox's identity path deterministically from its name,
+/// without persisting the path anywhere new.
+pub fn ensure_sandbox_identity(
+    app: &tauri::AppHandle,
+    name: &str,
+) -> Result<String, BackendError> {
+    let root =
+        crate::paths::app_data_root(app).map_err(|e| BackendError::CommandFailed(e.to_string()))?;
+    let dir = root.join("ssh-keys").join(name);
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| BackendError::CommandFailed(format!("failed to create {dir:?}: {e}")))?;
+    let identity_path = dir.join("id_ed25519").to_string_lossy().replace('\\', "/");
+    PodmanCliBackend::ensure_key(&identity_path)?;
+    Ok(identity_path)
+}
+
+/// Ensure the SSH alias for an exec-capable sandbox is written to `~/.ssh/sandbox-mio/config`.
+/// Unlike [`ensure_connection_alias`], the identity and authorized-keys installation are stable
+/// for the sandbox's lifetime — no per-call refresh needed — but `write_alias` is called anyway on
+/// every terminal/agent-web/expose-port open, since the alias file itself is not guaranteed to
+/// survive between app runs the way the container does.
+pub async fn ensure_sandbox_alias(
+    name: &str,
+    connection: &str,
+    identity_path: &str,
+) -> Result<(), BackendError> {
+    // MSYS path mangling of the in-container `/usr/local/bin/mio-sshd` argument is suppressed by
+    // `MSYS_NO_PATHCONV`/`MSYS2_ARG_CONV_EXCL`, set on the Mutagen sidecar's environment
+    // (`crate::sync::command`) rather than via an `env …` prefix here — the wrapping `sh -c
+    // "exec ..."` cannot resolve `env.exe` on the app's runtime PATH. See
+    // `docs/features/podman-exec-transport/02_dev.md`, Resolved Decision 5.
+    let command = format!(
+        "{} --connection {connection} exec -i {name} /usr/local/bin/mio-sshd",
+        podman_literal_path()
+    );
+    crate::ssh::write_alias(&crate::ssh::types::SshAlias::Proxied {
+        alias: name.to_string(),
+        command,
+        user: CONTAINER_USER.to_string(),
+        identity: identity_path.to_string(),
+        known_hosts: sandbox_known_hosts_path(identity_path),
+    })?;
+    Ok(())
+}
+
+/// The `UserKnownHostsFile` [`ensure_sandbox_alias`] pins, kept next to the sandbox's own identity.
+fn sandbox_known_hosts_path(identity_path: &str) -> String {
+    match identity_path.rsplit_once('/') {
+        Some((dir, _)) => format!("{dir}/known_hosts"),
+        None => "known_hosts".to_string(),
+    }
+}
+
+/// Drop the host key pinned for a sandbox alias. Must run whenever a *fresh* container is created
+/// under a name that may have been used before: the sshd host key is baked into the base image, so
+/// it changes across an image rebuild while the alias name stays the same.
+fn forget_sandbox_host_key(identity_path: &str) {
+    let _ = std::fs::remove_file(sandbox_known_hosts_path(identity_path));
 }

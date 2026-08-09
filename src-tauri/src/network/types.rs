@@ -3,7 +3,7 @@ use serde::Serialize;
 /// Event emitted after every forward mutation so the frontend stays live without polling.
 pub const EVENT_NAME: &str = "network://forwards-changed";
 
-/// What a forward carries. `Exposed` holds the user-chosen target port bridged via relay-pool.
+/// What a forward carries. `Exposed` holds the user-chosen target port.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, std::hash::Hash, Serialize)]
 #[serde(rename_all = "kebab-case", tag = "kind", content = "targetPort")]
 pub enum ServiceKind {
@@ -37,7 +37,9 @@ pub struct ForwardInfo {
     pub host_port: u16,
     /// Podman connection or SSH alias the forward tunnels over.
     pub connection: String,
-    /// Container-side port (podman-published for Terminal/AgentWeb, relay-pool slot for Exposed).
+    /// The port the forward's far end dials. On the publish+relay model that is the connection's
+    /// published host port (Terminal/AgentWeb) or a relay-pool slot (Exposed); on the exec
+    /// transport it is the container-side port itself, since the alias lands inside the container.
     pub remote_port: u16,
     /// Mutagen session name (e.g., `terminal-<sandbox>`, `expose-<sandbox>-<port>`).
     pub forward_name: String,
@@ -74,8 +76,12 @@ pub trait NetworkManager: Send + Sync {
     /// Clean up Mutagen sessions orphaned by a crashed previous run (not in `live_sandboxes`).
     async fn sweep(&self, live_sandboxes: &[String]);
 
-    /// Expose `target_port` from sandbox to a fresh host loopback port via relay-pool slot.
-    /// Does not recreate the container. `workspace_path` initializes `.mio/ports.json` if absent.
+    /// Expose `target_port` from sandbox to a fresh host loopback port. For a sandbox on the
+    /// publish+relay model, bridges via a relay-pool slot; for an exec-capable sandbox
+    /// (`exec_capable: true`), forwards straight to `target_port` with no slot/socat — see
+    /// `docs/features/podman-exec-transport/02_dev.md`. Does not recreate the container.
+    /// `workspace_path` initializes `.mio/ports.json` if absent.
+    #[allow(clippy::too_many_arguments)]
     async fn expose_port(
         &self,
         sandbox: &str,
@@ -84,6 +90,7 @@ pub trait NetworkManager: Send + Sync {
         target_port: u16,
         label: Option<String>,
         auto_detected: bool,
+        exec_capable: bool,
     ) -> Result<u16, NetworkError>;
 
     /// Remove the relay and forward for `target_port`, freeing its pool slot. Best-effort.
@@ -96,5 +103,6 @@ pub trait NetworkManager: Send + Sync {
         sandbox: &str,
         workspace_path: &str,
         connection: &str,
+        exec_capable: bool,
     );
 }

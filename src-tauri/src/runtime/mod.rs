@@ -23,12 +23,19 @@ const PASEO_WEB_PORT: u16 = 6767;
 const PASEO_PROJECTS_DIR: &str = "/root/.paseo/projects";
 const PASEO_PROJECTS_FILE: &str = "/root/.paseo/projects/projects.json";
 
-pub fn default_runtime() -> std::sync::Arc<dyn RuntimeManager> {
+pub fn default_runtime(
+    published_port_transport: std::sync::Arc<dyn crate::transport::types::PortTransport>,
+) -> std::sync::Arc<dyn RuntimeManager> {
     if crate::backends::mock_backend_enabled() {
         return std::sync::Arc::new(MockRuntime::new());
     }
     let connection = crate::backends::connection_name();
-    std::sync::Arc::new(PodmanMiseRuntime { connection, registry_cache: tokio::sync::OnceCell::new() })
+    std::sync::Arc::new(PodmanMiseRuntime {
+        connection,
+        registry_cache: tokio::sync::OnceCell::new(),
+        published_port_transport,
+        exec_port_transport: crate::transport::default_exec_port_transport(),
+    })
 }
 
 fn check(out: Output) -> Result<String, RuntimeError> {
@@ -70,15 +77,6 @@ fn parse_token(stdout: &str) -> Option<String> {
         .filter(|t| !t.is_empty())
 }
 
-fn parse_host_port(output: &str) -> Option<String> {
-    output
-        .lines()
-        .map(str::trim)
-        .filter_map(|l| l.strip_prefix("127.0.0.1:"))
-        .map(|p| p.to_string())
-        .find(|p| !p.is_empty())
-}
-
 impl PodmanMiseRuntime {
     async fn podman(&self, args: &[&str]) -> Result<Output, RuntimeError> {
         Self::podman_on(&self.connection, args).await
@@ -92,6 +90,14 @@ impl PodmanMiseRuntime {
             .output()
             .await
             .map_err(|e| RuntimeError::CommandFailed(e.to_string()))
+    }
+
+    fn port_transport(&self, exec_capable: bool) -> &std::sync::Arc<dyn crate::transport::types::PortTransport> {
+        if exec_capable {
+            &self.exec_port_transport
+        } else {
+            &self.published_port_transport
+        }
     }
 
     // Runs mise in container workspace; data dir and lockfile from image ENV.
@@ -247,6 +253,7 @@ impl RuntimeManager for PodmanMiseRuntime {
         name: &str,
         connection: &str,
         _workspace_host_path: &str,
+        exec_capable: bool,
     ) -> Result<(String, u16), RuntimeError> {
         // The container must be running before any `podman exec`.
         check(Self::podman_on(connection, &["start", name]).await?)?;
@@ -273,18 +280,14 @@ impl RuntimeManager for PodmanMiseRuntime {
         })?;
 
         // Read the ephemeral port Podman published for the container's web port on the connection's
-        // host loopback. The returned port is the destination for the Mutagen forwarding session.
-        let port_spec = format!("{ZELLIJ_WEB_PORT}/tcp");
-        let port_out = check(Self::podman_on(connection, &["port", name, &port_spec]).await?)?;
-        let host_port_str = parse_host_port(&port_out).ok_or_else(|| {
-            RuntimeError::TerminalUnavailable(format!(
-                "no 127.0.0.1 host mapping for container port {ZELLIJ_WEB_PORT}; \
-                 the sandbox was likely created before the web port was published. Output:\n{port_out}"
-            ))
-        })?;
-        let host_port: u16 = host_port_str.parse().map_err(|e| {
-            RuntimeError::TerminalUnavailable(format!("could not parse host port {host_port_str:?}: {e}"))
-        })?;
+        // host loopback (or, for an exec-capable sandbox, the unchanged container port — see
+        // `PassthroughPortTransport`). The returned port is the destination for the Mutagen
+        // forwarding session.
+        let transport = self.port_transport(exec_capable);
+        let host_port = transport
+            .resolve_remote_port(name, connection, ZELLIJ_WEB_PORT)
+            .await
+            .map_err(|e| RuntimeError::TerminalUnavailable(e.to_string()))?;
 
         Ok((token, host_port))
     }
@@ -294,6 +297,7 @@ impl RuntimeManager for PodmanMiseRuntime {
         name: &str,
         connection: &str,
         password: &str,
+        exec_capable: bool,
     ) -> Result<u16, RuntimeError> {
         // The container must be running before any `podman exec`.
         check(Self::podman_on(connection, &["start", name]).await?)?;
@@ -359,19 +363,10 @@ impl RuntimeManager for PodmanMiseRuntime {
             ))
         })?;
 
-        let port_spec = format!("{PASEO_WEB_PORT}/tcp");
-        let port_out = check(Self::podman_on(connection, &["port", name, &port_spec]).await?)?;
-        let host_port_str = parse_host_port(&port_out).ok_or_else(|| {
-            RuntimeError::AgentWebUnavailable(format!(
-                "no 127.0.0.1 host mapping for container port {PASEO_WEB_PORT}; \
-                 the sandbox was likely created before the agents web port was published. Output:\n{port_out}"
-            ))
-        })?;
-        host_port_str.parse().map_err(|e| {
-            RuntimeError::AgentWebUnavailable(format!(
-                "could not parse host port {host_port_str:?}: {e}"
-            ))
-        })
+        self.port_transport(exec_capable)
+            .resolve_remote_port(name, connection, PASEO_WEB_PORT)
+            .await
+            .map_err(|e| RuntimeError::AgentWebUnavailable(e.to_string()))
     }
 
     fn local_connection(&self) -> &str {

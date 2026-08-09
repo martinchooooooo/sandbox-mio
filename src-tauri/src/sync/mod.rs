@@ -32,7 +32,16 @@ pub fn command<R: Runtime>(app: &AppHandle<R>) -> Result<Command, SyncError> {
         .shell()
         .sidecar(SIDECAR)
         .map_err(|e| SyncError::Sidecar(e.to_string()))?
-        .env("MUTAGEN_DATA_DIRECTORY", dir.to_string_lossy().to_string()))
+        .env("MUTAGEN_DATA_DIRECTORY", dir.to_string_lossy().to_string())
+        // The exec-transport `ProxyCommand` (`backends::ensure_sandbox_alias`) passes in-container
+        // POSIX paths (`/usr/local/bin/mio-sshd`) to the bundled `podman.exe`. Mutagen runs that
+        // command through an MSYS/Git-Bash `ssh` → `sh -c "exec …"`, whose MSYS runtime would
+        // otherwise rewrite those paths to host paths. Setting these here — rather than an `env …`
+        // prefix inside the command string — avoids depending on `env.exe` being on the sidecar's
+        // PATH, which it is not at app runtime (docs/features/podman-exec-transport/02_dev.md,
+        // Resolved Decision 5).
+        .env("MSYS_NO_PATHCONV", "1")
+        .env("MSYS2_ARG_CONV_EXCL", "*"))
 }
 
 /// Run a Mutagen subcommand and return trimmed stdout, or the captured stderr as `Err`. Used by the
