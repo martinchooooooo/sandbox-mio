@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tauri::{ipc::Channel, Emitter};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::process_ext::NoWindow;
+use crate::provider::types::{ExecOpts, MachineProvider};
 use crate::runtime::types::RuntimeManager;
 use types::{AgentAuthEvent, AgentAuthStatus, AgentError, AgentInstallEvent, AuthSession, AuthSessionMap};
 
@@ -114,25 +114,20 @@ pub async fn start_auth(
     auth_command: &[String],
     app: &tauri::AppHandle,
     sessions: &AuthSessionMap,
-    runtime: &Arc<dyn RuntimeManager>,
+    provider: &Arc<dyn MachineProvider>,
 ) -> Result<String, AgentError> {
-    let connection = runtime.local_connection().to_string();
     let session_id = new_session_id();
 
-    tokio::process::Command::new("podman")
-        .no_window()
-        .args(["--connection", &connection, "start", name])
-        .output()
-        .await
-        .map_err(|e| AgentError::AuthFailed(e.to_string()))?;
+    provider.start(name).await.map_err(|e| AgentError::AuthFailed(e.to_string()))?;
 
-    let mut cmd = tokio::process::Command::new("podman");
-    cmd.no_window();
-    cmd.arg("--connection").arg(&connection);
-    cmd.args(["exec", "-i", "--workdir", "/root/work", name, "mise", "exec", "--"]);
-    for arg in auth_command {
-        cmd.arg(arg);
-    }
+    let auth_refs: Vec<&str> = auth_command.iter().map(String::as_str).collect();
+    let mut argv = vec!["mise", "exec", "--"];
+    argv.extend_from_slice(&auth_refs);
+    let mut cmd = provider.exec_command(
+        name,
+        &argv,
+        ExecOpts { workdir: Some("/root/work".to_string()), ..Default::default() },
+    );
     cmd.stdin(std::process::Stdio::piped());
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());

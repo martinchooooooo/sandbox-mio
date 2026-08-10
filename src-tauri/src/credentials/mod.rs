@@ -10,7 +10,7 @@ use tauri::AppHandle;
 
 use crate::backends::types::SandboxBackend;
 use crate::env_ext::env_dir;
-use crate::process_ext::NoWindow;
+use crate::provider::types::{ExecOpts, MachineProvider};
 use crate::runtime::types::RuntimeManager;
 use types::{CredentialError, CredentialManifest, OnboardingSeed};
 
@@ -115,16 +115,16 @@ pub async fn capture(
     expires_at_json_key: &str,
     account_source_path: Option<&str>,
     account_email_json_key: Option<&str>,
-    runtime: &Arc<dyn RuntimeManager>,
+    provider: &Arc<dyn MachineProvider>,
 ) -> Result<CredentialManifest, CredentialError> {
-    let cred_json = runtime.exec_in_container(name, &["cat", credential_path]).await?;
+    let cred_json = exec_read(provider, name, &["cat", credential_path]).await?;
     let cred: serde_json::Value =
         serde_json::from_str(cred_json.trim()).map_err(|e| CredentialError::Parse(e.to_string()))?;
     let expires_at_ms = crate::agents::json_path_get(&cred, expires_at_json_key).and_then(|v| v.as_u64());
 
     let mut account_email = None;
     if let Some(src_path) = account_source_path {
-        let src_json = runtime.exec_in_container(name, &["cat", src_path]).await?;
+        let src_json = exec_read(provider, name, &["cat", src_path]).await?;
         let src: serde_json::Value =
             serde_json::from_str(src_json.trim()).map_err(|e| CredentialError::Parse(e.to_string()))?;
         if let Some(email_key) = account_email_json_key {
@@ -138,8 +138,7 @@ pub async fn capture(
     if let Some(src_path) = account_source_path {
         paths.push(src_path.to_string());
     }
-    let connection = runtime.local_connection();
-    let archive = tar_capture(connection, name, &paths).await?;
+    let archive = tar_capture(provider, name, &paths).await?;
 
     let dir = bundle_dir(app, service_id)?;
     std::fs::write(dir.join("home.tar.gz"), &archive).map_err(|e| CredentialError::Io(e.to_string()))?;
@@ -154,7 +153,7 @@ pub async fn inject(
     app: &AppHandle,
     name: &str,
     service_id: &str,
-    runtime: &Arc<dyn RuntimeManager>,
+    provider: &Arc<dyn MachineProvider>,
 ) -> Result<(), CredentialError> {
     let dir = bundle_dir(app, service_id)?;
     let archive = std::fs::read(dir.join("home.tar.gz")).map_err(|e| {
@@ -165,21 +164,29 @@ pub async fn inject(
         }
     })?;
 
-    let connection = runtime.local_connection();
-    tar_inject(connection, name, &archive).await
+    tar_inject(provider, name, &archive).await
 }
 
 /// Patch account-source file to skip onboarding wizard and trust the project (idempotent).
 pub async fn seed_onboarding(
     name: &str,
     seed: &OnboardingSeed,
-    runtime: &Arc<dyn RuntimeManager>,
+    provider: &Arc<dyn MachineProvider>,
 ) -> Result<(), CredentialError> {
-    let mut root = runtime
-        .exec_in_container(name, &["cat", &seed.account_source_path])
+    let mut root = provider
+        .exec(name, &["cat", &seed.account_source_path], ExecOpts::default())
         .await
         .ok()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(s.trim()).ok())
+        .and_then(|out| {
+            if out.status.success() {
+                serde_json::from_str::<serde_json::Value>(
+                    String::from_utf8_lossy(&out.stdout).trim(),
+                )
+                .ok()
+            } else {
+                None
+            }
+        })
         .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
 
     let obj = root
@@ -209,50 +216,38 @@ pub async fn seed_onboarding(
     }
 
     let serialized = serde_json::to_string(&root).map_err(|e| CredentialError::Parse(e.to_string()))?;
-    write_file_via_stdin(
-        runtime.local_connection(),
-        name,
-        &seed.account_source_path,
-        serialized.as_bytes(),
-    )
-    .await
+    write_file_via_stdin(provider, name, &seed.account_source_path, serialized.as_bytes()).await
+}
+
+/// Exec `argv` inside `name`, check success, return stdout as a string.
+async fn exec_read(
+    provider: &Arc<dyn MachineProvider>,
+    name: &str,
+    argv: &[&str],
+) -> Result<String, CredentialError> {
+    let out = provider.exec(name, argv, ExecOpts::default()).await?;
+    if !out.status.success() {
+        return Err(CredentialError::ExecFailed(
+            String::from_utf8_lossy(&out.stderr).trim().to_string(),
+        ));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
 /// Write file via stdin to preserve permissions (path is constant, never user input).
 async fn write_file_via_stdin(
-    connection: &str,
+    provider: &Arc<dyn MachineProvider>,
     name: &str,
     path: &str,
     bytes: &[u8],
 ) -> Result<(), CredentialError> {
-    use tokio::io::AsyncWriteExt;
-
-    tokio::process::Command::new("podman")
-        .no_window()
-        .args(["--connection", connection, "start", name])
-        .output()
-        .await
-        .map_err(|e| CredentialError::ExecFailed(e.to_string()))?;
-
+    provider.start(name).await?;
     let script = format!("cat >{path} && chmod 600 {path}");
-    let mut cmd = tokio::process::Command::new("podman");
-    cmd.no_window();
-    cmd.args(["--connection", connection, "exec", "-i", name, "sh", "-c", &script]);
-    cmd.stdin(std::process::Stdio::piped());
-    cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::piped());
-
-    let mut child = cmd.spawn().map_err(|e| CredentialError::ExecFailed(format!("spawn failed: {e}")))?;
-    let mut stdin = child.stdin.take().ok_or_else(|| CredentialError::ExecFailed("stdin not piped".into()))?;
-    stdin.write_all(bytes).await.map_err(|e| CredentialError::ExecFailed(e.to_string()))?;
-    drop(stdin); // close the pipe so the container-side `cat` sees EOF
-
-    let output = child
-        .wait_with_output()
-        .await
-        .map_err(|e| CredentialError::ExecFailed(e.to_string()))?;
-    if !output.status.success() {
-        return Err(CredentialError::ExecFailed(String::from_utf8_lossy(&output.stderr).to_string()));
+    let out = provider.exec_piped(name, &["sh", "-c", &script], bytes).await?;
+    if !out.status.success() {
+        return Err(CredentialError::ExecFailed(
+            String::from_utf8_lossy(&out.stderr).to_string(),
+        ));
     }
     Ok(())
 }
@@ -266,59 +261,38 @@ fn tar_relative(path: &str) -> &str {
 }
 
 /// Capture files via tar to preserve permissions and binary data integrity.
-async fn tar_capture(connection: &str, name: &str, paths: &[String]) -> Result<Vec<u8>, CredentialError> {
-    tokio::process::Command::new("podman")
-        .no_window()
-        .args(["--connection", connection, "start", name])
-        .output()
-        .await
-        .map_err(|e| CredentialError::ExecFailed(e.to_string()))?;
-
+async fn tar_capture(
+    provider: &Arc<dyn MachineProvider>,
+    name: &str,
+    paths: &[String],
+) -> Result<Vec<u8>, CredentialError> {
+    provider.start(name).await?;
     let rel: Vec<&str> = paths.iter().map(|p| tar_relative(p)).collect();
-    let mut args = vec!["--connection", connection, "exec", name, "tar", "-C", "/", "-czf", "-"];
-    args.extend(rel.iter().copied());
-
-    let output = tokio::process::Command::new("podman")
-        .no_window()
-        .args(&args)
-        .output()
-        .await
-        .map_err(|e| CredentialError::ExecFailed(e.to_string()))?;
-    if !output.status.success() {
-        return Err(CredentialError::ExecFailed(String::from_utf8_lossy(&output.stderr).to_string()));
+    let mut argv = vec!["tar", "-C", "/", "-czf", "-"];
+    argv.extend_from_slice(&rel);
+    let out = provider.exec_piped(name, &argv, &[]).await?;
+    if !out.status.success() {
+        return Err(CredentialError::ExecFailed(
+            String::from_utf8_lossy(&out.stderr).to_string(),
+        ));
     }
-    Ok(output.stdout)
+    Ok(out.stdout)
 }
 
 /// Extract tar archive at original absolute paths and permissions via stdin.
-async fn tar_inject(connection: &str, name: &str, archive: &[u8]) -> Result<(), CredentialError> {
-    use tokio::io::AsyncWriteExt;
-
-    tokio::process::Command::new("podman")
-        .no_window()
-        .args(["--connection", connection, "start", name])
-        .output()
-        .await
-        .map_err(|e| CredentialError::ExecFailed(e.to_string()))?;
-
-    let mut cmd = tokio::process::Command::new("podman");
-    cmd.no_window();
-    cmd.args(["--connection", connection, "exec", "-i", name, "tar", "-C", "/", "-xzpf", "-"]);
-    cmd.stdin(std::process::Stdio::piped());
-    cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::piped());
-
-    let mut child = cmd.spawn().map_err(|e| CredentialError::ExecFailed(format!("spawn failed: {e}")))?;
-    let mut stdin = child.stdin.take().ok_or_else(|| CredentialError::ExecFailed("stdin not piped".into()))?;
-    stdin.write_all(archive).await.map_err(|e| CredentialError::ExecFailed(e.to_string()))?;
-    drop(stdin); // close the pipe so the container-side `tar` sees EOF
-
-    let output = child
-        .wait_with_output()
-        .await
-        .map_err(|e| CredentialError::ExecFailed(e.to_string()))?;
-    if !output.status.success() {
-        return Err(CredentialError::ExecFailed(String::from_utf8_lossy(&output.stderr).to_string()));
+async fn tar_inject(
+    provider: &Arc<dyn MachineProvider>,
+    name: &str,
+    archive: &[u8],
+) -> Result<(), CredentialError> {
+    provider.start(name).await?;
+    let out = provider
+        .exec_piped(name, &["tar", "-C", "/", "-xzpf", "-"], archive)
+        .await?;
+    if !out.status.success() {
+        return Err(CredentialError::ExecFailed(
+            String::from_utf8_lossy(&out.stderr).to_string(),
+        ));
     }
     Ok(())
 }

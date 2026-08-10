@@ -7,8 +7,12 @@ mod mock;
 
 use std::process::Output;
 
+use std::sync::Arc;
+
 use mock::MockRuntime;
-use types::{PodmanMiseRuntime, RuntimeError, RuntimeManager};
+use types::{MiseRuntime, RuntimeError, RuntimeManager};
+
+use crate::provider::types::{ExecOpts, MachineProvider};
 
 const WORKSPACE_MOUNT: &str = "/root/work";
 
@@ -24,14 +28,18 @@ const PASEO_PROJECTS_DIR: &str = "/root/.paseo/projects";
 const PASEO_PROJECTS_FILE: &str = "/root/.paseo/projects/projects.json";
 
 pub fn default_runtime(
-    published_port_transport: std::sync::Arc<dyn crate::transport::types::PortTransport>,
-) -> std::sync::Arc<dyn RuntimeManager> {
+    provider: Arc<dyn MachineProvider>,
+    runner: Arc<dyn crate::mockctl::types::ProcessRunner>,
+    published_port_transport: Arc<dyn crate::transport::types::PortTransport>,
+) -> Arc<dyn RuntimeManager> {
     if crate::backends::mock_backend_enabled() {
-        return std::sync::Arc::new(MockRuntime::new());
+        return Arc::new(MockRuntime::new());
     }
     let connection = crate::backends::connection_name();
-    std::sync::Arc::new(PodmanMiseRuntime {
+    Arc::new(MiseRuntime {
         connection,
+        provider,
+        runner,
         registry_cache: tokio::sync::OnceCell::new(),
         published_port_transport,
         exec_port_transport: crate::transport::default_exec_port_transport(),
@@ -77,22 +85,19 @@ fn parse_token(stdout: &str) -> Option<String> {
         .filter(|t| !t.is_empty())
 }
 
-impl PodmanMiseRuntime {
-    async fn podman(&self, args: &[&str]) -> Result<Output, RuntimeError> {
-        Self::podman_on(&self.connection, args).await
+/// Options that exec `mise` from the workspace directory: `WORKSPACE_MOUNT` as `--workdir`, no env,
+/// not detached.
+fn workdir_opts() -> ExecOpts {
+    ExecOpts { workdir: Some(WORKSPACE_MOUNT.to_string()), ..Default::default() }
+}
+
+impl MiseRuntime {
+    /// A provider pinned to an arbitrary `connection`, mirroring `deploy`'s target-pinned provider.
+    fn provider_on(&self, connection: &str) -> Arc<dyn MachineProvider> {
+        crate::provider::default_provider(self.runner.clone(), connection.to_string())
     }
 
-    async fn podman_on(connection: &str, args: &[&str]) -> Result<Output, RuntimeError> {
-        let mut full = vec!["--connection", connection];
-        full.extend_from_slice(args);
-        crate::backends::podman_command()
-            .args(&full)
-            .output()
-            .await
-            .map_err(|e| RuntimeError::CommandFailed(e.to_string()))
-    }
-
-    fn port_transport(&self, exec_capable: bool) -> &std::sync::Arc<dyn crate::transport::types::PortTransport> {
+    fn port_transport(&self, exec_capable: bool) -> &Arc<dyn crate::transport::types::PortTransport> {
         if exec_capable {
             &self.exec_port_transport
         } else {
@@ -102,14 +107,18 @@ impl PodmanMiseRuntime {
 
     // Runs mise in container workspace; data dir and lockfile from image ENV.
     async fn mise_exec(&self, name: &str, mise_args: &[&str]) -> Result<String, RuntimeError> {
-        check(self.podman(&["start", name]).await?)?;
-        let mut args = vec!["exec", "--workdir", WORKSPACE_MOUNT, name, "mise"];
-        args.extend_from_slice(mise_args);
-        check(self.podman(&args).await?)
+        self.provider.start(name).await?;
+        let mut argv = vec!["mise"];
+        argv.extend_from_slice(mise_args);
+        check(self.provider.exec(name, &argv, workdir_opts()).await?)
     }
 
-    async fn seed_paseo_projects(connection: &str, name: &str) -> Result<(), RuntimeError> {
-        let already_seeded = Self::podman_on(connection, &["exec", name, "test", "-f", PASEO_PROJECTS_FILE])
+    async fn seed_paseo_projects(
+        provider: &Arc<dyn MachineProvider>,
+        name: &str,
+    ) -> Result<(), RuntimeError> {
+        let already_seeded = provider
+            .exec(name, &["test", "-f", PASEO_PROJECTS_FILE], ExecOpts::default())
             .await
             .map(|out| out.status.success())
             .unwrap_or(false);
@@ -117,7 +126,7 @@ impl PodmanMiseRuntime {
             return Ok(());
         }
 
-        check(Self::podman_on(connection, &["exec", name, "mkdir", "-p", PASEO_PROJECTS_DIR]).await?)?;
+        check(provider.exec(name, &["mkdir", "-p", PASEO_PROJECTS_DIR], ExecOpts::default()).await?)?;
 
         let now = iso8601_now();
         let projects = serde_json::json!([{
@@ -136,10 +145,9 @@ impl PodmanMiseRuntime {
         let tmp_path = std::env::temp_dir().join(format!("paseo-projects-{name}.json"));
         std::fs::write(&tmp_path, &contents)
             .map_err(|e| RuntimeError::AgentWebUnavailable(format!("failed to write {}: {e}", tmp_path.to_string_lossy())))?;
-        let dest = format!("{name}:{PASEO_PROJECTS_FILE}");
-        let result = check(Self::podman_on(connection, &["cp", &tmp_path.to_string_lossy(), &dest]).await?);
+        let result = provider.copy_in(name, &tmp_path.to_string_lossy(), PASEO_PROJECTS_FILE).await;
         let _ = std::fs::remove_file(&tmp_path);
-        result.map(|_| ())
+        result.map_err(RuntimeError::from)
     }
 }
 
@@ -170,7 +178,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 }
 
 #[async_trait::async_trait]
-impl RuntimeManager for PodmanMiseRuntime {
+impl RuntimeManager for MiseRuntime {
     async fn init(&self, workspace_host_path: &str) -> Result<(), RuntimeError> {
         let workspace = std::path::Path::new(workspace_host_path);
         let manifest = workspace.join(MANIFEST_REL);
@@ -218,34 +226,18 @@ impl RuntimeManager for PodmanMiseRuntime {
     ) -> Result<(), RuntimeError> {
         let manifest_src = format!("{workspace_host_path}/{MANIFEST_REL}");
         let lockfile_src = format!("{workspace_host_path}/{LOCKFILE_REL}");
+        // `reproduce_remote` targets an arbitrary connection, so it drives a provider pinned to it,
+        // exactly as `deploy` does in `backends`.
+        let provider = self.provider_on(target_connection);
         // The container must be running for `podman exec`.
-        check(Self::podman_on(target_connection, &["start", name]).await?)?;
+        provider.start(name).await?;
         // Copy `mise.toml` and `mise.lock` directly rather than racing the workspace sync (see the
         // "Manifest timing on deploy" note in docs/features/sandbox-runtime-management/02_dev.md).
-        check(
-            Self::podman_on(
-                target_connection,
-                &["cp", &manifest_src, &format!("{name}:{WORKSPACE_MOUNT}/{MANIFEST_REL}")],
-            )
-            .await?,
-        )?;
-        check(
-            Self::podman_on(
-                target_connection,
-                &["cp", &lockfile_src, &format!("{name}:{WORKSPACE_MOUNT}/{LOCKFILE_REL}")],
-            )
-            .await?,
-        )?;
+        provider.copy_in(name, &manifest_src, &format!("{WORKSPACE_MOUNT}/{MANIFEST_REL}")).await?;
+        provider.copy_in(name, &lockfile_src, &format!("{WORKSPACE_MOUNT}/{LOCKFILE_REL}")).await?;
         // Install the lock-pinned tools from the upstream release hosts. Resolving from `mise.lock`
         // (not tool names) is what makes the remote reproduce the identical builds the laptop locked.
-        check(
-            Self::podman_on(
-                target_connection,
-                &["exec", "--workdir", WORKSPACE_MOUNT, name, "mise", "install"],
-            )
-            .await?,
-        )
-        .map(|_| ())
+        check(provider.exec(name, &["mise", "install"], workdir_opts()).await?).map(|_| ())
     }
 
     async fn prepare_terminal(
@@ -255,24 +247,25 @@ impl RuntimeManager for PodmanMiseRuntime {
         _workspace_host_path: &str,
         exec_capable: bool,
     ) -> Result<(String, u16), RuntimeError> {
+        let provider = self.provider_on(connection);
         // The container must be running before any `podman exec`.
-        check(Self::podman_on(connection, &["start", name]).await?)?;
+        provider.start(name).await?;
 
         // Ensure the web server is up, idempotently: start it only when `--status` reports offline.
         // `--status` exits non-zero when offline, so inspect the combined output instead of `check`.
         // "online" is not a substring of "offline", so the contains-check does not false-positive.
-        let status = Self::podman_on(connection, &["exec", name, "zellij", "web", "--status"]).await?;
+        let status = provider.exec(name, &["zellij", "web", "--status"], ExecOpts::default()).await?;
         let status_text = format!(
             "{}{}",
             String::from_utf8_lossy(&status.stdout),
             String::from_utf8_lossy(&status.stderr)
         );
         if !status_text.contains("online") {
-            check(Self::podman_on(connection, &["exec", name, "zellij", "web", "--daemonize"]).await?)?;
+            check(provider.exec(name, &["zellij", "web", "--daemonize"], ExecOpts::default()).await?)?;
         }
 
         // Mint a one-time token; its plaintext is emitted only here and can never be re-read.
-        let token_out = check(Self::podman_on(connection, &["exec", name, "zellij", "web", "--create-token"]).await?)?;
+        let token_out = check(provider.exec(name, &["zellij", "web", "--create-token"], ExecOpts::default()).await?)?;
         let token = parse_token(&token_out).ok_or_else(|| {
             RuntimeError::TerminalUnavailable(format!(
                 "could not parse a token from `zellij web --create-token` output:\n{token_out}"
@@ -299,47 +292,43 @@ impl RuntimeManager for PodmanMiseRuntime {
         password: &str,
         exec_capable: bool,
     ) -> Result<u16, RuntimeError> {
+        let provider = self.provider_on(connection);
         // The container must be running before any `podman exec`.
-        check(Self::podman_on(connection, &["start", name]).await?)?;
+        provider.start(name).await?;
 
-        Self::seed_paseo_projects(connection, name).await?;
+        Self::seed_paseo_projects(&provider, name).await?;
 
         check(
-            Self::podman_on(
-                connection,
-                &[
-                    "exec", "--workdir", WORKSPACE_MOUNT, name,
-                    "mise", "use", "node@lts", "npm:@getpaseo/cli",
-                ],
-            )
-            .await?,
+            provider
+                .exec(name, &["mise", "use", "node@lts", "npm:@getpaseo/cli"], workdir_opts())
+                .await?,
         )?;
 
         // Stop any running daemon unconditionally (best-effort, fails when none is running):
-        let _ = Self::podman_on(
-            connection,
-            &[
-                "exec", "--workdir", WORKSPACE_MOUNT, name,
-                "mise", "exec", "--", "paseo", "daemon", "stop",
-            ],
-        )
-        .await;
+        let _ = provider
+            .exec(name, &["mise", "exec", "--", "paseo", "daemon", "stop"], workdir_opts())
+            .await;
 
         // `mise exec` from the workspace dir puts the workspace's tools (opencode, pi) on PATH
         // and applies `mise.toml [env]`, so paseo discovers installed providers and its spawned
         // agents see the provisioned environment.
         let listen = format!("0.0.0.0:{PASEO_WEB_PORT}");
-        let password_env = format!("PASEO_PASSWORD={password}");
+        let start_opts = ExecOpts {
+            workdir: Some(WORKSPACE_MOUNT.to_string()),
+            env: vec![("PASEO_PASSWORD".to_string(), password.to_string())],
+            detached: true,
+        };
         check(
-            Self::podman_on(
-                connection,
-                &[
-                    "exec", "-d", "--workdir", WORKSPACE_MOUNT, "--env", &password_env, name,
-                    "mise", "exec", "--", "paseo", "daemon", "start", "--foreground",
-                    "--listen", &listen, "--web-ui", "--hostnames", "true",
-                ],
-            )
-            .await?,
+            provider
+                .exec(
+                    name,
+                    &[
+                        "mise", "exec", "--", "paseo", "daemon", "start", "--foreground",
+                        "--listen", &listen, "--web-ui", "--hostnames", "true",
+                    ],
+                    start_opts,
+                )
+                .await?,
         )?;
 
         // `exec -d --foreground` returns once the process is spawned, not once it accepts
@@ -347,15 +336,17 @@ impl RuntimeManager for PodmanMiseRuntime {
         // timeout.
         let listen_url = format!("http://127.0.0.1:{PASEO_WEB_PORT}/");
         check(
-            Self::podman_on(
-                connection,
-                &[
-                    "exec", name, "curl", "--silent", "--fail", "--output", "/dev/null",
-                    "--retry", "30", "--retry-delay", "1", "--retry-connrefused",
-                    "--max-time", "45", &listen_url,
-                ],
-            )
-            .await?,
+            provider
+                .exec(
+                    name,
+                    &[
+                        "curl", "--silent", "--fail", "--output", "/dev/null",
+                        "--retry", "30", "--retry-delay", "1", "--retry-connrefused",
+                        "--max-time", "45", &listen_url,
+                    ],
+                    ExecOpts::default(),
+                )
+                .await?,
         )
         .map_err(|e| {
             RuntimeError::AgentWebUnavailable(format!(
@@ -390,9 +381,7 @@ impl RuntimeManager for PodmanMiseRuntime {
     }
 
     async fn exec_in_container(&self, name: &str, args: &[&str]) -> Result<String, types::RuntimeError> {
-        check(self.podman(&["start", name]).await?)?;
-        let mut full_args = vec!["exec", "--workdir", WORKSPACE_MOUNT, name];
-        full_args.extend_from_slice(args);
-        check(self.podman(&full_args).await?)
+        self.provider.start(name).await?;
+        check(self.provider.exec(name, args, workdir_opts()).await?)
     }
 }

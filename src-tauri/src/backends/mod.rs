@@ -10,10 +10,21 @@ use tokio::process::Command;
 use crate::env_ext::env_dir;
 use crate::mockctl::types::ProcessRunner;
 use crate::process_ext::NoWindow;
+use crate::provider::types::{InstanceSpec, PublishModel};
 use types::{
     BackendError, ConnectionInfo, PodmanCliBackend, RemoteDeployment, Sandbox, SandboxBackend,
     SyncStrategy, WorkspacePlan,
 };
+
+/// Maps the exec-transport capability flag to the provider-neutral publish model both `create` and
+/// `deploy` build their [`InstanceSpec`] from.
+fn publish_model(exec_capable: bool) -> PublishModel {
+    if exec_capable {
+        PublishModel::ExecTunnelled
+    } else {
+        PublishModel::PublishRelay
+    }
+}
 
 // `e2e/lib/podman-machine.ts` regex-parses the two declarations below and `DEFAULT_MACHINE_NAME`,
 // so their literal form (name, type, `const`) is load-bearing beyond Rust.
@@ -27,8 +38,6 @@ pub(crate) const BASE_IMAGE_VERSION: u32 = 6;
 /// this feature shipped with — kept separate from `BASE_IMAGE_VERSION`, which will keep bumping for
 /// unrelated Containerfile changes.
 pub(crate) const EXEC_TRANSPORT_MIN_IMAGE_VERSION: u32 = 6;
-
-const CONTAINERFILE: &str = include_str!("../../resources/Containerfile");
 
 /// The connection `podman machine init` creates for the local machine. Renaming this const (not its
 /// value) breaks the regex parse in `e2e/lib/podman-machine.ts`, which mirrors it as `DEFAULT_MACHINE`.
@@ -44,22 +53,9 @@ pub(crate) fn connection_name() -> String {
     std::env::var("PODMAN_CONNECTION").unwrap_or_else(|_| DEFAULT_MACHINE_NAME.to_string())
 }
 
-fn parse_image_version(image: &str) -> Option<u32> {
-    image.rsplit(':').next()?.parse().ok()
-}
-
-/// Spelled literally because `podman -v` rejects a bare `~` and does not expand `$HOME`.
-const WORKSPACE_MOUNT: &str = "/root/work";
-
-const WORKSPACE_LABEL: &str = "sandbox-mio.workspace";
-
 /// The account the exec-transport SSH session authenticates as. Must match the base image, which
-/// runs everything as root (`WORKSPACE_MOUNT` lives under `/root`).
+/// runs everything as root (`/root/work` lives under `/root`).
 const CONTAINER_USER: &str = "root";
-
-const ZELLIJ_WEB_PORT: u16 = 8082;
-
-const PASEO_WEB_PORT: u16 = 6767;
 
 fn workspace_root() -> Result<std::path::PathBuf, BackendError> {
     if let Some(root) = env_dir("SANDBOX_WORKSPACE_ROOT") {
@@ -82,19 +78,22 @@ fn validate_name(name: &str) -> Result<(), BackendError> {
     Ok(())
 }
 
-fn workspace_path(name: &str) -> Result<String, BackendError> {
+/// Name-derived workspace path under `workspace_root()`. `pub(crate)` because
+/// `PodmanProvider::list_instances` falls back to it for containers lacking the workspace label.
+pub(crate) fn workspace_path(name: &str) -> Result<String, BackendError> {
     let path = workspace_root()?.join(name);
     Ok(path.to_string_lossy().replace('\\', "/"))
 }
 
 pub fn default_backend(
+    provider: Arc<dyn crate::provider::types::MachineProvider>,
     runner: Arc<dyn ProcessRunner>,
     app: tauri::AppHandle,
 ) -> std::sync::Arc<dyn SandboxBackend> {
     let connection = connection_name();
     std::sync::Arc::new(PodmanCliBackend {
         connection,
-        build_lock: tokio::sync::Mutex::new(()),
+        provider,
         runner,
         app,
     })
@@ -228,10 +227,6 @@ impl PodmanCliBackend {
         base_image()
     }
 
-    async fn podman(&self, args: &[&str]) -> Result<Output, BackendError> {
-        self.podman_on(&self.connection, args).await
-    }
-
     /// Runs `podman` without `--connection`, for system-connection registry operations
     /// that are not bound to the backend's active connection.
     async fn podman_unbound(&self, args: &[&str]) -> Result<Output, BackendError> {
@@ -259,12 +254,12 @@ impl PodmanCliBackend {
     }
 
     /// Copies `<identity_path>.pub` into the container at the fixed path
-    /// `sshd_config.container`'s `AuthorizedKeysFile` references. Mirrors `seed_paseo_projects`'s
-    /// temp-file + `podman cp` pattern (`src-tauri/src/runtime/mod.rs`). The container need only
-    /// exist, not be running — `podman cp` works against a created-but-stopped container.
+    /// `sshd_config.container`'s `AuthorizedKeysFile` references, via the given provider so remote
+    /// deploys use a target-pinned provider. The container need only exist, not be running —
+    /// `podman cp` works against a created-but-stopped container.
     async fn install_sandbox_key(
         &self,
-        connection: &str,
+        provider: &Arc<dyn crate::provider::types::MachineProvider>,
         name: &str,
         identity_path: &str,
     ) -> Result<(), BackendError> {
@@ -273,48 +268,17 @@ impl PodmanCliBackend {
         let tmp_path = std::env::temp_dir().join(format!("sandbox-mio-authorized-keys-{name}"));
         std::fs::write(&tmp_path, &pub_key)
             .map_err(|e| BackendError::CommandFailed(format!("failed to write {tmp_path:?}: {e}")))?;
-        let dest = format!("{name}:/etc/ssh/authorized_keys.container");
-        let result = check(
-            self.podman_on(connection, &["cp", &tmp_path.to_string_lossy(), &dest])
-                .await?,
-        );
+        let result = provider
+            .copy_in(name, &tmp_path.to_string_lossy(), "/etc/ssh/authorized_keys.container")
+            .await
+            .map_err(BackendError::from);
         let _ = std::fs::remove_file(&tmp_path);
-        result.map(|_| ())
+        result
     }
 
     async fn verify_host(&self, name: &str) -> Result<(), BackendError> {
         let out = self.podman_on(name, &["info", "--format", "json"]).await?;
         check(out).map(|_| ())
-    }
-
-    async fn image_exists_on(&self, connection: &str) -> Result<bool, BackendError> {
-        Ok(self.podman_on(connection, &["image", "exists", &Self::image()]).await?.status.success())
-    }
-
-    /// Ensures the mise base image exists on `connection`, building from the bundled Containerfile
-    /// if absent. The image is never published to any registry, so absence always means build.
-    /// Called by `ensure_base_image` (local, serialized under the build lock) and `deploy` (remote,
-    /// no lock — concurrent deploys to the same target are harmless since `podman build` is idempotent).
-    async fn ensure_image_on(&self, connection: &str) -> Result<(), BackendError> {
-        let image = Self::image();
-        if self.image_exists_on(connection).await? {
-            return Ok(());
-        }
-        // A temp context dir is needed because `podman build -` does not stream the Containerfile
-        // through `--connection` to a remote machine. The connection name disambiguates concurrent
-        // local+remote builds sharing the same process ID.
-        let context = std::env::temp_dir().join(format!(
-            "sandbox-mio-build-{pid}-{conn}",
-            pid = std::process::id(),
-            conn = connection.replace(['/', '\\', ':'], "-"),
-        ));
-        std::fs::create_dir_all(&context)
-            .and_then(|_| std::fs::write(context.join("Containerfile"), CONTAINERFILE))
-            .map_err(|e| BackendError::CommandFailed(e.to_string()))?;
-        let context_arg = context.to_string_lossy().replace('\\', "/");
-        let result = check(self.podman_on(connection, &["build", "--tag", &image, &context_arg]).await?).map(|_| ());
-        let _ = std::fs::remove_dir_all(&context);
-        result
     }
 
     /// Live SSH endpoint for connection `name`, or `None` for a connection not reachable over SSH.
@@ -439,15 +403,11 @@ fn progress(channel: &Channel<serde_json::Value>, step: &str, status: &str, mess
 #[async_trait::async_trait]
 impl SandboxBackend for PodmanCliBackend {
     async fn ensure_base_image(&self) -> Result<(), BackendError> {
-        // Held across the whole check+build so concurrent local creates serialize: the first
-        // builder wins while the rest wait, then each re-checks `image exists` inside
-        // `ensure_image_on` and returns immediately — without it they would race the build.
-        let _guard = self.build_lock.lock().await;
-        self.ensure_image_on(&self.connection).await
+        Ok(self.provider.ensure_base_image().await?)
     }
 
     async fn base_image_ready(&self) -> Result<bool, BackendError> {
-        self.image_exists_on(&self.connection).await
+        Ok(self.provider.base_image_ready().await?)
     }
 
     async fn create(&self, name: &str, existing_path: Option<&str>) -> Result<Sandbox, BackendError> {
@@ -456,72 +416,19 @@ impl SandboxBackend for PodmanCliBackend {
         // Every sandbox is created locally; remoteness is a later deploy action, so the workspace
         // is always a laptop directory bind-mounted directly.
         let workspace = self.resolve_create_workspace(name, existing_path).await?;
-        let volume = format!("{workspace}:{WORKSPACE_MOUNT}");
-        let label = format!("{WORKSPACE_LABEL}={workspace}");
-        // Publish zellij's web port to an ephemeral host-loopback port. `--host-lo-to-ns-lo` is the
-        // decisive pasta flag: it forwards the host-loopback-published port to the container's
-        // loopback, where zellij binds; without it pasta forwards to the container's eth0 and the
-        // loopback-bound server is unreachable. The host side is pinned to 127.0.0.1 so nothing is
-        // exposed on the local network. Both local and remote containers get these flags.
-        //
-        // Podman only forwards ports it is explicitly told about (confirmed: with no `--publish`
-        // it invokes pasta with `-t none -u none`, forwarding nothing) — there is no way to reach a
-        // container's port from outside its netns without publishing it first. `relay_publishes`
-        // pre-publishes a small pool of container-side ports (crate::network::RELAY_POOL_SIZE) that
-        // `NetworkManager::expose_port` can later bridge to an arbitrary user-chosen port via an
-        // in-container `socat` relay, without ever recreating the container.
         let exec_capable = BASE_IMAGE_VERSION >= EXEC_TRANSPORT_MIN_IMAGE_VERSION;
-        let mut args = vec![
-            "create".to_string(), "--pull=missing".to_string(), "--tty".to_string(),
-        ];
-        if exec_capable {
-            // No `--network pasta:--host-lo-to-ns-lo`, no `--publish` at all: reachability goes
-            // through `podman exec`-tunneled `sshd`, not a published loopback port — see
-            // docs/features/podman-exec-transport/02_dev.md.
-            args.push("--network".to_string());
-            args.push("pasta".to_string());
-        } else {
-            // Publish zellij's web port to an ephemeral host-loopback port. `--host-lo-to-ns-lo` is
-            // the decisive pasta flag: it forwards the host-loopback-published port to the
-            // container's loopback, where zellij binds; without it pasta forwards to the
-            // container's eth0 and the loopback-bound server is unreachable. The host side is
-            // pinned to 127.0.0.1 so nothing is exposed on the local network.
-            //
-            // Podman only forwards ports it is explicitly told about (confirmed: with no
-            // `--publish` it invokes pasta with `-t none -u none`, forwarding nothing) — there is
-            // no way to reach a container's port from outside its netns without publishing it
-            // first. `relay_publishes` pre-publishes a small pool of container-side ports
-            // (crate::network::RELAY_POOL_SIZE) that `NetworkManager::expose_port` can later
-            // bridge to an arbitrary user-chosen port via an in-container `socat` relay, without
-            // ever recreating the container.
-            let publish = format!("127.0.0.1::{ZELLIJ_WEB_PORT}");
-            let publish_paseo = format!("127.0.0.1::{PASEO_WEB_PORT}");
-            let relay_publishes = crate::network::relay_pool_publish_args();
-            args.push("--network".to_string());
-            args.push("pasta:--host-lo-to-ns-lo".to_string());
-            args.push("--publish".to_string());
-            args.push(publish);
-            args.push("--publish".to_string());
-            args.push(publish_paseo);
-            for p in &relay_publishes {
-                args.push("--publish".to_string());
-                args.push(p.clone());
-            }
-        }
-        args.extend([
-            "--volume".to_string(), volume, "--workdir".to_string(), WORKSPACE_MOUNT.to_string(),
-            "--label".to_string(), label, "--name".to_string(), name.to_string(),
-            image, "/bin/sh".to_string(),
-        ]);
-        // `--pull=missing` satisfies the trait's "pull if absent, then create" contract.
-        let out = self
-            .podman(&args.iter().map(String::as_str).collect::<Vec<_>>())
-            .await?;
-        let id = check(out)?.trim().to_string();
+        let spec = InstanceSpec {
+            name: name.to_string(),
+            image,
+            workspace_source: workspace.clone(),
+            labels: vec![(crate::provider::WORKSPACE_LABEL.to_string(), workspace.clone())],
+            publish_model: publish_model(exec_capable),
+        };
+        let id = self.provider.create_instance(&spec).await?;
         if exec_capable {
             let identity_path = ensure_sandbox_identity(&self.app, name)?;
             forget_sandbox_host_key(&identity_path);
-            self.install_sandbox_key(&self.connection, name, &identity_path).await?;
+            self.install_sandbox_key(&self.provider, name, &identity_path).await?;
             ensure_sandbox_alias(name, &self.connection, &identity_path).await?;
         }
         Ok(Sandbox {
@@ -534,55 +441,19 @@ impl SandboxBackend for PodmanCliBackend {
     }
 
     async fn list(&self) -> Result<Vec<Sandbox>, BackendError> {
-        let out = self.podman(&["ps", "--all", "--format", "json"]).await?;
-        let stdout = check(out)?;
-        let containers: Vec<serde_json::Value> =
-            serde_json::from_str(&stdout).map_err(|e| BackendError::ParseError(e.to_string()))?;
-        // Deployment state is not derived here: a deployed sandbox is identified by its Mutagen
-        // session (see the deploy flow), keeping `list` independent of the sync engine.
-        Ok(containers
-            .into_iter()
-            .map(|c| {
-                let name = c["Names"]
-                    .as_array()
-                    .and_then(|a| a.first())
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_default()
-                    .trim_start_matches('/')
-                    .to_string();
-                // Prefer the label written at `create` time, since an `existing_path` sandbox's
-                // workspace is not under `workspace_root()` and cannot be reconstructed from the
-                // name alone. Falls back to the name-derived path for containers created before
-                // this label existed, or outside this app.
-                let workspace_path = c["Labels"]
-                    .get(WORKSPACE_LABEL)
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string)
-                    .unwrap_or_else(|| workspace_path(&name).unwrap_or_default());
-                let image_version =
-                    parse_image_version(c["Image"].as_str().unwrap_or_default());
-                Sandbox {
-                    id: c["Id"].as_str().unwrap_or_default().to_string(),
-                    status: c["State"].as_str().unwrap_or_default().to_string(),
-                    name,
-                    workspace_path,
-                    image_version,
-                }
-            })
-            .collect())
+        Ok(self.provider.list_instances().await?)
     }
 
     async fn start(&self, name: &str) -> Result<(), BackendError> {
-        check(self.podman(&["start", name]).await?).map(|_| ())
+        Ok(self.provider.start(name).await?)
     }
 
     async fn stop(&self, name: &str) -> Result<(), BackendError> {
-        check(self.podman(&["stop", name]).await?).map(|_| ())
+        Ok(self.provider.stop(name).await?)
     }
 
     async fn destroy(&self, name: &str) -> Result<(), BackendError> {
-        // `--force` stops a running container first. The workspace directory is left intact.
-        check(self.podman(&["rm", "--force", name]).await?).map(|_| ())
+        Ok(self.provider.remove(name).await?)
     }
 
     async fn deploy(
@@ -609,8 +480,13 @@ impl SandboxBackend for PodmanCliBackend {
             });
         };
 
+        // A second provider pinned to the target: `self.provider` targets the local connection,
+        // but every remote-container operation below runs against `target_connection`.
+        let target_provider =
+            crate::provider::default_provider(self.runner.clone(), target_connection.to_string());
+
         // Stop the workload onto the remote; kept stopped (not removed) so undeploy can restart it.
-        check(self.podman(&["stop", name]).await?)?;
+        self.provider.stop(name).await?;
         // No committed-image transfer: software is reproduced from the mise manifest by
         // `RuntimeManager::reproduce_remote` after this returns. Must not be reintroduced.
         let image = Self::image();
@@ -627,46 +503,24 @@ impl SandboxBackend for PodmanCliBackend {
 
         // Ensure the base image exists on the remote. It is never published to any registry, so
         // absence means build — the same path `ensure_base_image` takes for the local connection.
-        self.ensure_image_on(target_connection).await?;
+        target_provider.ensure_base_image().await?;
 
         // Create and start the remote container on the target connection, not self.connection.
+        // No workspace label on remote containers, matching prior behaviour.
         let exec_capable = BASE_IMAGE_VERSION >= EXEC_TRANSPORT_MIN_IMAGE_VERSION;
-        let volume = format!("{}:{WORKSPACE_MOUNT}", plan.bind_mount_source);
-        let mut create_args = vec!["create".to_string(), "--tty".to_string()];
-        if exec_capable {
-            create_args.push("--network".to_string());
-            create_args.push("pasta".to_string());
-        } else {
-            let publish = format!("127.0.0.1::{ZELLIJ_WEB_PORT}");
-            let publish_paseo = format!("127.0.0.1::{PASEO_WEB_PORT}");
-            let relay_publishes = crate::network::relay_pool_publish_args();
-            create_args.push("--network".to_string());
-            create_args.push("pasta:--host-lo-to-ns-lo".to_string());
-            create_args.push("--publish".to_string());
-            create_args.push(publish);
-            create_args.push("--publish".to_string());
-            create_args.push(publish_paseo);
-            for p in &relay_publishes {
-                create_args.push("--publish".to_string());
-                create_args.push(p.clone());
-            }
-        }
-        create_args.extend([
-            "--volume".to_string(), volume, "--workdir".to_string(), WORKSPACE_MOUNT.to_string(),
-            "--name".to_string(), name.to_string(), image.clone(), "/bin/sh".to_string(),
-        ]);
-        check(
-            self.podman_on(
-                target_connection,
-                &create_args.iter().map(String::as_str).collect::<Vec<_>>(),
-            )
-            .await?,
-        )?;
-        check(self.podman_on(target_connection, &["start", name]).await?)?;
+        let spec = InstanceSpec {
+            name: name.to_string(),
+            image: image.clone(),
+            workspace_source: plan.bind_mount_source.clone(),
+            labels: Vec::new(),
+            publish_model: publish_model(exec_capable),
+        };
+        target_provider.create_instance(&spec).await?;
+        target_provider.start(name).await?;
         if exec_capable {
             let identity_path = ensure_sandbox_identity(&self.app, name)?;
             forget_sandbox_host_key(&identity_path);
-            self.install_sandbox_key(target_connection, name, &identity_path).await?;
+            self.install_sandbox_key(&target_provider, name, &identity_path).await?;
             ensure_sandbox_alias(name, target_connection, &identity_path).await?;
         }
 
@@ -677,7 +531,9 @@ impl SandboxBackend for PodmanCliBackend {
     }
 
     async fn remove_remote(&self, name: &str, connection: &str) -> Result<(), BackendError> {
-        check(self.podman_on(connection, &["rm", "--force", name]).await?).map(|_| ())
+        let target_provider =
+            crate::provider::default_provider(self.runner.clone(), connection.to_string());
+        Ok(target_provider.remove(name).await?)
     }
 
     async fn listen_events(&self, on_event: Channel<serde_json::Value>) -> Result<(), BackendError> {

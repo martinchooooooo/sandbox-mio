@@ -10,6 +10,7 @@ mod mockctl;
 mod network;
 mod paths;
 mod process_ext;
+mod provider;
 mod runtime;
 mod settings;
 mod ssh;
@@ -878,6 +879,7 @@ async fn install_agent(
     on_progress: Channel<serde_json::Value>,
     app: tauri::AppHandle,
     runtime: State<'_, Arc<dyn RuntimeManager>>,
+    provider: State<'_, Arc<dyn provider::types::MachineProvider>>,
 ) -> Result<(), AppError> {
     agents::install_packages(&name, &packages, &on_progress, &runtime).await?;
     if let Some((npm_package, node_tool)) = postinstall_npm {
@@ -885,9 +887,9 @@ async fn install_agent(
     }
     if let Some(service_id) = credential_service {
         if credentials::load_manifest(&app, &service_id).is_ok() {
-            credentials::inject(&app, &name, &service_id, &runtime).await?;
+            credentials::inject(&app, &name, &service_id, &provider).await?;
             if let Some(seed) = &onboarding {
-                credentials::seed_onboarding(&name, seed, &runtime).await?;
+                credentials::seed_onboarding(&name, seed, &provider).await?;
             }
         }
     }
@@ -1021,9 +1023,9 @@ async fn start_agent_auth(
     auth_command: Vec<String>,
     app: tauri::AppHandle,
     sessions: State<'_, AuthSessionMap>,
-    runtime: State<'_, Arc<dyn RuntimeManager>>,
+    provider: State<'_, Arc<dyn provider::types::MachineProvider>>,
 ) -> Result<String, AppError> {
-    Ok(agents::start_auth(&name, &auth_command, &app, &sessions, &runtime).await?)
+    Ok(agents::start_auth(&name, &auth_command, &app, &sessions, &provider).await?)
 }
 
 /// Write to auth process stdin. One-shot for PKCE flows.
@@ -1087,7 +1089,7 @@ async fn capture_agent_credentials(
     account_source_path: Option<String>,
     account_email_json_key: Option<String>,
     app: tauri::AppHandle,
-    runtime: State<'_, Arc<dyn RuntimeManager>>,
+    provider: State<'_, Arc<dyn provider::types::MachineProvider>>,
 ) -> Result<credentials::types::CredentialManifest, AppError> {
     Ok(credentials::capture(
         &app,
@@ -1097,7 +1099,7 @@ async fn capture_agent_credentials(
         &expires_at_json_key,
         account_source_path.as_deref(),
         account_email_json_key.as_deref(),
-        &runtime,
+        &provider,
     )
     .await?)
 }
@@ -1109,11 +1111,11 @@ async fn inject_agent_credentials(
     service_id: String,
     onboarding: Option<credentials::types::OnboardingSeed>,
     app: tauri::AppHandle,
-    runtime: State<'_, Arc<dyn RuntimeManager>>,
+    provider: State<'_, Arc<dyn provider::types::MachineProvider>>,
 ) -> Result<(), AppError> {
-    credentials::inject(&app, &name, &service_id, &runtime).await?;
+    credentials::inject(&app, &name, &service_id, &provider).await?;
     if let Some(seed) = onboarding {
-        credentials::seed_onboarding(&name, &seed, &runtime).await?;
+        credentials::seed_onboarding(&name, &seed, &provider).await?;
     }
     Ok(())
 }
@@ -1123,9 +1125,9 @@ async fn inject_agent_credentials(
 async fn seed_agent_onboarding(
     name: String,
     onboarding: credentials::types::OnboardingSeed,
-    runtime: State<'_, Arc<dyn RuntimeManager>>,
+    provider: State<'_, Arc<dyn provider::types::MachineProvider>>,
 ) -> Result<(), AppError> {
-    Ok(credentials::seed_onboarding(&name, &onboarding, &runtime).await?)
+    Ok(credentials::seed_onboarding(&name, &onboarding, &provider).await?)
 }
 
 /// List every service with persisted credentials.
@@ -1428,7 +1430,6 @@ pub fn run() {
     };
     backends::set_podman_runner(podman_runner.clone());
     let port_transport = transport::default_port_transport();
-    let runtime = runtime::default_runtime(port_transport.clone());
     let machine = machine::default_machine_manager(podman_runner.clone());
 
     let mut builder = tauri::Builder::default();
@@ -1444,15 +1445,30 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .manage(runtime)
         .manage(machine)
         .manage(mock_director.clone())
         .setup(move |app| {
             app.manage(init_logging(app.handle()));
+            // Constructed once from the shared podman runner and connection, then managed as
+            // `Arc<dyn MachineProvider>` and threaded into the backend so both share one provider.
+            let provider: Arc<dyn provider::types::MachineProvider> =
+                provider::default_provider(podman_runner.clone(), backends::connection_name());
+            app.manage(provider.clone());
+            // The runtime shares the same provider (pinned to the local connection) and the process
+            // runner, from which it builds a target-pinned provider for remote-connection calls.
+            app.manage(runtime::default_runtime(
+                provider.clone(),
+                podman_runner.clone(),
+                port_transport.clone(),
+            ));
             // Needs `app.handle()` to resolve `crate::paths::app_data_root` for per-sandbox SSH
             // identities, so `default_backend` is constructed here rather than before the builder,
             // unlike the other subsystems above (none of which need an `AppHandle`).
-            app.manage(backends::default_backend(podman_runner.clone(), app.handle().clone()));
+            app.manage(backends::default_backend(
+                provider,
+                podman_runner.clone(),
+                app.handle().clone(),
+            ));
             if !backends::mock_backend_enabled() {
                 if let Ok(resource_dir) = app.path().resource_dir() {
                     backends::set_podman_resource_dir(resource_dir.join("podman"));
@@ -1465,7 +1481,11 @@ pub fn run() {
                     Arc::new(mockctl::types::SystemMutagenRunner::new(app.handle().clone()))
                 };
             app.manage(sync::default_sync_engine(mutagen_runner));
-            app.manage(network::default_network_manager(app.handle().clone(), port_transport.clone()));
+            app.manage(network::default_network_manager(
+                app.handle().clone(),
+                port_transport.clone(),
+                podman_runner.clone(),
+            ));
             app.manage(WorkspaceRegistry::default());
             app.manage(AuthSessionMap::default());
             app.manage(ActiveServer::default());

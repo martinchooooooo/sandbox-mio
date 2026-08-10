@@ -159,13 +159,16 @@ pub trait SandboxBackend: Send + Sync {
     ) -> Result<(), BackendError>;
 }
 
-/// Real [`SandboxBackend`] driving the `podman` CLI over a named system connection.
+/// Real [`SandboxBackend`] driving the `podman` CLI over a named system connection. Container
+/// lifecycle delegates to `provider`; the Podman-only orchestration (deploy, host registry,
+/// event stream, exec-transport SSH aliases) stays here.
 pub(super) struct PodmanCliBackend {
     pub connection: String,
-    /// Serializes base image build to prevent concurrent races.
-    pub(super) build_lock: tokio::sync::Mutex<()>,
-    /// The process seam every `podman` call routes through — real in production, scripted under
-    /// `MIO_MOCK_BACKEND=1`. See `docs/features/scriptable-mock-backend/02_dev.md`.
+    /// Container/VM primitive the lifecycle methods delegate to, pinned to `connection`.
+    pub(super) provider: std::sync::Arc<dyn crate::provider::types::MachineProvider>,
+    /// The process seam the still-Podman-only `&self` calls route through (host registry, event
+    /// stream, connection lookup) — real in production, scripted under `MIO_MOCK_BACKEND=1`.
+    /// See `docs/features/scriptable-mock-backend/02_dev.md`.
     pub(super) runner: std::sync::Arc<dyn crate::mockctl::types::ProcessRunner>,
     /// Resolves `crate::paths::app_data_root` for per-sandbox exec-transport SSH identities
     /// (`ensure_sandbox_identity`). Not used by any pre-existing method.

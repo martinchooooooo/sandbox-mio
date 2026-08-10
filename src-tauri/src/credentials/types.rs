@@ -1,4 +1,5 @@
 use crate::backends::types::BackendError;
+use crate::provider::types::ProviderError;
 use crate::runtime::types::RuntimeError;
 
 #[derive(Debug, thiserror::Error)]
@@ -21,6 +22,12 @@ impl From<RuntimeError> for CredentialError {
 
 impl From<BackendError> for CredentialError {
     fn from(e: BackendError) -> Self {
+        CredentialError::ExecFailed(e.to_string())
+    }
+}
+
+impl From<ProviderError> for CredentialError {
+    fn from(e: ProviderError) -> Self {
         CredentialError::ExecFailed(e.to_string())
     }
 }

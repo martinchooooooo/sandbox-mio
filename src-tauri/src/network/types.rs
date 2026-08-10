@@ -26,6 +26,12 @@ pub enum NetworkError {
     CommandFailed(String),
 }
 
+impl From<crate::provider::types::ProviderError> for NetworkError {
+    fn from(e: crate::provider::types::ProviderError) -> Self {
+        NetworkError::CommandFailed(e.to_string())
+    }
+}
+
 /// One active Mutagen forward, tracked so the frontend can display open ports and teardown
 /// can reverse exactly what was opened.
 #[derive(Debug, Clone, Serialize)]

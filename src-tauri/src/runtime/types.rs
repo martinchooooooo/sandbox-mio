@@ -29,9 +29,18 @@ pub enum RuntimeError {
     AgentWebUnavailable(String),
 }
 
+impl From<crate::provider::types::ProviderError> for RuntimeError {
+    fn from(e: crate::provider::types::ProviderError) -> Self {
+        match e {
+            crate::provider::types::ProviderError::CommandFailed(m) => RuntimeError::CommandFailed(m),
+            crate::provider::types::ProviderError::ParseError(m) => RuntimeError::CommandFailed(m),
+        }
+    }
+}
+
 /// Manages the mise tool environment embedded in a sandbox workspace. Distinct from
 /// [`crate::backends::types::SandboxBackend`], which owns container lifecycle. The sole
-/// implementation is [`PodmanMiseRuntime`], held in Tauri state as `Arc<dyn RuntimeManager>`.
+/// implementation is [`MiseRuntime`], held in Tauri state as `Arc<dyn RuntimeManager>`.
 #[async_trait]
 pub trait RuntimeManager: Send + Sync {
     /// Create `mise.toml` and empty `mise.lock` if absent. Idempotent.
@@ -89,11 +98,18 @@ pub trait RuntimeManager: Send + Sync {
     async fn exec_in_container(&self, name: &str, args: &[&str]) -> Result<String, RuntimeError>;
 }
 
-/// Drives `mise` (over `podman exec`) against a named Podman **system connection**, mirroring
-/// [`crate::backends::types::PodmanCliBackend`]. The connection is the same one the backend is
-/// pinned to; deploy passes an explicit target connection per call.
-pub struct PodmanMiseRuntime {
+/// Drives `mise` through a [`crate::provider::types::MachineProvider`] pinned to a named Podman
+/// **system connection**, mirroring [`crate::backends::types::PodmanCliBackend`]. The connection is
+/// the same one the backend is pinned to; operations against an arbitrary target connection
+/// (`reproduce_remote`, `prepare_terminal`, `prepare_agent_web`) build a target-pinned provider
+/// from `runner`, exactly as `deploy` does in `backends`.
+pub struct MiseRuntime {
     pub connection: String,
+    /// Provider pinned to `connection`, driving every local `podman exec`/`cp`/`start`.
+    pub provider: std::sync::Arc<dyn crate::provider::types::MachineProvider>,
+    /// The process seam used to build a fresh provider pinned to an arbitrary target connection,
+    /// mirroring `deploy`'s `self.runner`.
+    pub runner: std::sync::Arc<dyn crate::mockctl::types::ProcessRunner>,
     pub registry_cache: tokio::sync::OnceCell<Vec<RegistryEntry>>,
     /// `podman port`-based lookup, used for a sandbox on the publish+relay reachability model.
     pub published_port_transport: std::sync::Arc<dyn crate::transport::types::PortTransport>,

@@ -6,15 +6,16 @@ mod mock;
 
 use std::collections::HashMap;
 use std::process::Output;
+use std::sync::Arc;
 use std::sync::Mutex;
 
 use tauri::{AppHandle, Emitter};
-use tokio::process::Command;
 
 use mock::MockNetworkManager;
 use types::{ForwardInfo, NetworkError, NetworkManager, ServiceKind};
 
-use crate::process_ext::NoWindow;
+use crate::mockctl::types::ProcessRunner;
+use crate::provider::types::{ExecOpts, MachineProvider};
 
 pub use types::EVENT_NAME;
 
@@ -50,17 +51,6 @@ fn allocate_ephemeral_port() -> Result<u16, NetworkError> {
         .local_addr()
         .map(|a| a.port())
         .map_err(|e| NetworkError::PortAllocation(e.to_string()))
-}
-
-async fn podman(connection: &str, args: &[&str]) -> Result<Output, NetworkError> {
-    let mut full = vec!["--connection", connection];
-    full.extend_from_slice(args);
-    Command::new("podman")
-        .no_window()
-        .args(&full)
-        .output()
-        .await
-        .map_err(|e| NetworkError::CommandFailed(e.to_string()))
 }
 
 fn check(out: Output) -> Result<String, NetworkError> {
@@ -107,9 +97,19 @@ pub struct MutagenNetworkManager {
     /// loopback is reached directly), so unlike `PodmanMiseRuntime` there is no second
     /// `exec_port_transport` field here — see `docs/features/podman-exec-transport/02_dev.md`.
     published_port_transport: std::sync::Arc<dyn crate::transport::types::PortTransport>,
+    /// The process seam from which a per-call, target-pinned provider is built. Each method drives an
+    /// explicit `connection`/`entry.connection`, so the provider is constructed per call rather than
+    /// held as a single field — mirroring `MiseRuntime`'s `provider_on`.
+    runner: Arc<dyn ProcessRunner>,
 }
 
 impl MutagenNetworkManager {
+    /// A provider pinned to an arbitrary `connection`, mirroring `MiseRuntime::provider_on` and
+    /// `deploy`'s target-pinned provider.
+    fn provider_on(&self, connection: &str) -> Arc<dyn MachineProvider> {
+        crate::provider::default_provider(self.runner.clone(), connection.to_string())
+    }
+
     /// Push the full current snapshot to `EVENT_NAME` so `state.svelte.ts` stays live. Called after
     /// every mutation below instead of making the frontend refetch via `list_open_forwards`.
     fn emit_forwards(&self) {
@@ -194,8 +194,10 @@ impl NetworkManager for MutagenNetworkManager {
                     // Best-effort: the container may already be gone (destroy) or stopped
                     // (undeploy), either of which already kills the relay process for free.
                     let pattern = format!("TCP-LISTEN:{}", entry.remote_port);
-                    let _ =
-                        podman(&entry.connection, &["exec", sandbox, "pkill", "-f", &pattern]).await;
+                    let _ = self
+                        .provider_on(&entry.connection)
+                        .exec(sandbox, &["pkill", "-f", &pattern], ExecOpts::default())
+                        .await;
                 }
             }
         }
@@ -235,11 +237,12 @@ impl NetworkManager for MutagenNetworkManager {
 
         let name = forward_name(sandbox, kind);
         let host_port = allocate_ephemeral_port()?;
+        let provider = self.provider_on(connection);
 
         let remote_port = if exec_capable {
             // No relay-pool slot, no socat: the container's own loopback is reachable directly
             // over the exec-transport `Proxied` alias once `sandbox` is running.
-            check(podman(connection, &["start", sandbox]).await?)?;
+            provider.start(sandbox).await?;
             crate::sync::forward_create(&self.app, &name, host_port, sandbox, target_port).await?;
             target_port
         } else {
@@ -248,7 +251,7 @@ impl NetworkManager for MutagenNetworkManager {
                 limit: RELAY_POOL_SIZE as usize,
             })?;
 
-            check(podman(connection, &["start", sandbox]).await?)?;
+            provider.start(sandbox).await?;
 
             // `fork` handles one client per accepted connection; `reuseaddr` lets a restarted relay
             // rebind immediately after a prior one was killed. The relay runs inside the same netns
@@ -257,11 +260,13 @@ impl NetworkManager for MutagenNetworkManager {
             let listen_spec = format!("TCP-LISTEN:{slot},fork,reuseaddr");
             let dial_spec = format!("TCP:127.0.0.1:{target_port}");
             check(
-                podman(
-                    connection,
-                    &["exec", "-d", sandbox, "socat", &listen_spec, &dial_spec],
-                )
-                .await?,
+                provider
+                    .exec(
+                        sandbox,
+                        &["socat", &listen_spec, &dial_spec],
+                        ExecOpts { detached: true, ..Default::default() },
+                    )
+                    .await?,
             )?;
 
             let slot_host_port = self
@@ -299,7 +304,10 @@ impl NetworkManager for MutagenNetworkManager {
         crate::sync::forward_terminate(&self.app, &entry.forward_name).await;
         if is_relayed(&entry, target_port) {
             let pattern = format!("TCP-LISTEN:{}", entry.remote_port);
-            let _ = podman(&entry.connection, &["exec", sandbox, "pkill", "-f", &pattern]).await;
+            let _ = self
+                .provider_on(&entry.connection)
+                .exec(sandbox, &["pkill", "-f", &pattern], ExecOpts::default())
+                .await;
         }
         self.emit_forwards();
     }
@@ -353,12 +361,17 @@ fn parse_listening_ports(output: &str) -> std::collections::HashSet<u16> {
 /// Reads the sandbox's currently-listening TCP ports via `podman exec`. Best-effort: any failure
 /// (container not running, `cat` missing, ...) reports no listening ports rather than erroring, so
 /// a scan hiccup can't tear down forwards the next block sets up to remove.
-async fn scan_listening_ports(connection: &str, sandbox: &str) -> std::collections::HashSet<u16> {
-    match podman(
-        connection,
-        &["exec", sandbox, "sh", "-c", "cat /proc/net/tcp /proc/net/tcp6 2>/dev/null"],
-    )
-    .await
+async fn scan_listening_ports(
+    provider: &Arc<dyn MachineProvider>,
+    sandbox: &str,
+) -> std::collections::HashSet<u16> {
+    match provider
+        .exec(
+            sandbox,
+            &["sh", "-c", "cat /proc/net/tcp /proc/net/tcp6 2>/dev/null"],
+            ExecOpts::default(),
+        )
+        .await
     {
         Ok(out) if out.status.success() => parse_listening_ports(&String::from_utf8_lossy(&out.stdout)),
         _ => Default::default(),
@@ -388,6 +401,7 @@ async fn poll_ports_file(
     exec_capable: bool,
 ) {
     let path = std::path::Path::new(&workspace_path).join(".mio").join("ports.json");
+    let provider = manager.provider_on(&connection);
     loop {
         tokio::time::sleep(PORTS_FILE_POLL_INTERVAL).await;
 
@@ -432,7 +446,7 @@ async fn poll_ports_file(
             }
         }
 
-        let scanned = scan_listening_ports(&connection, &sandbox).await;
+        let scanned = scan_listening_ports(&provider, &sandbox).await;
 
         let (auto_tracked, exclude): (Vec<u16>, std::collections::HashSet<u16>) = {
             let forwards = manager.forwards.lock().unwrap();
@@ -477,6 +491,7 @@ async fn poll_ports_file(
 pub fn default_network_manager(
     app: AppHandle,
     published_port_transport: std::sync::Arc<dyn crate::transport::types::PortTransport>,
+    runner: Arc<dyn ProcessRunner>,
 ) -> std::sync::Arc<dyn NetworkManager> {
     if crate::backends::mock_backend_enabled() {
         return std::sync::Arc::new(MockNetworkManager::new(app));
@@ -487,5 +502,6 @@ pub fn default_network_manager(
         expose_lock: tokio::sync::Mutex::new(()),
         ports_watch: Mutex::new(HashMap::new()),
         published_port_transport,
+        runner,
     })
 }
