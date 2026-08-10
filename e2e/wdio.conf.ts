@@ -14,7 +14,13 @@ import {
   waitForConnection,
 } from "./lib/podman-machine.js";
 import { LOCAL_CONNECTION, REMOTE_CONNECTION } from "./lib/podman-connection.js";
-import { ensureMutagen, forwardCreate, SWEEP_ORPHAN_SESSION, SWEEP_KEEP_SESSION } from "./lib/mutagen.js";
+import {
+  ensureMutagen,
+  forwardCreate,
+  listMutagenDaemons,
+  SWEEP_ORPHAN_SESSION,
+  SWEEP_KEEP_SESSION,
+} from "./lib/mutagen.js";
 import {
   RUN_SLUG,
   APP_DATA_ROOT,
@@ -438,6 +444,16 @@ export const config: WebdriverIO.Config = {
     }
 
     if (IS_LAUNCHER) {
+      // Diagnostic only, never fatal: the Mutagen daemon is shared per data directory and outlives
+      // the app, so leftovers here are expected across concurrent worktrees — but a climbing count
+      // is the early signal that daemons are leaking (each carries the environment of whichever CLI
+      // call auto-started it, the hazard behind the mangled-`mio-sshd` failure). Logged, not swept.
+      const daemons = listMutagenDaemons();
+      console.log(`[e2e] ${daemons.length} mutagen daemon(s) still running at end of run:`);
+      for (const { pid, started } of daemons) {
+        console.log(`[e2e]   pid=${pid} started=${started}`);
+      }
+
       releaseWorktreeLock();
       if (!IS_LIGHT_RUN) releaseHostLock();
     }

@@ -869,13 +869,17 @@ pub async fn ensure_sandbox_alias(
     connection: &str,
     identity_path: &str,
 ) -> Result<(), BackendError> {
-    // MSYS path mangling of the in-container `/usr/local/bin/mio-sshd` argument is suppressed by
-    // `MSYS_NO_PATHCONV`/`MSYS2_ARG_CONV_EXCL`, set on the Mutagen sidecar's environment
-    // (`crate::sync::command`) rather than via an `env …` prefix here — the wrapping `sh -c
-    // "exec ..."` cannot resolve `env.exe` on the app's runtime PATH. See
-    // `docs/features/podman-exec-transport/02_dev.md`, Resolved Decision 5.
+    // `mio-sshd` is referenced by bare name (it lives on the container's default `PATH` via
+    // `/usr/local/bin`, baked in the Containerfile) rather than by its `/usr/local/bin/...` absolute
+    // path, so the argument carries no MSYS-manglable token. This is load-bearing, not cosmetic:
+    // Mutagen forwarding runs in the long-lived daemon, which spawns the `ssh → sh -c "exec …"`
+    // transport — the daemon "outlives the app" (`crate::sync::sweep_stale_forwards`) and is only
+    // env-configured by whichever CLI call happens to auto-start it, so the `MSYS_NO_PATHCONV`
+    // suppression set on `crate::sync::command` does not reach a pre-existing daemon. A bare name
+    // is correct regardless of daemon provenance. See `docs/features/podman-exec-transport/02_dev.md`,
+    // Resolved Decision 5.
     let command = format!(
-        "{} --connection {connection} exec -i {name} /usr/local/bin/mio-sshd",
+        "{} --connection {connection} exec -i {name} mio-sshd",
         podman_literal_path()
     );
     crate::ssh::write_alias(&crate::ssh::types::SshAlias::Proxied {

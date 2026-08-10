@@ -86,21 +86,28 @@ Two further decisions were forced by implementation rather than restated from `0
    `/bin/sh: line 1: exec: env: not found`, which surfaces as Mutagen's opaque `unable to receive
    server magic number: EOF` / `Connection closed by UNKNOWN port 65535`. The spike missed it only
    because a manual Git Bash shell *does* have `/usr/bin` on PATH.
-   **The shipped fix sets the two variables as environment variables on the Mutagen sidecar process**
-   (`crate::sync::command`, `sync/mod.rs`) instead of prefixing the command string. Mutagen shells
-   out to `ssh`, which spawns the `sh -c "exec …"` that does the conversion; all three inherit the
-   sidecar's environment, so the variables take effect with no dependency on `env` being locatable,
-   and `ensure_sandbox_alias`'s `ProxyCommand` is now a bare
-   `<podman.exe> --connection <c> exec -i <name> /usr/local/bin/mio-sshd`. The same MSYS shell also
-   corrupts a quoted backslashed `C:\...` argument (observed mangled into a bogus `\?\C:\...`), so
+   **The first shipped fix set the two variables as environment variables on the Mutagen sidecar
+   process** (`crate::sync::command`, `sync/mod.rs`) instead of prefixing the command string, on the
+   theory that Mutagen shells out to `ssh` → `sh -c "exec …"` and all three inherit the sidecar's
+   environment. **That theory is wrong for forwarding**, and it shipped a latent break (traced
+   2026-08-10 from an `agents UI unavailable` / `crun: … C:/Program Files/Git/usr/local/bin/mio-sshd
+   not found` failure): Mutagen forwarding runs in the **long-lived daemon**, not the `forward create`
+   CLI process. The CLI only registers the session; the daemon spawns the transport. The env vars
+   therefore reach the transport only when the CLI call is the one that *auto-starts* the daemon — and
+   the daemon "outlives the app" (`crate::sync::sweep_stale_forwards`), so any user (or e2e host) with
+   a daemon already running from before this feature keeps mangling the path. **The corrected fix
+   drops the manglable token entirely:** `ensure_sandbox_alias`'s `ProxyCommand` is now
+   `<podman.exe> --connection <c> exec -i <name> mio-sshd`, referencing `mio-sshd` by bare name off
+   the container's default `PATH` (`/usr/local/bin`, baked in the Containerfile). A bare name has no
+   POSIX-path shape for MSYS to rewrite, so correctness no longer depends on daemon env inheritance.
+   The `MSYS_NO_PATHCONV`/`MSYS2_ARG_CONV_EXCL` vars on `crate::sync::command` are kept as harmless
+   defense-in-depth for any other manglable argument. The same MSYS shell also corrupts a quoted
+   backslashed `C:\...` argument (observed mangled into a bogus `\?\C:\...`), so
    `podman_literal_path()` forward-slashes the bundled `podman.exe` path the way `workspace_path()`
-   already does for mount arguments. **Scope limit:** this env-inheritance fix only reaches clients
-   the app itself spawns (Mutagen). A third-party SSH client executing a `Proxied` alias — the
-   host-tool-ssh-access case (Claude Desktop, VS Code Remote-SSH, JetBrains Gateway) — does not
-   inherit these variables, so a `ProxyCommand` handed to such a client must instead be free of
-   MSYS-manglable tokens (reference `mio-sshd` by bare name off the container `PATH`, not by its
-   `/usr/local/bin/...` absolute path) rather than rely on the environment. See that feature's dev
-   plan before reusing this alias shape.
+   already does for mount arguments. **Note:** this bare-name shape is exactly what a third-party SSH
+   client executing a `Proxied` alias also needs — the host-tool-ssh-access case (Claude Desktop, VS
+   Code Remote-SSH, JetBrains Gateway) never inherits the app's environment either, so the two paths
+   now converge on the same manglable-token-free alias.
 6. **What else the `Proxied` block must carry beyond `ProxyCommand`/`IdentityFile`.** Two keywords,
    both load-bearing:
    - `User root` — Mutagen's `alias:path` URLs carry no user, so OpenSSH would otherwise offer the

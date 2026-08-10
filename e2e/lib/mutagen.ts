@@ -46,6 +46,42 @@ function mutagen(args: string[]): SpawnSyncReturns<string> {
   return out;
 }
 
+export interface MutagenDaemonInfo {
+  pid: number;
+  /** ISO 8601 process start time, or "unknown" when CIM did not report one. */
+  started: string;
+}
+
+// Windows-only: enumerate every running `mutagen daemon run` process. Best-effort — returns [] on
+// any failure or off-Windows. The daemon is keyed by MUTAGEN_DATA_DIRECTORY and "outlives the app"
+// (src-tauri/src/sync/mod.rs `sweep_stale_forwards`), so it is not torn down when the app exits;
+// counting the survivors at end-of-run surfaces daemon leakage across runs — which is what silently
+// re-spawned the pre-fix, un-`MSYS_NO_PATHCONV`'d daemon behind the mangled-`mio-sshd` failure
+// (docs/features/podman-exec-transport/02_dev.md, Resolved Decision 5).
+export function listMutagenDaemons(): MutagenDaemonInfo[] {
+  if (process.platform !== "win32") return [];
+  const out = spawnSync(
+    "powershell",
+    [
+      "-NoProfile",
+      "-Command",
+      "Get-CimInstance Win32_Process -Filter \"name like '%mutagen%'\" | " +
+        "Where-Object { $_.CommandLine -like '*daemon run*' } | " +
+        "ForEach-Object { \"$($_.ProcessId)`t$($_.CreationDate.ToString('o'))\" }",
+    ],
+    { encoding: "utf8", shell: false },
+  );
+  if (out.status !== 0 || !out.stdout) return [];
+  return out.stdout
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [pid, started] = line.split("\t");
+      return { pid: Number(pid), started: started || "unknown" };
+    });
+}
+
 /** Two-way-resolved between a local directory (alpha) and an `alias:path` remote (beta). */
 export function syncCreate(name: string, alpha: string, beta: string): void {
   mutagen(["sync", "terminate", name]); // idempotent across runs; ignore "no such session"

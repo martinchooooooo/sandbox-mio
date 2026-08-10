@@ -33,13 +33,12 @@ pub fn command<R: Runtime>(app: &AppHandle<R>) -> Result<Command, SyncError> {
         .sidecar(SIDECAR)
         .map_err(|e| SyncError::Sidecar(e.to_string()))?
         .env("MUTAGEN_DATA_DIRECTORY", dir.to_string_lossy().to_string())
-        // The exec-transport `ProxyCommand` (`backends::ensure_sandbox_alias`) passes in-container
-        // POSIX paths (`/usr/local/bin/mio-sshd`) to the bundled `podman.exe`. Mutagen runs that
-        // command through an MSYS/Git-Bash `ssh` → `sh -c "exec …"`, whose MSYS runtime would
-        // otherwise rewrite those paths to host paths. Setting these here — rather than an `env …`
-        // prefix inside the command string — avoids depending on `env.exe` being on the sidecar's
-        // PATH, which it is not at app runtime (docs/features/podman-exec-transport/02_dev.md,
-        // Resolved Decision 5).
+        // Defense-in-depth against MSYS/Git-Bash path mangling in the `ssh` → `sh -c "exec …"`
+        // transport Mutagen spawns for a `Proxied` alias. NOT load-bearing for the exec transport:
+        // `backends::ensure_sandbox_alias` references `mio-sshd` by bare name precisely so it carries
+        // no manglable token, because these vars only reach the daemon that spawns the transport when
+        // this CLI call auto-starts it (docs/features/podman-exec-transport/02_dev.md, Resolved
+        // Decision 5). Kept for any future manglable argument on the sidecar's own command line.
         .env("MSYS_NO_PATHCONV", "1")
         .env("MSYS2_ARG_CONV_EXCL", "*"))
 }
