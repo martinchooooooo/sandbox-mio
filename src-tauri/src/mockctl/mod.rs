@@ -385,7 +385,34 @@ impl ScriptedMsbRunner {
             director,
             instances: std::sync::Mutex::new(Vec::new()),
             volumes: std::sync::Mutex::new(Vec::new()),
+            images: std::sync::Mutex::new(Vec::new()),
         }
+    }
+
+    /// `msb load --input <tar> --tag <ref>`: records the reference so a later `msb image ls`
+    /// reports it, which is what makes `MsbProvider::ensure_base_image` idempotent under mock.
+    fn track_load(&self, args: &[&str]) -> ScriptedOutput {
+        if let Some(tag) = arg_after(args, "--tag") {
+            let mut images = self.images.lock().unwrap();
+            if !images.iter().any(|i| i == tag) {
+                images.push(tag.to_string());
+            }
+        }
+        ScriptedOutput { exit_code: 0, stdout: String::new(), stderr: String::new() }
+    }
+
+    /// `msb image ls --format json`: real output carries digest/size/architecture too, but
+    /// `reference` is the only field `MsbProvider` reads.
+    fn tracked_image_ls(&self) -> ScriptedOutput {
+        let entries: Vec<serde_json::Value> = self
+            .images
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|r| serde_json::json!({ "reference": r }))
+            .collect();
+        let stdout = serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_string());
+        ScriptedOutput { exit_code: 0, stdout, stderr: String::new() }
     }
 
     /// `msb volume create <name> --kind disk --size <n>`: rejects a duplicate name exactly as real
@@ -510,6 +537,8 @@ impl ProcessRunner for ScriptedMsbRunner {
             "msb.inspect" => self.tracked_inspect(args),
             "msb.volume-create" => self.track_volume_create(args),
             "msb.volume-rm" => self.track_volume_remove(args),
+            "msb.load" => self.track_load(args),
+            "msb.image-ls" => self.tracked_image_ls(),
             _ => default_output(&key),
         };
         Ok(to_output(scripted))

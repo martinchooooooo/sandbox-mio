@@ -119,4 +119,8 @@ pub struct ScriptedMsbRunner {
     /// back. Modelled here so `msb volume create` can reject a duplicate name the way real `msb`
     /// 0.6.6 does (exit 1, `volume already exists: <name>`).
     pub(super) volumes: Mutex<Vec<String>>,
+    /// Image references `msb load --tag <ref>` has imported, reported back by `msb image ls
+    /// --format json` so `MsbProvider`'s base-image check is idempotent under mock the way
+    /// `podman.image-exists` is for the Podman path.
+    pub(super) images: Mutex<Vec<String>>,
 }

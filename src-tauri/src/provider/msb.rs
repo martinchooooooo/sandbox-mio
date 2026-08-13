@@ -76,16 +76,22 @@ impl MsbProvider {
         self.runner.run(argv).await.map_err(|e| ProviderError::CommandFailed(e.to_string()))
     }
 
-    /// Checks the tag appears verbatim in `msb image ls`'s plain-text listing. Verified against
-    /// real `msb` 0.6.6: the `REFERENCE` column carries the full `name:tag` an image was loaded
-    /// under, so a substring match on the line finds it. (`msb image ls --format json` also exists
-    /// and exposes `reference` as its own field, which would additionally rule out a
-    /// `base:7`/`base:70` prefix collision — a worthwhile follow-up, not a live bug at one-digit
-    /// image versions.)
+    /// Whether the base image is in the local `msb` store. Compares `msb image ls --format json`'s
+    /// `reference` field exactly rather than substring-matching the plain-text listing, which would
+    /// also accept `sandbox-mio/base:70` when asked for `sandbox-mio/base:7`. Both the `--format
+    /// json` flag and `reference` carrying the full `name:tag` an image was loaded under are
+    /// verified against real `msb` 0.6.6.
     async fn image_exists(&self) -> Result<bool, ProviderError> {
         let image = crate::backends::base_image();
-        let stdout = check(self.run(&["image", "ls"]).await?)?;
-        Ok(stdout.lines().any(|l| l.contains(&image)))
+        let stdout = check(self.run(&["image", "ls", "--format", "json"]).await?)?;
+        // An empty store prints nothing rather than `[]` on some paths; that is no images, not a
+        // parse failure.
+        if stdout.trim().is_empty() {
+            return Ok(false);
+        }
+        let entries: Vec<serde_json::Value> =
+            serde_json::from_str(&stdout).map_err(|e| ProviderError::ParseError(e.to_string()))?;
+        Ok(entries.iter().any(|e| e["reference"].as_str() == Some(image.as_str())))
     }
 
     /// Creates the instance's workspace volume, tolerating one that already exists. `msb volume
@@ -443,6 +449,30 @@ mod tests {
             .expect("runner call succeeds");
 
         provider.create_instance(&spec("test-sbx")).await.expect("create tolerates the leftover");
+    }
+
+    /// The check has to distinguish `sandbox-mio/base:7` from `sandbox-mio/base:70`, which a
+    /// substring match on the plain-text listing could not.
+    #[tokio::test]
+    async fn base_image_ready_matches_the_reference_exactly() {
+        let provider = provider();
+        let image = crate::backends::base_image();
+        assert!(!provider.base_image_ready().await.expect("empty store reads clean"));
+
+        provider
+            .run(&["load", "--input", "x.tar", "--tag", &format!("{image}0")])
+            .await
+            .expect("runner call succeeds");
+        assert!(
+            !provider.base_image_ready().await.expect("store reads clean"),
+            "a longer version sharing the prefix is not this image"
+        );
+
+        provider
+            .run(&["load", "--input", "x.tar", "--tag", &image])
+            .await
+            .expect("runner call succeeds");
+        assert!(provider.base_image_ready().await.expect("store reads clean"));
     }
 
     #[tokio::test]
