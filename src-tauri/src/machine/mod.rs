@@ -1,17 +1,21 @@
 //! Podman machine-lifecycle management: start default machine, reset WSL, activate rootless socket.
 //! Separate from backends since it drives the whole machine rather than single connections.
 
+pub mod msb;
 pub mod types;
 
 use std::process::Output;
 use std::sync::Arc;
 
+use tauri::ipc::Channel;
+
 use crate::backends::types::BackendError;
 use crate::backends::{podman_command, DEFAULT_MACHINE_NAME};
 use crate::mockctl::types::ProcessRunner;
 use crate::process_ext::NoWindow;
+use crate::provider::types::ProviderId;
 
-use types::{MachineManager, PodmanMachineManager};
+use types::{MachineManager, MachineReadinessProvider, MachineReadiness, MachineSetupEvent, PodmanMachineManager, SetupStep};
 
 /// Rootless Podman API socket inside the default machine (UID 1000). Must be activated manually
 /// via `podman system service` because the machine's user systemd session does not start on boot.
@@ -198,6 +202,118 @@ impl MachineManager for PodmanMachineManager {
         // and podman refuses to retry `machine init` while it's still registered. `wsl
         // --unregister` also exits non-zero when the distro is already gone, which is fine.
         let _ = run_host_wsl(&["--unregister", DEFAULT_MACHINE_NAME]).await;
+        Ok(())
+    }
+}
+
+/// The two process seams [`readiness_provider_for`] picks between, managed once as Tauri state
+/// (`src-tauri/src/lib.rs`). A plain `Arc<dyn ProcessRunner>` cannot be managed twice under two
+/// different meanings, since Tauri state is keyed by type.
+pub struct MachineRunners {
+    pub podman: Arc<dyn ProcessRunner>,
+    pub msb: Arc<dyn ProcessRunner>,
+}
+
+/// Construct the [`MachineReadinessProvider`] for `provider`, mirroring `inference::engine_for`'s
+/// per-call construction (cheap: both managers are thin wrappers over an already-shared runner).
+pub fn readiness_provider_for(
+    provider: ProviderId,
+    runners: &MachineRunners,
+) -> Arc<dyn MachineReadinessProvider> {
+    match provider {
+        ProviderId::Podman => Arc::new(PodmanMachineManager { runner: runners.podman.clone() }),
+        ProviderId::Microsandbox => Arc::new(msb::MsbMachineManager::new(runners.msb.clone())),
+    }
+}
+
+#[async_trait::async_trait]
+impl MachineReadinessProvider for PodmanMachineManager {
+    fn setup_steps(&self) -> Vec<SetupStep> {
+        ["wsl-install", "machine-init", "machine-start", "socket-activate"]
+            .into_iter()
+            .map(SetupStep::new)
+            .collect()
+    }
+
+    async fn readiness(&self) -> MachineReadiness {
+        let Ok(true) = self.machine_exists().await else {
+            return MachineReadiness { ready: false, needs_setup: true };
+        };
+        let ready = matches!(self.machine_is_running().await, Ok(true)) && self.poll_ready(1).await.is_ok();
+        MachineReadiness { ready, needs_setup: false }
+    }
+
+    /// Independent of `provision_podman`/`start_podman_machine` (`src-tauri/src/lib.rs`) by design,
+    /// not oversight: those commands back the real-infra-verified recovery gate on
+    /// `src/routes/projects/+page.svelte`, and this phase has no way to re-run
+    /// `podman-startup-recovery.spec.ts` to prove a shared implementation is byte-identical. The
+    /// duplication is recorded as a follow-up in `docs/features/microsandbox-provider/04_improvements.md`.
+    async fn prepare(&self, on_step: &Channel<serde_json::Value>) -> Result<(), BackendError> {
+        MachineSetupEvent::StepStart { id: "wsl-install".into() }.send(on_step);
+        if !self.wsl_is_ready().await {
+            match self.install_wsl().await {
+                Ok(true) => {
+                    let msg = "Windows needs to restart to finish installing WSL2. Restart, then \
+                               try again."
+                        .to_string();
+                    MachineSetupEvent::RebootRequired { message: msg.clone() }.send(on_step);
+                    return Err(BackendError::CommandFailed(msg));
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    MachineSetupEvent::StepFailed { id: "wsl-install".into(), error: e.to_string() }
+                        .send(on_step);
+                    return Err(e);
+                }
+            }
+        }
+        MachineSetupEvent::StepDone { id: "wsl-install".into(), detail: None }.send(on_step);
+
+        MachineSetupEvent::StepStart { id: "machine-init".into() }.send(on_step);
+        match self.machine_exists().await {
+            Ok(true) => {
+                MachineSetupEvent::StepSkipped {
+                    id: "machine-init".into(),
+                    reason: "already exists".into(),
+                }
+                .send(on_step);
+            }
+            Ok(false) => {
+                if let Err(e) = self.init_machine().await {
+                    MachineSetupEvent::StepFailed { id: "machine-init".into(), error: e.to_string() }
+                        .send(on_step);
+                    return Err(e);
+                }
+                MachineSetupEvent::StepDone { id: "machine-init".into(), detail: None }.send(on_step);
+            }
+            Err(e) => {
+                MachineSetupEvent::StepFailed { id: "machine-init".into(), error: e.to_string() }
+                    .send(on_step);
+                return Err(e);
+            }
+        }
+
+        MachineSetupEvent::StepStart { id: "machine-start".into() }.send(on_step);
+        if self.run_machine_start().await.is_err() {
+            self.run_wsl_shutdown().await.ok();
+            if let Err(e) = self.run_machine_start().await {
+                MachineSetupEvent::StepFailed { id: "machine-start".into(), error: e.to_string() }
+                    .send(on_step);
+                return Err(e);
+            }
+        }
+        MachineSetupEvent::StepDone { id: "machine-start".into(), detail: None }.send(on_step);
+
+        MachineSetupEvent::StepStart { id: "socket-activate".into() }.send(on_step);
+        self.activate_podman_socket().await.ok();
+        if let Err(e) = self.poll_ready(4).await {
+            MachineSetupEvent::StepFailed { id: "socket-activate".into(), error: e.to_string() }
+                .send(on_step);
+            return Err(e);
+        }
+        MachineSetupEvent::StepDone { id: "socket-activate".into(), detail: None }.send(on_step);
+
+        MachineSetupEvent::Ready.send(on_step);
         Ok(())
     }
 }

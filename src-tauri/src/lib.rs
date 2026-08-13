@@ -28,6 +28,8 @@ use crate::activity::TaskRegistry;
 use crate::agents::types::AuthSessionMap;
 use crate::backends::types::{Sandbox, SandboxBackend};
 use crate::machine::types::MachineManager;
+use crate::machine::MachineRunners;
+use crate::provider::types::ProviderId;
 use crate::error::AppError;
 use crate::inference::types::{
     ActiveServer, EngineKind, InferenceStatus, MachineSpecs, MachineSpecsCache, SetupStep,
@@ -805,6 +807,35 @@ async fn reset_stuck_podman_machine(
         .map_err(|e| AppError::PodmanUnavailable(e.to_string()))
 }
 
+/// Provider-neutral welcome-flow checklist plan (`CreateVmStep.svelte`), distinct from the Podman-only
+/// recovery gate above (`docs/features/microsandbox-provider/02_dev.md`, Phase I).
+#[tauri::command]
+fn machine_setup_steps(
+    provider: ProviderId,
+    runners: State<'_, MachineRunners>,
+) -> Vec<machine::types::SetupStep> {
+    machine::readiness_provider_for(provider, &runners).setup_steps()
+}
+
+/// Probe whether `provider`'s machine is usable right now, without changing anything.
+#[tauri::command]
+async fn machine_readiness(
+    provider: ProviderId,
+    runners: State<'_, MachineRunners>,
+) -> Result<machine::types::MachineReadiness, AppError> {
+    Ok(machine::readiness_provider_for(provider, &runners).readiness().await)
+}
+
+/// Bring `provider`'s machine online, streaming a `MachineSetupEvent` per setup-checklist row.
+#[tauri::command]
+async fn prepare_machine(
+    provider: ProviderId,
+    on_progress: Channel<serde_json::Value>,
+    runners: State<'_, MachineRunners>,
+) -> Result<(), AppError> {
+    Ok(machine::readiness_provider_for(provider, &runners).prepare(&on_progress).await?)
+}
+
 #[tauri::command]
 async fn listen_events(on_event: Channel<serde_json::Value>, store: State<'_, Arc<dyn SandboxBackend>>) -> Result<(), AppError> {
     Ok(store.listen_events(on_event).await?)
@@ -1429,6 +1460,11 @@ pub fn run() {
         Arc::new(mockctl::types::SystemPodmanRunner)
     };
     backends::set_podman_runner(podman_runner.clone());
+    let msb_runner: Arc<dyn mockctl::types::ProcessRunner> = if backends::mock_backend_enabled() {
+        Arc::new(mockctl::types::ScriptedMsbRunner::new(mock_director.clone()))
+    } else {
+        Arc::new(mockctl::types::SystemMsbRunner)
+    };
     let port_transport = transport::default_port_transport();
     let machine = machine::default_machine_manager(podman_runner.clone());
 
@@ -1446,6 +1482,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(machine)
+        .manage(machine::MachineRunners { podman: podman_runner.clone(), msb: msb_runner })
         .manage(mock_director.clone())
         .setup(move |app| {
             app.manage(init_logging(app.handle()));
@@ -1540,6 +1577,9 @@ pub fn run() {
             machine_needs_init,
             start_podman_machine,
             provision_podman,
+            machine_setup_steps,
+            machine_readiness,
+            prepare_machine,
             reset_stuck_podman_machine,
             listen_events,
             list_sandbox_hosts,
