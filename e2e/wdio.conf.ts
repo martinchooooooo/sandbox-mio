@@ -35,6 +35,8 @@ import {
   PORT_WINDOW_BASE,
   PORT_WINDOW_INDEX,
   MIO_PORT_BASE,
+  MSB_HOME,
+  MSB_PATH,
 } from "./lib/run-identity.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
@@ -55,6 +57,13 @@ const MIO_REMOTE_REMOVE = process.env.MIO_REMOTE_REMOVE === "1";
 // profile is auto-mounted into the podman VM (needed by the standard tier's bind mount). Read via
 // SANDBOX_WORKSPACE_ROOT in src-tauri/src/backends/.
 process.env.SANDBOX_WORKSPACE_ROOT = WORKSPACE_ROOT;
+
+// Isolates microsandbox's own state (db, sandboxes, cache, logs) and binary resolution per
+// worktree, mirroring SANDBOX_WORKSPACE_ROOT above — read directly by the `msb` binary itself
+// (upstream `resolve_home()`), not by this app's Rust code
+// (docs/features/microsandbox-provider/02_dev.md, "E2E isolation").
+process.env.MSB_HOME = MSB_HOME;
+process.env.MSB_PATH = MSB_PATH;
 
 // Test-only GGUF for the `test_model` command, kept out of the shipped catalogue (see
 // docs/features/local-llm/03_e2e.md). Set in process.env so the spawned app sees it too.

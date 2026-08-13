@@ -11,15 +11,38 @@ use std::collections::HashSet;
 use std::process::Output;
 use std::sync::{Arc, LazyLock};
 
+use crate::process_ext::NoWindow;
+
 use types::{
-    Behaviour, MockDirector, ProcessRunner, ScriptedMutagenRunner, ScriptedOutput,
-    ScriptedPodmanRunner, SystemMutagenRunner, SystemPodmanRunner, TrackedContainer,
+    Behaviour, MockDirector, ProcessRunner, ScriptedMsbRunner, ScriptedMutagenRunner,
+    ScriptedOutput, ScriptedPodmanRunner, SystemMsbRunner, SystemMutagenRunner, SystemPodmanRunner,
+    TrackedContainer, TrackedMsbInstance,
 };
 
 #[async_trait::async_trait]
 impl ProcessRunner for SystemPodmanRunner {
     async fn run(&self, args: &[&str]) -> std::io::Result<Output> {
         crate::backends::podman_command().args(args).output().await
+    }
+}
+
+/// `msb` is never bundled (see [`SystemMsbRunner`]'s doc comment), so this only needs to honour an
+/// `MSB_PATH` override the way `podman_command()` honours its bundled resource dir — real `msb`
+/// itself also reads `MSB_PATH`/`MSB_HOME` directly from the inherited process environment for its
+/// own state isolation, which this app does not need to (and must not) re-derive.
+pub(crate) fn msb_command() -> tokio::process::Command {
+    let mut cmd = match std::env::var_os("MSB_PATH") {
+        Some(dir) => tokio::process::Command::new(std::path::Path::new(&dir).join("msb.exe")),
+        None => tokio::process::Command::new("msb"),
+    };
+    cmd.no_window();
+    cmd
+}
+
+#[async_trait::async_trait]
+impl ProcessRunner for SystemMsbRunner {
+    async fn run(&self, args: &[&str]) -> std::io::Result<Output> {
+        msb_command().args(args).output().await
     }
 }
 
@@ -80,6 +103,25 @@ static KNOWN_CALLS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "mutagen.sync-terminate",
         "mutagen.sync-flush",
         "mutagen.sync-list",
+        // `msb.*` keys backed by `ScriptedMsbRunner`'s tracked-instance round trip
+        // (docs/features/microsandbox-provider/02_dev.md, Phase F), extended by Phase G's
+        // `MsbProvider` for the base-image and exec paths.
+        "msb.create",
+        "msb.ls",
+        "msb.start",
+        "msb.stop",
+        "msb.rm",
+        "msb.exec",
+        "msb.inspect",
+        "msb.load",
+        "msb.volume-create",
+        "msb.volume-rm",
+        "msb.image-ls",
+        // `MsbMachineManager::readiness`/`prepare` (Phase I).
+        "msb.doctor",
+        // `MsbProvider::ensure_base_image` builds the image with Podman before handing it to
+        // `msb load` (docs/features/microsandbox-provider/02_dev.md, Phase G).
+        "podman.save",
     ])
 });
 
@@ -187,6 +229,23 @@ fn arg_after<'a>(args: &[&'a str], flag: &str) -> Option<&'a str> {
     args.iter().position(|&a| a == flag).and_then(|i| args.get(i + 1).copied())
 }
 
+/// Derives a `msb.<subcommand>` key. Depth-2 for `volume`/`image` (`msb volume create`, `msb image
+/// ls`), matching `derive_podman_key`'s `machine`/`system connection`/`image` special-casing; depth-1
+/// for every other call (`msb ls`, `msb create ...`, `msb start <name>`, `msb exec <name> -- ...`,
+/// `msb inspect <name> ...`, `msb load ...`). A future two-word subcommand outside `volume`/`image`
+/// (e.g. `msb ssh serve`, Phase H) needs its own case here.
+fn derive_msb_key(args: &[&str]) -> String {
+    let Some(&root) = args.first() else {
+        return "msb.".to_string();
+    };
+    let depth = match root {
+        "volume" | "image" => 2,
+        _ => 1,
+    };
+    let depth = depth.min(args.len());
+    format!("msb.{}", args[..depth].join("-"))
+}
+
 impl ScriptedPodmanRunner {
     pub fn new(director: Arc<MockDirector>) -> Self {
         Self { director, containers: std::sync::Mutex::new(Vec::new()) }
@@ -250,6 +309,9 @@ fn default_output(key: &str) -> ScriptedOutput {
         "podman.machine-list" => {
             r#"[{"Name":"podman-machine-default","Running":true}]"#.to_string()
         }
+        // Mirrors `podman.machine-list`'s "already running" default: an unconfigured `msb doctor`
+        // reports ready so a light spec that never scripts it doesn't land on a setup screen.
+        "msb.doctor" => "Host setup is ready".to_string(),
         _ => String::new(),
     };
     ScriptedOutput { exit_code: 0, stdout, stderr: String::new() }
@@ -311,6 +373,143 @@ impl ProcessRunner for ScriptedPodmanRunner {
             "podman.stop" => self.set_running(stripped, false),
             "podman.rm" => self.track_remove(stripped),
             "podman.ps" => self.tracked_ps(),
+            _ => default_output(&key),
+        };
+        Ok(to_output(scripted))
+    }
+}
+
+impl ScriptedMsbRunner {
+    pub fn new(director: Arc<MockDirector>) -> Self {
+        Self {
+            director,
+            instances: std::sync::Mutex::new(Vec::new()),
+            volumes: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    /// `msb volume create <name> --kind disk --size <n>`: rejects a duplicate name exactly as real
+    /// `msb` 0.6.6 does, so `MsbProvider::ensure_volume`'s tolerance of a leftover volume is
+    /// exercised under mock rather than only against the real binary.
+    fn track_volume_create(&self, args: &[&str]) -> ScriptedOutput {
+        let name = args.get(2).copied().unwrap_or_default().to_string();
+        let mut volumes = self.volumes.lock().unwrap();
+        if volumes.iter().any(|v| *v == name) {
+            return ScriptedOutput {
+                exit_code: 1,
+                stdout: String::new(),
+                stderr: format!("error: volume already exists: {name}"),
+            };
+        }
+        volumes.push(name.clone());
+        ScriptedOutput { exit_code: 0, stdout: name, stderr: String::new() }
+    }
+
+    /// Test-only view of the tracked volumes, so a provider test can assert a rollback removed one
+    /// outright rather than inferring it from a later call happening to succeed.
+    #[cfg(test)]
+    pub(crate) fn tracked_volumes(&self) -> Vec<String> {
+        self.volumes.lock().unwrap().clone()
+    }
+
+    fn track_volume_remove(&self, args: &[&str]) -> ScriptedOutput {
+        if let Some(&name) = args.get(2) {
+            self.volumes.lock().unwrap().retain(|v| v != name);
+        }
+        ScriptedOutput { exit_code: 0, stdout: String::new(), stderr: String::new() }
+    }
+
+    /// `msb create <image> --name <name> ...`: the name and workspace label sit at fixed flags
+    /// exactly like `track_create`'s Podman argv, just without a leading `--connection` pair to
+    /// strip.
+    fn track_create(&self, args: &[&str]) -> ScriptedOutput {
+        let name = arg_after(args, "--name").unwrap_or_default().to_string();
+        let workspace_label = arg_after(args, "--label")
+            .and_then(|l| l.strip_prefix("sandbox-mio.workspace="))
+            .unwrap_or_default()
+            .to_string();
+        self.instances.lock().unwrap().push(TrackedMsbInstance { name, workspace_label, running: false });
+        ScriptedOutput { exit_code: 0, stdout: String::new(), stderr: String::new() }
+    }
+
+    fn set_running(&self, args: &[&str], running: bool) -> ScriptedOutput {
+        let Some(&name) = args.last() else {
+            return ScriptedOutput { exit_code: 0, stdout: String::new(), stderr: String::new() };
+        };
+        if let Some(i) = self.instances.lock().unwrap().iter_mut().find(|i| i.name == name) {
+            i.running = running;
+        }
+        ScriptedOutput { exit_code: 0, stdout: String::new(), stderr: String::new() }
+    }
+
+    fn track_remove(&self, args: &[&str]) -> ScriptedOutput {
+        if let Some(&name) = args.last() {
+            self.instances.lock().unwrap().retain(|i| i.name != name);
+        }
+        ScriptedOutput { exit_code: 0, stdout: String::new(), stderr: String::new() }
+    }
+
+    /// `msb ls --format json` shape: exactly `name`/`status`/`created_at`/`image`, PascalCase
+    /// status, no labels — `MsbProvider::list_instances` (Phase G) recovers
+    /// `sandbox-mio.workspace` from `msb inspect` instead, which this tracked default does not yet
+    /// model since no light spec drives that path.
+    fn tracked_ls(&self) -> ScriptedOutput {
+        let entries: Vec<serde_json::Value> = self
+            .instances
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|i| {
+                serde_json::json!({
+                    "name": i.name,
+                    "status": if i.running { "Running" } else { "Stopped" },
+                    "created_at": "",
+                    "image": "",
+                })
+            })
+            .collect();
+        let stdout = serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_string());
+        ScriptedOutput { exit_code: 0, stdout, stderr: String::new() }
+    }
+
+    /// `msb inspect <name> --format json`: `args[0]` is the `inspect` root itself (no `--connection`
+    /// pair to strip, unlike Podman), so the name is the first positional argument after it. Reports
+    /// back the `sandbox-mio.workspace` label `track_create` recorded, at the same `active_config.
+    /// labels` path the real spike-verified JSON shape uses
+    /// (`docs/features/microsandbox-provider/spike/hands-on-cli.md` addendum).
+    fn tracked_inspect(&self, args: &[&str]) -> ScriptedOutput {
+        let name = args.get(1).copied().unwrap_or_default();
+        let label = self
+            .instances
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|i| i.name == name)
+            .map(|i| i.workspace_label.clone())
+            .unwrap_or_default();
+        let mut labels = serde_json::Map::new();
+        labels.insert(crate::provider::WORKSPACE_LABEL.to_string(), serde_json::Value::String(label));
+        let body = serde_json::json!({ "active_config": { "labels": serde_json::Value::Object(labels) } });
+        ScriptedOutput { exit_code: 0, stdout: body.to_string(), stderr: String::new() }
+    }
+}
+
+#[async_trait::async_trait]
+impl ProcessRunner for ScriptedMsbRunner {
+    async fn run(&self, args: &[&str]) -> std::io::Result<Output> {
+        let key = derive_msb_key(args);
+        if let Some(scripted) = self.director.consult(&key) {
+            return Ok(to_output(scripted));
+        }
+        let scripted = match key.as_str() {
+            "msb.create" => self.track_create(args),
+            "msb.start" => self.set_running(args, true),
+            "msb.stop" => self.set_running(args, false),
+            "msb.rm" => self.track_remove(args),
+            "msb.ls" => self.tracked_ls(),
+            "msb.inspect" => self.tracked_inspect(args),
+            "msb.volume-create" => self.track_volume_create(args),
+            "msb.volume-rm" => self.track_volume_remove(args),
             _ => default_output(&key),
         };
         Ok(to_output(scripted))

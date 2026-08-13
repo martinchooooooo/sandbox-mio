@@ -22,6 +22,13 @@ pub struct SystemMutagenRunner {
     pub(super) app: tauri::AppHandle,
 }
 
+/// Real `msb` invocations. Unlike `podman`/Mutagen, microsandbox is never bundled — it is a
+/// system-installed prerequisite (its own Windows Hypervisor Platform setup is not something this
+/// app can vendor), so this simply runs `msb` off `PATH`, honouring an `MSB_PATH` override the same
+/// way `podman_command()` honours a bundled resource dir for Podman. See
+/// `docs/features/microsandbox-provider/02_dev.md`.
+pub struct SystemMsbRunner;
+
 /// One scripted behaviour installed against a `<binary>.<subcommand>` override key. The payload is
 /// the process's raw text output, not a typed value — the real subsystem code parses it exactly
 /// as it would parse genuine `podman`/`mutagen` output.
@@ -90,4 +97,26 @@ pub struct ScriptedPodmanRunner {
 /// `mutagen.sync-list` directly.
 pub struct ScriptedMutagenRunner {
     pub(super) director: Arc<MockDirector>,
+}
+
+/// One `msb create`d instance, tracked only so the built-in `msb.ls` default (no override
+/// installed) can report it back — the microsandbox sibling of [`TrackedContainer`]. Status is
+/// PascalCase (`Running`/`Stopped`), matching real `msb ls --format json` output rather than
+/// Podman's lowercase vocabulary.
+pub(super) struct TrackedMsbInstance {
+    pub(super) name: String,
+    pub(super) workspace_label: String,
+    pub(super) running: bool,
+}
+
+/// Scripted `msb` invocations, mirroring [`ScriptedPodmanRunner`]'s create→list→start→stop→list
+/// round trip against `msb`-shaped JSON instead of Podman's.
+pub struct ScriptedMsbRunner {
+    pub(super) director: Arc<MockDirector>,
+    pub(super) instances: Mutex<Vec<TrackedMsbInstance>>,
+    /// Workspace volume names, tracked separately from `instances` because a volume outlives a
+    /// failed `msb create` on the real binary — the leftover `MsbProvider::create_instance` rolls
+    /// back. Modelled here so `msb volume create` can reject a duplicate name the way real `msb`
+    /// 0.6.6 does (exit 1, `volume already exists: <name>`).
+    pub(super) volumes: Mutex<Vec<String>>,
 }
