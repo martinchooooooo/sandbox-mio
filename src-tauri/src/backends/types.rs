@@ -88,10 +88,16 @@ pub(super) enum SyncStrategy {
     Local,
     /// Remote: bind-mount is on remote host, mirrored via sync engine over SSH.
     Remote(ConnectionInfo),
-    /// A Mutagen-managed volume owned by the provider itself, not a bind-mountable directory.
-    /// Unconstructed until a provider needs it (`docs/features/mutagen-transport/02_dev.md`).
+    /// A Mutagen-managed volume owned by the provider itself, not a bind-mountable directory (a
+    /// microsandbox sandbox's disk volume). No payload: the sync `beta` URL is `<name>:<mount>`
+    /// (`backends::msb_sync_beta`), resolved entirely through the sandbox's own `SshAlias::Proxied`
+    /// (`ensure_msb_sandbox_alias`) — unlike `Remote`, there is no separate host/port/user/identity
+    /// to carry, since the alias's `ProxyCommand` already is the full connection.
+    /// `docs/features/mutagen-transport/02_dev.md` originally sketched this as `Volume(ConnectionInfo)`;
+    /// corrected in `docs/features/microsandbox-provider/02_dev.md`, Phase H, once a concrete
+    /// consumer showed `ConnectionInfo`'s host/port/identity fields don't apply here.
     #[allow(dead_code)]
-    Volume(ConnectionInfo),
+    Volume,
 }
 
 /// Live SSH endpoint for a Podman connection (read fresh, port changes at each boot).

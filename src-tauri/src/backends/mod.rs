@@ -748,6 +748,42 @@ pub async fn ensure_sandbox_alias(
     Ok(())
 }
 
+/// Guest-side mount point for a microsandbox sandbox's workspace volume. Kept as its own literal
+/// (matching the crate's existing convention — `runtime::WORKSPACE_MOUNT` and `provider::
+/// WORKSPACE_MOUNT` each keep a private copy too) rather than importing `provider`'s, since it's a
+/// guest-path fact any module may need, not shared mutable state.
+const MSB_WORKSPACE_MOUNT: &str = "/root/work";
+
+/// Ensure the SSH alias for a microsandbox sandbox is written to `~/.ssh/sandbox-mio/config`.
+/// Mirrors [`ensure_sandbox_alias`]'s Podman/exec-transport counterpart, but the `ProxyCommand` execs
+/// `msb ssh serve <name> --stdio` directly rather than tunnelling through a container exec —
+/// `SshAlias::Proxied` already fits both without a new variant
+/// (`docs/features/microsandbox-provider/02_dev.md`, Resolved Decision 8). Not yet called from
+/// `create()`: wiring a microsandbox sandbox's lifecycle into `create()` is Phase J's per-sandbox
+/// provider selection, the same constraint Phase G's `MsbProvider` construction deferred to Phase J.
+#[allow(dead_code)]
+pub async fn ensure_msb_sandbox_alias(name: &str, identity_path: &str) -> Result<(), BackendError> {
+    let command = format!("msb ssh serve {name} --stdio");
+    crate::ssh::write_alias(&crate::ssh::types::SshAlias::Proxied {
+        alias: name.to_string(),
+        command,
+        user: CONTAINER_USER.to_string(),
+        identity: identity_path.to_string(),
+        known_hosts: sandbox_known_hosts_path(identity_path),
+    })?;
+    Ok(())
+}
+
+/// The Mutagen `beta` scp-style URL for syncing a microsandbox sandbox's workspace volume. No
+/// host/port/user: the alias named `name` (written by [`ensure_msb_sandbox_alias`]) resolves the
+/// full connection through its `ProxyCommand`, exactly like the exec-transport `Proxied` alias's
+/// beta URL in `deploy` needs none beyond the alias name (`docs/features/microsandbox-provider/
+/// 02_dev.md`, Phase H). Unconstructed for the same reason as `ensure_msb_sandbox_alias`.
+#[allow(dead_code)]
+pub fn msb_sync_beta(name: &str) -> String {
+    format!("{name}:{MSB_WORKSPACE_MOUNT}")
+}
+
 /// The `UserKnownHostsFile` [`ensure_sandbox_alias`] pins, kept next to the sandbox's own identity.
 fn sandbox_known_hosts_path(identity_path: &str) -> String {
     match identity_path.rsplit_once('/') {
@@ -761,4 +797,14 @@ fn sandbox_known_hosts_path(identity_path: &str) -> String {
 /// it changes across an image rebuild while the alias name stays the same.
 fn forget_sandbox_host_key(identity_path: &str) {
     let _ = std::fs::remove_file(sandbox_known_hosts_path(identity_path));
+}
+
+#[cfg(test)]
+mod msb_sync_tests {
+    use super::*;
+
+    #[test]
+    fn msb_sync_beta_has_no_host_or_port() {
+        assert_eq!(msb_sync_beta("my-sandbox"), "my-sandbox:/root/work");
+    }
 }
