@@ -1,3 +1,9 @@
+// Unconstructed outside its own unit tests until Phase J's `provider_for` resolver makes
+// `MsbProvider` reachable from `lib.rs` — Tauri can only manage one `Arc<dyn MachineProvider>` of
+// state until Phase J replaces that with a per-operation resolver
+// (`docs/features/microsandbox-provider/02_dev.md`, Phase E's `MachineRef` section).
+#[allow(dead_code)]
+pub mod msb;
 pub mod types;
 
 use std::process::{Output, Stdio};
@@ -8,7 +14,9 @@ use tokio::process::Command;
 
 use crate::backends::{base_image, podman_command};
 use crate::mockctl::types::ProcessRunner;
-use types::{ExecOpts, InstanceSpec, MachineProvider, ProviderError, PublishModel};
+use types::{
+    ExecOpts, InstanceSpec, MachineProvider, ProviderCapabilities, ProviderError, PublishModel,
+};
 
 /// Spelled literally because `podman -v` rejects a bare `~` and does not expand `$HOME`.
 const WORKSPACE_MOUNT: &str = "/root/work";
@@ -136,6 +144,10 @@ impl PodmanProvider {
 
 #[async_trait::async_trait]
 impl MachineProvider for PodmanProvider {
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities { remote_targets: true, event_stream: true, host_bind_mount: true }
+    }
+
     async fn ensure_base_image(&self) -> Result<(), ProviderError> {
         // Held across the whole check+build so concurrent local creates serialize: the first
         // builder wins while the rest wait, then each re-checks `image exists` inside

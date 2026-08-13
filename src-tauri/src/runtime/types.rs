@@ -34,6 +34,9 @@ impl From<crate::provider::types::ProviderError> for RuntimeError {
         match e {
             crate::provider::types::ProviderError::CommandFailed(m) => RuntimeError::CommandFailed(m),
             crate::provider::types::ProviderError::ParseError(m) => RuntimeError::CommandFailed(m),
+            crate::provider::types::ProviderError::PodmanUnavailable(m) => {
+                RuntimeError::CommandFailed(m)
+            }
         }
     }
 }
