@@ -51,23 +51,6 @@ fn detached_wrapper(argv: &[&str]) -> String {
     format!("{joined} >/tmp/out.log 2>&1 & disown")
 }
 
-/// Authorize `pubkey_path` for SSH into microsandbox instances, so the sandbox's own
-/// `SshAlias::Proxied` (`backends::ensure_msb_sandbox_alias`) can log in. Host-wide by nature:
-/// `msb ssh authorize --file <pubkey>` accepts no sandbox positional and appends to the single
-/// host-wide `authorized_keys` every instance's guest sshd reads (confirmed hands-on against real
-/// `msb` 0.6.6, see the addendum in `spike/hands-on-cli.md`). A free function rather than a
-/// [`MachineProvider`] method because it addresses the microsandbox host, not one instance.
-pub async fn authorize_ssh_key(
-    runner: &Arc<dyn ProcessRunner>,
-    pubkey_path: &str,
-) -> Result<(), ProviderError> {
-    let out = runner
-        .run(&["ssh", "authorize", "--file", pubkey_path])
-        .await
-        .map_err(|e| ProviderError::CommandFailed(e.to_string()))?;
-    check(out).map(|_| ())
-}
-
 /// Construct the microsandbox-backed [`MachineProvider`]. Holds `podman` (the app's already-pinned
 /// local `PodmanProvider`) only to build the base image — microsandbox has no build command of its
 /// own (`docs/features/microsandbox-provider/01_ideas.md`, "Base image via an imported archive").
@@ -335,6 +318,18 @@ impl MachineProvider for MsbProvider {
         argv: &[&str],
         stdin: &[u8],
     ) -> Result<Output, ProviderError> {
+        if crate::backends::mock_backend_enabled() {
+            // Spawns `msb_command()` directly, so `ScriptedMsbRunner` cannot divert it and a light
+            // spec would drive the host's real `msb` (or an `MSB_PATH` mock that speaks no exec
+            // protocol) — the gate `src-tauri/AGENTS.md` requires of any spawning method, as
+            // `PodmanCliBackend::listen_events` already does. The scripted runner models one-shot
+            // calls with no stdin, which is exactly what a `copy_in` under mock needs to be: the
+            // call is recorded as `msb.exec` and the payload goes nowhere, since no guest exists to
+            // receive it.
+            let mut full = vec!["exec", name, "--"];
+            full.extend_from_slice(argv);
+            return self.run(&full).await;
+        }
         let mut child = self
             .exec_command_inner(name, argv, &ExecOpts::default())
             .stdin(Stdio::piped())

@@ -174,9 +174,6 @@ static KNOWN_CALLS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "msb.volume-create",
         "msb.volume-rm",
         "msb.image-ls",
-        // `backends::create`'s microsandbox branch authorizes the sandbox's SSH key host-wide
-        // (docs/features/microsandbox-provider/02_dev.md, Phase J).
-        "msb.ssh-authorize",
         // `MsbMachineManager::readiness`/`prepare` (Phase I).
         "msb.doctor",
         // `MsbProvider::ensure_base_image` builds the image with Podman before handing it to
@@ -289,17 +286,17 @@ fn arg_after<'a>(args: &[&'a str], flag: &str) -> Option<&'a str> {
     args.iter().position(|&a| a == flag).and_then(|i| args.get(i + 1).copied())
 }
 
-/// Derives a `msb.<subcommand>` key. Depth-2 for `volume`/`image`/`ssh` (`msb volume create`, `msb
-/// image ls`, `msb ssh authorize`), matching `derive_podman_key`'s `machine`/`system connection`/
+/// Derives a `msb.<subcommand>` key. Depth-2 for `volume`/`image` (`msb volume create`, `msb
+/// image ls`), matching `derive_podman_key`'s `machine`/`system connection`/
 /// `image` special-casing; depth-1 for every other call (`msb ls`, `msb create ...`, `msb start
 /// <name>`, `msb exec <name> -- ...`, `msb inspect <name> ...`, `msb load ...`). A future two-word
-/// subcommand outside those three roots needs its own case here.
+/// subcommand outside `volume`/`image` needs its own case here.
 fn derive_msb_key(args: &[&str]) -> String {
     let Some(&root) = args.first() else {
         return "msb.".to_string();
     };
     let depth = match root {
-        "volume" | "image" | "ssh" => 2,
+        "volume" | "image" => 2,
         _ => 1,
     };
     let depth = depth.min(args.len());

@@ -37,7 +37,6 @@ const MSB_LOCAL_ID: &str = "local";
 /// (`docs/features/microsandbox-provider/02_dev.md`, Phase J).
 pub struct ProviderRegistry {
     podman_runner: Arc<dyn ProcessRunner>,
-    msb_runner: Arc<dyn ProcessRunner>,
     /// The Podman system connection a locally-created sandbox lives on. Read once at startup, like
     /// `PodmanCliBackend::connection` and `MiseRuntime::connection` already do.
     local_connection: String,
@@ -99,12 +98,6 @@ impl ProviderRegistry {
             (ProviderId::Microsandbox, self.msb.clone()),
         ]
     }
-
-    /// The `msb`-keyed process seam, for the microsandbox host commands that are not instance
-    /// operations and so have no place on [`MachineProvider`] (`msb ssh authorize`).
-    pub fn msb_runner(&self) -> &Arc<dyn ProcessRunner> {
-        &self.msb_runner
-    }
 }
 
 /// Construct the [`ProviderRegistry`] for Tauri state. Both runners come from `lib.rs::run()`, so
@@ -115,8 +108,8 @@ pub fn default_registry(
 ) -> Arc<ProviderRegistry> {
     let local_connection = crate::backends::connection_name();
     let local_podman = default_provider(podman_runner.clone(), local_connection.clone());
-    let msb = msb::default_msb_provider(msb_runner.clone(), local_podman.clone());
-    Arc::new(ProviderRegistry { podman_runner, msb_runner, local_connection, local_podman, msb })
+    let msb = msb::default_msb_provider(msb_runner, local_podman.clone());
+    Arc::new(ProviderRegistry { podman_runner, local_connection, local_podman, msb })
 }
 
 /// Construct the Podman-backed [`MachineProvider`] pinned to `connection`. Remote-target operations

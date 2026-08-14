@@ -269,8 +269,10 @@ impl PodmanCliBackend {
 
     /// Copies `<identity_path>.pub` into the container at the fixed path
     /// `sshd_config.container`'s `AuthorizedKeysFile` references, via the given provider so remote
-    /// deploys use a target-pinned provider. The container need only exist, not be running —
-    /// `podman cp` works against a created-but-stopped container.
+    /// deploys use a target-pinned provider. For Podman the container need only exist, not be
+    /// running (`podman cp` works against a created-but-stopped container); microsandbox's
+    /// `copy_in` goes through `msb exec` and does need a running instance, which it always has,
+    /// since `msb create` auto-starts what it creates.
     async fn install_sandbox_key(
         &self,
         provider: &Arc<dyn crate::provider::types::MachineProvider>,
@@ -454,24 +456,25 @@ impl SandboxBackend for PodmanCliBackend {
         if exec_capable {
             let identity_path = ensure_sandbox_identity(&self.app, name)?;
             forget_sandbox_host_key(&identity_path);
+            tracing::info!(
+                target: "backends",
+                %name,
+                provider = %provider_id,
+                %identity_path,
+                "installing sandbox ssh key"
+            );
+            // The key install is provider-neutral: both aliases tunnel to the base image's own
+            // `mio-sshd`, so both need the pubkey at the path its `sshd_config.container` names.
+            // Notably *not* `msb ssh authorize` for microsandbox — that authorizes against
+            // microsandbox's own SSH server, which `ensure_msb_sandbox_alias` no longer uses.
+            self.install_sandbox_key(&provider, name, &identity_path).await?;
             match provider_id {
                 ProviderId::Podman => {
-                    self.install_sandbox_key(&provider, name, &identity_path).await?;
-                    ensure_sandbox_alias(name, &self.connection, &identity_path).await?;
+                    ensure_sandbox_alias(name, &self.connection, &identity_path).await?
                 }
-                ProviderId::Microsandbox => {
-                    // Host-wide, not per-instance: `msb ssh authorize` takes no sandbox argument
-                    // and appends to one `authorized_keys` the guest sshd of every instance reads
-                    // (confirmed hands-on, see `spike/hands-on-cli.md`). The instance also need not
-                    // be running for it, unlike a `copy_in` of the same key.
-                    crate::provider::msb::authorize_ssh_key(
-                        self.registry.msb_runner(),
-                        &format!("{identity_path}.pub"),
-                    )
-                    .await?;
-                    ensure_msb_sandbox_alias(name, &identity_path).await?;
-                }
+                ProviderId::Microsandbox => ensure_msb_sandbox_alias(name, &identity_path).await?,
             }
+            tracing::info!(target: "backends", %name, "ssh key installed and alias written");
         }
         Ok(Sandbox {
             id,
@@ -816,13 +819,47 @@ pub async fn ensure_sandbox_alias(
 /// guest-path fact any module may need, not shared mutable state.
 const MSB_WORKSPACE_MOUNT: &str = "/root/work";
 
+/// The literal argv token for `msb`, for embedding in an OpenSSH `ProxyCommand` string — the
+/// counterpart of [`podman_literal_path`], honouring the same `MSB_PATH` override
+/// [`crate::mockctl::msb_command`] resolves so an e2e run's scripted `msb` is the one the transport
+/// spawns too.
+fn msb_literal_path() -> String {
+    match std::env::var("MSB_PATH") {
+        Ok(exe) if !exe.is_empty() => format!("\"{}\"", exe.replace('\\', "/")),
+        _ => "msb".to_string(),
+    }
+}
+
+/// The `ProxyCommand` [`ensure_msb_sandbox_alias`] pins, split out from the alias write so the
+/// transport choice is assertable without touching `~/.ssh`.
+fn msb_proxy_command(name: &str) -> String {
+    format!("{} exec --stream {name} -- mio-sshd", msb_literal_path())
+}
+
 /// Ensure the SSH alias for a microsandbox sandbox is written to `~/.ssh/sandbox-mio/config`.
-/// Mirrors [`ensure_sandbox_alias`]'s Podman/exec-transport counterpart, but the `ProxyCommand` execs
-/// `msb ssh serve <name> --stdio` directly rather than tunnelling through a container exec —
-/// `SshAlias::Proxied` already fits both without a new variant
-/// (`docs/features/microsandbox-provider/02_dev.md`, Resolved Decision 8).
+/// Mirrors [`ensure_sandbox_alias`]'s Podman/exec-transport counterpart exactly, down to execing the
+/// image's own `mio-sshd` — only the exec substrate differs (`msb exec --stream` in place of `podman
+/// exec -i`; both are byte-faithful piped stdio with no PTY).
+///
+/// Tunnelling to `mio-sshd` rather than to microsandbox's own `msb ssh serve <name> --stdio` server
+/// is load-bearing, not stylistic. That server answers exec and pty channels but silently drops a
+/// `subsystem sftp` request, and Mutagen installs its remote agent with `scp`, which speaks the SFTP
+/// protocol on OpenSSH 9+ — so every sync against a microsandbox sandbox died with `unable to
+/// install agent: unable to copy agent binary: unable to run SCP process: exit status 1` while a
+/// plain `ssh <alias> <cmd>` worked fine. The base image's `sshd` already configures `Subsystem sftp`
+/// (`src-tauri/resources/Containerfile`), and microsandbox boots that same image, so routing through
+/// it fixes `scp` and costs nothing (confirmed hands-on against real `msb` 0.6.6: `ssh` and `scp`
+/// both exit 0 over this ProxyCommand, `scp` exits 1 over `msb ssh serve`).
+///
+/// Both `msb` (unless `MSB_PATH`-overridden) and `mio-sshd` are referenced by bare name, so the
+/// command carries no MSYS-manglable token — see [`ensure_sandbox_alias`] on why that matters for a
+/// pre-existing Mutagen daemon.
 pub async fn ensure_msb_sandbox_alias(name: &str, identity_path: &str) -> Result<(), BackendError> {
-    let command = format!("msb ssh serve {name} --stdio");
+    let command = msb_proxy_command(name);
+    // The exact `ProxyCommand` OpenSSH will run, logged verbatim: the transport is the one part of
+    // the microsandbox path no Rust-side error can describe, since every failure in it surfaces as
+    // an opaque `scp`/`ssh` exit code from inside Mutagen.
+    tracing::info!(target: "backends", %name, %command, %identity_path, "writing microsandbox ssh alias");
     crate::ssh::write_alias(&crate::ssh::types::SshAlias::Proxied {
         alias: name.to_string(),
         command,
@@ -874,4 +911,14 @@ mod msb_sync_tests {
         assert_eq!(msb_sync_beta("my-sandbox"), "my-sandbox:/root/work");
     }
 
+    /// The transport must tunnel to the base image's own `mio-sshd`, never to microsandbox's
+    /// `msb ssh serve` server: that server drops the `sftp` subsystem request, which breaks the
+    /// `scp` Mutagen installs its agent with, while leaving a plain `ssh <alias> <cmd>` working —
+    /// so nothing but a sync exercises the difference. See [`ensure_msb_sandbox_alias`].
+    #[test]
+    fn msb_proxy_command_tunnels_to_the_image_sshd() {
+        let command = msb_proxy_command("my-sandbox");
+        assert!(command.ends_with(" exec --stream my-sandbox -- mio-sshd"), "{command}");
+        assert!(!command.contains("ssh serve"), "{command}");
+    }
 }
