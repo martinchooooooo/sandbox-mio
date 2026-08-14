@@ -41,7 +41,7 @@ impl NetworkManager for MockNetworkManager {
         &self,
         sandbox: &str,
         kind: ServiceKind,
-        connection: &str,
+        alias: &str,
         remote_port: u16,
     ) -> Result<u16, NetworkError> {
         let host_port = allocate_ephemeral_port()?;
@@ -51,7 +51,7 @@ impl NetworkManager for MockNetworkManager {
                 sandbox: sandbox.to_string(),
                 kind,
                 host_port,
-                connection: connection.to_string(),
+                connection: alias.to_string(),
                 remote_port,
                 forward_name: format!("mock-{sandbox}"),
                 label: None,
@@ -84,7 +84,7 @@ impl NetworkManager for MockNetworkManager {
     async fn expose_port(
         &self,
         sandbox: &str,
-        connection: &str,
+        machine: &crate::provider::types::MachineRef,
         workspace_path: &str,
         target_port: u16,
         label: Option<String>,
@@ -116,7 +116,7 @@ impl NetworkManager for MockNetworkManager {
                 sandbox: sandbox.to_string(),
                 kind,
                 host_port,
-                connection: connection.to_string(),
+                connection: machine.to_string(),
                 remote_port: slot,
                 forward_name: format!("mock-expose-{sandbox}-{target_port}"),
                 label: label.clone(),
@@ -140,7 +140,7 @@ impl NetworkManager for MockNetworkManager {
         self: std::sync::Arc<Self>,
         sandbox: &str,
         workspace_path: &str,
-        connection: &str,
+        machine: &crate::provider::types::MachineRef,
         exec_capable: bool,
     ) {
         let mut watches = self.ports_watch.lock().unwrap();
@@ -150,7 +150,7 @@ impl NetworkManager for MockNetworkManager {
         let path = std::path::Path::new(workspace_path).join(".mio").join("ports.json");
         let sandbox = sandbox.to_string();
         let workspace_path = workspace_path.to_string();
-        let connection = connection.to_string();
+        let machine = machine.clone();
         let manager = self.clone();
         let task_sandbox = sandbox.clone();
         let handle = tokio::spawn(async move {
@@ -193,7 +193,7 @@ impl NetworkManager for MockNetworkManager {
 
                 for (port, label) in declared.into_iter().filter(|(p, _)| !already_exposed.contains(p)) {
                     let _ = manager
-                        .expose_port(&task_sandbox, &connection, &workspace_path, port, Some(label), false, exec_capable)
+                        .expose_port(&task_sandbox, &machine, &workspace_path, port, Some(label), false, exec_capable)
                         .await;
                 }
             }

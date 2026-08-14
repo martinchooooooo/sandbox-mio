@@ -12,7 +12,7 @@ use std::sync::Arc;
 use mock::MockRuntime;
 use types::{MiseRuntime, RuntimeError, RuntimeManager};
 
-use crate::provider::types::{ExecOpts, MachineProvider};
+use crate::provider::types::{ExecOpts, MachineProvider, MachineRef};
 
 const WORKSPACE_MOUNT: &str = "/root/work";
 
@@ -28,18 +28,14 @@ const PASEO_PROJECTS_DIR: &str = "/root/.paseo/projects";
 const PASEO_PROJECTS_FILE: &str = "/root/.paseo/projects/projects.json";
 
 pub fn default_runtime(
-    provider: Arc<dyn MachineProvider>,
-    runner: Arc<dyn crate::mockctl::types::ProcessRunner>,
+    providers: Arc<crate::provider::ProviderRegistry>,
     published_port_transport: Arc<dyn crate::transport::types::PortTransport>,
 ) -> Arc<dyn RuntimeManager> {
     if crate::backends::mock_backend_enabled() {
         return Arc::new(MockRuntime::new());
     }
-    let connection = crate::backends::connection_name();
     Arc::new(MiseRuntime {
-        connection,
-        provider,
-        runner,
+        providers,
         registry_cache: tokio::sync::OnceCell::new(),
         published_port_transport,
         exec_port_transport: crate::transport::default_exec_port_transport(),
@@ -92,9 +88,15 @@ fn workdir_opts() -> ExecOpts {
 }
 
 impl MiseRuntime {
-    /// A provider pinned to an arbitrary `connection`, mirroring `deploy`'s target-pinned provider.
-    fn provider_on(&self, connection: &str) -> Arc<dyn MachineProvider> {
-        crate::provider::default_provider(self.runner.clone(), connection.to_string())
+    /// The provider driving `machine`, which may be a deploy target rather than the local one.
+    fn provider_on(&self, machine: &MachineRef) -> Arc<dyn MachineProvider> {
+        self.providers.provider_for(machine)
+    }
+
+    /// The provider running the sandbox named `name`, for the name-only methods that carry no
+    /// [`MachineRef`] of their own.
+    async fn provider_of(&self, name: &str) -> Arc<dyn MachineProvider> {
+        self.providers.provider_of(name).await.1
     }
 
     fn port_transport(&self, exec_capable: bool) -> &Arc<dyn crate::transport::types::PortTransport> {
@@ -107,10 +109,11 @@ impl MiseRuntime {
 
     // Runs mise in container workspace; data dir and lockfile from image ENV.
     async fn mise_exec(&self, name: &str, mise_args: &[&str]) -> Result<String, RuntimeError> {
-        self.provider.start(name).await?;
+        let provider = self.provider_of(name).await;
+        provider.start(name).await?;
         let mut argv = vec!["mise"];
         argv.extend_from_slice(mise_args);
-        check(self.provider.exec(name, &argv, workdir_opts()).await?)
+        check(provider.exec(name, &argv, workdir_opts()).await?)
     }
 
     async fn seed_paseo_projects(
@@ -221,14 +224,14 @@ impl RuntimeManager for MiseRuntime {
     async fn reproduce_remote(
         &self,
         name: &str,
-        target_connection: &str,
+        target: &MachineRef,
         workspace_host_path: &str,
     ) -> Result<(), RuntimeError> {
         let manifest_src = format!("{workspace_host_path}/{MANIFEST_REL}");
         let lockfile_src = format!("{workspace_host_path}/{LOCKFILE_REL}");
-        // `reproduce_remote` targets an arbitrary connection, so it drives a provider pinned to it,
-        // exactly as `deploy` does in `backends`.
-        let provider = self.provider_on(target_connection);
+        // `reproduce_remote` targets an arbitrary machine, so it drives that machine's provider
+        // rather than the local one, exactly as `deploy` does in `backends`.
+        let provider = self.provider_on(target);
         // The container must be running for `podman exec`.
         provider.start(name).await?;
         // Copy `mise.toml` and `mise.lock` directly rather than racing the workspace sync (see the
@@ -243,11 +246,11 @@ impl RuntimeManager for MiseRuntime {
     async fn prepare_terminal(
         &self,
         name: &str,
-        connection: &str,
+        machine: &MachineRef,
         _workspace_host_path: &str,
         exec_capable: bool,
     ) -> Result<(String, u16), RuntimeError> {
-        let provider = self.provider_on(connection);
+        let provider = self.provider_on(machine);
         // The container must be running before any `podman exec`.
         provider.start(name).await?;
 
@@ -278,7 +281,7 @@ impl RuntimeManager for MiseRuntime {
         // forwarding session.
         let transport = self.port_transport(exec_capable);
         let host_port = transport
-            .resolve_remote_port(name, connection, ZELLIJ_WEB_PORT)
+            .resolve_remote_port(name, &machine.id, ZELLIJ_WEB_PORT)
             .await
             .map_err(|e| RuntimeError::TerminalUnavailable(e.to_string()))?;
 
@@ -288,11 +291,11 @@ impl RuntimeManager for MiseRuntime {
     async fn prepare_agent_web(
         &self,
         name: &str,
-        connection: &str,
+        machine: &MachineRef,
         password: &str,
         exec_capable: bool,
     ) -> Result<u16, RuntimeError> {
-        let provider = self.provider_on(connection);
+        let provider = self.provider_on(machine);
         // The container must be running before any `podman exec`.
         provider.start(name).await?;
 
@@ -355,13 +358,9 @@ impl RuntimeManager for MiseRuntime {
         })?;
 
         self.port_transport(exec_capable)
-            .resolve_remote_port(name, connection, PASEO_WEB_PORT)
+            .resolve_remote_port(name, &machine.id, PASEO_WEB_PORT)
             .await
             .map_err(|e| RuntimeError::AgentWebUnavailable(e.to_string()))
-    }
-
-    fn local_connection(&self) -> &str {
-        &self.connection
     }
 
     async fn registry(&self, name: &str) -> Result<Vec<types::RegistryEntry>, types::RuntimeError> {
@@ -381,7 +380,8 @@ impl RuntimeManager for MiseRuntime {
     }
 
     async fn exec_in_container(&self, name: &str, args: &[&str]) -> Result<String, types::RuntimeError> {
-        self.provider.start(name).await?;
-        check(self.provider.exec(name, args, workdir_opts()).await?)
+        let provider = self.provider_of(name).await;
+        provider.start(name).await?;
+        check(provider.exec(name, args, workdir_opts()).await?)
     }
 }

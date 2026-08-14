@@ -55,6 +55,7 @@ All read via `std::env::var` at call time, never cached:
 - `PODMAN_CONNECTION` — Podman system connection name; default `podman-machine-default` (`src-tauri/src/backends/mod.rs`).
 - `SANDBOX_WORKSPACE_ROOT` — root for sandbox workspace directories; default `<Documents>/sandbox-mio` (`workspace_root()` in `src-tauri/src/backends/mod.rs`).
 - `MIO_MOCK_BACKEND=1` — swaps every subsystem trait to its in-memory mock; used by the e2e `light` tier (`mock_backend_enabled()` in `src-tauri/src/backends/mod.rs`).
+- `MIO_MACHINE_PROVIDER` — overrides the persisted `default_provider` setting for the process (`podman` or `msb`), so a run can point the create-sandbox flow at a provider without writing that choice to `settings.json` (`load()` in `src-tauri/src/settings/mod.rs`).
 - `MIO_TEST_MODEL` — overrides the model used by inference e2e specs.
 - `MIO_APP_DATA_DIR` — app-data and log root; default the compiled-in `app_data_dir()`, and for logs `app_log_dir()` (`src-tauri/src/paths.rs`, `init_logging()` in `src-tauri/src/lib.rs`). Set by the e2e harness to a per-worktree directory, never by a shipped install.
 - `MIO_SETTINGS_DIR` — relocates `settings.json`; takes precedence over `MIO_APP_DATA_DIR` (`settings_path()` in `src-tauri/src/settings/mod.rs`).

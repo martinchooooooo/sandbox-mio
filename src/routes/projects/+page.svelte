@@ -20,6 +20,9 @@
     import CreateSandboxItem from "./CreateSandboxItem.svelte";
     import { activityEvents, containerStatusFor } from "$lib/activity/activity.svelte";
     import type { Project, Deployment } from "$lib/sandbox";
+    import { allCapabilities, type ProviderCapabilities, type ProviderId } from "$lib/providers";
+
+    let capabilities = $state<Record<ProviderId, ProviderCapabilities> | undefined>(undefined);
 
     let projects = $state<Project[]>([]);
     let error = $state("");
@@ -83,6 +86,7 @@
         loadHosts();
         loadDeployments();
         invoke<number>("base_image_version").then((v) => (currentImageVersion = v)).catch(() => {});
+        allCapabilities().then((c) => (capabilities = c)).catch(() => {});
     }
 
     // Only started once Podman is confirmed ready: polling a down Podman floods the backend with
@@ -182,6 +186,7 @@
                         {hosts}
                         {currentImageVersion}
                         deployment={deployments[project.name]}
+                        capabilities={capabilities?.[project.provider]}
                         onChanged={reload}
                     />
                 {/each}

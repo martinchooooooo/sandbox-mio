@@ -41,7 +41,10 @@ pub struct ForwardInfo {
     pub kind: ServiceKind,
     /// Windows-host loopback port for frontend/webview connection.
     pub host_port: u16,
-    /// Podman connection or SSH alias the forward tunnels over.
+    /// For Terminal/AgentWeb, the SSH alias the forward tunnels over. For an `Exposed` port, the
+    /// `MachineRef` string of the machine the sandbox runs on — that branch is the only one that
+    /// later has to reach the instance again (to kill its `socat` relay), and an alias cannot be
+    /// resolved back to a provider.
     pub connection: String,
     /// The port the forward's far end dials. On the publish+relay model that is the connection's
     /// published host port (Terminal/AgentWeb) or a relay-pool slot (Exposed); on the exec
@@ -66,7 +69,7 @@ pub trait NetworkManager: Send + Sync {
         &self,
         sandbox: &str,
         kind: ServiceKind,
-        connection: &str,
+        alias: &str,
         remote_port: u16,
     ) -> Result<u16, NetworkError>;
 
@@ -91,7 +94,7 @@ pub trait NetworkManager: Send + Sync {
     async fn expose_port(
         &self,
         sandbox: &str,
-        connection: &str,
+        machine: &crate::provider::types::MachineRef,
         workspace_path: &str,
         target_port: u16,
         label: Option<String>,
@@ -108,7 +111,7 @@ pub trait NetworkManager: Send + Sync {
         self: std::sync::Arc<Self>,
         sandbox: &str,
         workspace_path: &str,
-        connection: &str,
+        machine: &crate::provider::types::MachineRef,
         exec_capable: bool,
     );
 }

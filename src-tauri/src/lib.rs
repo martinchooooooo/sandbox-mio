@@ -29,7 +29,8 @@ use crate::agents::types::AuthSessionMap;
 use crate::backends::types::{Sandbox, SandboxBackend};
 use crate::machine::types::MachineManager;
 use crate::machine::MachineRunners;
-use crate::provider::types::ProviderId;
+use crate::provider::types::{MachineRef, ProviderCapabilities, ProviderId};
+use crate::provider::ProviderRegistry;
 use crate::error::AppError;
 use crate::inference::types::{
     ActiveServer, EngineKind, InferenceStatus, MachineSpecs, MachineSpecsCache, SetupStep,
@@ -49,14 +50,32 @@ fn base_image_version() -> u32 {
 
 /// Stages the base image on its own, without creating a sandbox: the onboarding flow's "download
 /// necessities" step. Deliberately skips `create_sandbox`'s `runtime.init` — no workspace exists yet.
+/// `provider` defaults to Podman, whose image every provider's base image is built from
+/// (`docs/features/microsandbox-provider/02_dev.md`, Resolved Decision 2).
 #[tauri::command]
-async fn build_base_image(store: State<'_, Arc<dyn SandboxBackend>>) -> Result<(), AppError> {
-    Ok(store.ensure_base_image().await?)
+async fn build_base_image(
+    provider: Option<ProviderId>,
+    store: State<'_, Arc<dyn SandboxBackend>>,
+) -> Result<(), AppError> {
+    Ok(store.ensure_base_image(provider.unwrap_or(ProviderId::Podman)).await?)
 }
 
 #[tauri::command]
-async fn base_image_ready(store: State<'_, Arc<dyn SandboxBackend>>) -> Result<bool, AppError> {
-    Ok(store.base_image_ready().await?)
+async fn base_image_ready(
+    provider: Option<ProviderId>,
+    store: State<'_, Arc<dyn SandboxBackend>>,
+) -> Result<bool, AppError> {
+    Ok(store.base_image_ready(provider.unwrap_or(ProviderId::Podman)).await?)
+}
+
+/// Feature differences between provider engines, for UI that must hide what a provider cannot do
+/// (the deploy picker, per `ProviderCapabilities.remote_targets`).
+#[tauri::command]
+fn provider_capabilities(
+    provider: ProviderId,
+    registry: State<'_, Arc<ProviderRegistry>>,
+) -> ProviderCapabilities {
+    registry.local(provider).capabilities()
 }
 
 #[tauri::command]
@@ -79,16 +98,39 @@ async fn mutagen_version(app: tauri::AppHandle) -> Result<String, AppError> {
     Ok(sync::version(&app).await?)
 }
 
+/// Create a sandbox on `provider`, defaulting to the persisted `default_provider` setting.
 #[tauri::command]
 async fn create_sandbox(
     name: String,
     existing_path: Option<String>,
+    provider: Option<ProviderId>,
     store: State<'_, Arc<dyn SandboxBackend>>,
     runtime: State<'_, Arc<dyn RuntimeManager>>,
+    engine: State<'_, Arc<dyn SyncEngine>>,
+    app: tauri::AppHandle,
 ) -> Result<Sandbox, AppError> {
-    store.ensure_base_image().await?;
-    let sandbox = store.create(&name, existing_path.as_deref()).await?;
+    let provider = match provider {
+        Some(p) => p,
+        None => settings::load(&app)?.default_provider,
+    };
+    store.ensure_base_image(provider).await?;
+    let mut sandbox = store.create(&name, existing_path.as_deref(), provider).await?;
     runtime.init(&sandbox.workspace_path).await?;
+    if provider == ProviderId::Microsandbox {
+        // A microsandbox workspace lives in a disk volume inside the VM, not a host bind mount, so
+        // it only exists once Mutagen has synced the laptop directory into it — and the instance
+        // has to be running first for `msb ssh serve` (the alias's ProxyCommand) to answer
+        // (`docs/features/microsandbox-provider/02_dev.md`, Phase H).
+        store.start(&name).await?;
+        engine
+            .create(
+                &backends::msb_sync_session(&name),
+                &sandbox.workspace_path,
+                &backends::msb_sync_beta(&name),
+            )
+            .await?;
+        sandbox.status = "running".to_string();
+    }
     Ok(sandbox)
 }
 
@@ -110,40 +152,75 @@ async fn uninstall_package(
     Ok(runtime.uninstall(&name, &package).await?)
 }
 
-/// Which of the two reachability models `name` was built for — the single predicate every
-/// transport-sensitive command branches on (`docs/features/podman-exec-transport/02_dev.md`).
-/// A sandbox the backend no longer lists is treated as pre-feature, the conservative default.
-async fn sandbox_exec_capable(
+/// The provider running `name` and which of the two reachability models it was built for — the
+/// pair every transport-sensitive command branches on, read in one `list()` pass
+/// (`docs/features/podman-exec-transport/02_dev.md`). A sandbox the backend no longer lists is
+/// treated as a pre-feature Podman one, the conservative default.
+async fn sandbox_facts(
     store: &Arc<dyn SandboxBackend>,
     name: &str,
-) -> Result<bool, AppError> {
+) -> Result<(ProviderId, bool), AppError> {
     Ok(store
         .list()
         .await?
         .into_iter()
         .find(|s| s.name == name)
-        .is_some_and(|s| s.supports_exec_transport()))
+        .map_or((ProviderId::Podman, false), |s| (s.provider, s.supports_exec_transport())))
 }
 
-/// The SSH alias a sandbox's Mutagen forwards tunnel over: the sandbox itself when exec-capable,
-/// the shared Podman connection otherwise. Rewrites the managed `~/.ssh` block on every call —
-/// unlike the container, that file is not guaranteed to survive between app runs.
+/// The machine a sandbox's operations address: its deploy target when one exists, else the local
+/// machine of its own provider.
+async fn resolve_machine(
+    name: &str,
+    provider: ProviderId,
+    engine: &Arc<dyn SyncEngine>,
+    registry: &Arc<ProviderRegistry>,
+) -> Result<MachineRef, AppError> {
+    if provider != ProviderId::Podman {
+        // Only Podman has remote targets (`ProviderCapabilities.remote_targets`). A microsandbox
+        // sandbox does have a Mutagen session, but it syncs its workspace volume rather than
+        // marking a deploy, and is named apart from the sandbox for exactly that reason
+        // (`backends::msb_sync_session`).
+        return Ok(registry.local_ref(provider));
+    }
+    Ok(engine
+        .sessions()
+        .await?
+        .into_iter()
+        .find(|s| s.name == name)
+        .map(|s| MachineRef { provider: ProviderId::Podman, id: s.host })
+        .unwrap_or_else(|| registry.local_ref(ProviderId::Podman)))
+}
+
+/// The SSH alias a sandbox's Mutagen forwards tunnel over: the sandbox itself when it is reached
+/// through its own transport (microsandbox always, Podman when exec-capable), the shared Podman
+/// connection otherwise. Rewrites the managed `~/.ssh` block on every call — unlike the container,
+/// that file is not guaranteed to survive between app runs.
 async fn ensure_forward_alias(
     name: &str,
-    connection: &str,
+    machine: &MachineRef,
     exec_capable: bool,
     app: &tauri::AppHandle,
 ) -> Result<String, AppError> {
-    if exec_capable {
-        let identity_path = crate::backends::ensure_sandbox_identity(app, name)?;
-        crate::backends::ensure_sandbox_alias(name, connection, &identity_path).await?;
-        Ok(name.to_string())
-    } else {
-        crate::backends::ensure_connection_alias(connection).await?;
-        Ok(connection.to_string())
+    match machine.provider {
+        ProviderId::Microsandbox => {
+            let identity_path = crate::backends::ensure_sandbox_identity(app, name)?;
+            crate::backends::ensure_msb_sandbox_alias(name, &identity_path).await?;
+            Ok(name.to_string())
+        }
+        ProviderId::Podman if exec_capable => {
+            let identity_path = crate::backends::ensure_sandbox_identity(app, name)?;
+            crate::backends::ensure_sandbox_alias(name, &machine.id, &identity_path).await?;
+            Ok(name.to_string())
+        }
+        ProviderId::Podman => {
+            crate::backends::ensure_connection_alias(&machine.id).await?;
+            Ok(machine.id.clone())
+        }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn prepare_terminal_webview(
     name: &str,
     workspace_path: &str,
@@ -151,21 +228,15 @@ async fn prepare_terminal_webview(
     engine: &Arc<dyn SyncEngine>,
     network: &Arc<dyn NetworkManager>,
     store: &Arc<dyn SandboxBackend>,
+    registry: &Arc<ProviderRegistry>,
     app: &tauri::AppHandle,
 ) -> Result<TerminalPane, AppError> {
-    let connection = engine
-        .sessions()
-        .await?
-        .into_iter()
-        .find(|s| s.name == name)
-        .map(|s| s.host)
-        .unwrap_or_else(|| runtime.local_connection().to_string());
-
-    let exec_capable = sandbox_exec_capable(store, name).await?;
-    let forward_alias = ensure_forward_alias(name, &connection, exec_capable, app).await?;
+    let (provider, exec_capable) = sandbox_facts(store, name).await?;
+    let machine = resolve_machine(name, provider, engine, registry).await?;
+    let forward_alias = ensure_forward_alias(name, &machine, exec_capable, app).await?;
 
     let (token, container_port) = runtime
-        .prepare_terminal(name, &connection, workspace_path, exec_capable)
+        .prepare_terminal(name, &machine, workspace_path, exec_capable)
         .await?;
 
     let forward_name = format!("terminal-{name}");
@@ -262,6 +333,7 @@ async fn fetch_paseo_server_info(
     Err(format!("{url}: {last_err}"))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn prepare_agent_web_pane(
     name: &str,
     workspace_path: &str,
@@ -269,27 +341,21 @@ async fn prepare_agent_web_pane(
     engine: &Arc<dyn SyncEngine>,
     network: &Arc<dyn NetworkManager>,
     store: &Arc<dyn SandboxBackend>,
+    registry: &Arc<ProviderRegistry>,
     app: &tauri::AppHandle,
 ) -> Result<TerminalPane, AppError> {
     let unavailable =
         |e: String| crate::runtime::types::RuntimeError::AgentWebUnavailable(e);
 
-    let connection = engine
-        .sessions()
-        .await?
-        .into_iter()
-        .find(|s| s.name == name)
-        .map(|s| s.host)
-        .unwrap_or_else(|| runtime.local_connection().to_string());
-
-    let exec_capable = sandbox_exec_capable(store, name).await?;
-    let forward_alias = ensure_forward_alias(name, &connection, exec_capable, app).await?;
+    let (provider, exec_capable) = sandbox_facts(store, name).await?;
+    let machine = resolve_machine(name, provider, engine, registry).await?;
+    let forward_alias = ensure_forward_alias(name, &machine, exec_capable, app).await?;
 
     let password = read_paseo_password(workspace_path)
         .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
 
     let container_port = runtime
-        .prepare_agent_web(name, &connection, &password, exec_capable)
+        .prepare_agent_web(name, &machine, &password, exec_capable)
         .await?;
 
     let forward_name = format!("agentweb-{name}");
@@ -354,6 +420,7 @@ async fn open_agent_web(
     engine: State<'_, Arc<dyn SyncEngine>>,
     network: State<'_, Arc<dyn NetworkManager>>,
     store: State<'_, Arc<dyn SandboxBackend>>,
+    registry: State<'_, Arc<ProviderRegistry>>,
     workspaces: State<'_, WorkspaceRegistry>,
     app: tauri::AppHandle,
 ) -> Result<(), AppError> {
@@ -367,9 +434,17 @@ async fn open_agent_web(
         return workspace::switch_pane(&app, &name, AppKind::AgentWeb).map_err(Into::into);
     }
 
-    let pane =
-        prepare_agent_web_pane(&name, &workspace_path, &runtime, &engine, &network, &store, &app)
-            .await?;
+    let pane = prepare_agent_web_pane(
+        &name,
+        &workspace_path,
+        &runtime,
+        &engine,
+        &network,
+        &store,
+        &registry,
+        &app,
+    )
+    .await?;
     workspace::embed_agent_web(&app, &name, &workspace_path, pane)?;
     Ok(())
 }
@@ -383,6 +458,7 @@ async fn open_terminal(
     engine: State<'_, Arc<dyn SyncEngine>>,
     network: State<'_, Arc<dyn NetworkManager>>,
     store: State<'_, Arc<dyn SandboxBackend>>,
+    registry: State<'_, Arc<ProviderRegistry>>,
     app: tauri::AppHandle,
 ) -> Result<(), AppError> {
     let label = format!("terminal-{name}");
@@ -394,9 +470,17 @@ async fn open_terminal(
         return Ok(());
     }
 
-    let pane =
-        prepare_terminal_webview(&name, &workspace_path, &runtime, &engine, &network, &store, &app)
-            .await?;
+    let pane = prepare_terminal_webview(
+        &name,
+        &workspace_path,
+        &runtime,
+        &engine,
+        &network,
+        &store,
+        &registry,
+        &app,
+    )
+    .await?;
     tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::External(pane.url))
         .title(format!("{name} — terminal"))
         .initialization_script(&pane.init_script)
@@ -411,23 +495,23 @@ async fn open_terminal(
 async fn open_workspace(
     name: String,
     workspace_path: String,
-    runtime: State<'_, Arc<dyn RuntimeManager>>,
     engine: State<'_, Arc<dyn SyncEngine>>,
     network: State<'_, Arc<dyn NetworkManager>>,
     store: State<'_, Arc<dyn SandboxBackend>>,
+    registry: State<'_, Arc<ProviderRegistry>>,
     app: tauri::AppHandle,
 ) -> Result<(), AppError> {
-    let connection = resolve_connection(&name, &runtime, &engine).await?;
-    let exec_capable = sandbox_exec_capable(&store, &name).await?;
+    let (provider, exec_capable) = sandbox_facts(&store, &name).await?;
+    let machine = resolve_machine(&name, provider, &engine, &registry).await?;
     // The poll loop auto-exposes ports over this alias without going through `expose_port`'s
     // command handler, so it has to exist before the loop's first tick.
     if exec_capable {
-        ensure_forward_alias(&name, &connection, exec_capable, &app).await?;
+        ensure_forward_alias(&name, &machine, exec_capable, &app).await?;
     }
     network
         .inner()
         .clone()
-        .watch_ports_file(&name, &workspace_path, &connection, exec_capable)
+        .watch_ports_file(&name, &workspace_path, &machine, exec_capable)
         .await;
     Ok(())
 }
@@ -441,6 +525,7 @@ async fn open_terminal_pane(
     engine: State<'_, Arc<dyn SyncEngine>>,
     network: State<'_, Arc<dyn NetworkManager>>,
     store: State<'_, Arc<dyn SandboxBackend>>,
+    registry: State<'_, Arc<ProviderRegistry>>,
     workspaces: State<'_, WorkspaceRegistry>,
     app: tauri::AppHandle,
 ) -> Result<(), AppError> {
@@ -454,9 +539,17 @@ async fn open_terminal_pane(
         return workspace::switch_pane(&app, &name, AppKind::Terminal).map_err(Into::into);
     }
 
-    let pane =
-        prepare_terminal_webview(&name, &workspace_path, &runtime, &engine, &network, &store, &app)
-            .await?;
+    let pane = prepare_terminal_webview(
+        &name,
+        &workspace_path,
+        &runtime,
+        &engine,
+        &network,
+        &store,
+        &registry,
+        &app,
+    )
+    .await?;
     workspace::embed_terminal(&app, &name, &workspace_path, pane)?;
     Ok(())
 }
@@ -552,8 +645,9 @@ async fn deploy_sandbox(
     engine: State<'_, Arc<dyn SyncEngine>>,
 ) -> Result<(), AppError> {
     let deployment = store.deploy(&name, &host).await?;
+    let target = MachineRef { provider: ProviderId::Podman, id: host };
     runtime
-        .reproduce_remote(&name, &host, &deployment.alpha)
+        .reproduce_remote(&name, &target, &deployment.alpha)
         .await?;
     engine
         .create(&name, &deployment.alpha, &deployment.beta)
@@ -607,7 +701,12 @@ async fn destroy_sandbox(
     let Some(session) = session else {
         workspace::close_app(&app, &name).await;
         network.close_sandbox(&name).await;
-        return Ok(store.destroy(&name).await?);
+        store.destroy(&name).await?;
+        // Best-effort, and a no-op for a Podman sandbox, which has no workspace session: a
+        // microsandbox sandbox's volume is gone with the instance, so its sync has nothing left to
+        // reconcile and would otherwise keep retrying a dead ProxyCommand.
+        let _ = engine.terminate(&backends::msb_sync_session(&name)).await;
+        return Ok(());
     };
     let _ = engine.flush(&name).await;
     if !force && engine.status(&name).await? != SyncStatus::UpToDate {
@@ -639,39 +738,25 @@ async fn list_open_forwards(
     Ok(network.list_forwards().await)
 }
 
-async fn resolve_connection(
-    name: &str,
-    runtime: &Arc<dyn RuntimeManager>,
-    engine: &Arc<dyn SyncEngine>,
-) -> Result<String, AppError> {
-    Ok(engine
-        .sessions()
-        .await?
-        .into_iter()
-        .find(|s| s.name == name)
-        .map(|s| s.host)
-        .unwrap_or_else(|| runtime.local_connection().to_string()))
-}
-
 /// Expose a target port to Windows-host loopback via Mutagen. Returns the host port.
 #[tauri::command]
 async fn expose_port(
     name: String,
     workspace_path: String,
     target_port: u16,
-    runtime: State<'_, Arc<dyn RuntimeManager>>,
     engine: State<'_, Arc<dyn SyncEngine>>,
     network: State<'_, Arc<dyn NetworkManager>>,
     store: State<'_, Arc<dyn SandboxBackend>>,
+    registry: State<'_, Arc<ProviderRegistry>>,
     app: tauri::AppHandle,
 ) -> Result<u16, AppError> {
-    let connection = resolve_connection(&name, &runtime, &engine).await?;
-    let exec_capable = sandbox_exec_capable(&store, &name).await?;
+    let (provider, exec_capable) = sandbox_facts(&store, &name).await?;
+    let machine = resolve_machine(&name, provider, &engine, &registry).await?;
     if exec_capable {
-        ensure_forward_alias(&name, &connection, exec_capable, &app).await?;
+        ensure_forward_alias(&name, &machine, exec_capable, &app).await?;
     }
     Ok(network
-        .expose_port(&name, &connection, &workspace_path, target_port, None, false, exec_capable)
+        .expose_port(&name, &machine, &workspace_path, target_port, None, false, exec_capable)
         .await?)
 }
 
@@ -910,7 +995,7 @@ async fn install_agent(
     on_progress: Channel<serde_json::Value>,
     app: tauri::AppHandle,
     runtime: State<'_, Arc<dyn RuntimeManager>>,
-    provider: State<'_, Arc<dyn provider::types::MachineProvider>>,
+    registry: State<'_, Arc<ProviderRegistry>>,
 ) -> Result<(), AppError> {
     agents::install_packages(&name, &packages, &on_progress, &runtime).await?;
     if let Some((npm_package, node_tool)) = postinstall_npm {
@@ -918,6 +1003,9 @@ async fn install_agent(
     }
     if let Some(service_id) = credential_service {
         if credentials::load_manifest(&app, &service_id).is_ok() {
+            // Resolved here rather than up front: `provider_of` costs a list call per provider, and
+            // an install without stored credentials never needs one.
+            let provider = registry.provider_of(&name).await.1;
             credentials::inject(&app, &name, &service_id, &provider).await?;
             if let Some(seed) = &onboarding {
                 credentials::seed_onboarding(&name, seed, &provider).await?;
@@ -1054,8 +1142,9 @@ async fn start_agent_auth(
     auth_command: Vec<String>,
     app: tauri::AppHandle,
     sessions: State<'_, AuthSessionMap>,
-    provider: State<'_, Arc<dyn provider::types::MachineProvider>>,
+    registry: State<'_, Arc<ProviderRegistry>>,
 ) -> Result<String, AppError> {
+    let provider = registry.provider_of(&name).await.1;
     Ok(agents::start_auth(&name, &auth_command, &app, &sessions, &provider).await?)
 }
 
@@ -1120,8 +1209,9 @@ async fn capture_agent_credentials(
     account_source_path: Option<String>,
     account_email_json_key: Option<String>,
     app: tauri::AppHandle,
-    provider: State<'_, Arc<dyn provider::types::MachineProvider>>,
+    registry: State<'_, Arc<ProviderRegistry>>,
 ) -> Result<credentials::types::CredentialManifest, AppError> {
+    let provider = registry.provider_of(&name).await.1;
     Ok(credentials::capture(
         &app,
         &name,
@@ -1142,8 +1232,9 @@ async fn inject_agent_credentials(
     service_id: String,
     onboarding: Option<credentials::types::OnboardingSeed>,
     app: tauri::AppHandle,
-    provider: State<'_, Arc<dyn provider::types::MachineProvider>>,
+    registry: State<'_, Arc<ProviderRegistry>>,
 ) -> Result<(), AppError> {
+    let provider = registry.provider_of(&name).await.1;
     credentials::inject(&app, &name, &service_id, &provider).await?;
     if let Some(seed) = onboarding {
         credentials::seed_onboarding(&name, &seed, &provider).await?;
@@ -1156,8 +1247,9 @@ async fn inject_agent_credentials(
 async fn seed_agent_onboarding(
     name: String,
     onboarding: credentials::types::OnboardingSeed,
-    provider: State<'_, Arc<dyn provider::types::MachineProvider>>,
+    registry: State<'_, Arc<ProviderRegistry>>,
 ) -> Result<(), AppError> {
+    let provider = registry.provider_of(&name).await.1;
     Ok(credentials::seed_onboarding(&name, &onboarding, &provider).await?)
 }
 
@@ -1254,7 +1346,6 @@ async fn start_inference(
     model_id: String,
     on_progress: Channel<serde_json::Value>,
     active: State<'_, ActiveServer>,
-    runtime: State<'_, Arc<dyn RuntimeManager>>,
     app: tauri::AppHandle,
 ) -> Result<InferenceStatus, AppError> {
     tracing::info!(target: "inference", ?engine, %model_id, "start_inference requested");
@@ -1306,7 +1397,9 @@ async fn start_inference(
     tracing::info!(target: "inference", base_url = %handle.base_url, model_id = %handle.model_id, "server ready");
     activity::succeed(&app, "inference-setup", Some(handle.base_url.clone()));
 
-    let connection = runtime.local_connection().to_string();
+    // The inference server is reached from inside the Podman VM regardless of which provider a
+    // sandbox runs on; microsandbox instances dial the same host loopback through their own netns.
+    let connection = crate::backends::connection_name();
     match crate::backends::ensure_connection_alias(&connection).await {
         Ok(()) => {
             if let Err(e) = sync::forward_create_reverse(
@@ -1482,27 +1575,23 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(machine)
-        .manage(machine::MachineRunners { podman: podman_runner.clone(), msb: msb_runner })
+        .manage(machine::MachineRunners {
+            podman: podman_runner.clone(),
+            msb: msb_runner.clone(),
+        })
         .manage(mock_director.clone())
         .setup(move |app| {
             app.manage(init_logging(app.handle()));
-            // Constructed once from the shared podman runner and connection, then managed as
-            // `Arc<dyn MachineProvider>` and threaded into the backend so both share one provider.
-            let provider: Arc<dyn provider::types::MachineProvider> =
-                provider::default_provider(podman_runner.clone(), backends::connection_name());
-            app.manage(provider.clone());
-            // The runtime shares the same provider (pinned to the local connection) and the process
-            // runner, from which it builds a target-pinned provider for remote-connection calls.
-            app.manage(runtime::default_runtime(
-                provider.clone(),
-                podman_runner.clone(),
-                port_transport.clone(),
-            ));
+            // One registry shared by every subsystem, so a sandbox resolves to the same provider
+            // instance (and the same base-image build lock) wherever it is addressed from.
+            let registry = provider::default_registry(podman_runner.clone(), msb_runner.clone());
+            app.manage(registry.clone());
+            app.manage(runtime::default_runtime(registry.clone(), port_transport.clone()));
             // Needs `app.handle()` to resolve `crate::paths::app_data_root` for per-sandbox SSH
             // identities, so `default_backend` is constructed here rather than before the builder,
             // unlike the other subsystems above (none of which need an `AppHandle`).
             app.manage(backends::default_backend(
-                provider,
+                registry.clone(),
                 podman_runner.clone(),
                 app.handle().clone(),
             ));
@@ -1521,7 +1610,7 @@ pub fn run() {
             app.manage(network::default_network_manager(
                 app.handle().clone(),
                 port_transport.clone(),
-                podman_runner.clone(),
+                registry.clone(),
             ));
             app.manage(WorkspaceRegistry::default());
             app.manage(AuthSessionMap::default());
@@ -1545,6 +1634,7 @@ pub fn run() {
             base_image_version,
             build_base_image,
             base_image_ready,
+            provider_capabilities,
             get_dismissed_image_version,
             dismiss_image_update,
             mutagen_version,

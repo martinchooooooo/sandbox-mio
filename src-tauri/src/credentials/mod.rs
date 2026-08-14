@@ -10,7 +10,7 @@ use tauri::AppHandle;
 
 use crate::backends::types::SandboxBackend;
 use crate::env_ext::env_dir;
-use crate::provider::types::{ExecOpts, MachineProvider};
+use crate::provider::types::{ExecOpts, MachineProvider, ProviderId};
 use crate::runtime::types::RuntimeManager;
 use types::{CredentialError, CredentialManifest, OnboardingSeed};
 
@@ -99,8 +99,11 @@ pub async fn ensure_auth_container(
 ) -> Result<(), CredentialError> {
     let exists = backend.list().await?.iter().any(|s| s.name == name);
     if !exists {
-        backend.ensure_base_image().await?;
-        let sandbox = backend.create(name, None).await?;
+        // Pinned to Podman rather than the user's `default_provider`: an auth container is a
+        // throwaway the app creates and destroys around one login, so it has no reason to pay a
+        // microsandbox sandbox's volume-plus-sync setup.
+        backend.ensure_base_image(ProviderId::Podman).await?;
+        let sandbox = backend.create(name, None, ProviderId::Podman).await?;
         runtime.init(&sandbox.workspace_path).await?;
     }
     Ok(())

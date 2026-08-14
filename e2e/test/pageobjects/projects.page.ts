@@ -38,6 +38,19 @@ class ProjectsPage extends AppPage {
     await (await this.useExistingFolderLink).click();
   }
 
+  // docs/features/microsandbox-provider — the create row's provider picker. Keyed on the attribute
+  // rather than the label, which is still a hard-coded English literal pending the i18n pass.
+  providerOption(provider: string): Element {
+    return this.createRow.$(`button[data-provider-option='${provider}']`);
+  }
+
+  /** Select which provider the next `createProject()` creates on. */
+  async chooseProvider(provider: string): Promise<void> {
+    const btn = await this.providerOption(provider);
+    await btn.waitForClickable({ timeout: UI_SETTLE });
+    await btn.click();
+  }
+
   // ── Podman startup-recovery gate ─────────────────────────────────────────────
   // This button's presence is the gate signal, not the Create button: the create form stays
   // mounted while the recovery screen replaces the sandbox list.

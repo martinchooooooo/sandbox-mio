@@ -58,10 +58,11 @@ const MIO_REMOTE_REMOVE = process.env.MIO_REMOTE_REMOVE === "1";
 // SANDBOX_WORKSPACE_ROOT in src-tauri/src/backends/.
 process.env.SANDBOX_WORKSPACE_ROOT = WORKSPACE_ROOT;
 
-// Isolates microsandbox's own state (db, sandboxes, cache, logs) and binary resolution per
-// worktree, mirroring SANDBOX_WORKSPACE_ROOT above — read directly by the `msb` binary itself
-// (upstream `resolve_home()`), not by this app's Rust code
-// (docs/features/microsandbox-provider/02_dev.md, "E2E isolation").
+// MSB_HOME isolates microsandbox's own state (db, sandboxes, cache, logs) per worktree, mirroring
+// SANDBOX_WORKSPACE_ROOT above; MSB_PATH pins the host-wide `msb` executable so a slug-keyed home
+// with no `bin/` still resolves. Both are read by the `msb` binary itself (upstream
+// `resolve_home()`) as well as by this app (docs/features/microsandbox-provider/02_dev.md,
+// "E2E isolation").
 process.env.MSB_HOME = MSB_HOME;
 process.env.MSB_PATH = MSB_PATH;
 

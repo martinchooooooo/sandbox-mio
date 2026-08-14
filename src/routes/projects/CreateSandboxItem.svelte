@@ -8,14 +8,28 @@
     import { createActionRunner } from "$lib/actions.svelte";
     import StatusRow from "./StatusRow.svelte";
     import type { Project } from "$lib/sandbox";
+    import { PROVIDERS, providerLabel, type ProviderId } from "$lib/providers";
+    import { onMount } from "svelte";
 
     let { projects, onCreated }: { projects: Project[]; onCreated: () => void } = $props();
 
     let mode = $state<"name" | "folder">("name");
     let name = $state("");
     let existingPath = $state<string | undefined>(undefined);
+    let provider = $state<ProviderId>("podman");
 
     const action = createActionRunner();
+
+    // Seeded from the persisted `defaultProvider` setting; the picker below overrides it per
+    // sandbox without writing the choice back.
+    onMount(async () => {
+        try {
+            const s = await invoke<{ defaultProvider?: ProviderId }>("get_settings");
+            if (s.defaultProvider) provider = s.defaultProvider;
+        } catch {
+            /* keep the podman default */
+        }
+    });
 
     // Path may come from either OS separator (the native dialog returns the host's convention).
     function basename(path: string): string {
@@ -45,7 +59,7 @@
                     // TODO(i18n)
                     throw { kind: "Backend", message: `A sandbox named "${trimmed}" already exists.` };
                 }
-                await invoke("create_sandbox", { name: trimmed, existingPath: path });
+                await invoke("create_sandbox", { name: trimmed, existingPath: path, provider });
             },
             { message: m.projects_status_creating({ name: trimmed }) }
         );
@@ -98,6 +112,22 @@
                         </div>
                     {/if}
                 {/if}
+            </Field.Field>
+            <Field.Field>
+                <!-- TODO(i18n) -->
+                <Field.Label>Runs on</Field.Label>
+                <div data-provider-picker class="flex gap-2">
+                    {#each PROVIDERS as option (option)}
+                        <Button
+                            data-provider-option={option}
+                            aria-pressed={provider === option}
+                            variant={provider === option ? "default" : "outline"}
+                            size="sm"
+                            disabled={action.busy !== null}
+                            onclick={() => (provider = option)}
+                        >{providerLabel(option)}</Button>
+                    {/each}
+                </div>
             </Field.Field>
         </Field.Group>
     </Field.Set>

@@ -16,9 +16,6 @@ pub enum ProviderError {
     /// (`docs/features/microsandbox-provider/02_dev.md`, Resolved Decision 2) and no working Podman
     /// machine is reachable. A distinct variant so this fails loudly instead of surfacing as a
     /// generic command failure.
-    // Unconstructed outside `MsbProvider` and tests until Phase J's `provider_for` resolver makes
-    // `MsbProvider` reachable from `lib.rs` (see `mockctl::types::SystemMsbRunner`'s doc comment).
-    #[allow(dead_code)]
     #[error("microsandbox base image requires a working Podman machine: {0}")]
     PodmanUnavailable(String),
 }
@@ -69,11 +66,8 @@ pub struct ExecOpts {
 /// probes it yet — see `docs/features/microsandbox-provider/02_dev.md`). Deliberately omits
 /// `publish_after_create`/`loopback_publish` from that document's earlier draft: `PublishModel::
 /// ExecTunnelled` already makes both moot for every provider that constructs against it.
-// Unconstructed outside `PodmanProvider::capabilities()` until Phase F/G add `MsbProvider` and
-// Phase J adds a caller that reads a non-Podman capability
-// (`docs/features/microsandbox-provider/02_dev.md`).
-#[allow(dead_code)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProviderCapabilities {
     /// Whether this provider supports `SandboxBackend::deploy`/`remove_remote` (an arbitrary
     /// remote target connection). `false` hides the deploy picker in the frontend rather than
@@ -90,9 +84,14 @@ pub struct ProviderCapabilities {
 /// why it derives `Serialize`/`Deserialize` on top of the `MachineRef` prefix-string form below —
 /// the two serializations are independent and allowed to diverge (`"microsandbox"` here vs. `"msb"`
 /// in `tag()`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum ProviderId {
+    /// The default everywhere a provider is unstated: every install has Podman, and an
+    /// `AppSettings` file written before this feature deserializes to it.
+    #[default]
     Podman,
     Microsandbox,
 }
@@ -127,9 +126,8 @@ impl std::str::FromStr for ProviderId {
 /// A provider-tagged machine handle, replacing the untyped `connection: &str` threaded through
 /// `RuntimeManager`/`NetworkManager`/`sync` today. Serializes as a prefixed string (`podman:
 /// mio-tests`, `msb:local`) so IPC payloads and persisted `.mio/` JSON stay plain strings; see
-/// `docs/features/microsandbox-provider/02_dev.md`. Inert until Phase J switches call sites onto
-/// it — introduced now so Phase F/G code can be written against its final shape.
-#[allow(dead_code)]
+/// `docs/features/microsandbox-provider/02_dev.md`. Resolved to a provider by
+/// `ProviderRegistry::provider_for` (`src-tauri/src/provider/mod.rs`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MachineRef {
     pub provider: ProviderId,

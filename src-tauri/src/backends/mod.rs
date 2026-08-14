@@ -10,7 +10,8 @@ use tokio::process::Command;
 use crate::env_ext::env_dir;
 use crate::mockctl::types::ProcessRunner;
 use crate::process_ext::NoWindow;
-use crate::provider::types::{InstanceSpec, PublishModel};
+use crate::provider::types::{InstanceSpec, ProviderId, PublishModel};
+use crate::provider::ProviderRegistry;
 use types::{
     BackendError, ConnectionInfo, PodmanCliBackend, RemoteDeployment, Sandbox, SandboxBackend,
     SyncStrategy, WorkspacePlan,
@@ -86,14 +87,14 @@ pub(crate) fn workspace_path(name: &str) -> Result<String, BackendError> {
 }
 
 pub fn default_backend(
-    provider: Arc<dyn crate::provider::types::MachineProvider>,
+    registry: Arc<ProviderRegistry>,
     runner: Arc<dyn ProcessRunner>,
     app: tauri::AppHandle,
 ) -> std::sync::Arc<dyn SandboxBackend> {
     let connection = connection_name();
     std::sync::Arc::new(PodmanCliBackend {
         connection,
-        provider,
+        registry,
         runner,
         app,
     })
@@ -225,6 +226,19 @@ fn parse_connection_entry(entry: &serde_json::Value) -> Result<Option<Connection
 impl PodmanCliBackend {
     fn image() -> String {
         base_image()
+    }
+
+    /// Reject a name any provider already runs an instance under. Names must be unique across the
+    /// union of both providers, not per provider, because every other command addresses a sandbox
+    /// by name alone (`docs/features/microsandbox-provider/02_dev.md`, Phase J).
+    async fn ensure_name_available(&self, name: &str) -> Result<(), BackendError> {
+        match self.list().await?.into_iter().find(|s| s.name == name) {
+            Some(existing) => Err(BackendError::NameTaken {
+                name: name.to_string(),
+                provider: existing.provider,
+            }),
+            None => Ok(()),
+        }
     }
 
     /// Runs `podman` without `--connection`, for system-connection registry operations
@@ -402,21 +416,33 @@ fn progress(channel: &Channel<serde_json::Value>, step: &str, status: &str, mess
 
 #[async_trait::async_trait]
 impl SandboxBackend for PodmanCliBackend {
-    async fn ensure_base_image(&self) -> Result<(), BackendError> {
-        Ok(self.provider.ensure_base_image().await?)
+    async fn ensure_base_image(&self, provider: ProviderId) -> Result<(), BackendError> {
+        Ok(self.registry.local(provider).ensure_base_image().await?)
     }
 
-    async fn base_image_ready(&self) -> Result<bool, BackendError> {
-        Ok(self.provider.base_image_ready().await?)
+    async fn base_image_ready(&self, provider: ProviderId) -> Result<bool, BackendError> {
+        Ok(self.registry.local(provider).base_image_ready().await?)
     }
 
-    async fn create(&self, name: &str, existing_path: Option<&str>) -> Result<Sandbox, BackendError> {
+    async fn create(
+        &self,
+        name: &str,
+        existing_path: Option<&str>,
+        provider_id: ProviderId,
+    ) -> Result<Sandbox, BackendError> {
         validate_name(name)?;
+        self.ensure_name_available(name).await?;
+        let provider = self.registry.local(provider_id);
         let image = Self::image();
         // Every sandbox is created locally; remoteness is a later deploy action, so the workspace
-        // is always a laptop directory bind-mounted directly.
+        // is always a laptop directory — bind-mounted for Podman, Mutagen-synced into the disk
+        // volume `MsbProvider::create_instance` attaches for microsandbox.
         let workspace = self.resolve_create_workspace(name, existing_path).await?;
-        let exec_capable = BASE_IMAGE_VERSION >= EXEC_TRANSPORT_MIN_IMAGE_VERSION;
+        // Provider first, image version second: a microsandbox instance is exec-tunnelled by
+        // construction and `MsbProvider` has no publish+relay argv to build at all
+        // (`docs/features/microsandbox-provider/02_dev.md`, gotcha table).
+        let exec_capable = provider_id == ProviderId::Microsandbox
+            || BASE_IMAGE_VERSION >= EXEC_TRANSPORT_MIN_IMAGE_VERSION;
         let spec = InstanceSpec {
             name: name.to_string(),
             image,
@@ -424,12 +450,28 @@ impl SandboxBackend for PodmanCliBackend {
             labels: vec![(crate::provider::WORKSPACE_LABEL.to_string(), workspace.clone())],
             publish_model: publish_model(exec_capable),
         };
-        let id = self.provider.create_instance(&spec).await?;
+        let id = provider.create_instance(&spec).await?;
         if exec_capable {
             let identity_path = ensure_sandbox_identity(&self.app, name)?;
             forget_sandbox_host_key(&identity_path);
-            self.install_sandbox_key(&self.provider, name, &identity_path).await?;
-            ensure_sandbox_alias(name, &self.connection, &identity_path).await?;
+            match provider_id {
+                ProviderId::Podman => {
+                    self.install_sandbox_key(&provider, name, &identity_path).await?;
+                    ensure_sandbox_alias(name, &self.connection, &identity_path).await?;
+                }
+                ProviderId::Microsandbox => {
+                    // Host-wide, not per-instance: `msb ssh authorize` takes no sandbox argument
+                    // and appends to one `authorized_keys` the guest sshd of every instance reads
+                    // (confirmed hands-on, see `spike/hands-on-cli.md`). The instance also need not
+                    // be running for it, unlike a `copy_in` of the same key.
+                    crate::provider::msb::authorize_ssh_key(
+                        self.registry.msb_runner(),
+                        &format!("{identity_path}.pub"),
+                    )
+                    .await?;
+                    ensure_msb_sandbox_alias(name, &identity_path).await?;
+                }
+            }
         }
         Ok(Sandbox {
             id,
@@ -437,23 +479,36 @@ impl SandboxBackend for PodmanCliBackend {
             status: "created".to_string(),
             workspace_path: workspace,
             image_version: Some(BASE_IMAGE_VERSION),
+            provider: provider_id,
         })
     }
 
     async fn list(&self) -> Result<Vec<Sandbox>, BackendError> {
-        Ok(self.provider.list_instances().await?)
+        let mut all = Vec::new();
+        for (id, provider) in self.registry.all() {
+            match provider.list_instances().await {
+                Ok(instances) => all.extend(instances),
+                // Only Podman's failure is fatal: every install has Podman, but `msb` may not be
+                // installed at all, and that must not blank out the Podman sandboxes as well.
+                Err(e) if id == ProviderId::Podman => return Err(e.into()),
+                Err(e) => {
+                    tracing::debug!(target: "backends", provider = %id, error = %e, "skipping provider in list")
+                }
+            }
+        }
+        Ok(all)
     }
 
     async fn start(&self, name: &str) -> Result<(), BackendError> {
-        Ok(self.provider.start(name).await?)
+        Ok(self.registry.provider_of(name).await.1.start(name).await?)
     }
 
     async fn stop(&self, name: &str) -> Result<(), BackendError> {
-        Ok(self.provider.stop(name).await?)
+        Ok(self.registry.provider_of(name).await.1.stop(name).await?)
     }
 
     async fn destroy(&self, name: &str) -> Result<(), BackendError> {
-        Ok(self.provider.remove(name).await?)
+        Ok(self.registry.provider_of(name).await.1.remove(name).await?)
     }
 
     async fn deploy(
@@ -462,6 +517,13 @@ impl SandboxBackend for PodmanCliBackend {
         target_connection: &str,
     ) -> Result<RemoteDeployment, BackendError> {
         validate_name(name)?;
+        // The deploy picker is already hidden for a provider without remote targets
+        // (`ProviderCapabilities.remote_targets`); this is the backend half of that gate, so an
+        // invoke that gets through anyway fails with a reason rather than nonsense podman argv.
+        let owner = self.registry.provider_of(name).await.1;
+        if !owner.capabilities().remote_targets {
+            return Err(BackendError::RemoteTargetsUnsupported { name: name.to_string() });
+        }
         // Deploying onto the source connection would name-collide with the kept-stopped local
         // container and is pointless; any other connection (including a different local machine)
         // is a valid target.
@@ -486,7 +548,7 @@ impl SandboxBackend for PodmanCliBackend {
             crate::provider::default_provider(self.runner.clone(), target_connection.to_string());
 
         // Stop the workload onto the remote; kept stopped (not removed) so undeploy can restart it.
-        self.provider.stop(name).await?;
+        owner.stop(name).await?;
         // No committed-image transfer: software is reproduced from the mise manifest by
         // `RuntimeManager::reproduce_remote` after this returns. Must not be reintroduced.
         let image = Self::image();
@@ -758,10 +820,7 @@ const MSB_WORKSPACE_MOUNT: &str = "/root/work";
 /// Mirrors [`ensure_sandbox_alias`]'s Podman/exec-transport counterpart, but the `ProxyCommand` execs
 /// `msb ssh serve <name> --stdio` directly rather than tunnelling through a container exec —
 /// `SshAlias::Proxied` already fits both without a new variant
-/// (`docs/features/microsandbox-provider/02_dev.md`, Resolved Decision 8). Not yet called from
-/// `create()`: wiring a microsandbox sandbox's lifecycle into `create()` is Phase J's per-sandbox
-/// provider selection, the same constraint Phase G's `MsbProvider` construction deferred to Phase J.
-#[allow(dead_code)]
+/// (`docs/features/microsandbox-provider/02_dev.md`, Resolved Decision 8).
 pub async fn ensure_msb_sandbox_alias(name: &str, identity_path: &str) -> Result<(), BackendError> {
     let command = format!("msb ssh serve {name} --stdio");
     crate::ssh::write_alias(&crate::ssh::types::SshAlias::Proxied {
@@ -778,10 +837,17 @@ pub async fn ensure_msb_sandbox_alias(name: &str, identity_path: &str) -> Result
 /// host/port/user: the alias named `name` (written by [`ensure_msb_sandbox_alias`]) resolves the
 /// full connection through its `ProxyCommand`, exactly like the exec-transport `Proxied` alias's
 /// beta URL in `deploy` needs none beyond the alias name (`docs/features/microsandbox-provider/
-/// 02_dev.md`, Phase H). Unconstructed for the same reason as `ensure_msb_sandbox_alias`.
-#[allow(dead_code)]
+/// 02_dev.md`, Phase H).
 pub fn msb_sync_beta(name: &str) -> String {
     format!("{name}:{MSB_WORKSPACE_MOUNT}")
+}
+
+/// Mutagen session name for a microsandbox sandbox's workspace sync. Deliberately *not* the bare
+/// sandbox name: a session under that name means "deployed to a remote host" everywhere else
+/// (`SessionInfo`, `sandbox_deployments`), and a microsandbox sandbox is never deployed — its
+/// session only keeps the disk volume in step with the laptop directory.
+pub fn msb_sync_session(name: &str) -> String {
+    format!("workspace-{name}")
 }
 
 /// The `UserKnownHostsFile` [`ensure_sandbox_alias`] pins, kept next to the sandbox's own identity.
@@ -807,4 +873,5 @@ mod msb_sync_tests {
     fn msb_sync_beta_has_no_host_or_port() {
         assert_eq!(msb_sync_beta("my-sandbox"), "my-sandbox:/root/work");
     }
+
 }

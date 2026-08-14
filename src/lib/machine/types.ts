@@ -1,5 +1,5 @@
-/** Which machine engine a welcome-flow readiness check targets (mirrors Rust `ProviderId`). */
-export type ProviderId = "podman" | "microsandbox";
+/** Which machine engine a welcome-flow readiness check targets. Defined once in `$lib/providers`. */
+export type { ProviderId } from "$lib/providers";
 
 /** One row of a provider's readiness checklist (mirrors Rust `machine::types::SetupStep`). */
 export interface SetupStep {

@@ -62,7 +62,7 @@ pub trait RuntimeManager: Send + Sync {
     async fn reproduce_remote(
         &self,
         name: &str,
-        target_connection: &str,
+        target: &crate::provider::types::MachineRef,
         workspace_host_path: &str,
     ) -> Result<(), RuntimeError>;
 
@@ -73,7 +73,7 @@ pub trait RuntimeManager: Send + Sync {
     async fn prepare_terminal(
         &self,
         name: &str,
-        connection: &str,
+        machine: &crate::provider::types::MachineRef,
         workspace_host_path: &str,
         exec_capable: bool,
     ) -> Result<(String, u16), RuntimeError>;
@@ -83,13 +83,10 @@ pub trait RuntimeManager: Send + Sync {
     async fn prepare_agent_web(
         &self,
         name: &str,
-        connection: &str,
+        machine: &crate::provider::types::MachineRef,
         password: &str,
         exec_capable: bool,
     ) -> Result<u16, RuntimeError>;
-
-    /// The Podman connection this runtime is pinned to. Fallback for local sandboxes.
-    fn local_connection(&self) -> &str;
 
     /// List available tools from the mise registry (process-wide cached).
     async fn registry(&self, name: &str) -> Result<Vec<RegistryEntry>, RuntimeError>;
@@ -101,18 +98,14 @@ pub trait RuntimeManager: Send + Sync {
     async fn exec_in_container(&self, name: &str, args: &[&str]) -> Result<String, RuntimeError>;
 }
 
-/// Drives `mise` through a [`crate::provider::types::MachineProvider`] pinned to a named Podman
-/// **system connection**, mirroring [`crate::backends::types::PodmanCliBackend`]. The connection is
-/// the same one the backend is pinned to; operations against an arbitrary target connection
-/// (`reproduce_remote`, `prepare_terminal`, `prepare_agent_web`) build a target-pinned provider
-/// from `runner`, exactly as `deploy` does in `backends`.
+/// Drives `mise` through whichever [`crate::provider::types::MachineProvider`] owns the sandbox.
+/// The methods that take a [`crate::provider::types::MachineRef`] (`reproduce_remote`,
+/// `prepare_terminal`, `prepare_agent_web`) resolve it directly; the name-only methods resolve the
+/// sandbox's owner through `ProviderRegistry::provider_of`.
 pub struct MiseRuntime {
-    pub connection: String,
-    /// Provider pinned to `connection`, driving every local `podman exec`/`cp`/`start`.
-    pub provider: std::sync::Arc<dyn crate::provider::types::MachineProvider>,
-    /// The process seam used to build a fresh provider pinned to an arbitrary target connection,
-    /// mirroring `deploy`'s `self.runner`.
-    pub runner: std::sync::Arc<dyn crate::mockctl::types::ProcessRunner>,
+    /// Resolves each call to the provider running the sandbox
+    /// (`docs/features/microsandbox-provider/02_dev.md`, Phase J).
+    pub providers: std::sync::Arc<crate::provider::ProviderRegistry>,
     pub registry_cache: tokio::sync::OnceCell<Vec<RegistryEntry>>,
     /// `podman port`-based lookup, used for a sandbox on the publish+relay reachability model.
     pub published_port_transport: std::sync::Arc<dyn crate::transport::types::PortTransport>,

@@ -107,6 +107,9 @@ pub(super) struct TrackedMsbInstance {
     pub(super) name: String,
     pub(super) workspace_label: String,
     pub(super) running: bool,
+    /// The `name:tag` the instance was created from, so `msb.ls` reports an `image` that parses
+    /// into a `Sandbox::image_version` — the Podman side gets this for free from a real image.
+    pub(super) image: String,
 }
 
 /// Scripted `msb` invocations, mirroring [`ScriptedPodmanRunner`]'s create→list→start→stop→list

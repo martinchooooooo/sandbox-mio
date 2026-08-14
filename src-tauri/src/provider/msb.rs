@@ -8,7 +8,8 @@ use crate::backends::types::Sandbox;
 use crate::mockctl::types::ProcessRunner;
 
 use super::types::{
-    ExecOpts, InstanceSpec, MachineProvider, ProviderCapabilities, ProviderError, PublishModel,
+    ExecOpts, InstanceSpec, MachineProvider, ProviderCapabilities, ProviderError, ProviderId,
+    PublishModel,
 };
 use super::{check, parse_image_version, WORKSPACE_LABEL, WORKSPACE_MOUNT};
 
@@ -48,6 +49,23 @@ fn shell_quote(s: &str) -> String {
 fn detached_wrapper(argv: &[&str]) -> String {
     let joined = argv.iter().map(|a| shell_quote(a)).collect::<Vec<_>>().join(" ");
     format!("{joined} >/tmp/out.log 2>&1 & disown")
+}
+
+/// Authorize `pubkey_path` for SSH into microsandbox instances, so the sandbox's own
+/// `SshAlias::Proxied` (`backends::ensure_msb_sandbox_alias`) can log in. Host-wide by nature:
+/// `msb ssh authorize --file <pubkey>` accepts no sandbox positional and appends to the single
+/// host-wide `authorized_keys` every instance's guest sshd reads (confirmed hands-on against real
+/// `msb` 0.6.6, see the addendum in `spike/hands-on-cli.md`). A free function rather than a
+/// [`MachineProvider`] method because it addresses the microsandbox host, not one instance.
+pub async fn authorize_ssh_key(
+    runner: &Arc<dyn ProcessRunner>,
+    pubkey_path: &str,
+) -> Result<(), ProviderError> {
+    let out = runner
+        .run(&["ssh", "authorize", "--file", pubkey_path])
+        .await
+        .map_err(|e| ProviderError::CommandFailed(e.to_string()))?;
+    check(out).map(|_| ())
 }
 
 /// Construct the microsandbox-backed [`MachineProvider`]. Holds `podman` (the app's already-pinned
@@ -220,10 +238,11 @@ impl MachineProvider for MsbProvider {
         }
         if let Err(e) = check(self.run(&args.iter().map(String::as_str).collect::<Vec<_>>()).await?)
         {
-            // Roll the volume back so a failed create leaves nothing behind: without this the
-            // volume outlives the create that made it, and the next attempt at the same name has
-            // to reuse a volume it never asked for (see `ensure_volume`). Best-effort — the create
-            // error is what the user needs to see either way.
+            // A failed `msb create` registers the sandbox before the step that fails, so roll back
+            // both halves or the name is left taken with no workspace volume behind it — a record
+            // `msb start` can only ever fail on. Order mirrors `remove`: record, then volume.
+            // Best-effort — the create error is what the user needs to see either way.
+            let _ = self.run(&["rm", "--force", &spec.name]).await;
             let _ = self.run(&["volume", "rm", &volume]).await;
             return Err(e);
         }
@@ -241,13 +260,33 @@ impl MachineProvider for MsbProvider {
             let status = map_status(e["status"].as_str().unwrap_or_default());
             let image_version = parse_image_version(e["image"].as_str().unwrap_or_default());
             let workspace_path = self.workspace_label(&name).await.unwrap_or_default();
-            sandboxes.push(Sandbox { id: name.clone(), name, status, workspace_path, image_version });
+            sandboxes.push(Sandbox {
+                id: name.clone(),
+                name,
+                status,
+                workspace_path,
+                image_version,
+                provider: ProviderId::Microsandbox,
+            });
         }
         Ok(sandboxes)
     }
 
+    /// Starts the instance, tolerating one already running. `msb create` auto-starts what it creates
+    /// (`docs/features/microsandbox-provider/spike/hands-on-cli.md`, finding 3), so the start that
+    /// has to precede the Mutagen session (`02_dev.md`, Phase H) always lands on a running instance
+    /// and would otherwise fail with `error: sandbox still running: ... already running` (exit 1).
+    /// Tolerance is modelled on [`Self::ensure_volume`]'s handling of a name already taken.
     async fn start(&self, name: &str) -> Result<(), ProviderError> {
-        check(self.run(&["start", name]).await?).map(|_| ())
+        let out = self.run(&["start", name]).await?;
+        if out.status.success() {
+            return Ok(());
+        }
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        if stderr.contains("already running") {
+            return Ok(());
+        }
+        Err(ProviderError::CommandFailed(stderr))
     }
 
     async fn stop(&self, name: &str) -> Result<(), ProviderError> {
@@ -401,8 +440,13 @@ mod tests {
         let list = provider.list_instances().await.expect("list succeeds");
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].name, "test-sbx");
-        assert_eq!(list[0].status, "exited");
+        // `msb create` auto-starts, so a freshly created instance is already running.
+        assert_eq!(list[0].status, "running");
         assert_eq!(list[0].workspace_path, "C:/work");
+
+        provider.stop("test-sbx").await.expect("stop succeeds");
+        let list = provider.list_instances().await.expect("list succeeds");
+        assert_eq!(list[0].status, "exited");
 
         provider.start("test-sbx").await.expect("start succeeds");
         let list = provider.list_instances().await.expect("list succeeds");
@@ -417,11 +461,12 @@ mod tests {
         assert!(list.is_empty());
     }
 
-    /// A failed `msb create` must not strand the workspace volume it just made: `msb volume create`
-    /// rejects a duplicate name, so a stranded volume would make every later create of the same
-    /// sandbox name fail on a step that has nothing to do with what went wrong.
+    /// A failed `msb create` must strand neither half: it registers the sandbox record before it
+    /// fails, and the volume was made a step earlier. A stranded record takes the name and has no
+    /// volume to start against; a stranded volume makes every later create of that name fail on
+    /// `msb volume create`'s duplicate check instead of on what actually went wrong.
     #[tokio::test]
-    async fn failed_create_rolls_back_the_workspace_volume() {
+    async fn failed_create_rolls_back_the_record_and_the_workspace_volume() {
         let director = Arc::new(MockDirector::new());
         let msb_runner = Arc::new(ScriptedMsbRunner::new(director.clone()));
         let provider = provider_over(msb_runner.clone(), director.clone());
@@ -434,7 +479,12 @@ mod tests {
 
         let spec = spec("test-sbx");
         assert!(provider.create_instance(&spec).await.is_err(), "scripted create fails");
+        assert!(msb_runner.tracked_instance_names().is_empty(), "the record is rolled back");
         assert!(msb_runner.tracked_volumes().is_empty(), "the volume is rolled back");
+        assert!(
+            provider.list_instances().await.expect("list succeeds").is_empty(),
+            "the failed create leaves nothing in the sandbox list"
+        );
         provider.create_instance(&spec).await.expect("retry succeeds");
     }
 
@@ -473,6 +523,35 @@ mod tests {
             .await
             .expect("runner call succeeds");
         assert!(provider.base_image_ready().await.expect("store reads clean"));
+    }
+
+    /// `create_sandbox` (`src-tauri/src/lib.rs`) starts the instance before creating its Mutagen
+    /// session, but `msb create` has already started it, so that start must succeed on a running
+    /// instance rather than surface `msb start`'s exit 1.
+    #[tokio::test]
+    async fn start_tolerates_an_already_running_instance() {
+        let provider = provider();
+        provider.create_instance(&spec("test-sbx")).await.expect("create succeeds");
+
+        provider.start("test-sbx").await.expect("start after create succeeds");
+        provider.start("test-sbx").await.expect("a repeated start succeeds");
+        let list = provider.list_instances().await.expect("list succeeds");
+        assert_eq!(list[0].status, "running");
+    }
+
+    /// Only the already-running failure is tolerated; anything else `msb start` reports still fails.
+    #[tokio::test]
+    async fn start_surfaces_an_unrelated_failure() {
+        let director = Arc::new(MockDirector::new());
+        let provider = provider_with(director.clone());
+        director
+            .configure(
+                "msb.start",
+                Behaviour::FailAlways { exit_code: 1, stderr: "no such sandbox".to_string() },
+            )
+            .expect("known mock key");
+
+        assert!(provider.start("test-sbx").await.is_err());
     }
 
     #[tokio::test]

@@ -1,0 +1,36 @@
+import { invoke } from "@tauri-apps/api/core";
+
+/** Which engine runs a sandbox (mirrors Rust `provider::types::ProviderId`). */
+export type ProviderId = "podman" | "microsandbox";
+
+/** Every selectable provider, in the order the create-sandbox picker offers them. */
+export const PROVIDERS: ProviderId[] = ["podman", "microsandbox"];
+
+/** Feature differences between engines (mirrors Rust `provider::types::ProviderCapabilities`). */
+export interface ProviderCapabilities {
+    remoteTargets: boolean;
+    eventStream: boolean;
+    hostBindMount: boolean;
+}
+
+// TODO(i18n)
+const LABELS: Record<ProviderId, string> = {
+    podman: "Podman container",
+    microsandbox: "Microsandbox VM",
+};
+
+export function providerLabel(provider: ProviderId): string {
+    return LABELS[provider] ?? provider;
+}
+
+export function providerCapabilities(provider: ProviderId): Promise<ProviderCapabilities> {
+    return invoke<ProviderCapabilities>("provider_capabilities", { provider });
+}
+
+/** Capabilities for every provider at once, for a view that renders sandboxes of both. */
+export async function allCapabilities(): Promise<Record<ProviderId, ProviderCapabilities>> {
+    const entries = await Promise.all(
+        PROVIDERS.map(async (p) => [p, await providerCapabilities(p)] as const),
+    );
+    return Object.fromEntries(entries) as Record<ProviderId, ProviderCapabilities>;
+}

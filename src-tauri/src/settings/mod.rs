@@ -21,14 +21,25 @@ fn settings_path(app: &AppHandle) -> Result<std::path::PathBuf, SettingsError> {
     Ok(dir.join("settings.json"))
 }
 
-/// Load persisted settings, returning defaults when the file is absent.
+/// Load persisted settings, returning defaults when the file is absent. `MIO_MACHINE_PROVIDER`
+/// overrides `default_provider` for the process without touching the file, so an e2e run can point
+/// the create flow at a provider without persisting that choice into the developer's settings.
 pub fn load(app: &AppHandle) -> Result<AppSettings, SettingsError> {
     let path = settings_path(app)?;
-    match std::fs::read_to_string(&path) {
-        Ok(s) => serde_json::from_str(&s).map_err(|e| SettingsError::Parse(e.to_string())),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(AppSettings::default()),
-        Err(e) => Err(SettingsError::Io(e.to_string())),
+    let mut settings = match std::fs::read_to_string(&path) {
+        Ok(s) => serde_json::from_str(&s).map_err(|e| SettingsError::Parse(e.to_string()))?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => AppSettings::default(),
+        Err(e) => return Err(SettingsError::Io(e.to_string())),
+    };
+    if let Ok(tag) = std::env::var("MIO_MACHINE_PROVIDER") {
+        match tag.parse() {
+            Ok(provider) => settings.default_provider = provider,
+            Err(_) => {
+                tracing::warn!(target: "settings", %tag, "ignoring unknown MIO_MACHINE_PROVIDER")
+            }
+        }
     }
+    Ok(settings)
 }
 
 /// Persist `settings`, overwriting the file.

@@ -32,11 +32,21 @@ export const APP_DATA_ROOT = path.join(os.homedir(), `.sandbox-mio-e2e-appdata-$
 export const WORKSPACE_ROOT = path.join(os.homedir(), `.sandbox-mio-e2e-${RUN_SLUG}`);
 
 // microsandbox state root: `resolve_home()` upstream reads `MSB_HOME` as the root of *all* its
-// state (db, sandboxes, cache, logs), and probes `{MSB_PATH}/bin/msb` before falling back to
-// `PATH` — both must be slug-keyed or two worktrees' e2e runs collide on one shared installation
-// (docs/features/microsandbox-provider/02_dev.md, "E2E isolation").
+// state (db, sandboxes, cache, logs), so it must be slug-keyed or two worktrees' e2e runs collide on
+// one shared installation (docs/features/microsandbox-provider/02_dev.md, "E2E isolation").
+// `MSB_PATH` is pinned alongside it because a slug-keyed `MSB_HOME` holds no `bin/`, and it is the
+// path to the `msb` executable itself — `msb` resolves its own VM supervisor from the inherited
+// value, and a directory there fails every `msb create` (`msb_command()` in
+// `src-tauri/src/mockctl/mod.rs`).
 export const MSB_HOME = path.join(os.homedir(), `.sandbox-mio-e2e-msb-${RUN_SLUG}`);
-export const MSB_PATH = process.env.MSB_PATH ?? path.join(os.homedir(), ".microsandbox", "bin");
+export const MSB_PATH =
+  process.env.MSB_PATH ??
+  path.join(
+    os.homedir(),
+    ".microsandbox",
+    "bin",
+    `msb${process.platform === "win32" ? ".exe" : ""}`,
+  );
 
 // Trailing separator: a bare prefix match (`StartsWith`) would otherwise also match a sibling
 // worktree whose absolute path happens to start with this one's (e.g. a nested `.claude/worktrees/*`

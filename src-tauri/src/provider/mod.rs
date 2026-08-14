@@ -1,8 +1,3 @@
-// Unconstructed outside its own unit tests until Phase J's `provider_for` resolver makes
-// `MsbProvider` reachable from `lib.rs` — Tauri can only manage one `Arc<dyn MachineProvider>` of
-// state until Phase J replaces that with a per-operation resolver
-// (`docs/features/microsandbox-provider/02_dev.md`, Phase E's `MachineRef` section).
-#[allow(dead_code)]
 pub mod msb;
 pub mod types;
 
@@ -15,7 +10,8 @@ use tokio::process::Command;
 use crate::backends::{base_image, podman_command};
 use crate::mockctl::types::ProcessRunner;
 use types::{
-    ExecOpts, InstanceSpec, MachineProvider, ProviderCapabilities, ProviderError, PublishModel,
+    ExecOpts, InstanceSpec, MachineProvider, MachineRef, ProviderCapabilities, ProviderError,
+    ProviderId, PublishModel,
 };
 
 /// Spelled literally because `podman -v` rejects a bare `~` and does not expand `$HOME`.
@@ -30,6 +26,98 @@ const CONTAINERFILE: &str = include_str!("../../resources/Containerfile");
 /// The label key `create_instance` stamps and `list_instances` reads back to recover an
 /// `existing_path` sandbox's workspace, which is not reconstructible from the name alone.
 pub(crate) const WORKSPACE_LABEL: &str = "sandbox-mio.workspace";
+
+/// The id half of the one microsandbox machine there is (`msb:local`). Microsandbox runs its
+/// instances on the host itself and has no connection registry, so unlike Podman there is nothing
+/// to name — but [`MachineRef`] still needs an id to round-trip through its `provider:id` string.
+const MSB_LOCAL_ID: &str = "local";
+
+/// Resolves a [`MachineRef`] to the provider driving it. Replaces the single managed
+/// `Arc<dyn MachineProvider>` Phases A–I wired into Tauri state, which could only ever be Podman's
+/// (`docs/features/microsandbox-provider/02_dev.md`, Phase J).
+pub struct ProviderRegistry {
+    podman_runner: Arc<dyn ProcessRunner>,
+    msb_runner: Arc<dyn ProcessRunner>,
+    /// The Podman system connection a locally-created sandbox lives on. Read once at startup, like
+    /// `PodmanCliBackend::connection` and `MiseRuntime::connection` already do.
+    local_connection: String,
+    /// Cached rather than rebuilt per call so every local Podman operation shares one base-image
+    /// build lock — a fresh `PodmanProvider` per call would each hold their own and race the build.
+    local_podman: Arc<dyn MachineProvider>,
+    msb: Arc<dyn MachineProvider>,
+}
+
+impl ProviderRegistry {
+    /// The machine a locally-created sandbox of `provider` lives on.
+    pub fn local_ref(&self, provider: ProviderId) -> MachineRef {
+        let id = match provider {
+            ProviderId::Podman => self.local_connection.clone(),
+            ProviderId::Microsandbox => MSB_LOCAL_ID.to_string(),
+        };
+        MachineRef { provider, id }
+    }
+
+    /// The provider driving `machine`. A Podman ref naming a connection other than the local one
+    /// (a deploy target) gets its own pinned provider, exactly as `deploy` builds one.
+    pub fn provider_for(&self, machine: &MachineRef) -> Arc<dyn MachineProvider> {
+        match machine.provider {
+            ProviderId::Podman if machine.id == self.local_connection => self.local_podman.clone(),
+            ProviderId::Podman => default_provider(self.podman_runner.clone(), machine.id.clone()),
+            ProviderId::Microsandbox => self.msb.clone(),
+        }
+    }
+
+    /// The provider for `provider`'s local machine — shorthand for `provider_for(&local_ref(..))`.
+    pub fn local(&self, provider: ProviderId) -> Arc<dyn MachineProvider> {
+        self.provider_for(&self.local_ref(provider))
+    }
+
+    /// The provider running an instance named `name`, found by asking each in turn. Falls back to
+    /// Podman when no provider lists it, so an operation on a vanished sandbox surfaces the engine's
+    /// own "no such container" rather than an error of this app's invention. Podman is asked first,
+    /// which short-circuits the microsandbox lookup's per-instance `msb inspect` for the common case.
+    pub async fn provider_of(&self, name: &str) -> (ProviderId, Arc<dyn MachineProvider>) {
+        for (id, provider) in self.all() {
+            match provider.list_instances().await {
+                Ok(instances) if instances.iter().any(|s| s.name == name) => {
+                    return (id, provider);
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::debug!(target: "provider", provider = %id, error = %e, "skipping provider in lookup")
+                }
+            }
+        }
+        (ProviderId::Podman, self.local_podman.clone())
+    }
+
+    /// Every provider, for the cross-provider operations (`list`, name-uniqueness) that have to ask
+    /// all of them rather than one.
+    pub fn all(&self) -> [(ProviderId, Arc<dyn MachineProvider>); 2] {
+        [
+            (ProviderId::Podman, self.local_podman.clone()),
+            (ProviderId::Microsandbox, self.msb.clone()),
+        ]
+    }
+
+    /// The `msb`-keyed process seam, for the microsandbox host commands that are not instance
+    /// operations and so have no place on [`MachineProvider`] (`msb ssh authorize`).
+    pub fn msb_runner(&self) -> &Arc<dyn ProcessRunner> {
+        &self.msb_runner
+    }
+}
+
+/// Construct the [`ProviderRegistry`] for Tauri state. Both runners come from `lib.rs::run()`, so
+/// scripted and real calls stay on the one director the rest of the app shares.
+pub fn default_registry(
+    podman_runner: Arc<dyn ProcessRunner>,
+    msb_runner: Arc<dyn ProcessRunner>,
+) -> Arc<ProviderRegistry> {
+    let local_connection = crate::backends::connection_name();
+    let local_podman = default_provider(podman_runner.clone(), local_connection.clone());
+    let msb = msb::default_msb_provider(msb_runner.clone(), local_podman.clone());
+    Arc::new(ProviderRegistry { podman_runner, msb_runner, local_connection, local_podman, msb })
+}
 
 /// Construct the Podman-backed [`MachineProvider`] pinned to `connection`. Remote-target operations
 /// (`deploy` / `remove_remote`) build a second provider pinned to their target connection.
@@ -251,6 +339,7 @@ impl MachineProvider for PodmanProvider {
                     name,
                     workspace_path,
                     image_version,
+                    provider: ProviderId::Podman,
                 }
             })
             .collect())

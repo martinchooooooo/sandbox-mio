@@ -1,4 +1,5 @@
 import { m } from "$lib/paraglide/messages.js";
+import type { ProviderId } from "$lib/providers";
 
 export interface Project {
     id: string;
@@ -7,6 +8,8 @@ export interface Project {
     workspace_path: string;
     /** Absent for sandboxes predating numeric base-image versioning. */
     image_version?: number;
+    /** Which engine runs it — what gates the actions its provider cannot do (deploy). */
+    provider: ProviderId;
 }
 
 export type SyncStatus = "syncing" | "up-to-date" | "conflict" | "error";

@@ -1,4 +1,4 @@
-use std::{env, fs, path::{Path, PathBuf}, process::Command};
+use std::{env, fs, net::TcpStream, path::{Path, PathBuf}, process::Command, time::{Duration, Instant}};
 
 /// Mutagen release staged as the Tauri sidecar. Pinned to match the e2e suite's Mutagen.
 const MUTAGEN_VERSION: &str = "v0.18.1";
@@ -11,6 +11,13 @@ const LLAMA_VERSION: &str = "b9835";
 /// (`src-tauri/binaries/podman`). Pinned so every checkout stages the same `podman`/`gvproxy`/
 /// `win-sshproxy` that `backends::podman_command()` resolves at runtime.
 const PODMAN_VERSION: &str = "v5.6.2";
+
+/// Mirrors `tauri.conf.json`'s `build.devUrl`. `run_dev_directly` polls this to know when the Vite
+/// dev server it started is ready for the app to load, since the app itself has no retry loop.
+/// `localhost`, not a literal `127.0.0.1`: Vite's default bind can be IPv6-loopback-only, and
+/// `TcpStream::connect` does no hostname fallback across families the way letting `localhost`
+/// resolve does.
+const DEV_SERVER_ADDR: &str = "localhost:1420";
 
 fn e2e_dir() -> PathBuf { PathBuf::from(env::current_dir().unwrap()).join("e2e") }
 fn tools_dir() -> PathBuf { PathBuf::from(env::current_dir().unwrap()).join("tools") }
@@ -51,7 +58,7 @@ fn main() {
             stage_llama();
             stage_podman();
             stage_mutagen_agents();
-            run(root_dir(), "pnpm", &["run", "tauri", "dev"]);
+            run_dev_directly();
         }
         Some("e2e") if args.get(2).map(String::as_str) == Some("--setup") => {
             setup_e2e();
@@ -83,7 +90,11 @@ fn main() {
             eprintln!("                       src-tauri/binaries/ (hard-linked from a sibling worktree when");
             eprintln!("                       possible) and run `pnpm install` into <path>, defaulting to");
             eprintln!("                       the invoking worktree");
-            eprintln!("  build dev          - run `pnpm run tauri dev`");
+            eprintln!("  build dev          - start the Vite dev server, build, and launch the app directly");
+            eprintln!("                       (not via `tauri dev`/`cargo run`: msb create needs to break away");
+            eprintln!("                       from the Windows Job Object those put the app process in — see");
+            eprintln!("                       `run_dev_directly`'s doc comment. Rerun after a Rust change; no");
+            eprintln!("                       auto-relaunch)");
             eprintln!("  build dev --setup  - install app dependencies and stage the Mutagen sidecar + llama.cpp engine + Podman");
             eprintln!("  build e2e          - run `pnpm test` in the e2e folder");
             eprintln!("  build e2e --setup  - install e2e test dependencies");
@@ -706,6 +717,74 @@ fn run(dir: PathBuf, cmd: &str, args: &[&str]) {
         .wait()
         .unwrap_or_else(|e| panic!("failed to wait for `{}`: {}", cmd, e));
     assert!(status.success(), "`{}` exited with {}", cmd, status);
+}
+
+/// Runs the dev workflow without ever putting the app process in a Windows Job Object, unlike
+/// `pnpm run tauri dev` (`cargo run`, under the hood). `msb create` spawns its own detached VM
+/// supervisor, and that spawn needs to break away from any job the app process itself sits in; the
+/// job `cargo run` assigns on Windows never grants that (`rust-lang/cargo#4841`, open since 2017,
+/// no known workaround besides not going through `cargo run` at all) — confirmed hands-on, including
+/// that this app's own `win_job` (below) would reintroduce the identical problem if `sandbox-mio.exe`
+/// were spawned through `run`/`try_run` instead of bypassing them here.
+///
+/// Costs `tauri dev`'s auto-rebuild-and-relaunch on Rust file changes: rerun `build dev` after
+/// editing Rust source. Frontend (Svelte/Vite) hot-reload is untouched either way, since it never
+/// goes through this process tree.
+fn run_dev_directly() {
+    let vite = spawn_background(root_dir(), "pnpm", &["dev"]);
+    wait_for_dev_server();
+    run(root_dir().join("src-tauri"), "cargo", &["build"]);
+
+    let exe = debug_dir().join("sandbox-mio.exe");
+    // Deliberately not `run`/`try_run`: both call `win_job::assign`, which is exactly the job
+    // membership this function exists to avoid for this one process.
+    let mut app = Command::new(&exe)
+        .current_dir(root_dir())
+        .spawn()
+        .unwrap_or_else(|e| panic!("failed to launch {}: {}", exe.display(), e));
+    let _ = app.wait();
+
+    // `vite` is a member of `win_job`'s job like every other `spawn_background`/`run` child, so it
+    // would die with `build.exe` regardless — killed explicitly here so closing the app window ends
+    // the dev server promptly instead of leaving it running until `build.exe` itself is interrupted.
+    let mut vite = vite;
+    let _ = vite.kill();
+}
+
+/// Polls `DEV_SERVER_ADDR` until Vite accepts a connection, so `cargo build` (and the eventual app
+/// launch) never race the dev server's own startup. Panics past a generous timeout rather than
+/// hanging forever on a dev server that failed to start.
+fn wait_for_dev_server() {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while Instant::now() < deadline {
+        if TcpStream::connect(DEV_SERVER_ADDR).is_ok() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    panic!("Vite dev server never came up on {} after 60s", DEV_SERVER_ADDR);
+}
+
+/// `run`'s non-blocking counterpart: spawns `cmd`, joins it to `win_job`'s job the same way, but
+/// returns the [`std::process::Child`] immediately instead of waiting — for a long-running sidecar
+/// like the Vite dev server that has to keep running alongside whatever `dev` does next.
+fn spawn_background(dir: PathBuf, cmd: &str, args: &[&str]) -> std::process::Child {
+    let mut command = if cfg!(windows) {
+        let mut c = Command::new("cmd");
+        c.arg("/C").arg(cmd).args(args);
+        c
+    } else {
+        let mut c = Command::new(cmd);
+        c.args(args);
+        c
+    };
+    let child = command
+        .current_dir(dir)
+        .spawn()
+        .unwrap_or_else(|e| panic!("failed to run `{}`: {}", cmd, e));
+    #[cfg(windows)]
+    win_job::assign(&child);
+    child
 }
 
 /// A Windows job object that kills every process still assigned to it the instant this binary's

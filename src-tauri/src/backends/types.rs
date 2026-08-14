@@ -9,6 +9,11 @@ pub enum BackendError {
     /// Sandbox name failed Podman's character/length rules.
     #[error("invalid sandbox name {name:?}: use letters, digits, '_', '.' or '-', starting with a letter or digit")]
     InvalidName { name: String },
+    /// A sandbox of this name already exists on some provider. Names are unique across the union of
+    /// every provider's instances, not per provider, because every other command addresses a
+    /// sandbox by name alone.
+    #[error("a sandbox named {name:?} already exists on {provider}")]
+    NameTaken { name: String, provider: crate::provider::types::ProviderId },
     /// Platform Documents directory not found (headless environment).
     #[error("could not resolve the Documents directory")]
     DocumentsDirNotFound,
@@ -33,6 +38,10 @@ pub enum BackendError {
     /// Deploy target is the same connection as the local container.
     #[error("cannot deploy {name:?} onto its own connection {connection:?}; the local container already runs there")]
     SelfDeploy { name: String, connection: String },
+    /// Deploy was asked for a sandbox whose provider has no remote-target concept
+    /// (`ProviderCapabilities.remote_targets`).
+    #[error("{name:?} runs on a provider that cannot deploy to a remote host")]
+    RemoteTargetsUnsupported { name: String },
     /// Deploy target has no SSH endpoint (e.g., unix-socket-only local connection).
     #[error("deploy target {connection:?} has no SSH endpoint to sync over")]
     NoSshEndpoint { connection: String },
@@ -53,15 +62,22 @@ pub struct Sandbox {
     /// Image version for updates (None for legacy/non-mio containers).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image_version: Option<u32>,
+    /// Which engine runs this sandbox. Every command addresses a sandbox by name alone, so this is
+    /// what lets the command layer resolve the name back to a provider without asking both.
+    pub provider: crate::provider::types::ProviderId,
 }
 
 impl Sandbox {
-    /// Whether this sandbox was built from an image new enough to have `sshd`/
-    /// `sshd_config.container` baked in, and so can use the podman-exec-transport reachability
-    /// model (`SshAlias::Proxied` + `PassthroughPortTransport`) instead of publish+relay.
+    /// Whether this sandbox uses the exec-transport reachability model (`SshAlias::Proxied` +
+    /// `PassthroughPortTransport`) instead of publish+relay. A microsandbox sandbox is exec-tunnelled
+    /// by construction, independent of image version — `MsbProvider` has no publish+relay argv to
+    /// build (`docs/features/microsandbox-provider/02_dev.md`, Phase E onward). For Podman it means
+    /// an image new enough to have `sshd`/`sshd_config.container` baked in.
     pub fn supports_exec_transport(&self) -> bool {
-        self.image_version
-            .is_some_and(|v| v >= crate::backends::EXEC_TRANSPORT_MIN_IMAGE_VERSION)
+        self.provider == crate::provider::types::ProviderId::Microsandbox
+            || self
+                .image_version
+                .is_some_and(|v| v >= crate::backends::EXEC_TRANSPORT_MIN_IMAGE_VERSION)
     }
 }
 
@@ -114,16 +130,28 @@ pub(super) struct ConnectionInfo {
 /// on the configured system connection (local Podman machine or remote host over SSH).
 #[async_trait::async_trait]
 pub trait SandboxBackend: Send + Sync {
-    /// Build base image if absent (idempotent; image is never in a registry).
-    async fn ensure_base_image(&self) -> Result<(), BackendError>;
-    /// Whether the base image already exists on the active connection, without building it.
-    /// Query-only counterpart to `ensure_base_image` for UI that must distinguish "already done"
-    /// from "not started yet" (the welcome/onboarding replay screen).
-    async fn base_image_ready(&self) -> Result<bool, BackendError>;
-    /// Create a stopped container with workspace directory bind-mounted at `/root/work`.
-    /// With `existing_path: None`, uses `<Documents>/sandbox-mio/<name>`; with Some, validates and uses it.
-    async fn create(&self, name: &str, existing_path: Option<&str>) -> Result<Sandbox, BackendError>;
-    /// Return all containers (running and stopped).
+    /// Build `provider`'s base image if absent (idempotent; image is never in a registry).
+    async fn ensure_base_image(
+        &self,
+        provider: crate::provider::types::ProviderId,
+    ) -> Result<(), BackendError>;
+    /// Whether `provider`'s base image already exists, without building it. Query-only counterpart
+    /// to `ensure_base_image` for UI that must distinguish "already done" from "not started yet"
+    /// (the welcome/onboarding replay screen).
+    async fn base_image_ready(
+        &self,
+        provider: crate::provider::types::ProviderId,
+    ) -> Result<bool, BackendError>;
+    /// Create a stopped instance on `provider` with the workspace reachable at `/root/work` — a
+    /// host bind mount for Podman, a synced disk volume for microsandbox. With `existing_path:
+    /// None`, uses `<Documents>/sandbox-mio/<name>`; with Some, validates and uses it.
+    async fn create(
+        &self,
+        name: &str,
+        existing_path: Option<&str>,
+        provider: crate::provider::types::ProviderId,
+    ) -> Result<Sandbox, BackendError>;
+    /// Return every provider's instances (running and stopped), each tagged with its provider.
     async fn list(&self) -> Result<Vec<Sandbox>, BackendError>;
     /// Start a stopped container.
     async fn start(&self, name: &str) -> Result<(), BackendError>;
@@ -165,13 +193,15 @@ pub trait SandboxBackend: Send + Sync {
     ) -> Result<(), BackendError>;
 }
 
-/// Real [`SandboxBackend`] driving the `podman` CLI over a named system connection. Container
-/// lifecycle delegates to `provider`; the Podman-only orchestration (deploy, host registry,
-/// event stream, exec-transport SSH aliases) stays here.
+/// Real [`SandboxBackend`]. Instance lifecycle dispatches through `registry` to whichever provider
+/// owns the sandbox, so it is no longer Podman-only despite the name; the orchestration that *is*
+/// Podman-only (deploy, host registry, event stream) stays here and still drives the `podman` CLI
+/// over `connection` directly.
 pub(super) struct PodmanCliBackend {
     pub connection: String,
-    /// Container/VM primitive the lifecycle methods delegate to, pinned to `connection`.
-    pub(super) provider: std::sync::Arc<dyn crate::provider::types::MachineProvider>,
+    /// Resolves each operation to the provider that owns the sandbox
+    /// (`docs/features/microsandbox-provider/02_dev.md`, Phase J).
+    pub(super) registry: std::sync::Arc<crate::provider::ProviderRegistry>,
     /// The process seam the still-Podman-only `&self` calls route through (host registry, event
     /// stream, connection lookup) — real in production, scripted under `MIO_MOCK_BACKEND=1`.
     /// See `docs/features/scriptable-mock-backend/02_dev.md`.

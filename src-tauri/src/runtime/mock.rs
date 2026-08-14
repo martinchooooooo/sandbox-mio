@@ -63,7 +63,7 @@ impl RuntimeManager for MockRuntime {
     async fn reproduce_remote(
         &self,
         _name: &str,
-        _target_connection: &str,
+        _target: &crate::provider::types::MachineRef,
         _workspace_host_path: &str,
     ) -> Result<(), RuntimeError> {
         Ok(())
@@ -72,7 +72,7 @@ impl RuntimeManager for MockRuntime {
     async fn prepare_terminal(
         &self,
         _name: &str,
-        _connection: &str,
+        _machine: &crate::provider::types::MachineRef,
         _workspace_host_path: &str,
         _exec_capable: bool,
     ) -> Result<(String, u16), RuntimeError> {
@@ -82,15 +82,11 @@ impl RuntimeManager for MockRuntime {
     async fn prepare_agent_web(
         &self,
         _name: &str,
-        _connection: &str,
+        _machine: &crate::provider::types::MachineRef,
         _password: &str,
         _exec_capable: bool,
     ) -> Result<u16, RuntimeError> {
         Ok(0)
-    }
-
-    fn local_connection(&self) -> &str {
-        "mock"
     }
 
     async fn registry(&self, _name: &str) -> Result<Vec<RegistryEntry>, RuntimeError> {

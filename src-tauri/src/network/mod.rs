@@ -14,8 +14,8 @@ use tauri::{AppHandle, Emitter};
 use mock::MockNetworkManager;
 use types::{ForwardInfo, NetworkError, NetworkManager, ServiceKind};
 
-use crate::mockctl::types::ProcessRunner;
-use crate::provider::types::{ExecOpts, MachineProvider};
+use crate::provider::types::{ExecOpts, MachineProvider, MachineRef};
+use crate::provider::ProviderRegistry;
 
 pub use types::EVENT_NAME;
 
@@ -97,17 +97,23 @@ pub struct MutagenNetworkManager {
     /// loopback is reached directly), so unlike `PodmanMiseRuntime` there is no second
     /// `exec_port_transport` field here — see `docs/features/podman-exec-transport/02_dev.md`.
     published_port_transport: std::sync::Arc<dyn crate::transport::types::PortTransport>,
-    /// The process seam from which a per-call, target-pinned provider is built. Each method drives an
-    /// explicit `connection`/`entry.connection`, so the provider is constructed per call rather than
-    /// held as a single field — mirroring `MiseRuntime`'s `provider_on`.
-    runner: Arc<dyn ProcessRunner>,
+    /// Resolves each method's explicit `machine`/`entry.connection` to its provider. Held as a
+    /// registry rather than one pinned provider because each call names its own machine — mirroring
+    /// `MiseRuntime`'s `providers`.
+    providers: Arc<ProviderRegistry>,
 }
 
 impl MutagenNetworkManager {
-    /// A provider pinned to an arbitrary `connection`, mirroring `MiseRuntime::provider_on` and
-    /// `deploy`'s target-pinned provider.
-    fn provider_on(&self, connection: &str) -> Arc<dyn MachineProvider> {
-        crate::provider::default_provider(self.runner.clone(), connection.to_string())
+    /// The provider driving `machine`, mirroring `MiseRuntime::provider_on`.
+    fn provider_on(&self, machine: &MachineRef) -> Arc<dyn MachineProvider> {
+        self.providers.provider_for(machine)
+    }
+
+    /// The provider for a `ForwardInfo.connection` recorded by `expose_port`. An unparseable value
+    /// means the entry came from `open_forward`, whose `connection` is an SSH alias — those are
+    /// never relayed, so no caller reaches this with one.
+    fn provider_for_entry(&self, entry: &ForwardInfo) -> Option<Arc<dyn MachineProvider>> {
+        entry.connection.parse::<MachineRef>().ok().map(|m| self.provider_on(&m))
     }
 
     /// Push the full current snapshot to `EVENT_NAME` so `state.svelte.ts` stays live. Called after
@@ -140,19 +146,19 @@ impl NetworkManager for MutagenNetworkManager {
         &self,
         sandbox: &str,
         kind: ServiceKind,
-        connection: &str,
+        alias: &str,
         remote_port: u16,
     ) -> Result<u16, NetworkError> {
         let name = forward_name(sandbox, kind);
         let host_port = allocate_ephemeral_port()?;
-        crate::sync::forward_create(&self.app, &name, host_port, connection, remote_port).await?;
+        crate::sync::forward_create(&self.app, &name, host_port, alias, remote_port).await?;
         self.forwards.lock().unwrap().insert(
             (sandbox.to_string(), kind),
             ForwardInfo {
                 sandbox: sandbox.to_string(),
                 kind,
                 host_port,
-                connection: connection.to_string(),
+                connection: alias.to_string(),
                 remote_port,
                 forward_name: name,
                 label: None,
@@ -172,6 +178,12 @@ impl NetworkManager for MutagenNetworkManager {
     }
 
     async fn close_sandbox(&self, sandbox: &str) {
+        // Order is load-bearing: take `expose_lock` *before* aborting the poll task. `expose_port`
+        // creates the Mutagen forward and only then records it, so aborting first can cancel it in
+        // that window and strand a live forward this map never learns about — one nothing can
+        // terminate afterwards. Holding the lock lets an in-flight expose finish and register, and
+        // cancels a queued one while it still waits here, before it creates anything.
+        let _expose_guard = self.expose_lock.lock().await;
         if let Some(handle) = self.ports_watch.lock().unwrap().remove(sandbox) {
             handle.abort();
         }
@@ -194,10 +206,11 @@ impl NetworkManager for MutagenNetworkManager {
                     // Best-effort: the container may already be gone (destroy) or stopped
                     // (undeploy), either of which already kills the relay process for free.
                     let pattern = format!("TCP-LISTEN:{}", entry.remote_port);
-                    let _ = self
-                        .provider_on(&entry.connection)
-                        .exec(sandbox, &["pkill", "-f", &pattern], ExecOpts::default())
-                        .await;
+                    if let Some(provider) = self.provider_for_entry(entry) {
+                        let _ = provider
+                            .exec(sandbox, &["pkill", "-f", &pattern], ExecOpts::default())
+                            .await;
+                    }
                 }
             }
         }
@@ -215,7 +228,7 @@ impl NetworkManager for MutagenNetworkManager {
     async fn expose_port(
         &self,
         sandbox: &str,
-        connection: &str,
+        machine: &MachineRef,
         workspace_path: &str,
         target_port: u16,
         label: Option<String>,
@@ -237,7 +250,7 @@ impl NetworkManager for MutagenNetworkManager {
 
         let name = forward_name(sandbox, kind);
         let host_port = allocate_ephemeral_port()?;
-        let provider = self.provider_on(connection);
+        let provider = self.provider_on(machine);
 
         let remote_port = if exec_capable {
             // No relay-pool slot, no socat: the container's own loopback is reachable directly
@@ -271,11 +284,11 @@ impl NetworkManager for MutagenNetworkManager {
 
             let slot_host_port = self
                 .published_port_transport
-                .resolve_remote_port(sandbox, connection, slot)
+                .resolve_remote_port(sandbox, &machine.id, slot)
                 .await
                 .map_err(|e| NetworkError::CommandFailed(e.to_string()))?;
 
-            crate::sync::forward_create(&self.app, &name, host_port, connection, slot_host_port).await?;
+            crate::sync::forward_create(&self.app, &name, host_port, &machine.id, slot_host_port).await?;
             slot
         };
 
@@ -285,7 +298,7 @@ impl NetworkManager for MutagenNetworkManager {
                 sandbox: sandbox.to_string(),
                 kind,
                 host_port,
-                connection: connection.to_string(),
+                connection: machine.to_string(),
                 remote_port,
                 forward_name: name,
                 label: label.clone(),
@@ -304,10 +317,11 @@ impl NetworkManager for MutagenNetworkManager {
         crate::sync::forward_terminate(&self.app, &entry.forward_name).await;
         if is_relayed(&entry, target_port) {
             let pattern = format!("TCP-LISTEN:{}", entry.remote_port);
-            let _ = self
-                .provider_on(&entry.connection)
-                .exec(sandbox, &["pkill", "-f", &pattern], ExecOpts::default())
-                .await;
+            if let Some(provider) = self.provider_for_entry(&entry) {
+                let _ = provider
+                    .exec(sandbox, &["pkill", "-f", &pattern], ExecOpts::default())
+                    .await;
+            }
         }
         self.emit_forwards();
     }
@@ -316,7 +330,7 @@ impl NetworkManager for MutagenNetworkManager {
         self: std::sync::Arc<Self>,
         sandbox: &str,
         workspace_path: &str,
-        connection: &str,
+        machine: &MachineRef,
         exec_capable: bool,
     ) {
         let mut watches = self.ports_watch.lock().unwrap();
@@ -325,11 +339,11 @@ impl NetworkManager for MutagenNetworkManager {
         }
         let sandbox = sandbox.to_string();
         let workspace_path = workspace_path.to_string();
-        let connection = connection.to_string();
+        let machine = machine.clone();
         let manager = self.clone();
         let task_sandbox = sandbox.clone();
         let handle = tokio::spawn(async move {
-            poll_ports_file(manager, task_sandbox, workspace_path, connection, exec_capable).await;
+            poll_ports_file(manager, task_sandbox, workspace_path, machine, exec_capable).await;
         });
         watches.insert(sandbox, handle);
     }
@@ -397,11 +411,11 @@ async fn poll_ports_file(
     manager: std::sync::Arc<MutagenNetworkManager>,
     sandbox: String,
     workspace_path: String,
-    connection: String,
+    machine: MachineRef,
     exec_capable: bool,
 ) {
     let path = std::path::Path::new(&workspace_path).join(".mio").join("ports.json");
-    let provider = manager.provider_on(&connection);
+    let provider = manager.provider_on(&machine);
     loop {
         tokio::time::sleep(PORTS_FILE_POLL_INTERVAL).await;
 
@@ -440,7 +454,7 @@ async fn poll_ports_file(
 
                 for (port, label) in declared.into_iter().filter(|(p, _)| !already_exposed.contains(p)) {
                     let _ = manager
-                        .expose_port(&sandbox, &connection, &workspace_path, port, Some(label), false, exec_capable)
+                        .expose_port(&sandbox, &machine, &workspace_path, port, Some(label), false, exec_capable)
                         .await;
                 }
             }
@@ -480,7 +494,7 @@ async fn poll_ports_file(
 
         for port in scanned.into_iter().filter(|p| !exclude.contains(p)) {
             let _ = manager
-                .expose_port(&sandbox, &connection, &workspace_path, port, None, true, exec_capable)
+                .expose_port(&sandbox, &machine, &workspace_path, port, None, true, exec_capable)
                 .await;
         }
     }
@@ -491,7 +505,7 @@ async fn poll_ports_file(
 pub fn default_network_manager(
     app: AppHandle,
     published_port_transport: std::sync::Arc<dyn crate::transport::types::PortTransport>,
-    runner: Arc<dyn ProcessRunner>,
+    providers: Arc<ProviderRegistry>,
 ) -> std::sync::Arc<dyn NetworkManager> {
     if crate::backends::mock_backend_enabled() {
         return std::sync::Arc::new(MockNetworkManager::new(app));
@@ -502,6 +516,6 @@ pub fn default_network_manager(
         expose_lock: tokio::sync::Mutex::new(()),
         ports_watch: Mutex::new(HashMap::new()),
         published_port_transport,
-        runner,
+        providers,
     })
 }

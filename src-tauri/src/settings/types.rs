@@ -23,4 +23,8 @@ pub struct AppSettings {
     /// Whether the user has finished the welcome/onboarding flow. Absent from a settings file
     /// written before the feature, so an existing install deserializes as not yet onboarded.
     pub onboarding_completed: bool,
+    /// Which engine the create-sandbox flow selects by default. Absent from an existing settings
+    /// file, which therefore keeps creating Podman sandboxes
+    /// (`docs/features/microsandbox-provider/02_dev.md`, Phase J).
+    pub default_provider: crate::provider::types::ProviderId,
 }

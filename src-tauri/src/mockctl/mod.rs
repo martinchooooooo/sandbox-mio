@@ -9,6 +9,7 @@ pub mod types;
 
 use std::collections::HashSet;
 use std::process::Output;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
 
 use crate::process_ext::NoWindow;
@@ -27,12 +28,25 @@ impl ProcessRunner for SystemPodmanRunner {
 }
 
 /// `msb` is never bundled (see [`SystemMsbRunner`]'s doc comment), so this only needs to honour an
-/// `MSB_PATH` override the way `podman_command()` honours its bundled resource dir — real `msb`
-/// itself also reads `MSB_PATH`/`MSB_HOME` directly from the inherited process environment for its
-/// own state isolation, which this app does not need to (and must not) re-derive.
+/// `MSB_PATH` override the way `podman_command()` honours its bundled resource dir, falling back to
+/// a bare `msb` off `PATH`.
+///
+/// `MSB_PATH` is the path *to the `msb` executable*, never a directory containing it. The spawned
+/// `msb` inherits the variable and resolves its own detached VM supervisor from it, so a directory
+/// value makes every `msb create` underneath this app fail (`Access is denied. (os error 5)` on
+/// Windows, where executing a directory is ERROR_ACCESS_DENIED).
+///
+/// Under `tauri dev` specifically, this app's own process sits inside a Windows Job Object
+/// tauri-cli assigns for rebuild/restart cleanup, and that job denies `JOB_OBJECT_LIMIT_BREAKAWAY_OK`
+/// — confirmed hands-on: `msb create` fails under `tauri dev` and succeeds when the identical binary
+/// is launched directly outside any job, and requesting `CREATE_BREAKAWAY_FROM_JOB` on this app's
+/// own spawn of `msb.exe` fails outright rather than helping, since a job member can never grant
+/// itself an exemption the job's owner didn't set. There is no fix from this side of the process
+/// tree; running the dev-built binary directly (bypassing `tauri dev`'s supervision) is the only
+/// workaround, and it does not affect a packaged build, which no job ever wraps.
 pub(crate) fn msb_command() -> tokio::process::Command {
     let mut cmd = match std::env::var_os("MSB_PATH") {
-        Some(dir) => tokio::process::Command::new(std::path::Path::new(&dir).join("msb.exe")),
+        Some(exe) => tokio::process::Command::new(exe),
         None => tokio::process::Command::new("msb"),
     };
     cmd.no_window();
@@ -42,8 +56,51 @@ pub(crate) fn msb_command() -> tokio::process::Command {
 #[async_trait::async_trait]
 impl ProcessRunner for SystemMsbRunner {
     async fn run(&self, args: &[&str]) -> std::io::Result<Output> {
-        msb_command().args(args).output().await
+        run_capturing_via_files(msb_command(), args).await
     }
+}
+
+static MSB_CALL_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Runs `cmd`, capturing stdout/stderr via temp files instead of the OS pipes `.output()` would use.
+///
+/// A successful `msb create` spawns a long-running detached VM supervisor that inherits `msb.exe`'s
+/// own stdout/stderr handles — `msb` does not appear to redirect them away for its own Windows
+/// daemonization. A piped `wait_with_output()` (what `.output()` does under the hood) reads until
+/// EOF, which never comes while that supervisor keeps its inherited duplicate of the pipe open, so
+/// every `msb create` hangs forever even though `msb.exe` itself already exited 0 and the sandbox is
+/// already running (confirmed hands-on: `msb ls` shows the new sandbox while the hung call still
+/// blocks). Reading a file after the direct child exits doesn't care whether some other process
+/// still has it open, so redirecting there instead sidesteps the hang entirely.
+async fn run_capturing_via_files(
+    mut cmd: tokio::process::Command,
+    args: &[&str],
+) -> std::io::Result<Output> {
+    let id = MSB_CALL_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let stem = format!("sandbox-mio-msb-{}-{id}", std::process::id());
+    let stdout_path = std::env::temp_dir().join(format!("{stem}.stdout"));
+    let stderr_path = std::env::temp_dir().join(format!("{stem}.stderr"));
+
+    let result = async {
+        let stdout_file = std::fs::File::create(&stdout_path)?;
+        let stderr_file = std::fs::File::create(&stderr_path)?;
+        let status = cmd
+            .args(args)
+            .stdout(std::process::Stdio::from(stdout_file))
+            .stderr(std::process::Stdio::from(stderr_file))
+            .status()
+            .await?;
+        Ok(Output {
+            status,
+            stdout: std::fs::read(&stdout_path).unwrap_or_default(),
+            stderr: std::fs::read(&stderr_path).unwrap_or_default(),
+        })
+    }
+    .await;
+
+    let _ = std::fs::remove_file(&stdout_path);
+    let _ = std::fs::remove_file(&stderr_path);
+    result
 }
 
 impl SystemMutagenRunner {
@@ -117,6 +174,9 @@ static KNOWN_CALLS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "msb.volume-create",
         "msb.volume-rm",
         "msb.image-ls",
+        // `backends::create`'s microsandbox branch authorizes the sandbox's SSH key host-wide
+        // (docs/features/microsandbox-provider/02_dev.md, Phase J).
+        "msb.ssh-authorize",
         // `MsbMachineManager::readiness`/`prepare` (Phase I).
         "msb.doctor",
         // `MsbProvider::ensure_base_image` builds the image with Podman before handing it to
@@ -229,17 +289,17 @@ fn arg_after<'a>(args: &[&'a str], flag: &str) -> Option<&'a str> {
     args.iter().position(|&a| a == flag).and_then(|i| args.get(i + 1).copied())
 }
 
-/// Derives a `msb.<subcommand>` key. Depth-2 for `volume`/`image` (`msb volume create`, `msb image
-/// ls`), matching `derive_podman_key`'s `machine`/`system connection`/`image` special-casing; depth-1
-/// for every other call (`msb ls`, `msb create ...`, `msb start <name>`, `msb exec <name> -- ...`,
-/// `msb inspect <name> ...`, `msb load ...`). A future two-word subcommand outside `volume`/`image`
-/// (e.g. `msb ssh serve`, Phase H) needs its own case here.
+/// Derives a `msb.<subcommand>` key. Depth-2 for `volume`/`image`/`ssh` (`msb volume create`, `msb
+/// image ls`, `msb ssh authorize`), matching `derive_podman_key`'s `machine`/`system connection`/
+/// `image` special-casing; depth-1 for every other call (`msb ls`, `msb create ...`, `msb start
+/// <name>`, `msb exec <name> -- ...`, `msb inspect <name> ...`, `msb load ...`). A future two-word
+/// subcommand outside those three roots needs its own case here.
 fn derive_msb_key(args: &[&str]) -> String {
     let Some(&root) = args.first() else {
         return "msb.".to_string();
     };
     let depth = match root {
-        "volume" | "image" => 2,
+        "volume" | "image" | "ssh" => 2,
         _ => 1,
     };
     let depth = depth.min(args.len());
@@ -439,6 +499,13 @@ impl ScriptedMsbRunner {
         self.volumes.lock().unwrap().clone()
     }
 
+    /// Test-only view of the tracked instance names, the record half of what a create rollback has
+    /// to clear.
+    #[cfg(test)]
+    pub(crate) fn tracked_instance_names(&self) -> Vec<String> {
+        self.instances.lock().unwrap().iter().map(|i| i.name.clone()).collect()
+    }
+
     fn track_volume_remove(&self, args: &[&str]) -> ScriptedOutput {
         if let Some(&name) = args.get(2) {
             self.volumes.lock().unwrap().retain(|v| v != name);
@@ -448,14 +515,46 @@ impl ScriptedMsbRunner {
 
     /// `msb create <image> --name <name> ...`: the name and workspace label sit at fixed flags
     /// exactly like `track_create`'s Podman argv, just without a leading `--connection` pair to
-    /// strip.
+    /// strip. The instance is tracked as running because real `msb create` auto-starts it
+    /// (`docs/features/microsandbox-provider/spike/hands-on-cli.md`, finding 3), unlike `podman
+    /// create`.
     fn track_create(&self, args: &[&str]) -> ScriptedOutput {
         let name = arg_after(args, "--name").unwrap_or_default().to_string();
         let workspace_label = arg_after(args, "--label")
             .and_then(|l| l.strip_prefix("sandbox-mio.workspace="))
             .unwrap_or_default()
             .to_string();
-        self.instances.lock().unwrap().push(TrackedMsbInstance { name, workspace_label, running: false });
+        // `msb create <image> ...` — the image is the one positional, ahead of every flag.
+        let image = args.get(1).copied().unwrap_or_default().to_string();
+        self.instances.lock().unwrap().push(TrackedMsbInstance {
+            name,
+            workspace_label,
+            running: true,
+            image,
+        });
+        ScriptedOutput { exit_code: 0, stdout: String::new(), stderr: String::new() }
+    }
+
+    /// `msb start <name>`: rejects an instance that is already running the way real `msb` 0.6.6
+    /// does, so `MsbProvider::start`'s tolerance of that failure is exercised under mock rather than
+    /// only against the real binary — the same reason `track_volume_create` models its duplicate.
+    fn track_start(&self, args: &[&str]) -> ScriptedOutput {
+        let Some(&name) = args.last() else {
+            return ScriptedOutput { exit_code: 0, stdout: String::new(), stderr: String::new() };
+        };
+        let mut instances = self.instances.lock().unwrap();
+        if let Some(i) = instances.iter_mut().find(|i| i.name == name) {
+            if i.running {
+                return ScriptedOutput {
+                    exit_code: 1,
+                    stdout: String::new(),
+                    stderr: format!(
+                        "error: sandbox still running: cannot start sandbox '{name}': already running"
+                    ),
+                };
+            }
+            i.running = true;
+        }
         ScriptedOutput { exit_code: 0, stdout: String::new(), stderr: String::new() }
     }
 
@@ -491,7 +590,7 @@ impl ScriptedMsbRunner {
                     "name": i.name,
                     "status": if i.running { "Running" } else { "Stopped" },
                     "created_at": "",
-                    "image": "",
+                    "image": i.image,
                 })
             })
             .collect();
@@ -526,11 +625,17 @@ impl ProcessRunner for ScriptedMsbRunner {
     async fn run(&self, args: &[&str]) -> std::io::Result<Output> {
         let key = derive_msb_key(args);
         if let Some(scripted) = self.director.consult(&key) {
+            // Real `msb` 0.6.6 inserts the sandbox record before the step a failing `msb create`
+            // dies on, so a scripted failure has to leave that record behind too — it is what
+            // `MsbProvider::create_instance`'s rollback exists to remove.
+            if key == "msb.create" && scripted.exit_code != 0 {
+                self.track_create(args);
+            }
             return Ok(to_output(scripted));
         }
         let scripted = match key.as_str() {
             "msb.create" => self.track_create(args),
-            "msb.start" => self.set_running(args, true),
+            "msb.start" => self.track_start(args),
             "msb.stop" => self.set_running(args, false),
             "msb.rm" => self.track_remove(args),
             "msb.ls" => self.tracked_ls(),

@@ -25,21 +25,31 @@
         type Project,
         type Deployment,
     } from "$lib/sandbox";
+    import type { ProviderCapabilities } from "$lib/providers";
 
     let {
         project,
         deployment,
         hosts,
         currentImageVersion,
+        capabilities,
         onChanged,
     }: {
         project: Project;
         deployment: Deployment | undefined;
         hosts: string[];
         currentImageVersion: number | undefined;
+        // What this sandbox's provider can do; `undefined` until the parent's probe resolves.
+        capabilities: ProviderCapabilities | undefined;
         // Tells the parent to reload its sandbox and deployment lists after a mutating action.
         onChanged: () => void;
     } = $props();
+
+    // Hidden rather than disabled for a provider with no remote-target concept: there is nothing
+    // the user could do to make it available (`docs/features/microsandbox-provider/02_dev.md`,
+    // Phase J). Shown while capabilities are still loading, so the button does not flicker in for
+    // the Podman sandboxes that are the common case.
+    const canDeploy = $derived(capabilities === undefined || capabilities.remoteTargets);
 
     let dismissedVersion = $state<number | undefined>(undefined);
 
@@ -242,10 +252,12 @@
                     <HugeiconsIcon icon={DashboardSquare01Icon} size={16} />
                     <span class="@max-[420px]:hidden">{m.projects_workspace()}</span>
                 </Button>
-                <Button variant="ghost" size="sm" onclick={openPicker} title={m.projects_deploy()} disabled={action.busy !== null}>
-                    <HugeiconsIcon icon={CloudUploadIcon} size={16} />
-                    <span class="@max-[420px]:hidden">{m.projects_deploy()}</span>
-                </Button>
+                {#if canDeploy}
+                    <Button variant="ghost" size="sm" onclick={openPicker} title={m.projects_deploy()} disabled={action.busy !== null}>
+                        <HugeiconsIcon icon={CloudUploadIcon} size={16} />
+                        <span class="@max-[420px]:hidden">{m.projects_deploy()}</span>
+                    </Button>
+                {/if}
             {/if}
             <Button variant="destructive" size="sm" onclick={destroyProject} title={m.projects_destroy()}
                 loading={action.busy === "destroy"} disabled={action.busy !== null}>
