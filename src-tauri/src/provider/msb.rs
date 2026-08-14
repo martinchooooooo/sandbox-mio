@@ -72,9 +72,44 @@ pub(crate) struct MsbProvider {
     build_lock: tokio::sync::Mutex<()>,
 }
 
+/// Trims a captured stream for the log: enough to carry a real `msb` diagnostic, capped so a JSON
+/// listing or a base-image dump cannot flood `mio.log`.
+fn for_log(bytes: &[u8]) -> String {
+    const LIMIT: usize = 600;
+    let text = String::from_utf8_lossy(bytes);
+    let text = text.trim();
+    match text.char_indices().nth(LIMIT) {
+        Some((cut, _)) => format!("{}…[{} bytes total]", &text[..cut], bytes.len()),
+        None => text.to_string(),
+    }
+}
+
 impl MsbProvider {
     async fn run(&self, argv: &[&str]) -> Result<Output, ProviderError> {
-        self.runner.run(argv).await.map_err(|e| ProviderError::CommandFailed(e.to_string()))
+        let started = std::time::Instant::now();
+        let result = self.runner.run(argv).await;
+        let ms = started.elapsed().as_millis();
+        match &result {
+            // Non-zero exit is logged but not returned as an error here: several callers
+            // deliberately tolerate one (`ensure_volume`'s `already exists`, `start`'s `already
+            // running`), so the log is the only place the distinction is visible.
+            Ok(out) if out.status.success() => {
+                tracing::info!(target: "msb", argv = %argv.join(" "), ms, "msb ok")
+            }
+            Ok(out) => tracing::warn!(
+                target: "msb",
+                argv = %argv.join(" "),
+                ms,
+                code = out.status.code().unwrap_or(-1),
+                stderr = %for_log(&out.stderr),
+                stdout = %for_log(&out.stdout),
+                "msb exited non-zero"
+            ),
+            Err(e) => {
+                tracing::error!(target: "msb", argv = %argv.join(" "), ms, error = %e, "msb spawn failed")
+            }
+        }
+        result.map_err(|e| ProviderError::CommandFailed(e.to_string()))
     }
 
     /// Whether the base image is in the local `msb` store. Compares `msb image ls --format json`'s
@@ -345,10 +380,21 @@ impl MachineProvider for MsbProvider {
             .await
             .map_err(|e| ProviderError::CommandFailed(e.to_string()))?;
         drop(sink);
-        child
+        let out = child
             .wait_with_output()
             .await
-            .map_err(|e| ProviderError::CommandFailed(e.to_string()))
+            .map_err(|e| ProviderError::CommandFailed(e.to_string()))?;
+        // Logged separately from `run`: this path spawns `msb_command()` itself, so none of `run`'s
+        // instrumentation sees it, and it is the one carrying the SSH key into the guest.
+        tracing::info!(
+            target: "msb",
+            argv = %format!("exec --stream {name} -- {}", argv.join(" ")),
+            stdin_bytes = stdin.len(),
+            code = out.status.code().unwrap_or(-1),
+            stderr = %for_log(&out.stderr),
+            "msb exec (piped)"
+        );
+        Ok(out)
     }
 
     fn exec_command(&self, name: &str, argv: &[&str], opts: ExecOpts) -> Command {

@@ -113,8 +113,19 @@ async fn create_sandbox(
         Some(p) => p,
         None => settings::load(&app)?.default_provider,
     };
+    // Stage markers, so a failed create is attributable to a step from the log alone. The
+    // microsandbox path spans four subsystems (provider, ssh, runtime, sync) and its failures
+    // surface as one flattened string in the UI toast, which cannot say how far it got.
+    tracing::info!(target: "create", %name, %provider, "create_sandbox: ensuring base image");
     store.ensure_base_image(provider).await?;
+    tracing::info!(target: "create", %name, "create_sandbox: creating instance");
     let mut sandbox = store.create(&name, existing_path.as_deref(), provider).await?;
+    tracing::info!(
+        target: "create",
+        %name,
+        workspace = %sandbox.workspace_path,
+        "create_sandbox: instance created, initializing runtime"
+    );
     runtime.init(&sandbox.workspace_path).await?;
     if provider == ProviderId::Microsandbox {
         // A microsandbox workspace lives in a disk volume inside the VM, not a host bind mount, so
@@ -122,13 +133,30 @@ async fn create_sandbox(
         // has to be running first for `msb ssh serve` (the alias's ProxyCommand) to answer
         // (`docs/features/microsandbox-provider/02_dev.md`, Phase H).
         store.start(&name).await?;
-        engine
-            .create(
-                &backends::msb_sync_session(&name),
-                &sandbox.workspace_path,
-                &backends::msb_sync_beta(&name),
-            )
-            .await?;
+        let session = backends::msb_sync_session(&name);
+        let beta = backends::msb_sync_beta(&name);
+        tracing::info!(
+            target: "create",
+            %name,
+            %session,
+            alpha = %sandbox.workspace_path,
+            %beta,
+            "create_sandbox: creating workspace sync session"
+        );
+        if let Err(e) = engine.create(&session, &sandbox.workspace_path, &beta).await {
+            // Mutagen reports a beta it cannot reach as one flattened chain
+            // (`unable to connect to beta: ... unable to run SCP process: exit status 1`), whose
+            // root cause is always in the SSH transport rather than in Mutagen. Logging it whole,
+            // next to the alias's `ProxyCommand` from `ensure_msb_sandbox_alias`, is what makes the
+            // two diagnosable together.
+            tracing::error!(target: "create", %name, %beta, error = %e, "create_sandbox: sync create failed");
+            // Mutagen never shows what the transport actually said, so ask the transport directly
+            // while the sandbox is still up. Purely diagnostic — the original error is what the
+            // user gets either way.
+            crate::ssh::probe_alias(&name).await;
+            return Err(e.into());
+        }
+        tracing::info!(target: "create", %name, "create_sandbox: sync session created");
         sandbox.status = "running".to_string();
     }
     Ok(sandbox)
@@ -1494,11 +1522,28 @@ fn init_logging(app: &tauri::AppHandle) -> tracing_appender::non_blocking::Worke
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
 
-    let _ = tracing_subscriber::registry()
+    // A failed `try_init` means something else already owns the global subscriber (in practice
+    // `tauri-plugin-devtools`, see `run()`), and every `tracing!` in the crate then bypasses the
+    // file below. Nothing can be logged about that through `tracing` itself — the whole point is
+    // that `tracing` is not ours — so it is written straight into the file the reader will be
+    // staring at, wondering why it is empty.
+    if let Err(e) = tracing_subscriber::registry()
         .with(filter)
         .with(tracing_subscriber::fmt::layer().with_ansi(false).with_writer(non_blocking))
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stdout))
-        .try_init();
+        .try_init()
+    {
+        if let Ok(mut f) =
+            std::fs::OpenOptions::new().create(true).append(true).open(log_dir.join("mio.log"))
+        {
+            use std::io::Write;
+            let _ = writeln!(
+                f,
+                "logging not initialized: another global tracing subscriber is already installed \
+                 ({e}); no events will reach this file for this run"
+            );
+        }
+    }
 
     let panic_log_path = log_dir.join("mio-panic.log");
     std::panic::set_hook(Box::new(move |info| {
@@ -1543,8 +1588,17 @@ fn mock_reset(director: State<'_, Arc<mockctl::types::MockDirector>>) -> Result<
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Opt-in, because it is mutually exclusive with this app's own file logging: the plugin's
+    // `init()` claims the global tracing subscriber for itself (it calls `registry().try_init()`
+    // internally and exposes no layer to compose with), which makes `init_logging`'s own `try_init`
+    // fail. That failure used to be swallowed, so every `mio.log` in a dev build was 0 bytes and no
+    // backend event was recoverable after the fact. Default to the file; set `MIO_DEVTOOLS=1` to
+    // take the inspector instead and give the file up knowingly.
     #[cfg(all(debug_assertions, feature = "devtools"))]
-    let devtools = tauri_plugin_devtools::Builder::default().init();
+    let devtools = match std::env::var("MIO_DEVTOOLS").ok().as_deref() == Some("1") {
+        true => Some(tauri_plugin_devtools::Builder::default().init()),
+        false => None,
+    };
 
     let mock_director = Arc::new(mockctl::types::MockDirector::new());
     let podman_runner: Arc<dyn mockctl::types::ProcessRunner> = if backends::mock_backend_enabled() {
@@ -1564,7 +1618,7 @@ pub fn run() {
     let mut builder = tauri::Builder::default();
 
     #[cfg(all(debug_assertions, feature = "devtools"))]
-    {
+    if let Some(devtools) = devtools {
         builder = builder.plugin(devtools);
     }
 

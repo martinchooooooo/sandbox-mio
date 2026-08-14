@@ -65,16 +65,46 @@ async fn run<R: Runtime>(app: &AppHandle<R>, args: &[&str]) -> Result<String, Sy
 /// mapping, so a scripted non-zero exit produces the same `SyncError::CommandFailed` a real sidecar
 /// failure does.
 async fn run_via(runner: &Arc<dyn ProcessRunner>, args: &[&str]) -> Result<String, SyncError> {
-    let output = runner
-        .run(args)
-        .await
-        .map_err(|e| SyncError::Sidecar(e.to_string()))?;
+    let output = runner.run(args).await.map_err(|e| {
+        tracing::error!(target: "sync", argv = %args.join(" "), error = %e, "mutagen spawn failed");
+        SyncError::Sidecar(e.to_string())
+    })?;
     if output.status.success() {
+        // Success is `debug`, not `info`: `sync list` runs on a status-poll timer, and logging every
+        // poll at the default level would bury the one call that matters in `mio.log`.
+        tracing::debug!(target: "sync", argv = %args.join(" "), "mutagen ok");
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
-        Err(SyncError::CommandFailed(
-            String::from_utf8_lossy(&output.stderr).trim().to_string(),
-        ))
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        tracing::warn!(
+            target: "sync",
+            argv = %args.join(" "),
+            code = output.status.code().unwrap_or(-1),
+            %stderr,
+            "mutagen exited non-zero"
+        );
+        Err(SyncError::CommandFailed(stderr))
+    }
+}
+
+/// [`run_via`] for a call whose failure the caller deliberately discards — the "terminate any stale
+/// session of this name first" step every `create` opens with, which fails by design whenever the
+/// name is new. Logs at `debug` so a WARN in `mio.log` keeps meaning something actually went wrong.
+async fn run_via_discarding(runner: &Arc<dyn ProcessRunner>, args: &[&str]) {
+    match runner.run(args).await {
+        Ok(out) if out.status.success() => {
+            tracing::debug!(target: "sync", argv = %args.join(" "), "mutagen ok")
+        }
+        Ok(out) => tracing::debug!(
+            target: "sync",
+            argv = %args.join(" "),
+            code = out.status.code().unwrap_or(-1),
+            stderr = %String::from_utf8_lossy(&out.stderr).trim(),
+            "mutagen exited non-zero (ignored by caller)"
+        ),
+        Err(e) => {
+            tracing::debug!(target: "sync", argv = %args.join(" "), error = %e, "mutagen spawn failed (ignored by caller)")
+        }
     }
 }
 
@@ -255,7 +285,7 @@ fn pascal_case(name: &str) -> String {
 impl SyncEngine for MutagenCli {
     async fn create(&self, name: &str, alpha: &str, beta: &str) -> Result<(), SyncError> {
         // Idempotent across restarts: drop any stale session of this name first.
-        let _ = run_via(&self.runner, &["sync", "terminate", name]).await;
+        run_via_discarding(&self.runner, &["sync", "terminate", name]).await;
         run_via(
             &self.runner,
             &[
@@ -318,6 +348,6 @@ impl SyncEngine for MutagenCli {
     }
 
     async fn shutdown(&self) {
-        let _ = run_via(&self.runner, &["daemon", "stop"]).await;
+        run_via_discarding(&self.runner, &["daemon", "stop"]).await;
     }
 }

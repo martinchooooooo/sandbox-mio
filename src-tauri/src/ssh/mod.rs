@@ -25,6 +25,62 @@ fn managed_config() -> Result<PathBuf, SshError> {
     Ok(ssh_dir()?.join("sandbox-mio").join("config"))
 }
 
+/// Run `ssh -v` against a managed alias and log the result, for the case where the alias is known to
+/// be broken but the component that found out — Mutagen — reports only a flattened `unable to
+/// connect to beta: ...` with no transport detail. Diagnostic only: never called on a success path,
+/// never surfaced to the user, and a failure to run the probe itself is not an error worth
+/// propagating over whatever the caller was already reporting.
+///
+/// `-o BatchMode=yes` keeps it non-interactive (no host-key or passphrase prompt can hang the app),
+/// and the remote command is `true`, so a clean transport does nothing observable in the guest.
+pub async fn probe_alias(alias: &str) {
+    let config = match managed_config() {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(target: "ssh", %alias, error = %e, "ssh probe: no managed config path");
+            return;
+        }
+    };
+    let mut cmd = tokio::process::Command::new("ssh");
+    crate::process_ext::NoWindow::no_window(&mut cmd);
+    cmd.arg("-F")
+        .arg(&config)
+        .arg("-v")
+        .arg("-o")
+        .arg("BatchMode=yes")
+        .arg("-o")
+        .arg("ConnectTimeout=20")
+        .arg(alias)
+        .arg("true");
+    match cmd.output().await {
+        Ok(out) => tracing::warn!(
+            target: "ssh",
+            %alias,
+            code = out.status.code().unwrap_or(-1),
+            // `ssh -v` writes its whole trace to stderr; the tail carries the actual failure.
+            stderr = %tail(&out.stderr, 3000),
+            "ssh probe finished"
+        ),
+        Err(e) => tracing::warn!(target: "ssh", %alias, error = %e, "ssh probe could not spawn"),
+    }
+}
+
+/// The last `limit` bytes of a captured stream, on a char boundary.
+fn tail(bytes: &[u8], limit: usize) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    let text = text.trim();
+    if text.len() <= limit {
+        return text.to_string();
+    }
+    let start = text
+        .char_indices()
+        .rev()
+        .map(|(i, _)| i)
+        .find(|i| text.len() - i >= limit)
+        .unwrap_or(0);
+    format!("…[truncated]{}", &text[start..])
+}
+
 fn markers(alias: &str) -> (String, String) {
     (
         format!("# >>> sandbox-mio {alias} >>>"),
