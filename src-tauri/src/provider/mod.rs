@@ -8,7 +8,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 use crate::backends::{base_image, podman_command};
-use crate::mockctl::types::ProcessRunner;
+use crate::process::types::ProcessRunner;
 use types::{
     ExecOpts, InstanceSpec, MachineProvider, MachineRef, ProviderCapabilities, ProviderError,
     ProviderId, PublishModel,
@@ -154,14 +154,17 @@ fn parse_image_version(image: &str) -> Option<u32> {
 }
 
 impl PodmanProvider {
-    /// Runs `podman --connection <connection> <argv>` through the mockable runner seam.
+    /// Runs `podman --connection <connection> <argv>` through the mockable runner seam. Call/result
+    /// logging lives one layer down, in `SystemPodmanRunner::run` (`mockctl/mod.rs`) — the one seam
+    /// every real Podman invocation passes through, `verify_host`'s included — rather than here,
+    /// so it can't end up covering some callers and not others.
     async fn run(&self, argv: &[&str]) -> Result<Output, ProviderError> {
         let mut full = vec!["--connection", &self.connection];
         full.extend_from_slice(argv);
-        self.runner
-            .run(&full)
-            .await
-            .map_err(|e| ProviderError::CommandFailed(e.to_string()))
+        self.runner.run(&full).await.map_err(|e| match e.kind() {
+            std::io::ErrorKind::TimedOut => ProviderError::Unresponsive(e.to_string()),
+            _ => ProviderError::CommandFailed(e.to_string()),
+        })
     }
 
     async fn image_exists(&self) -> Result<bool, ProviderError> {

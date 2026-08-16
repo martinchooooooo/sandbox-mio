@@ -1,10 +1,10 @@
 <script lang="ts">
     import { onMount } from "svelte";
     import Button from "$lib/components/ui/button/button.svelte";
-    import { parseError } from "$lib/errors";
     import MachineSteps from "$lib/machine/MachineSteps.svelte";
-    import { fetchMachineReadiness, fetchMachineSetupSteps, prepareMachine } from "$lib/machine/readiness";
-    import type { MachineReadiness, MachineSetupEvent, ProviderId, SetupStep } from "$lib/machine/types";
+    import { prepareMachine } from "$lib/machine/readiness";
+    import { ensureMachineReadiness, machineReadiness } from "$lib/machine/readiness.svelte";
+    import type { MachineSetupEvent, ProviderId } from "$lib/machine/types";
 
     // `provider` has no picker yet — Phase J (docs/features/microsandbox-provider/02_dev.md) adds
     // the frontend selector that will pass something other than the default here.
@@ -13,36 +13,19 @@
         ondone?: (done: boolean) => void;
     } = $props();
 
-    let probing = $state(true);
-    let probeError = $state("");
-    let readiness = $state<MachineReadiness>({ ready: false, needsSetup: false });
-    let steps = $state<SetupStep[]>([]);
     let events = $state<MachineSetupEvent[]>([]);
     let busy = $state(false);
     let error = $state("");
     let rebootMessage = $state("");
 
+    const status = $derived(machineReadiness(provider));
     // The probe runs in both variants, so a user who already has a machine sees the completed state
     // on first run too, not just on replay.
-    const done = $derived(!probing && readiness.ready);
+    const done = $derived(!status.probing && status.readiness.ready);
 
     $effect(() => ondone?.(done));
 
-    async function probe() {
-        try {
-            [steps, readiness] = await Promise.all([
-                fetchMachineSetupSteps(provider),
-                fetchMachineReadiness(provider),
-            ]);
-            probeError = "";
-        } catch (e) {
-            probeError = parseError(e).message;
-        } finally {
-            probing = false;
-        }
-    }
-
-    onMount(probe);
+    onMount(() => ensureMachineReadiness(provider));
 
     async function run() {
         busy = true;
@@ -54,7 +37,7 @@
             if (e.kind === "rebootRequired") rebootMessage = e.message;
         });
         if (result.ok) {
-            await probe();
+            await ensureMachineReadiness(provider, true);
         } else if (!result.rebootRequired) {
             error = result.message;
         }
@@ -64,7 +47,7 @@
     function actionLabel(): string {
         // TODO(i18n)
         if (provider === "microsandbox") return "Set up microsandbox";
-        return readiness.needsSetup ? "Create virtual machine" : "Start virtual machine";
+        return status.readiness.needsSetup ? "Create virtual machine" : "Start virtual machine";
     }
 </script>
 
@@ -76,11 +59,23 @@
         Sandboxes run inside a virtual machine. This sets it up on your computer.
     </p>
 
-    {#if probing}
+    {#if status.probing}
         <!-- TODO(i18n) -->
         <p class="text-muted-foreground text-sm">Checking…</p>
-    {:else if probeError}
-        <p class="text-destructive text-sm">{probeError}</p>
+    {:else if status.errorKind === "PodmanUnresponsive"}
+        <!-- Named as a stall rather than a fault to fix: the remedies the other failure branches
+             offer do not apply to a binary that never answers. TODO(i18n) -->
+        <p class="text-destructive text-sm" data-error="podman-unresponsive">
+            Podman started but never answered. Retrying may clear it; if it does not, the details are
+            in <code>mio.log</code>.
+        </p>
+        <!-- TODO(i18n) -->
+        <Button onclick={() => ensureMachineReadiness(provider, true)}>Try again</Button>
+    {:else if status.error}
+        <p class="text-destructive text-sm">{status.error}</p>
+        <!-- Without this the card is permanently dead after a failed probe, with an app restart as
+             the only escape. TODO(i18n) -->
+        <Button onclick={() => ensureMachineReadiness(provider, true)}>Try again</Button>
     {:else if done}
         <!-- TODO(i18n) -->
         <p class="text-sm font-medium">Already set up ✓</p>
@@ -89,7 +84,7 @@
         <!-- TODO(i18n) -->
         <Button onclick={run}>Try again</Button>
     {:else}
-        <MachineSteps {steps} {events} />
+        <MachineSteps steps={status.steps} {events} />
         <Button loading={busy} disabled={busy} onclick={run}>{actionLabel()}</Button>
         {#if error}
             <p class="text-destructive text-sm">{error}</p>

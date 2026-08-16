@@ -32,6 +32,13 @@ pub enum BackendError {
     /// Podman or SSH process failed or exited with non-zero status.
     #[error("{0}")]
     CommandFailed(String),
+    /// A podman invocation produced no exit status at all: it was still running when its bound
+    /// elapsed, or it was not attempted because the seam is already known unresponsive. Distinct
+    /// from `CommandFailed`, which always carries something podman actually said, and from
+    /// `AppError::PodmanUnavailable`, whose remedies (`setupPodman`/`startPodman` in
+    /// `src/lib/podman/setup.svelte.ts`) do not apply to a binary that never answers.
+    #[error("{0}")]
+    PodmanUnresponsive(String),
     /// Failed to parse JSON or URL from podman output or SSH URL argument.
     #[error("{0}")]
     ParseError(String),
@@ -48,6 +55,18 @@ pub enum BackendError {
     /// Error from SSH config management.
     #[error(transparent)]
     Ssh(#[from] SshError),
+}
+
+/// Classifies a raw spawn/wait failure from the process seam. `TimedOut` is the marker
+/// `crate::process` sets for "podman produced no exit status", so no caller has to match on
+/// message text.
+impl From<std::io::Error> for BackendError {
+    fn from(e: std::io::Error) -> Self {
+        match e.kind() {
+            std::io::ErrorKind::TimedOut => BackendError::PodmanUnresponsive(e.to_string()),
+            _ => BackendError::CommandFailed(e.to_string()),
+        }
+    }
 }
 
 /// A sandbox instance (returned by all backend operations).
@@ -205,7 +224,7 @@ pub(super) struct PodmanCliBackend {
     /// The process seam the still-Podman-only `&self` calls route through (host registry, event
     /// stream, connection lookup) — real in production, scripted under `MIO_MOCK_BACKEND=1`.
     /// See `docs/features/scriptable-mock-backend/02_dev.md`.
-    pub(super) runner: std::sync::Arc<dyn crate::mockctl::types::ProcessRunner>,
+    pub(super) runner: std::sync::Arc<dyn crate::process::types::ProcessRunner>,
     /// Resolves `crate::paths::app_data_root` for per-sandbox exec-transport SSH identities
     /// (`ensure_sandbox_identity`). Not used by any pre-existing method.
     pub(super) app: tauri::AppHandle,

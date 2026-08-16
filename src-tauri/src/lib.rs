@@ -9,7 +9,7 @@ mod machine;
 mod mockctl;
 mod network;
 mod paths;
-mod process_ext;
+mod process;
 mod provider;
 mod runtime;
 mod settings;
@@ -838,15 +838,20 @@ async fn start_podman_machine(
     activity::open(&app, "podman-startup", TaskKind::PodmanStartup, None);
 
     activity::progress(&app, "podman-startup", None, Some("Starting machine…".into()));
-    if machine.run_machine_start().await.is_err() {
+    // `podman machine start` on an already-running machine exits non-zero ("already running"),
+    // which would otherwise be indistinguishable from a real start failure below and trigger a
+    // needless `wsl --shutdown` of a machine that was working fine — e.g. a stale frontend gate
+    // (checked once on mount) re-firing this command against a machine that came up in the
+    // meantime, or a double click before the UI reacts to the first call's success.
+    if !matches!(machine.machine_is_running().await, Ok(true)) && machine.run_machine_start().await.is_err() {
         if machine.check_other_machines_running().await {
             activity::progress(&app, "podman-startup", None, Some("Retrying…".into()));
         } else {
             activity::progress(&app, "podman-startup", None, Some("Retrying after WSL reset…".into()));
             machine.run_wsl_shutdown().await.ok();
         }
-        if machine.run_machine_start().await.is_err() {
-            let err = "Failed to start Podman machine".to_string();
+        if let Err(e) = machine.run_machine_start().await {
+            let err = format!("Failed to start Podman machine: {e}");
             activity::fail(&app, "podman-startup", err.clone());
             return Err(AppError::PodmanUnavailable(err));
         }
@@ -1596,6 +1601,12 @@ fn mock_reset(director: State<'_, Arc<mockctl::types::MockDirector>>) -> Result<
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // First statement by requirement, ahead of `init_logging` and the Tauri builder: any process
+    // spawned before this still inherits the launching terminal's console handles, and both
+    // `listen_events` and the Mutagen daemon call spawn early
+    // (`docs/features/podman-process-isolation/02_dev.md`, Phase A).
+    let cleared = process::clear_inheritable_handles();
+
     // Opt-in, because it is mutually exclusive with this app's own file logging: the plugin's
     // `init()` claims the global tracing subscriber for itself (it calls `registry().try_init()`
     // internally and exposes no layer to compose with), which makes `init_logging`'s own `try_init`
@@ -1609,16 +1620,16 @@ pub fn run() {
     };
 
     let mock_director = Arc::new(mockctl::types::MockDirector::new());
-    let podman_runner: Arc<dyn mockctl::types::ProcessRunner> = if backends::mock_backend_enabled() {
+    let podman_runner: Arc<dyn process::types::ProcessRunner> = if backends::mock_backend_enabled() {
         Arc::new(mockctl::types::ScriptedPodmanRunner::new(mock_director.clone()))
     } else {
-        Arc::new(mockctl::types::SystemPodmanRunner)
+        Arc::new(process::types::SystemPodmanRunner)
     };
     backends::set_podman_runner(podman_runner.clone());
-    let msb_runner: Arc<dyn mockctl::types::ProcessRunner> = if backends::mock_backend_enabled() {
+    let msb_runner: Arc<dyn process::types::ProcessRunner> = if backends::mock_backend_enabled() {
         Arc::new(mockctl::types::ScriptedMsbRunner::new(mock_director.clone()))
     } else {
-        Arc::new(mockctl::types::SystemMsbRunner)
+        Arc::new(process::types::SystemMsbRunner)
     };
     let port_transport = transport::default_port_transport();
     let machine = machine::default_machine_manager(podman_runner.clone());
@@ -1644,6 +1655,9 @@ pub fn run() {
         .manage(mock_director.clone())
         .setup(move |app| {
             app.manage(init_logging(app.handle()));
+            // Logged here rather than at the call site: the sanitiser runs before there is a
+            // subscriber to write to.
+            tracing::info!(target: "process", cleared, "cleared inheritable handles at startup");
             // One registry shared by every subsystem, so a sandbox resolves to the same provider
             // instance (and the same base-image build lock) wherever it is addressed from.
             let registry = provider::default_registry(podman_runner.clone(), msb_runner.clone());
@@ -1662,11 +1676,11 @@ pub fn run() {
                     backends::set_podman_resource_dir(resource_dir.join("podman"));
                 }
             }
-            let mutagen_runner: Arc<dyn mockctl::types::ProcessRunner> =
+            let mutagen_runner: Arc<dyn process::types::ProcessRunner> =
                 if backends::mock_backend_enabled() {
                     Arc::new(mockctl::types::ScriptedMutagenRunner::new(mock_director.clone()))
                 } else {
-                    Arc::new(mockctl::types::SystemMutagenRunner::new(app.handle().clone()))
+                    Arc::new(process::types::SystemMutagenRunner::new(app.handle().clone()))
                 };
             app.manage(sync::default_sync_engine(mutagen_runner));
             app.manage(network::default_network_manager(

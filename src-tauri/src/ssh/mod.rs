@@ -41,8 +41,7 @@ pub async fn probe_alias(alias: &str) {
             return;
         }
     };
-    let mut cmd = tokio::process::Command::new("ssh");
-    crate::process_ext::NoWindow::no_window(&mut cmd);
+    let mut cmd = crate::process::detached_command("ssh");
     cmd.arg("-F")
         .arg(&config)
         .arg("-v")

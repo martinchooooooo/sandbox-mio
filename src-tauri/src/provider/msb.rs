@@ -5,7 +5,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 use crate::backends::types::Sandbox;
-use crate::mockctl::types::ProcessRunner;
+use crate::process::types::ProcessRunner;
 
 use super::types::{
     ExecOpts, InstanceSpec, MachineProvider, ProviderCapabilities, ProviderError, ProviderId,
@@ -164,7 +164,7 @@ impl MsbProvider {
     /// is byte-faithful piped stdin/stdout with no PTY (spike finding 7), the microsandbox
     /// counterpart of Podman's `exec -i`.
     fn exec_command_inner(&self, name: &str, argv: &[&str], opts: &ExecOpts) -> Command {
-        let mut cmd = crate::mockctl::msb_command();
+        let mut cmd = crate::process::msb_command();
         cmd.arg("exec").arg("--stream");
         if let Some(workdir) = &opts.workdir {
             cmd.arg("--workdir").arg(workdir);

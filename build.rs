@@ -738,8 +738,13 @@ fn run_dev_directly() {
     let exe = debug_dir().join("sandbox-mio.exe");
     // Deliberately not `run`/`try_run`: both call `win_job::assign`, which is exactly the job
     // membership this function exists to avoid for this one process.
+    // stdin to the null device, stdout/stderr left inherited so dev output still reaches the
+    // terminal: keeps the launching console's (possibly wedged) stdin handle out of the app's own
+    // table, on top of the app sanitising its handles itself
+    // (`docs/features/podman-process-isolation/02_dev.md`, Resolved Decision 5).
     let mut app = Command::new(&exe)
         .current_dir(root_dir())
+        .stdin(std::process::Stdio::null())
         .spawn()
         .unwrap_or_else(|e| panic!("failed to launch {}: {}", exe.display(), e));
     let _ = app.wait();

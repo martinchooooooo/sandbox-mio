@@ -9,6 +9,10 @@ pub enum ProviderError {
     /// Engine process failed or exited non-zero (captured stderr).
     #[error("{0}")]
     CommandFailed(String),
+    /// The engine produced no exit status at all — carried as its own variant so the condition
+    /// survives the hop into `BackendError` instead of collapsing into `CommandFailed`.
+    #[error("{0}")]
+    Unresponsive(String),
     /// Failed to parse the engine's JSON or text output.
     #[error("{0}")]
     ParseError(String),
@@ -24,6 +28,7 @@ impl From<ProviderError> for BackendError {
     fn from(e: ProviderError) -> Self {
         match e {
             ProviderError::CommandFailed(m) => BackendError::CommandFailed(m),
+            ProviderError::Unresponsive(m) => BackendError::PodmanUnresponsive(m),
             ProviderError::ParseError(m) => BackendError::ParseError(m),
             ProviderError::PodmanUnavailable(m) => BackendError::CommandFailed(m),
         }

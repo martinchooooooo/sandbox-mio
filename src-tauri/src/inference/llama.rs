@@ -14,7 +14,7 @@ use tauri::{AppHandle, Manager};
 use super::types::{
     EngineKind, InferenceEngine, InferenceError, RuntimeSetupEvent, ServerHandle, SetupStep,
 };
-use crate::process_ext::NoWindow;
+use crate::process::detached_command;
 use crate::settings;
 
 /// Default GPU offload when the user has not pinned `llama_gpu_layers`. 99 offloads every layer
@@ -73,8 +73,7 @@ impl LlamaServerEngine {
     /// Best-effort device probe: run `llama-server --list-devices` and return the first reported
     /// device line (e.g. `Intel(R) Arc(TM) 140V GPU (16GB)`), or `None` if it cannot be read.
     async fn list_device(&self, exe: &std::path::Path, engine_dir: &std::path::Path) -> Option<String> {
-        let out = tokio::process::Command::new(exe)
-            .no_window()
+        let out = detached_command(exe)
             .current_dir(engine_dir)
             .arg("--list-devices")
             .output()
@@ -133,8 +132,7 @@ impl InferenceEngine for LlamaServerEngine {
 
         // launch-server: spawn from the engine dir so its DLLs resolve.
         RuntimeSetupEvent::StepStart { id: "launch-server".into() }.send(on_step);
-        let mut cmd = tokio::process::Command::new(&exe);
-        cmd.no_window();
+        let mut cmd = detached_command(&exe);
         cmd.current_dir(&engine_dir)
             .arg("--model")
             .arg(&model_path)

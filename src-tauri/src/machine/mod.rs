@@ -11,8 +11,8 @@ use tauri::ipc::Channel;
 
 use crate::backends::types::BackendError;
 use crate::backends::{podman_command, DEFAULT_MACHINE_NAME};
-use crate::mockctl::types::ProcessRunner;
-use crate::process_ext::NoWindow;
+use crate::process::types::ProcessRunner;
+use crate::process::detached_command_std;
 use crate::provider::types::ProviderId;
 
 use types::{MachineManager, MachineReadinessProvider, MachineReadiness, MachineSetupEvent, PodmanMachineManager, SetupStep};
@@ -37,7 +37,7 @@ async fn run_host_wsl(args: &[&str]) -> Option<std::io::Result<Output>> {
     }
     let owned: Vec<String> = args.iter().map(|a| a.to_string()).collect();
     let joined = tokio::task::spawn_blocking(move || {
-        std::process::Command::new("wsl").no_window().args(&owned).output()
+        detached_command_std("wsl").args(&owned).output()
     })
     .await;
     Some(joined.unwrap_or_else(|e| Err(std::io::Error::other(e))))
@@ -61,13 +61,13 @@ async fn verify_host(runner: &Arc<dyn ProcessRunner>, name: &str) -> Result<(), 
     let out = runner
         .run(&["--connection", name, "info", "--format", "json"])
         .await
-        .map_err(|e| BackendError::CommandFailed(e.to_string()))?;
+        .map_err(BackendError::from)?;
     check(out).map(|_| ())
 }
 
 impl PodmanMachineManager {
     async fn podman(&self, args: &[&str]) -> Result<Output, BackendError> {
-        self.runner.run(args).await.map_err(|e| BackendError::CommandFailed(e.to_string()))
+        self.runner.run(args).await.map_err(BackendError::from)
     }
 }
 
@@ -154,7 +154,7 @@ impl MachineManager for PodmanMachineManager {
         // default version even when no distribution is installed yet (which is all Podman needs:
         // it brings its own Fedora CoreOS distribution via `machine init`).
         tokio::task::spawn_blocking(|| {
-            std::process::Command::new("wsl").no_window().arg("--status").output()
+            detached_command_std("wsl").arg("--status").output()
         })
         .await
         .map(|r| r.map(|o| o.status.success()).unwrap_or(false))

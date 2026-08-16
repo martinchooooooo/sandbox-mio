@@ -15,7 +15,7 @@ use crate::workspace::types::WorkspaceError;
 pub enum AppError {
     /// Transparent: Backend subsystem error.
     #[error(transparent)]
-    Backend(#[from] BackendError),
+    Backend(BackendError),
     /// Transparent: Sync engine error.
     #[error(transparent)]
     Sync(#[from] SyncError),
@@ -49,6 +49,11 @@ pub enum AppError {
     /// Podman machine unavailable (stopped or rootless socket unresponsive). Returned by machine-readiness checks.
     #[error("Podman is not ready: {0}")]
     PodmanUnavailable(String),
+    /// A podman invocation produced no exit status: it never returned within its bound, or was not
+    /// attempted because an earlier one never returned. Deliberately not `PodmanUnavailable`, whose
+    /// two remedies both assume a responsive binary (`src/lib/podman/setup.svelte.ts`).
+    #[error("Podman is not responding: {0}")]
+    PodmanUnresponsive(String),
     /// WSL2 installed; reboot required before machine init can proceed. Returned by provision_podman when install succeeds.
     #[error("Windows must be restarted to finish installing WSL2: {0}")]
     PodmanRebootRequired(String),
@@ -56,6 +61,17 @@ pub enum AppError {
     /// a payload that doesn't match the key's real error/return-value shape.
     #[error("mock control plane: {0}")]
     MockControl(String),
+}
+
+/// Hand-written rather than `#[from]`, so the one `BackendError` variant that has its own IPC kind
+/// keeps it instead of being flattened into `Backend` on the way across the boundary.
+impl From<BackendError> for AppError {
+    fn from(e: BackendError) -> Self {
+        match e {
+            BackendError::PodmanUnresponsive(m) => AppError::PodmanUnresponsive(m),
+            other => AppError::Backend(other),
+        }
+    }
 }
 
 impl AppError {
@@ -75,6 +91,7 @@ impl AppError {
             AppError::NotDeployed(_) => "NotDeployed",
             AppError::UnsyncedChanges { .. } => "UnsyncedChanges",
             AppError::PodmanUnavailable(_) => "PodmanUnavailable",
+            AppError::PodmanUnresponsive(_) => "PodmanUnresponsive",
             AppError::PodmanRebootRequired(_) => "PodmanRebootRequired",
             AppError::MockControl(_) => "MockControl",
         }

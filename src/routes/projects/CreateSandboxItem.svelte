@@ -9,6 +9,7 @@
     import StatusRow from "./StatusRow.svelte";
     import { PROVIDERS, providerLabel, type ProviderId } from "$lib/providers";
     import { onMount } from "svelte";
+    import { checkPodman, podmanUnavailable } from "$lib/podman/setup.svelte";
 
     let { onCreated }: { onCreated: () => void } = $props();
 
@@ -50,6 +51,13 @@
     async function createProject() {
         const trimmed = name.trim();
         if (!trimmed) return;
+        // Re-verify readiness right here rather than trusting the page's mount-time check: Podman
+        // can be stopped (by this app, Podman Desktop, or a host restart) any time after the page
+        // loaded, and both providers' base-image build shells out to it. On failure this flips the
+        // shared `podmanUnavailable` state, which unmounts this component in favor of the parent's
+        // "Start Podman" screen, so no separate error handling is needed here.
+        await checkPodman();
+        if (podmanUnavailable()) return;
         const path = existingPath;
         const ok = await action.run(
             "create",

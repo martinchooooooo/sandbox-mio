@@ -14,7 +14,7 @@ use tauri::AppHandle;
 use super::types::{
     EngineKind, InferenceEngine, InferenceError, RuntimeSetupEvent, ServerHandle, SetupStep,
 };
-use crate::process_ext::NoWindow;
+use crate::process::detached_command;
 
 pub struct FoundryLocalEngine {
     #[allow(dead_code)]
@@ -31,8 +31,7 @@ async fn foundry(args: &[&str]) -> Result<String, InferenceError> {
     let started = std::time::Instant::now();
     tracing::info!(target: "inference::foundry", cmd = %format!("foundry {argv}"), "spawning");
 
-    let out = tokio::process::Command::new("foundry")
-        .no_window()
+    let out = detached_command("foundry")
         .args(args)
         .output()
         .await

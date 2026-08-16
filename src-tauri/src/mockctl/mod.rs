@@ -1,128 +1,25 @@
 //! Runtime control plane for the e2e `light` tier (`MIO_MOCK_BACKEND=1`). Scripts the external
-//! **process** each subsystem shells out to (`podman`, the Mutagen sidecar) rather than a
+//! **process** each subsystem shells out to (`podman`, `msb`, the Mutagen sidecar) rather than a
 //! subsystem-level mock, so the real orchestration structs (`PodmanCliBackend`,
 //! `PodmanMachineManager`, ...) run unmodified against a scripted [`ProcessRunner`]. Exposed to
 //! running specs via the `mock_configure`/`mock_reset` Tauri commands in `src-tauri/src/lib.rs`.
 //! See `docs/features/scriptable-mock-backend/02_dev.md`.
+//!
+//! Scripted halves only. The real [`ProcessRunner`] implementations and the spawn machinery they
+//! drive live in `src-tauri/src/process/`, which this module depends on rather than the reverse.
 
 pub mod types;
 
 use std::collections::HashSet;
 use std::process::Output;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
 
-use crate::process_ext::NoWindow;
+use crate::process::{exit_status, strip_connection};
 
 use types::{
     Behaviour, MockDirector, ProcessRunner, ScriptedMsbRunner, ScriptedMutagenRunner,
-    ScriptedOutput, ScriptedPodmanRunner, SystemMsbRunner, SystemMutagenRunner, SystemPodmanRunner,
-    TrackedContainer, TrackedMsbInstance,
+    ScriptedOutput, ScriptedPodmanRunner, TrackedContainer, TrackedMsbInstance,
 };
-
-#[async_trait::async_trait]
-impl ProcessRunner for SystemPodmanRunner {
-    async fn run(&self, args: &[&str]) -> std::io::Result<Output> {
-        crate::backends::podman_command().args(args).output().await
-    }
-}
-
-/// `msb` is never bundled (see [`SystemMsbRunner`]'s doc comment), so this only needs to honour an
-/// `MSB_PATH` override the way `podman_command()` honours its bundled resource dir, falling back to
-/// a bare `msb` off `PATH`.
-///
-/// `MSB_PATH` is the path *to the `msb` executable*, never a directory containing it. The spawned
-/// `msb` inherits the variable and resolves its own detached VM supervisor from it, so a directory
-/// value makes every `msb create` underneath this app fail (`Access is denied. (os error 5)` on
-/// Windows, where executing a directory is ERROR_ACCESS_DENIED).
-///
-/// Under `tauri dev` specifically, this app's own process sits inside a Windows Job Object
-/// tauri-cli assigns for rebuild/restart cleanup, and that job denies `JOB_OBJECT_LIMIT_BREAKAWAY_OK`
-/// — confirmed hands-on: `msb create` fails under `tauri dev` and succeeds when the identical binary
-/// is launched directly outside any job, and requesting `CREATE_BREAKAWAY_FROM_JOB` on this app's
-/// own spawn of `msb.exe` fails outright rather than helping, since a job member can never grant
-/// itself an exemption the job's owner didn't set. There is no fix from this side of the process
-/// tree; running the dev-built binary directly (bypassing `tauri dev`'s supervision) is the only
-/// workaround, and it does not affect a packaged build, which no job ever wraps.
-pub(crate) fn msb_command() -> tokio::process::Command {
-    let mut cmd = match std::env::var_os("MSB_PATH") {
-        Some(exe) => tokio::process::Command::new(exe),
-        None => tokio::process::Command::new("msb"),
-    };
-    cmd.no_window();
-    cmd
-}
-
-#[async_trait::async_trait]
-impl ProcessRunner for SystemMsbRunner {
-    async fn run(&self, args: &[&str]) -> std::io::Result<Output> {
-        run_capturing_via_files(msb_command(), args).await
-    }
-}
-
-static MSB_CALL_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-/// Runs `cmd`, capturing stdout/stderr via temp files instead of the OS pipes `.output()` would use.
-///
-/// A successful `msb create` spawns a long-running detached VM supervisor that inherits `msb.exe`'s
-/// own stdout/stderr handles — `msb` does not appear to redirect them away for its own Windows
-/// daemonization. A piped `wait_with_output()` (what `.output()` does under the hood) reads until
-/// EOF, which never comes while that supervisor keeps its inherited duplicate of the pipe open, so
-/// every `msb create` hangs forever even though `msb.exe` itself already exited 0 and the sandbox is
-/// already running (confirmed hands-on: `msb ls` shows the new sandbox while the hung call still
-/// blocks). Reading a file after the direct child exits doesn't care whether some other process
-/// still has it open, so redirecting there instead sidesteps the hang entirely.
-async fn run_capturing_via_files(
-    mut cmd: tokio::process::Command,
-    args: &[&str],
-) -> std::io::Result<Output> {
-    let id = MSB_CALL_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let stem = format!("sandbox-mio-msb-{}-{id}", std::process::id());
-    let stdout_path = std::env::temp_dir().join(format!("{stem}.stdout"));
-    let stderr_path = std::env::temp_dir().join(format!("{stem}.stderr"));
-
-    let result = async {
-        let stdout_file = std::fs::File::create(&stdout_path)?;
-        let stderr_file = std::fs::File::create(&stderr_path)?;
-        let status = cmd
-            .args(args)
-            .stdout(std::process::Stdio::from(stdout_file))
-            .stderr(std::process::Stdio::from(stderr_file))
-            .status()
-            .await?;
-        Ok(Output {
-            status,
-            stdout: std::fs::read(&stdout_path).unwrap_or_default(),
-            stderr: std::fs::read(&stderr_path).unwrap_or_default(),
-        })
-    }
-    .await;
-
-    let _ = std::fs::remove_file(&stdout_path);
-    let _ = std::fs::remove_file(&stderr_path);
-    result
-}
-
-impl SystemMutagenRunner {
-    pub fn new(app: tauri::AppHandle) -> Self {
-        Self { app }
-    }
-}
-
-#[async_trait::async_trait]
-impl ProcessRunner for SystemMutagenRunner {
-    async fn run(&self, args: &[&str]) -> std::io::Result<Output> {
-        // Sidecar-resolution and data-dir errors collapse into one io::Error here; the caller
-        // (`sync::run_via`) re-wraps it as `SyncError::Sidecar`, losing the `DataDir` distinction.
-        let command = crate::sync::command(&self.app).map_err(std::io::Error::other)?;
-        let output = command.args(args).output().await.map_err(std::io::Error::other)?;
-        Ok(Output {
-            status: exit_status(output.status.code().unwrap_or(-1)),
-            stdout: output.stdout,
-            stderr: output.stderr,
-        })
-    }
-}
 
 fn validate_behaviour(behaviour: &Behaviour) -> Result<(), String> {
     match behaviour {
@@ -237,32 +134,11 @@ impl MockDirector {
     }
 }
 
-#[cfg(windows)]
-fn exit_status(code: i32) -> std::process::ExitStatus {
-    use std::os::windows::process::ExitStatusExt;
-    std::process::ExitStatus::from_raw(code as u32)
-}
-
-#[cfg(unix)]
-fn exit_status(code: i32) -> std::process::ExitStatus {
-    use std::os::unix::process::ExitStatusExt;
-    std::process::ExitStatus::from_raw(code)
-}
-
 fn to_output(scripted: ScriptedOutput) -> Output {
     Output {
         status: exit_status(scripted.exit_code),
         stdout: scripted.stdout.into_bytes(),
         stderr: scripted.stderr.into_bytes(),
-    }
-}
-
-/// Strips a leading `--connection <name>` pair (present on most `backends`/`runtime` calls,
-/// absent on `machine`'s calls).
-fn strip_connection<'a>(args: &'a [&'a str]) -> &'a [&'a str] {
-    match args {
-        ["--connection", _, rest @ ..] => rest,
-        _ => args,
     }
 }
 

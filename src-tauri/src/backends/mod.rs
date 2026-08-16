@@ -8,8 +8,8 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 use crate::env_ext::env_dir;
-use crate::mockctl::types::ProcessRunner;
-use crate::process_ext::NoWindow;
+use crate::process::types::ProcessRunner;
+use crate::process::{detached_command, detached_command_std};
 use crate::provider::types::{InstanceSpec, ProviderId, PublishModel};
 use crate::provider::ProviderRegistry;
 use types::{
@@ -113,16 +113,28 @@ pub fn set_podman_resource_dir(dir: std::path::PathBuf) {
 }
 
 pub(crate) fn podman_command() -> Command {
-    let mut cmd = match PODMAN_RESOURCE_DIR.get() {
+    match PODMAN_RESOURCE_DIR.get() {
         Some(dir) => {
-            let mut cmd = Command::new(dir.join("podman.exe"));
+            let mut cmd = detached_command(dir.join("podman.exe"));
             cmd.env("CONTAINERS_HELPER_BINARY_DIR", dir);
             cmd
         }
-        None => Command::new("podman"),
-    };
-    cmd.no_window();
-    cmd
+        None => detached_command("podman"),
+    }
+}
+
+/// [`podman_command`]'s `std::process` twin, for callers that need a blocking `Child` rather than
+/// `tokio::process`'s async one (`mockctl::run_via_blocking_process`) — same binary resolution, same
+/// `CONTAINERS_HELPER_BINARY_DIR`, same detachment.
+pub(crate) fn podman_command_std() -> std::process::Command {
+    match PODMAN_RESOURCE_DIR.get() {
+        Some(dir) => {
+            let mut cmd = detached_command_std(dir.join("podman.exe"));
+            cmd.env("CONTAINERS_HELPER_BINARY_DIR", dir);
+            cmd
+        }
+        None => detached_command_std("podman"),
+    }
 }
 
 /// The literal argv token for the bundled `podman.exe`, for embedding in an OpenSSH `ProxyCommand`
@@ -163,10 +175,7 @@ async fn run_podman(
     runner: &Arc<dyn ProcessRunner>,
     args: &[&str],
 ) -> Result<Output, BackendError> {
-    runner
-        .run(args)
-        .await
-        .map_err(|e| BackendError::CommandFailed(e.to_string()))
+    runner.run(args).await.map_err(BackendError::from)
 }
 
 /// Returns stdout on success, or the captured stderr as `Err` on a non-zero exit.
@@ -259,8 +268,7 @@ impl PodmanCliBackend {
         if std::path::Path::new(identity_path).exists() {
             return Ok(());
         }
-        let out = std::process::Command::new("ssh-keygen")
-            .no_window()
+        let out = detached_command_std("ssh-keygen")
             .args(["-t", "ed25519", "-f", identity_path, "-N", ""])
             .output()
             .map_err(|e| BackendError::CommandFailed(format!("failed to run ssh-keygen: {e}")))?;
@@ -318,8 +326,7 @@ impl PodmanCliBackend {
     /// laptop-side `std::fs::create_dir_all` because a remote bind-mount source lives in the
     /// remote filesystem.
     async fn remote_mkdir(info: &ConnectionInfo, dir: &str) -> Result<(), BackendError> {
-        let out = Command::new("ssh")
-            .no_window()
+        let out = detached_command("ssh")
             .arg("-o")
             .arg("BatchMode=yes")
             .arg("-o")
@@ -684,8 +691,7 @@ impl SandboxBackend for PodmanCliBackend {
 
     async fn prepare_host(&self, ssh_url: &str, identity_path: &str) -> Result<(), BackendError> {
         let (target, port) = ssh_target(ssh_url)?;
-        let mut cmd = Command::new("ssh");
-        cmd.no_window();
+        let mut cmd = detached_command("ssh");
         // BatchMode=yes turns a missing key authorization into a fast failure instead of a
         // password prompt that would hang headless — authorizing the key is a manual
         // prerequisite (`ssh` reads passwords from the TTY, not stdin).

@@ -37,6 +37,10 @@ impl From<crate::provider::types::ProviderError> for RuntimeError {
             crate::provider::types::ProviderError::PodmanUnavailable(m) => {
                 RuntimeError::CommandFailed(m)
             }
+            // No distinct `RuntimeError` variant: nothing on the runtime path branches on the
+            // condition, and the message already names it. The kind survives where it is acted on
+            // (`BackendError::PodmanUnresponsive`).
+            crate::provider::types::ProviderError::Unresponsive(m) => RuntimeError::CommandFailed(m),
         }
     }
 }

@@ -2,7 +2,7 @@
     import { onMount } from "svelte";
     import { invoke } from "@tauri-apps/api/core";
     import Button from "$lib/components/ui/button/button.svelte";
-    import { parseError } from "$lib/errors";
+    import { parseError, type AppErrorKind } from "$lib/errors";
     import { createActionRunner } from "$lib/actions.svelte";
     import {
         checkPodman,
@@ -20,6 +20,7 @@
     let probing = $state(true);
     let ready = $state(false);
     let probeError = $state("");
+    let probeErrorKind = $state<AppErrorKind | null>(null);
 
     const action = createActionRunner();
     const done = $derived(!probing && ready);
@@ -30,8 +31,11 @@
         try {
             ready = await invoke<boolean>("base_image_ready");
             probeError = "";
+            probeErrorKind = null;
         } catch (e) {
-            probeError = parseError(e).message;
+            const err = parseError(e);
+            probeError = err.message;
+            probeErrorKind = err.kind;
         } finally {
             probing = false;
         }
@@ -70,6 +74,15 @@
     {:else if done}
         <!-- TODO(i18n) -->
         <p class="text-sm font-medium">Already downloaded ✓</p>
+    {:else if probeErrorKind === "PodmanUnresponsive"}
+        <!-- Named as a stall rather than a fault to fix: neither `setupPodman` nor `startPodman`
+             helps a binary that never answers. TODO(i18n) -->
+        <p class="text-destructive text-sm" data-error="podman-unresponsive">
+            Podman started but never answered. Retrying may clear it; if it does not, the details are
+            in <code>mio.log</code>.
+        </p>
+        <!-- TODO(i18n) -->
+        <Button onclick={probe}>Try again</Button>
     {:else if podmanRebootRequired()}
         <!-- TODO(i18n) -->
         <p class="text-destructive text-sm">

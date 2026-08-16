@@ -9,7 +9,7 @@ use tauri::{AppHandle, Runtime};
 use tauri_plugin_shell::process::Command;
 use tauri_plugin_shell::ShellExt;
 
-use crate::mockctl::types::ProcessRunner;
+use crate::process::types::ProcessRunner;
 use types::{MutagenCli, SessionInfo, SyncEngine, SyncError, SyncStatus};
 
 /// Sidecar name as declared in `bundle.externalBin`.
@@ -26,13 +26,21 @@ fn data_dir<R: Runtime>(app: &AppHandle<R>) -> Result<std::path::PathBuf, SyncEr
     Ok(dir)
 }
 
-pub fn command<R: Runtime>(app: &AppHandle<R>) -> Result<Command, SyncError> {
+/// The bundled Mutagen sidecar, resolved through `tauri_plugin_shell` and then re-detached.
+///
+/// The plugin's own `Command` hard-codes `CREATE_NO_WINDOW` and piped stdio with no hook to override
+/// either, so the resolved sidecar is converted back to a `std::process::Command` and put through
+/// `crate::process::detach` — otherwise this one binary would keep the inherited stdin every other
+/// spawn site drops, and would state its console contract somewhere other than
+/// `src-tauri/src/process/mod.rs` (`docs/features/podman-process-isolation/02_dev.md`, Phase B).
+pub fn command<R: Runtime>(app: &AppHandle<R>) -> Result<tokio::process::Command, SyncError> {
     let dir = data_dir(app)?;
-    Ok(app
+    let sidecar: Command = app
         .shell()
         .sidecar(SIDECAR)
-        .map_err(|e| SyncError::Sidecar(e.to_string()))?
-        .env("MUTAGEN_DATA_DIRECTORY", dir.to_string_lossy().to_string())
+        .map_err(|e| SyncError::Sidecar(e.to_string()))?;
+    let mut cmd = crate::process::detach(sidecar.into());
+    cmd.env("MUTAGEN_DATA_DIRECTORY", dir.to_string_lossy().to_string())
         // Defense-in-depth against MSYS/Git-Bash path mangling in the `ssh` → `sh -c "exec …"`
         // transport Mutagen spawns for a `Proxied` alias. NOT load-bearing for the exec transport:
         // `backends::ensure_sandbox_alias` references `mio-sshd` by bare name precisely so it carries
@@ -40,7 +48,8 @@ pub fn command<R: Runtime>(app: &AppHandle<R>) -> Result<Command, SyncError> {
         // this CLI call auto-starts it (docs/features/podman-exec-transport/02_dev.md, Resolved
         // Decision 5). Kept for any future manglable argument on the sidecar's own command line.
         .env("MSYS_NO_PATHCONV", "1")
-        .env("MSYS2_ARG_CONV_EXCL", "*"))
+        .env("MSYS2_ARG_CONV_EXCL", "*");
+    Ok(cmd)
 }
 
 /// Run a Mutagen subcommand and return trimmed stdout, or the captured stderr as `Err`. Used by the

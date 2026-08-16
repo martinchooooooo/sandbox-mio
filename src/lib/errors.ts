@@ -3,6 +3,7 @@ export type AppErrorKind =
     | "Backend"
     | "Sync"
     | "Runtime"
+    | "Network"
     | "Agent"
     | "Inference"
     | "Settings"
@@ -11,6 +12,7 @@ export type AppErrorKind =
     | "NotDeployed"
     | "UnsyncedChanges"
     | "PodmanUnavailable"
+    | "PodmanUnresponsive"
     | "PodmanRebootRequired"
     | "MockControl";
 

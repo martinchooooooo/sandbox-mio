@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tauri::ipc::Channel;
 
 use crate::backends::types::BackendError;
-use crate::mockctl::types::ProcessRunner;
+use crate::process::types::ProcessRunner;
 
 use super::types::{MachineReadiness, MachineReadinessProvider, MachineSetupEvent, SetupStep};
 
