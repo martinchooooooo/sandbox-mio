@@ -7,11 +7,10 @@
     import { m } from "$lib/paraglide/messages.js";
     import { createActionRunner } from "$lib/actions.svelte";
     import StatusRow from "./StatusRow.svelte";
-    import type { Project } from "$lib/sandbox";
     import { PROVIDERS, providerLabel, type ProviderId } from "$lib/providers";
     import { onMount } from "svelte";
 
-    let { projects, onCreated }: { projects: Project[]; onCreated: () => void } = $props();
+    let { onCreated }: { onCreated: () => void } = $props();
 
     let mode = $state<"name" | "folder">("name");
     let name = $state("");
@@ -55,10 +54,6 @@
         const ok = await action.run(
             "create",
             async () => {
-                if (projects.some((p) => p.name === trimmed)) {
-                    // TODO(i18n)
-                    throw { kind: "Backend", message: `A sandbox named "${trimmed}" already exists.` };
-                }
                 await invoke("create_sandbox", { name: trimmed, existingPath: path, provider });
             },
             { message: m.projects_status_creating({ name: trimmed }) }

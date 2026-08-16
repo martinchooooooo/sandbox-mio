@@ -20,7 +20,7 @@ const LABELS: Record<ProviderId, string> = {
 };
 
 export function providerLabel(provider: ProviderId): string {
-    return LABELS[provider] ?? provider;
+    return LABELS[provider];
 }
 
 export function providerCapabilities(provider: ProviderId): Promise<ProviderCapabilities> {

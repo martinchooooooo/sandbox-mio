@@ -74,8 +74,8 @@ async fn base_image_ready(
 fn provider_capabilities(
     provider: ProviderId,
     registry: State<'_, Arc<ProviderRegistry>>,
-) -> ProviderCapabilities {
-    registry.local(provider).capabilities()
+) -> Result<ProviderCapabilities, AppError> {
+    Ok(registry.local(provider).capabilities())
 }
 
 #[tauri::command]
@@ -111,7 +111,7 @@ async fn create_sandbox(
 ) -> Result<Sandbox, AppError> {
     let provider = match provider {
         Some(p) => p,
-        None => settings::load(&app)?.default_provider,
+        None => settings::resolve_default_provider(&app)?,
     };
     // Stage markers, so a failed create is attributable to a step from the log alone. The
     // microsandbox path spans four subsystems (provider, ssh, runtime, sync) and its failures
@@ -154,6 +154,14 @@ async fn create_sandbox(
             // while the sandbox is still up. Purely diagnostic — the original error is what the
             // user gets either way.
             crate::ssh::probe_alias(&name).await;
+            // Match the provider's own rollback discipline: leaving the instance behind means a
+            // retry under the same name hits `NameTaken` instead of the sync error above.
+            if let Err(destroy_err) = store.destroy(&name).await {
+                tracing::error!(
+                    target: "create", %name, error = %destroy_err,
+                    "create_sandbox: rollback after sync failure also failed"
+                );
+            }
             return Err(e.into());
         }
         tracing::info!(target: "create", %name, "create_sandbox: sync session created");

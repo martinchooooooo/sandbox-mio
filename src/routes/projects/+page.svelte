@@ -190,7 +190,7 @@
                         onChanged={reload}
                     />
                 {/each}
-                <CreateSandboxItem {projects} onCreated={reload} />
+                <CreateSandboxItem onCreated={reload} />
             </ul>
         {/if}
     </div>
