@@ -45,16 +45,31 @@ read-modify-write is unguarded across processes (see the next section).
 
 ## `ssh::write_alias` does a read-modify-write with no lock
 
-`write_alias` (`src-tauri/src/ssh/mod.rs`) reads the managed config, strips its own block, appends the
-new one, and atomically writes the result. `CONFIG_LOCK` guards only `ensure_include`, not this
-sequence, so two concurrent writers — two threads, or two app processes overlapping at an e2e spec
-boundary — can each read the same base and the later write silently drops the earlier one's block.
-The atomic rename prevents a torn file, not a lost update.
+**Done.** `write_alias`, `ensure_include`, and `remove_alias` (`src-tauri/src/ssh/mod.rs`) now each
+run their whole read-strip-append-write sequence inside `with_config_lock`, which holds both the
+existing in-process `CONFIG_LOCK` `Mutex` and a new cross-process advisory lock (`std::fs::File::lock`
+— `flock`/`LockFileEx` underneath — on a stable sibling file, `sandbox-mio/.config.lock`, never the
+config file itself since `atomic_write`'s `rename` would strand a lock on the pre-rename inode). This
+is the "real file lock" this section originally called for: two app processes racing at an e2e session
+boundary now serialize on the OS-level lock the same way two threads in one process serialize on the
+`Mutex`. `write_alias`'s internal call into `ensure_include`'s logic goes through a `_locked` variant
+that does not re-acquire the lock, avoiding a self-deadlock. `std::fs::File::lock`/`unlock` are used
+directly (stabilized in the Rust toolchain this project builds with) rather than pulling in a locking
+crate.
 
-Deferred because no in-process concurrent caller exists today (`maxInstances: 1` in the e2e harness,
-and the app's own alias writes are sequential within a command), so fixing it is not required for any
-current flow. It is recorded here because it is the most plausible mechanism for the `agent-web`
-failure above, and a cross-process fix needs a real file lock rather than the existing `Mutex`.
+Not independently reproduced against the `agent-web.spec.ts` flake described above — no failing run
+was captured to confirm this was in fact the mechanism, only that it was the most plausible one and
+the only one left unruled-out. If the flake recurs, that is strong evidence this fix did not address
+the actual cause and the "next step" instrumentation above should still be pursued.
+
+Original text, superseded by the above: `write_alias` (`src-tauri/src/ssh/mod.rs`) read the managed
+config, stripped its own block, appended the new one, and atomically wrote the result. `CONFIG_LOCK`
+guarded only `ensure_include`, not this sequence, so two concurrent writers — two threads, or two app
+processes overlapping at an e2e spec boundary — could each read the same base and the later write
+would silently drop the earlier one's block. The atomic rename prevented a torn file, not a lost
+update. It was deferred because no in-process concurrent caller existed (`maxInstances: 1` in the e2e
+harness, and the app's own alias writes are sequential within a command), and a cross-process fix
+needed a real file lock rather than the existing `Mutex`.
 
 ## Rename `PodmanCliBackend`, which is no longer Podman-only
 
