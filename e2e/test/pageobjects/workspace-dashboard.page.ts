@@ -13,6 +13,14 @@ class WorkspaceDashboardPage {
     });
   }
 
+  // `data-dashboard` (WorkspaceDashboard.svelte's `<main>`) scopes the getters below: the sandbox
+  // list (SandboxItem.svelte) and the Dashboard render as siblings, both simultaneously visible
+  // (docs/features/consolidate-app-container/02_dev.md), and both use StatusRow — an unscoped
+  // `errorRow` lookup could resolve to the list row's instead of the Dashboard's.
+  get root(): Element {
+    return $("[data-dashboard]");
+  }
+
   // ── App launcher (docs/features/workspace-app-tabs/02_dev.md Phase D) ──────
 
   launcherButton(kind: "terminal" | "agentweb"): Element {
@@ -246,6 +254,51 @@ class WorkspaceDashboardPage {
   async closePortRow(kindLabel: string): Promise<void> {
     const row = await this.portRow(kindLabel);
     await this.#clickButton(row.$("button[title='Stop exposing']"));
+  }
+
+  // ── Folder reveal / Destroy (WorkspaceDashboard.svelte) ─────────────────────
+
+  get folderButton(): Element {
+    return this.root.$("button=folder");
+  }
+
+  get destroyButton(): Element {
+    return this.root.$("button=destroy");
+  }
+
+  async destroySandbox(): Promise<void> {
+    await this.#clickButton(this.destroyButton);
+  }
+
+  // ── Remote management (RemoteManager.svelte) ────────────────────────────────
+
+  get deployButton(): Element {
+    return this.root.$("button=deploy");
+  }
+
+  get deployConfirmButton(): Element {
+    return this.root.$("button=Deploy");
+  }
+
+  get undeployButton(): Element {
+    return this.root.$("button=undeploy");
+  }
+
+  get hostSelect(): Element {
+    return this.root.$("select");
+  }
+
+  get syncSwitch(): Element {
+    return this.root.$("button[role='switch']");
+  }
+
+  /**
+   * StatusRow's error line for the Dashboard's shared action runner — deploy/undeploy/destroy/sync
+   * and folder-reveal all run through it (`action` in WorkspaceDashboard.svelte), so one selector
+   * covers all of them, scoped to `root` (see the comment on it above).
+   */
+  get errorRow(): Element {
+    return this.root.$("div[role='status'].text-destructive");
   }
 }
 

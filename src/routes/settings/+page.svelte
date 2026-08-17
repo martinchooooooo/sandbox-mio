@@ -14,6 +14,7 @@
     import { SunIcon, MoonIcon } from "@hugeicons/core-free-icons";
     import { locales, getLocale, setLocale } from "$lib/paraglide/runtime.js";
     import { PROVIDERS, providerLabel, type ProviderId } from "$lib/providers";
+    import AdvancedSection from "$lib/components/AdvancedSection.svelte";
 
     function cycleLocale() {
         const current = getLocale();
@@ -154,12 +155,12 @@
         </Field.Group>
     </Field.Set>
 
+    <AdvancedSection data-advanced-section="tuning">
     <Field.Set>
         <Field.Legend>{m.settings_advanced()}</Field.Legend>
         <Field.Group>
             <Field.Field>
-                <!-- TODO(i18n) -->
-                <Field.Label>Default sandbox provider</Field.Label>
+                <Field.Label>{m.settings_default_provider_label()}</Field.Label>
                 <div class="flex flex-col gap-2" data-default-provider={defaultProvider}>
                     {#each PROVIDERS as option (option)}
                         <Button
@@ -225,8 +226,10 @@
             {/if}
         </Field.Group>
     </Field.Set>
+    </AdvancedSection>
 
-    <Field.Set class="mt-8">
+    <AdvancedSection label={m.settings_troubleshooting_label()} data-advanced-section="troubleshooting" class="mt-4">
+    <Field.Set>
         <Field.Legend>{m.settings_debugging()}</Field.Legend>
         <Field.Group>
             <Field.Field>
@@ -244,6 +247,7 @@
             </Field.Field>
         </Field.Group>
     </Field.Set>
+    </AdvancedSection>
 
     <div class="mt-4 flex items-center gap-3">
         <Button data-save loading={action.busy === "save"} disabled={action.busy !== null} onclick={save}>

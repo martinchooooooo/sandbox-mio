@@ -28,7 +28,7 @@
 
 <div
     class={[
-        "@container flex flex-col overflow-y-auto [scrollbar-gutter:stable]",
+        "@container flex flex-col",
         showControls ? (collapsed ? "w-12 shrink-0" : "w-[380px] shrink-0") : "flex-1",
     ].join(" ")}
 >
@@ -48,7 +48,9 @@
                 </Button>
             {/if}
         </div>
-        {@render children?.()}
-        <ActivityCenter />
+        <div class="flex flex-1 flex-col overflow-y-auto [scrollbar-gutter:stable]">
+            {@render children?.()}
+            <ActivityCenter />
+        </div>
     {/if}
 </div>

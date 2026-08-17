@@ -9,6 +9,7 @@
     import { m } from "$lib/paraglide/messages.js";
     import { createActionRunner } from "$lib/actions.svelte";
     import RuntimeSteps from "$lib/models/RuntimeSteps.svelte";
+    import AdvancedSection from "$lib/components/AdvancedSection.svelte";
     import { recommendModels, type RankedModel } from "$lib/models/recommend";
     import { testModelFromEnv } from "$lib/models/catalogue";
     import { reprovisionInstalledAgents } from "$lib/agents/reprovision";
@@ -87,6 +88,13 @@
         ),
     );
 
+    // The default view shows only this one entry — always displayModels[0], recommended or not
+    // (recommendModels already sorts recommended-first, so this degrades gracefully on constrained
+    // hardware where nothing rates "recommended" instead of ever rendering an empty default state,
+    // docs/features/desktop-app-feel/02_dev.md Phase D). Everything else moves behind AdvancedSection.
+    const topEntry = $derived(displayModels[0] as RankedModel | undefined);
+    const restEntries = $derived(displayModels.slice(1));
+
     async function refreshStatus() {
         status = await invoke<InferenceStatus>("inference_status");
     }
@@ -160,6 +168,19 @@
         }
     }
 
+    // The default row's single action: chains download then start so a first-time user has one
+    // button to press instead of two sequential ones (docs/features/desktop-app-feel/02_dev.md
+    // Phase D). Guards on the freshly re-fetched `downloaded` list rather than downloadModel()'s
+    // own action.run() result, since startModel()'s action.run() resets action.error right away and
+    // would otherwise wipe a download failure before the user saw it.
+    async function downloadAndStart(model: ModelDescriptor) {
+        if (model.llama && !isDownloaded(model.id)) {
+            await downloadModel(model);
+            if (!isDownloaded(model.id)) return;
+        }
+        await startModel(model);
+    }
+
     async function stop() {
         await action.run("stop", () => invoke("stop_inference"));
         await refreshStatus();
@@ -223,139 +244,167 @@
     });
 </script>
 
+{#snippet modelRow(entry: RankedModel, primary: boolean)}
+    {@const descriptor = entry.descriptor}
+    {@const rating = entry.rating}
+    <li class="border rounded-lg p-4" data-model-id={descriptor.id} data-running={isRunning(descriptor) ? "" : undefined}>
+        <div class="flex items-center justify-between gap-3">
+            <div class="flex-1 min-w-0 flex items-center gap-2">
+                <span class="font-medium truncate">{descriptor.label}</span>
+                <span class={"shrink-0 text-xs " + ratingClass(rating)} data-rating>{ratingLabel(rating)}</span>
+                {#if isRunning(descriptor)}
+                    <div class="text-xs mt-0.5">
+                        <span class="text-emerald-600 dark:text-emerald-400 font-medium">{m.models_running()}</span>
+                        <span class="text-muted-foreground ml-1 @max-[420px]:hidden">{m.models_base_url()}:</span>
+                        <code data-base-url class="@max-[420px]:hidden">{status.baseUrl}</code>
+                    </div>
+                {/if}
+            </div>
+            <div class="flex items-center gap-2">
+                {#if descriptor.llama}
+                    {#if isDownloaded(descriptor.id)}
+                        <span class="text-xs text-emerald-600 dark:text-emerald-400" data-downloaded>{m.models_downloaded()}</span>
+                    {:else if downloadPct[descriptor.id] !== undefined}
+                        <span class="text-xs text-muted-foreground">{m.models_downloading({ percent: downloadPct[descriptor.id] })}</span>
+                    {:else if !primary}
+                        <Button size="sm" variant="outline"
+                            disabled={action.busy !== null}
+                            onclick={() => downloadModel(descriptor)}>{m.models_download()}</Button>
+                    {/if}
+                {:else}
+                    <span class="text-xs text-muted-foreground">{m.models_foundry_first_run()}</span>
+                {/if}
+                {#if isRunning(descriptor)}
+                    <Button size="sm" variant="outline"
+                        disabled={action.busy !== null}
+                        onclick={stop}>{m.models_stop()}</Button>
+                {:else if primary && descriptor.llama && !isDownloaded(descriptor.id)}
+                    <Button size="sm"
+                        data-start
+                        loading={startingModel === descriptor.id || downloadPct[descriptor.id] !== undefined || action.busy === "download"}
+                        disabled={action.busy !== null}
+                        onclick={() => downloadAndStart(descriptor)}>{m.models_download_and_start()}</Button>
+                {:else}
+                    <Button size="sm"
+                        data-start
+                        loading={startingModel === descriptor.id}
+                        disabled={action.busy !== null || (engine === "llama" && descriptor.llama !== null && !isDownloaded(descriptor.id))}
+                        onclick={() => startModel(descriptor)}>{m.models_start()}</Button>
+                {/if}
+            </div>
+        </div>
+        {#if rating !== "recommended"}
+            <p class="text-xs text-amber-600 dark:text-amber-400 mt-2">{m.models_memory_warning()}</p>
+        {/if}
+        {#if engine === "foundry" && descriptor.foundryAlias === null}
+            <p class="text-xs text-muted-foreground mt-1">— (llama only)</p>
+        {/if}
+
+        <!-- Live runtime-setup checklist for the starting model -->
+        {#if startingModel === descriptor.id || (setupModel === descriptor.id && setupEvents.length > 0)}
+            <div class="mt-3 border-t pt-3">
+                {#if collapsedOnce}
+                    <button type="button" class="text-xs text-muted-foreground hover:text-foreground underline mb-2"
+                        onclick={() => (stepsCollapsed = !stepsCollapsed)}>
+                        {stepsCollapsed ? m.models_view_details() : m.models_hide_details()}
+                    </button>
+                {/if}
+                {#if !stepsCollapsed}
+                    <div transition:slide={{ duration: 300 }}>
+                        <RuntimeSteps steps={setupSteps} events={setupEvents} />
+                    </div>
+                {/if}
+            </div>
+        {/if}
+    </li>
+{/snippet}
+
 <main class="p-3 pb-6 @max-[420px]:p-2">
     <h1 class="text-3xl mb-2">{m.models_title()}</h1>
     <p class="text-sm text-muted-foreground mb-6">{m.models_engine_label({ engine })}</p>
 
-    <!-- Step 1: probed host specs -->
-    <section class="border rounded-lg p-4 mb-6" data-specs>
-        <div class="flex items-center justify-between mb-2">
-            <h2 class="text-sm font-medium">{m.models_specs_title()}</h2>
-            {#if specs}
-                <Button
-                    size="icon"
-                    variant="ghost"
-                    data-redetect
-                    loading={action.busy === "redetect"}
-                    disabled={action.busy !== null}
-                    onclick={redetectSpecs}
-                    title={m.models_redetect()}
-                    aria-label={m.models_redetect()}
-                >
-                    <HugeiconsIcon icon={RefreshIcon} class="size-3.5" />
-                </Button>
-            {/if}
+    {#if topEntry}
+        <ul class="space-y-3">
+            {@render modelRow(topEntry, true)}
+        </ul>
+    {:else if !specs}
+        <div role="status" aria-live="polite" class="flex items-center gap-1.5 text-sm text-muted-foreground">
+            <HugeiconsIcon icon={LoaderPinwheelIcon} class="animate-spin size-3.5" />
+            <span>{m.models_detecting()}</span>
         </div>
-        {#if specs}
-            <ul class="text-sm text-muted-foreground space-y-0.5" data-specs-ready>
-                <li>{m.models_cpu_cores({ cores: specs.cpuCores })}</li>
-                <li>{m.models_ram({ free: gb(specs.freeRamBytes), total: gb(specs.totalRamBytes) })}</li>
-                <li>
-                    {m.models_gpu()}:
-                    {specs.gpuNames.length > 0 ? specs.gpuNames.join(", ") : m.models_no_gpu()}
-                    {#if specs.hasNpu}· {m.models_npu()}{/if}
-                </li>
-            </ul>
-        {:else}
-            <div role="status" aria-live="polite" class="flex items-center gap-1.5 text-sm text-muted-foreground">
-                <HugeiconsIcon icon={LoaderPinwheelIcon} class="animate-spin size-3.5" />
-                <span>{m.models_detecting()}</span>
-            </div>
-        {/if}
-    </section>
-
-    <!-- Step 2 & 3: ranked catalogue with download / start -->
-    {#if ranked.length === 0 && specs}
+    {:else}
         <p class="text-sm text-muted-foreground">{m.models_no_models()}</p>
     {/if}
-    <ul class="space-y-3">
-        {#each displayModels as { descriptor, rating } (descriptor.id)}
-            <li class="border rounded-lg p-4" data-model-id={descriptor.id} data-running={isRunning(descriptor) ? "" : undefined}>
-                <div class="flex items-center justify-between gap-3">
-                    <div class="flex-1 min-w-0 flex items-center gap-2">
-                        <span class="font-medium truncate">{descriptor.label}</span>
-                        <span class={"shrink-0 text-xs " + ratingClass(rating)} data-rating>{ratingLabel(rating)}</span>
-                        {#if isRunning(descriptor)}
-                            <div class="text-xs mt-0.5">
-                                <span class="text-emerald-600 dark:text-emerald-400 font-medium">{m.models_running()}</span>
-                                <span class="text-muted-foreground ml-1 @max-[420px]:hidden">{m.models_base_url()}:</span>
-                                <code data-base-url class="@max-[420px]:hidden">{status.baseUrl}</code>
-                            </div>
-                        {/if}
-                    </div>
-                    <div class="flex items-center gap-2">
-                        {#if descriptor.llama}
-                            {#if isDownloaded(descriptor.id)}
-                                <span class="text-xs text-emerald-600 dark:text-emerald-400" data-downloaded>{m.models_downloaded()}</span>
-                            {:else if downloadPct[descriptor.id] !== undefined}
-                                <span class="text-xs text-muted-foreground">{m.models_downloading({ percent: downloadPct[descriptor.id] })}</span>
-                            {:else}
-                                <Button size="sm" variant="outline"
-                                    disabled={action.busy !== null}
-                                    onclick={() => downloadModel(descriptor)}>{m.models_download()}</Button>
-                            {/if}
-                        {:else}
-                            <span class="text-xs text-muted-foreground">{m.models_foundry_first_run()}</span>
-                        {/if}
-                        {#if isRunning(descriptor)}
-                            <Button size="sm" variant="outline"
-                                disabled={action.busy !== null}
-                                onclick={stop}>{m.models_stop()}</Button>
-                        {:else}
-                            <Button size="sm"
-                                data-start
-                                loading={startingModel === descriptor.id}
-                                disabled={action.busy !== null || (engine === "llama" && descriptor.llama !== null && !isDownloaded(descriptor.id))}
-                                onclick={() => startModel(descriptor)}>{m.models_start()}</Button>
-                        {/if}
-                    </div>
-                </div>
-                {#if rating !== "recommended"}
-                    <p class="text-xs text-amber-600 dark:text-amber-400 mt-2">{m.models_memory_warning()}</p>
-                {/if}
-                {#if engine === "foundry" && descriptor.foundryAlias === null}
-                    <p class="text-xs text-muted-foreground mt-1">— (llama only)</p>
-                {/if}
-
-                <!-- Step 4: live runtime-setup checklist for the starting model -->
-                {#if startingModel === descriptor.id || (setupModel === descriptor.id && setupEvents.length > 0)}
-                    <div class="mt-3 border-t pt-3">
-                        {#if collapsedOnce}
-                            <button type="button" class="text-xs text-muted-foreground hover:text-foreground underline mb-2"
-                                onclick={() => (stepsCollapsed = !stepsCollapsed)}>
-                                {stepsCollapsed ? m.models_view_details() : m.models_hide_details()}
-                            </button>
-                        {/if}
-                        {#if !stepsCollapsed}
-                            <div transition:slide={{ duration: 300 }}>
-                                <RuntimeSteps steps={setupSteps} events={setupEvents} />
-                            </div>
-                        {/if}
-                    </div>
-                {/if}
-            </li>
-        {/each}
-    </ul>
 
     {#if action.error}<p class="text-destructive mt-4 text-sm">{action.error}</p>{/if}
 
-    <!-- Chat test surface for the running endpoint -->
-    {#if status.running}
-        <section class="border rounded-lg p-4 mt-6" data-chat>
-            <div>
-                <h3 class="text-sm font-medium mb-2">{m.models_test_title()}</h3>
-                <Textarea
-                    value={prompt}
-                    oninput={(e) => (prompt = e.currentTarget.value)}
-                    placeholder={m.models_test_placeholder()}
-                    rows={2}
-                />
-                <div class="flex items-center gap-3 mt-2">
-                    <Button size="sm" loading={chatting} disabled={chatting} onclick={sendPrompt}>{m.models_test_send()}</Button>
-                    {#if chatting}<span class="text-xs text-muted-foreground">{m.models_test_thinking()}</span>{/if}
-                </div>
-                {#if reply}<p class="text-sm mt-3 whitespace-pre-wrap" data-reply>{reply}</p>{/if}
+    <AdvancedSection label="Choose a different model" data-model-advanced class="mt-4">
+        <!-- Host specs -->
+        <section class="border rounded-lg p-4 mb-4" data-specs>
+            <div class="flex items-center justify-between mb-2">
+                <h2 class="text-sm font-medium">{m.models_specs_title()}</h2>
+                {#if specs}
+                    <Button
+                        size="icon"
+                        variant="ghost"
+                        data-redetect
+                        loading={action.busy === "redetect"}
+                        disabled={action.busy !== null}
+                        onclick={redetectSpecs}
+                        title={m.models_redetect()}
+                        aria-label={m.models_redetect()}
+                    >
+                        <HugeiconsIcon icon={RefreshIcon} class="size-3.5" />
+                    </Button>
+                {/if}
             </div>
+            {#if specs}
+                <ul class="text-sm text-muted-foreground space-y-0.5" data-specs-ready>
+                    <li>{m.models_cpu_cores({ cores: specs.cpuCores })}</li>
+                    <li>{m.models_ram({ free: gb(specs.freeRamBytes), total: gb(specs.totalRamBytes) })}</li>
+                    <li>
+                        {m.models_gpu()}:
+                        {specs.gpuNames.length > 0 ? specs.gpuNames.join(", ") : m.models_no_gpu()}
+                        {#if specs.hasNpu}· {m.models_npu()}{/if}
+                    </li>
+                </ul>
+            {:else}
+                <div role="status" aria-live="polite" class="flex items-center gap-1.5 text-sm text-muted-foreground">
+                    <HugeiconsIcon icon={LoaderPinwheelIcon} class="animate-spin size-3.5" />
+                    <span>{m.models_detecting()}</span>
+                </div>
+            {/if}
         </section>
-    {/if}
+
+        {#if restEntries.length === 0 && ranked.length > 0}
+            <p class="text-sm text-muted-foreground">
+                {m.models_no_other_models()}
+            </p>
+        {/if}
+        <ul class="space-y-3">
+            {#each restEntries as entry (entry.descriptor.id)}
+                {@render modelRow(entry, false)}
+            {/each}
+        </ul>
+
+        <!-- Chat test surface for the running endpoint -->
+        {#if status.running}
+            <section class="border rounded-lg p-4 mt-6" data-chat>
+                <div>
+                    <h3 class="text-sm font-medium mb-2">{m.models_test_title()}</h3>
+                    <Textarea
+                        value={prompt}
+                        oninput={(e) => (prompt = e.currentTarget.value)}
+                        placeholder={m.models_test_placeholder()}
+                        rows={2}
+                    />
+                    <div class="flex items-center gap-3 mt-2">
+                        <Button size="sm" loading={chatting} disabled={chatting} onclick={sendPrompt}>{m.models_test_send()}</Button>
+                        {#if chatting}<span class="text-xs text-muted-foreground">{m.models_test_thinking()}</span>{/if}
+                    </div>
+                    {#if reply}<p class="text-sm mt-3 whitespace-pre-wrap" data-reply>{reply}</p>{/if}
+                </div>
+            </section>
+        {/if}
+    </AdvancedSection>
 </main>

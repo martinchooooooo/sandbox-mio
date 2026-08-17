@@ -2,6 +2,7 @@
     import Button from "$lib/components/ui/button/button.svelte";
     import * as Field from "$lib/components/ui/field";
     import { Input } from "$lib/components/ui/input";
+    import AdvancedSection from "$lib/components/AdvancedSection.svelte";
     import { invoke } from "@tauri-apps/api/core";
     import { open } from "@tauri-apps/plugin-dialog";
     import { m } from "$lib/paraglide/messages.js";
@@ -90,15 +91,13 @@
                         >{m.projects_create()}</Button>
                     </div>
                     <Button variant="link" size="sm" class="self-start px-0" onclick={() => (mode = "folder")}>
-                        <!-- TODO(i18n) -->
-                        or use an existing folder…
+                        {m.projects_use_existing_folder()}
                     </Button>
                 {:else}
                     {#if existingPath === undefined}
                         <div class="flex w-full items-center gap-2">
                             <Button variant="outline" onclick={chooseFolder}>
-                                <!-- TODO(i18n) -->
-                                Choose folder…
+                                {m.projects_choose_folder()}
                             </Button>
                             <Button variant="ghost" size="sm" aria-label="Back" onclick={backToName}>x</Button>
                         </div>
@@ -116,22 +115,23 @@
                     {/if}
                 {/if}
             </Field.Field>
-            <Field.Field>
-                <!-- TODO(i18n) -->
-                <Field.Label>Runs on</Field.Label>
-                <div data-provider-picker class="flex gap-2">
-                    {#each PROVIDERS as option (option)}
-                        <Button
-                            data-provider-option={option}
-                            aria-pressed={provider === option}
-                            variant={provider === option ? "default" : "outline"}
-                            size="sm"
-                            disabled={action.busy !== null}
-                            onclick={() => (provider = option)}
-                        >{providerLabel(option)}</Button>
-                    {/each}
-                </div>
-            </Field.Field>
+            <AdvancedSection>
+                <Field.Field>
+                    <Field.Label>{m.projects_runs_on_label()}</Field.Label>
+                    <div data-provider-picker class="flex gap-2">
+                        {#each PROVIDERS as option (option)}
+                            <Button
+                                data-provider-option={option}
+                                aria-pressed={provider === option}
+                                variant={provider === option ? "default" : "outline"}
+                                size="sm"
+                                disabled={action.busy !== null}
+                                onclick={() => (provider = option)}
+                            >{providerLabel(option)}</Button>
+                        {/each}
+                    </div>
+                </Field.Field>
+            </AdvancedSection>
         </Field.Group>
     </Field.Set>
 

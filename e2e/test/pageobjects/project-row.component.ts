@@ -1,4 +1,5 @@
 import { type Element } from "./app.page.js";
+import workspaceDashboard from "./workspace-dashboard.page.js";
 import { COMMAND, DEPLOY, DESTROY_GRACE, SUBPROCESS, SYNC_CONVERGE, UI_SETTLE } from "../../lib/timeouts.js";
 
 // Enough to outlast two of the deployment poll's 3 s re-render windows without masking a button that
@@ -9,6 +10,11 @@ const ACTION_CLICK_ATTEMPTS = 3;
  * One project's `<li>` in the projects list, resolved lazily on each access so the component
  * survives an in-place re-render. Keyed on `data-sandbox` rather than text because the create row
  * shows "Creating <name>…" while a sandbox is in flight, which a text selector would match instead.
+ *
+ * Deploy/Undeploy/Destroy/Sync moved into WorkspaceDashboard.svelte
+ * (docs/features/desktop-app-feel/02_dev.md Phase B); this row only keeps Start/Stop and Open.
+ * `deployTo`/`undeploy`/`destroy`/`toggleSyncOffOn` open the Dashboard themselves before acting, so
+ * every call site that used them before Phase B is unchanged.
  */
 export default class ProjectRow {
   readonly projectName: string;
@@ -33,26 +39,6 @@ export default class ProjectRow {
     return this.root.$("button=workspace");
   }
 
-  get deployButton(): Element {
-    return this.root.$("button=deploy");
-  }
-
-  get undeployButton(): Element {
-    return this.root.$("button=undeploy");
-  }
-
-  get destroyButton(): Element {
-    return this.root.$("button=destroy");
-  }
-
-  get hostSelect(): Element {
-    return this.root.$("select");
-  }
-
-  get syncSwitch(): Element {
-    return this.root.$("button[role='switch']");
-  }
-
   get runningIndicator(): Element {
     return this.root.$("span.bg-green-500");
   }
@@ -63,6 +49,13 @@ export default class ProjectRow {
 
   deployedHostLabel(host: string): Element {
     return this.root.$(`span*=${host}`);
+  }
+
+  // The row keeps a "→ host" label (SandboxItem.svelte) even though the Deploy/Undeploy controls
+  // that used to sit beside it moved into WorkspaceDashboard.svelte — this is the still-present
+  // signal isDeployed() reads instead of the relocated undeploy button.
+  get deploymentIndicator(): Element {
+    return this.root.$("span*=→");
   }
 
   async waitForDisplayed(timeout = COMMAND): Promise<void> {
@@ -77,21 +70,23 @@ export default class ProjectRow {
   async #clickButton(button: Element): Promise<void> {
     const el = await button;
     await el.scrollIntoView();
-    // The projects list re-renders on a 3 s deployment poll (src/routes/projects/+page.svelte), so a
-    // click issued without this can land while the row is being swapped and never reach a handler.
+    // The projects list re-renders on the shared sandbox-state poll (src/lib/sandbox/state.svelte.ts),
+    // so a click issued without this can land while the row is being swapped and never reach a handler.
     await el.waitForClickable({ timeout: UI_SETTLE });
     await el.click();
   }
 
   /**
    * Click a button that invokes a backend command, and confirm the command actually started —
-   * retrying the click when it did not. A click lost to the deployment poll's re-render leaves no
-   * trace: no busy state, no error, the row simply idle, which then burns the caller's whole budget.
+   * retrying the click when it did not. A click lost to the poll's re-render leaves no trace: no
+   * busy state, no error, the row simply idle, which then burns the caller's whole budget.
+   * `errorRow` is the StatusRow error line for whichever action runner owns this button — the row's
+   * own for start/stop, WorkspaceDashboard's shared one for the relocated deploy/undeploy actions.
    */
-  async #clickAction(button: Element, action: string): Promise<void> {
+  async #clickAction(button: Element, action: string, errorRow: Element): Promise<void> {
     for (let attempt = 1; attempt <= ACTION_CLICK_ATTEMPTS; attempt++) {
       await this.#clickButton(button);
-      if (await this.#actionStarted(button)) return;
+      if (await this.#actionStarted(button, errorRow)) return;
       console.warn(`[e2e] "${action}" click ${attempt}/${ACTION_CLICK_ATTEMPTS} did not start the action, retrying...`);
     }
     throw new Error(
@@ -101,11 +96,11 @@ export default class ProjectRow {
 
   // Whether the last click reached a handler: the row went busy, surfaced an error, or the button
   // itself went away. Absence of all three within the window means the click was swallowed.
-  async #actionStarted(button: Element): Promise<boolean> {
+  async #actionStarted(button: Element, errorRow: Element): Promise<boolean> {
     try {
       await browser.waitUntil(
         async () => {
-          if (await (await this.errorRow).isExisting()) return true;
+          if (await (await errorRow).isExisting()) return true;
           const el = await button;
           if (!(await el.isExisting()) || !(await el.isDisplayed())) return true;
           return (await el.getAttribute("aria-busy")) === "true";
@@ -132,6 +127,13 @@ export default class ProjectRow {
     await this.#clickButton(this.workspaceButton);
   }
 
+  // Deploy/undeploy/destroy/sync all act on WorkspaceDashboard.svelte now, so each opens it first
+  // (e2e/AGENTS.md's "Dashboard specs" section: wait for render before using its getters).
+  async #openDashboard(): Promise<void> {
+    await this.openWorkspace();
+    await workspaceDashboard.waitForRendered(this.projectName);
+  }
+
   async waitForRunning(timeout = SUBPROCESS): Promise<void> {
     await (await this.runningIndicator).waitForExist({ timeout });
   }
@@ -143,18 +145,20 @@ export default class ProjectRow {
   /** Resolves only once the deployment is live and synced. */
   async deployTo(host: string, { timeout = DEPLOY }: { timeout?: number } = {}): Promise<void> {
     const start = Date.now();
-    await this.#clickButton(this.deployButton);
+    await this.#openDashboard();
+    await this.#clickButton(workspaceDashboard.deployButton);
 
-    const select = await this.hostSelect;
+    const select = await workspaceDashboard.hostSelect;
     await select.waitForDisplayed({ timeout: UI_SETTLE });
     await select.selectByVisibleText(host);
 
-    await this.#clickAction(this.root.$("button=Deploy"), `deploy to "${host}"`);
+    await this.#clickAction(workspaceDashboard.deployConfirmButton, `deploy to "${host}"`, workspaceDashboard.errorRow);
 
     await this.#settle(
-      async () => (await this.undeployButton).isDisplayed(),
+      async () => (await workspaceDashboard.undeployButton).isDisplayed(),
       `deploy to "${host}"`,
-      timeout
+      timeout,
+      workspaceDashboard.errorRow
     );
 
     const remaining = timeout - (Date.now() - start);
@@ -164,8 +168,14 @@ export default class ProjectRow {
   // undeploy_sandbox (src-tauri/src/lib.rs) chains a flush, an SSH remove, Mutagen teardown and a
   // container start — same budget as deployTo.
   async undeploy(timeout = DEPLOY): Promise<void> {
-    await this.#clickAction(this.undeployButton, "undeploy");
-    await this.#settle(async () => (await this.deployButton).isDisplayed(), "undeploy", timeout);
+    await this.#openDashboard();
+    await this.#clickAction(workspaceDashboard.undeployButton, "undeploy", workspaceDashboard.errorRow);
+    await this.#settle(
+      async () => (await workspaceDashboard.deployButton).isDisplayed(),
+      "undeploy",
+      timeout,
+      workspaceDashboard.errorRow
+    );
   }
 
   /**
@@ -175,11 +185,11 @@ export default class ProjectRow {
    *
    * Both directions share this so neither can regain a blind wait the other has already lost.
    */
-  async #settle(succeeded: () => Promise<boolean>, action: string, timeout: number): Promise<void> {
+  async #settle(succeeded: () => Promise<boolean>, action: string, timeout: number, errorRow: Element): Promise<void> {
     let errorText = "";
     await browser.waitUntil(
       async () => {
-        const err = await this.errorRow;
+        const err = await errorRow;
         if (await err.isExisting()) {
           errorText = await err.getText();
           return true;
@@ -196,12 +206,14 @@ export default class ProjectRow {
   }
 
   async destroy(timeout = DESTROY_GRACE): Promise<void> {
-    await this.#clickButton(this.destroyButton);
+    await this.#openDashboard();
+    await this.#clickButton(workspaceDashboard.destroyButton);
     await this.waitForGone(timeout);
   }
 
   async toggleSyncOffOn(pauseMs = 500): Promise<void> {
-    const sw = await this.syncSwitch;
+    await this.#openDashboard();
+    const sw = await workspaceDashboard.syncSwitch;
     await sw.scrollIntoView();
     await sw.click();
     await browser.pause(pauseMs);
@@ -209,7 +221,7 @@ export default class ProjectRow {
   }
 
   async isDeployed(): Promise<boolean> {
-    return (await this.undeployButton).isDisplayed();
+    return (await this.deploymentIndicator).isExisting();
   }
 
   async isHostShown(host: string): Promise<boolean> {
@@ -217,8 +229,10 @@ export default class ProjectRow {
   }
 
   /**
-   * StatusRow's error line, rendered only while an action's last attempt failed
-   * (see createActionRunner() in src/lib/actions.svelte.ts).
+   * StatusRow's error line for this row's own action runner (start/stop/open-workspace — the
+   * controls that stayed here after Phase B). Deploy/undeploy/destroy/sync errors surface through
+   * `workspaceDashboard.errorRow` instead, since those actions now run through the Dashboard's
+   * shared action runner (docs/features/desktop-app-feel/02_dev.md Phase B).
    */
   get errorRow(): Element {
     return this.root.$("div[role='status'].text-destructive");

@@ -2,6 +2,8 @@
     import { onMount } from "svelte";
     import { invoke } from "@tauri-apps/api/core";
     import Button from "$lib/components/ui/button/button.svelte";
+    import AdvancedSection from "$lib/components/AdvancedSection.svelte";
+    import { m } from "$lib/paraglide/messages.js";
     import { parseError, type AppErrorKind } from "$lib/errors";
     import { createActionRunner } from "$lib/actions.svelte";
     import {
@@ -61,39 +63,32 @@
 </script>
 
 <div class="border-2 rounded-md shadow-md p-5 space-y-3" data-step="download-necessities" data-done={done}>
-    <!-- TODO(i18n) -->
-    <h3 class="text-lg font-medium">Download necessities</h3>
-    <!-- TODO(i18n) -->
-    <p class="text-muted-foreground text-sm">
-        Builds the base image every sandbox starts from. This takes a few minutes the first time.
-    </p>
+    <h3 class="text-lg font-medium">{m.welcome_download_title()}</h3>
+    <AdvancedSection label={m.welcome_technical_details_label()}>
+        <p class="text-muted-foreground text-sm">
+            {m.welcome_download_technical_details()}
+        </p>
+    </AdvancedSection>
 
     {#if probing}
-        <!-- TODO(i18n) -->
-        <p class="text-muted-foreground text-sm">Checking…</p>
+        <p class="text-muted-foreground text-sm">{m.welcome_checking()}</p>
     {:else if done}
-        <!-- TODO(i18n) -->
-        <p class="text-sm font-medium">Already downloaded ✓</p>
+        <p class="text-sm font-medium">{m.welcome_download_already_done()}</p>
     {:else if probeErrorKind === "PodmanUnresponsive"}
         <!-- Named as a stall rather than a fault to fix: neither `setupPodman` nor `startPodman`
-             helps a binary that never answers. TODO(i18n) -->
+             helps a binary that never answers. -->
         <p class="text-destructive text-sm" data-error="podman-unresponsive">
-            Podman started but never answered. Retrying may clear it; if it does not, the details are
-            in <code>mio.log</code>.
+            {m.welcome_podman_unresponsive_before()} <code>mio.log</code>{m.welcome_podman_unresponsive_after()}
         </p>
-        <!-- TODO(i18n) -->
-        <Button onclick={probe}>Try again</Button>
+        <Button onclick={probe}>{m.welcome_try_again()}</Button>
     {:else if podmanRebootRequired()}
-        <!-- TODO(i18n) -->
         <p class="text-destructive text-sm">
-            Windows needs to restart to finish installing WSL2. Restart, then come back here.
+            {m.welcome_wsl_reboot_message()}
         </p>
-        <!-- TODO(i18n) -->
-        <Button onclick={download}>Try again</Button>
+        <Button onclick={download}>{m.welcome_try_again()}</Button>
     {:else}
-        <!-- TODO(i18n) -->
         <Button loading={action.busy !== null} disabled={action.busy !== null} onclick={download}>
-            Download necessities
+            {m.welcome_download_button()}
         </Button>
         {#if action.error || probeError}
             <p class="text-destructive text-sm">{action.error || probeError}</p>

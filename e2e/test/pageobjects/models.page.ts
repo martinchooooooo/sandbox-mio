@@ -12,6 +12,22 @@ class ModelsPage extends AppPage {
     return $("[data-specs]");
   }
 
+  // The specs panel, full catalogue, and chat box all sit behind this single AdvancedSection
+  // disclosure, closed by default on every page visit (docs/features/desktop-app-feel/02_dev.md
+  // Phase D) — `open()` expands it immediately since every current caller needs at least the specs
+  // panel, keeping the rest of this page object's behavior unchanged from before Phase D.
+  get advancedTrigger(): Element {
+    return $("[data-model-advanced] button");
+  }
+
+  async #expandAdvanced(timeout: number): Promise<void> {
+    const btn = await this.advancedTrigger;
+    await btn.waitForDisplayed({ timeout });
+    if ((await btn.getAttribute("data-state")) === "open") return;
+    await btn.waitForClickable({ timeout });
+    await btn.click();
+  }
+
   // Present only once detect_machine_specs has resolved, so open() waits on it rather than the
   // specsPanel placeholder — otherwise callers read the panel mid-probe.
   get specsReady(): Element {
@@ -78,6 +94,7 @@ class ModelsPage extends AppPage {
       await link.waitForDisplayed({ timeout });
       await link.click();
     }
+    await this.#expandAdvanced(timeout);
     await (await this.specsPanel).waitForDisplayed({ timeout });
     await (await this.specsReady).waitForDisplayed({ timeout: SUBPROCESS });
   }
@@ -86,11 +103,25 @@ class ModelsPage extends AppPage {
     return (await this.specsPanel).getText();
   }
 
+  /**
+   * The default/primary row (docs/features/desktop-app-feel/02_dev.md Phase D) has no separate
+   * Download button — its single action chains download and start together — while any other row
+   * (reached through the AdvancedSection catalogue `open()` already expands) keeps them separate.
+   * Falls back to the combined `[data-start]` button when `button=Download` isn't there, so callers
+   * don't need to know which shape a given model's row has.
+   */
   async startDownload(modelId: string): Promise<void> {
     const row = await this.row(modelId);
-    const btn = await row.$("button=Download");
-    await btn.waitForDisplayed({ timeout: COMMAND });
-    await btn.click();
+    const downloadBtn = row.$("button=Download");
+    if (await downloadBtn.isExisting()) {
+      const btn = await downloadBtn;
+      await btn.waitForDisplayed({ timeout: COMMAND });
+      await btn.click();
+      return;
+    }
+    const combined = await row.$("[data-start]");
+    await combined.waitForClickable({ timeout: COMMAND });
+    await combined.click();
   }
 
   async waitForDownloaded(modelId: string, timeoutMs: number): Promise<void> {
@@ -102,11 +133,17 @@ class ModelsPage extends AppPage {
     });
   }
 
+  /**
+   * No-ops if `[data-start]` is already gone: the primary row's combined `startDownload()` click
+   * above already triggered start too, in which case the button switched to Stop (no `data-start`).
+   */
   async startInference(modelId: string): Promise<void> {
     const row = await this.row(modelId);
-    const btn = await row.$("[data-start]");
-    await btn.waitForClickable({ timeout: COMMAND });
-    await btn.click();
+    const btn = row.$("[data-start]");
+    if (!(await btn.isExisting())) return;
+    const el = await btn;
+    await el.waitForClickable({ timeout: COMMAND });
+    await el.click();
   }
 
   async waitForRunning(timeoutMs: number): Promise<void> {

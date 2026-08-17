@@ -44,8 +44,21 @@ class ProjectsPage extends AppPage {
     return this.createRow.$(`button[data-provider-option='${provider}']`);
   }
 
+  // The picker sits behind the shared AdvancedSection disclosure, closed by default on every page
+  // visit (docs/features/desktop-app-feel/02_dev.md Phase C) — this is its trigger.
+  get advancedTrigger(): Element {
+    return this.createRow.$("button=Advanced");
+  }
+
   /** Select which provider the next `createProject()` creates on. */
   async chooseProvider(provider: string): Promise<void> {
+    const opt = await this.providerOption(provider);
+    const visible = (await opt.isExisting()) && (await opt.isDisplayed());
+    if (!visible) {
+      const trigger = await this.advancedTrigger;
+      await trigger.waitForClickable({ timeout: UI_SETTLE });
+      await trigger.click();
+    }
     const btn = await this.providerOption(provider);
     await btn.waitForClickable({ timeout: UI_SETTLE });
     await btn.click();

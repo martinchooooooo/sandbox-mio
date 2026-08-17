@@ -1,6 +1,7 @@
 import assert from "node:assert";
 
 import ProjectsPage from "../../pageobjects/projects.page.js";
+import workspaceDashboard from "../../pageobjects/workspace-dashboard.page.js";
 
 // LIGHT spec for docs/features/microsandbox-provider (Phase J). Runs against MIO_MOCK_BACKEND=1, so
 // the `msb.*` calls land on ScriptedMsbRunner's tracked-instance round trip rather than a real `msb`
@@ -24,9 +25,11 @@ describe("Microsandbox provider — create and capability gating (mock backend)"
     await ProjectsPage.chooseProvider("microsandbox");
     const row = await ProjectsPage.createProject(msbName);
 
+    await row.openWorkspace();
+    await workspaceDashboard.waitForRendered(msbName);
     assert(
-      !(await (await row.deployButton).isExisting()),
-      "A microsandbox sandbox still offers Deploy — SandboxItem.svelte must hide it when the " +
+      !(await (await workspaceDashboard.deployButton).isExisting()),
+      "A microsandbox sandbox still offers Deploy — RemoteManager.svelte must hide it when the " +
         "provider's ProviderCapabilities.remote_targets is false.",
     );
   });
@@ -35,8 +38,10 @@ describe("Microsandbox provider — create and capability gating (mock backend)"
     await ProjectsPage.chooseProvider("podman");
     const row = await ProjectsPage.createProject(podmanName);
 
+    await row.openWorkspace();
+    await workspaceDashboard.waitForRendered(podmanName);
     assert(
-      await (await row.deployButton).isDisplayed(),
+      await (await workspaceDashboard.deployButton).isDisplayed(),
       "A Podman sandbox lost its Deploy action — the capability gate must be per sandbox, not " +
         "applied to the whole list.",
     );

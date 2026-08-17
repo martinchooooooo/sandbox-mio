@@ -1,6 +1,8 @@
 <script lang="ts">
     import { onMount } from "svelte";
     import Button from "$lib/components/ui/button/button.svelte";
+    import AdvancedSection from "$lib/components/AdvancedSection.svelte";
+    import { m } from "$lib/paraglide/messages.js";
     import MachineSteps from "$lib/machine/MachineSteps.svelte";
     import { prepareMachine } from "$lib/machine/readiness";
     import { ensureMachineReadiness, machineReadiness } from "$lib/machine/readiness.svelte";
@@ -45,44 +47,38 @@
     }
 
     function actionLabel(): string {
-        // TODO(i18n)
-        if (provider === "microsandbox") return "Set up microsandbox";
-        return status.readiness.needsSetup ? "Create virtual machine" : "Start virtual machine";
+        if (provider === "microsandbox") return m.welcome_setup_microsandbox();
+        return status.readiness.needsSetup ? m.welcome_create_vm() : m.welcome_start_vm();
     }
 </script>
 
 <div class="border-2 rounded-md shadow-md p-5 space-y-3" data-step="create-vm" data-done={done}>
-    <!-- TODO(i18n) -->
-    <h3 class="text-lg font-medium">Create virtual machine</h3>
-    <!-- TODO(i18n) -->
-    <p class="text-muted-foreground text-sm">
-        Sandboxes run inside a virtual machine. This sets it up on your computer.
-    </p>
+    <h3 class="text-lg font-medium">{m.welcome_workspace_title()}</h3>
+    <AdvancedSection label={m.welcome_technical_details_label()}>
+        <p class="text-muted-foreground text-sm">
+            {m.welcome_vm_technical_details()}
+        </p>
+    </AdvancedSection>
 
     {#if status.probing}
-        <!-- TODO(i18n) -->
-        <p class="text-muted-foreground text-sm">Checking…</p>
+        <p class="text-muted-foreground text-sm">{m.welcome_checking()}</p>
     {:else if status.errorKind === "PodmanUnresponsive"}
         <!-- Named as a stall rather than a fault to fix: the remedies the other failure branches
-             offer do not apply to a binary that never answers. TODO(i18n) -->
+             offer do not apply to a binary that never answers. -->
         <p class="text-destructive text-sm" data-error="podman-unresponsive">
-            Podman started but never answered. Retrying may clear it; if it does not, the details are
-            in <code>mio.log</code>.
+            {m.welcome_podman_unresponsive_before()} <code>mio.log</code>{m.welcome_podman_unresponsive_after()}
         </p>
-        <!-- TODO(i18n) -->
-        <Button onclick={() => ensureMachineReadiness(provider, true)}>Try again</Button>
+        <Button onclick={() => ensureMachineReadiness(provider, true)}>{m.welcome_try_again()}</Button>
     {:else if status.error}
         <p class="text-destructive text-sm">{status.error}</p>
         <!-- Without this the card is permanently dead after a failed probe, with an app restart as
-             the only escape. TODO(i18n) -->
-        <Button onclick={() => ensureMachineReadiness(provider, true)}>Try again</Button>
+             the only escape. -->
+        <Button onclick={() => ensureMachineReadiness(provider, true)}>{m.welcome_try_again()}</Button>
     {:else if done}
-        <!-- TODO(i18n) -->
-        <p class="text-sm font-medium">Already set up ✓</p>
+        <p class="text-sm font-medium">{m.welcome_vm_already_set_up()}</p>
     {:else if rebootMessage}
         <p class="text-destructive text-sm">{rebootMessage}</p>
-        <!-- TODO(i18n) -->
-        <Button onclick={run}>Try again</Button>
+        <Button onclick={run}>{m.welcome_try_again()}</Button>
     {:else}
         <MachineSteps steps={status.steps} {events} />
         <Button loading={busy} disabled={busy} onclick={run}>{actionLabel()}</Button>

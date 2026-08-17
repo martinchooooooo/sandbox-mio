@@ -1,9 +1,7 @@
 <script lang="ts">
     import Button from "$lib/components/ui/button/button.svelte";
-    import Input from "$lib/components/ui/input/input.svelte";
     import * as Collapsible from "$lib/components/ui/collapsible";
     import { invoke, Channel } from "@tauri-apps/api/core";
-    import { openUrl } from "@tauri-apps/plugin-opener";
     import { onMount } from "svelte";
     import { toast } from "svelte-sonner";
     import { createActionRunner } from "$lib/actions.svelte";
@@ -11,11 +9,10 @@
     import { m } from "$lib/paraglide/messages.js";
     import { parseError } from "$lib/errors";
     import type { AgentInstallEvent } from "$lib/agents/types";
+    import AuthSessionCard from "$lib/agents/AuthSessionCard.svelte";
     import {
         authSessionId,
         authPhase,
-        authOutputLines,
-        authUrlDetected,
         authExitCode,
         beginSigningIn,
         start as startAuthSession,
@@ -33,9 +30,6 @@
     let bundles = $state<Record<string, CredentialManifest>>({});
     let activeServiceId = $state<string | null>(null);
     let cardOpen = $state<Record<string, boolean>>({});
-    let showDetails = $state(false);
-    let codeInput = $state("");
-    let submittingCode = $state(false);
     let handledExitId: string | null = null;
 
     // Distinct services referenced by the catalogue, keeping the first agent descriptor that
@@ -57,8 +51,6 @@
     function dismiss(serviceId: string) {
         resetAuthSession();
         activeServiceId = null;
-        showDetails = false;
-        codeInput = "";
         delete cardOpen[serviceId];
     }
 
@@ -111,8 +103,6 @@
         const authContainer = `mio-auth-${serviceId}`;
 
         activeServiceId = serviceId;
-        showDetails = false;
-        codeInput = "";
         beginSigningIn();
         cardOpen[serviceId] = true;
 
@@ -156,16 +146,10 @@
         });
     }
 
-    async function submitCode() {
+    async function submitCode(code: string) {
         const sessionId = authSessionId();
-        if (!sessionId || !codeInput.trim() || submittingCode) return;
-        submittingCode = true;
-        try {
-            await invoke("send_agent_auth_input", { sessionId, input: codeInput.trim() });
-            codeInput = "";
-        } finally {
-            submittingCode = false;
-        }
+        if (!sessionId) return;
+        await invoke("send_agent_auth_input", { sessionId, input: code });
     }
 
     function cancelOrDismiss(serviceId: string) {
@@ -209,7 +193,7 @@
                         <div class="text-sm font-medium truncate">{service.label}</div>
                         <div class="text-xs text-muted-foreground truncate" data-status>
                             {#if active}
-                                Signing in… <!-- TODO(i18n) -->
+                                {m.auth_signing_in()}
                             {:else if bundle}
                                 {bundle.accountEmail ?? m.credentials_status_connected()}
                             {:else}
@@ -240,60 +224,11 @@
                 </div>
 
                 {#if active}
-                    <Collapsible.Content class="pt-3 flex flex-col gap-2">
-                        {#if authPhase() === "exited"}
-                            {#if authExitCode() === 0}
-                                <p class="text-xs text-muted-foreground">Login successful. Finishing up…</p> <!-- TODO(i18n) -->
-                            {:else}
-                                <p class="text-xs text-destructive">
-                                    Authentication failed (exit code {authExitCode()}). <!-- TODO(i18n) -->
-                                </p>
-                            {/if}
-                        {:else if !authUrlDetected()}
-                            <p class="text-xs text-muted-foreground">Signing in…</p> <!-- TODO(i18n) -->
-                        {/if}
-
-                        {#if authUrlDetected() && authPhase() !== "exited"}
-                            <div class="flex items-center gap-2">
-                                <span class="text-xs text-muted-foreground truncate flex-1">
-                                    {authUrlDetected()}
-                                </span>
-                                <Button size="sm" onclick={() => openUrl(authUrlDetected()!)}>
-                                    Open in browser <!-- TODO(i18n) -->
-                                </Button>
-                            </div>
-                        {/if}
-
-                        {#if authPhase() === "awaiting-code"}
-                            <!-- TODO(i18n) placeholder text below -->
-                            <div class="flex items-center gap-2">
-                                <Input
-                                    class="flex-1"
-                                    placeholder="Paste authorization code here…"
-                                    bind:value={codeInput}
-                                    onkeydown={(e) => e.key === "Enter" && submitCode()}
-                                    disabled={submittingCode}
-                                />
-                                <Button size="sm" onclick={submitCode} disabled={submittingCode || !codeInput.trim()}>
-                                    Submit <!-- TODO(i18n) -->
-                                </Button>
-                            </div>
-                        {/if}
-
-                        <div class="flex items-center gap-2">
-                            <Button size="sm" variant="outline" onclick={() => cancelOrDismiss(service.serviceId)}>
-                                Cancel <!-- TODO(i18n) -->
-                            </Button>
-                            <Button size="sm" variant="ghost" onclick={() => (showDetails = !showDetails)}>
-                                {showDetails ? "Hide details" : "Show details"} <!-- TODO(i18n) -->
-                            </Button>
-                        </div>
-
-                        {#if showDetails}
-                            <pre
-                                class="max-h-40 overflow-auto whitespace-pre-wrap break-all text-xs leading-relaxed bg-muted rounded p-2"
-                            >{#each authOutputLines() as line}{line + "\n"}{/each}</pre>
-                        {/if}
+                    <Collapsible.Content class="pt-3">
+                        <AuthSessionCard
+                            onCancel={() => cancelOrDismiss(service.serviceId)}
+                            onSubmitCode={submitCode}
+                        />
                     </Collapsible.Content>
                 {/if}
             </Collapsible.Root>

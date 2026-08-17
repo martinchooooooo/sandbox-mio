@@ -1,20 +1,25 @@
 <script lang="ts">
     import { invoke } from "@tauri-apps/api/core";
     import { onMount } from "svelte";
+    import { revealItemInDir } from "@tauri-apps/plugin-opener";
     import { HugeiconsIcon } from "@hugeicons/svelte";
     import Button from "$lib/components/ui/button/button.svelte";
     import { m } from "$lib/paraglide/messages.js";
     import { createActionRunner } from "$lib/actions.svelte";
+    import { parseError } from "$lib/errors";
     import StatusRow from "../../routes/projects/StatusRow.svelte";
     import PackageManager from "../../routes/projects/PackageManager.svelte";
     import AgentManager from "../../routes/projects/AgentManager.svelte";
     import PortsManager from "../../routes/projects/PortsManager.svelte";
+    import RemoteManager from "../../routes/projects/RemoteManager.svelte";
     import type { Project } from "$lib/sandbox";
-    import { LoaderPinwheelIcon } from "@hugeicons/core-free-icons";
+    import type { ProviderId } from "$lib/providers";
+    import { LoaderPinwheelIcon, Folder01Icon, Delete02Icon } from "@hugeicons/core-free-icons";
     import { AGENTS, miseKey } from "$lib/agents/catalogue";
     import { LAUNCHABLE_APPS } from "$lib/workspace/apps";
     import { sandboxHasPane, clearActiveSandbox } from "$lib/workspace/state.svelte";
     import { packagesFor, ensurePackages } from "$lib/workspace/packages.svelte";
+    import { ensureSandboxRemoteState, refreshSandboxState } from "$lib/sandbox/state.svelte";
 
     // Rendered by `+layout.svelte` when no Terminal/AgentWeb overlay is active for the active
     // sandbox (docs/features/consolidate-app-container/02_dev.md) — no longer a separate embedded
@@ -22,6 +27,7 @@
     let { sandboxName }: { sandboxName: string } = $props();
 
     let workspacePath = $state("");
+    let provider = $state<ProviderId | undefined>(undefined);
     const packages = $derived(packagesFor(sandboxName));
     const action = createActionRunner();
     const launcherAction = createActionRunner();
@@ -57,9 +63,36 @@
         clearActiveSandbox();
     }
 
+    async function openFolder() {
+        await action.run("folder", () => revealItemInDir(workspacePath));
+    }
+
+    async function destroySandbox() {
+        if (await action.run("destroy", async () => {
+            try {
+                await invoke("destroy_sandbox", { name: sandboxName, force: false });
+            } catch (e) {
+                const err = parseError(e);
+                // The guard refuses to discard unsynced remote work; confirm, then force.
+                if (err.kind === "UnsyncedChanges") {
+                    if (!confirm(`${err.message}\n\nDestroy anyway and discard them?`)) return;
+                    await invoke("destroy_sandbox", { name: sandboxName, force: true });
+                } else {
+                    throw e;
+                }
+            }
+        })) {
+            await refreshSandboxState();
+            await close();
+        }
+    }
+
     onMount(async () => {
         const projects = await invoke<Project[]>("list_sandboxes");
-        workspacePath = projects.find((p) => p.name === sandboxName)?.workspace_path ?? "";
+        const proj = projects.find((p) => p.name === sandboxName);
+        workspacePath = proj?.workspace_path ?? "";
+        provider = proj?.provider;
+        ensureSandboxRemoteState();
     });
 
     $effect(() => {
@@ -67,17 +100,24 @@
     });
 </script>
 
-<main class="h-screen overflow-y-auto p-6">
+<main data-dashboard={sandboxName} class="h-screen overflow-y-auto p-6">
     <div class="mb-4 flex items-center justify-between gap-2">
         <h1 class="text-xl font-medium">{sandboxName}</h1>
-        <button
-            class="text-muted-foreground hover:text-foreground"
-            data-close-sandbox
-            aria-label={m.workspace_close_sandbox_label({ sandbox: sandboxName })}
-            onclick={close}
-        >
-            ×
-        </button>
+        <span class="flex items-center gap-2">
+            <Button variant="ghost" size="sm" onclick={openFolder} title={workspacePath}
+                loading={action.busy === "folder"} disabled={action.busy !== null}>
+                <HugeiconsIcon icon={Folder01Icon} size={16} />
+                {m.projects_folder()}
+            </Button>
+            <button
+                class="text-muted-foreground hover:text-foreground"
+                data-close-sandbox
+                aria-label={m.workspace_close_sandbox_label({ sandbox: sandboxName })}
+                onclick={close}
+            >
+                ×
+            </button>
+        </span>
     </div>
 
     <StatusRow busy={action.busy} message={action.message} error={action.error} />
@@ -114,6 +154,17 @@
             <PackageManager {sandboxName} {workspacePath} {action} />
             <AgentManager {sandboxName} {workspacePath} {action} />
             <PortsManager {sandboxName} {workspacePath} {action} />
+            {#if provider}
+                <RemoteManager {sandboxName} {workspacePath} {provider} {action} />
+            {/if}
+
+            <div class="flex justify-end border-t pt-4">
+                <Button variant="destructive" size="sm" onclick={destroySandbox} title={m.projects_destroy()}
+                    loading={action.busy === "destroy"} disabled={action.busy !== null}>
+                    <HugeiconsIcon icon={Delete02Icon} size={16} />
+                    {m.projects_destroy()}
+                </Button>
+            </div>
         </div>
     {/if}
 </main>

@@ -1,7 +1,7 @@
 <script lang="ts">
     import Button from "$lib/components/ui/button/button.svelte";
     import { invoke } from "@tauri-apps/api/core";
-    import { onMount, onDestroy } from "svelte";
+    import { onMount } from "svelte";
     import { parseError } from "$lib/errors";
     import { m } from "$lib/paraglide/messages.js";
     import {
@@ -19,82 +19,29 @@
     import SandboxItem from "./SandboxItem.svelte";
     import CreateSandboxItem from "./CreateSandboxItem.svelte";
     import { activityEvents, containerStatusFor } from "$lib/activity/activity.svelte";
-    import type { Project, Deployment } from "$lib/sandbox";
-    import { allCapabilities, type ProviderCapabilities, type ProviderId } from "$lib/providers";
+    import type { Project } from "$lib/sandbox";
+    import {
+        ensureSandboxRemoteState,
+        sandboxesList,
+        deploymentFor,
+        sandboxLoadError,
+        refreshSandboxState,
+    } from "$lib/sandbox/state.svelte";
 
-    let capabilities = $state<Record<ProviderId, ProviderCapabilities> | undefined>(undefined);
-
-    let projects = $state<Project[]>([]);
     let error = $state("");
     let currentImageVersion = $state<number | undefined>(undefined);
 
-    // Deployment state, overlaid onto the local sandbox list by name. A sandbox with an entry is
-    // deployed to `deployments[name].host`; one without is local-only. Polled, since sync status
-    // changes outside our event stream.
-    let hosts = $state<string[]>([]);
-    let deployments = $state<Record<string, Deployment>>({});
-
-    async function loadProjects() {
-        try {
-            projects = await invoke<Project[]>("list_sandboxes");
-        } catch (e) {
-            error = parseError(e).message;
-        }
-    }
-
-    async function loadDeployments() {
-        try {
-            const list = await invoke<Deployment[]>("sandbox_deployments");
-            deployments = Object.fromEntries(list.map((d) => [d.name, d]));
-        } catch (e) {
-            error = parseError(e).message;
-        }
-    }
-
-    async function loadHosts() {
-        try {
-            hosts = await invoke<string[]>("list_sandbox_hosts");
-        } catch (e) {
-            error = parseError(e).message;
-        }
-    }
-
-    // The global activity store now owns the listen_events container stream (it superseded the
-    // route-local EventLog). Re-apply the latest container status to each project whenever a new
-    // container event arrives; reading activityEvents() makes this effect re-run on each event.
+    // The store's raw list, overlaid with the latest container status from the activity store's
+    // event stream (src/lib/activity/activity.svelte.ts) for responsiveness between the store's 3 s
+    // poll ticks. Reading activityEvents() makes this effect re-run on each container event.
+    let projects = $state<Project[]>([]);
     $effect(() => {
         activityEvents();
-        for (let i = 0; i < projects.length; i++) {
-            const status = containerStatusFor(projects[i].name);
-            if (status && projects[i].status !== status) {
-                projects[i] = { ...projects[i], status };
-            }
-        }
+        projects = sandboxesList().map((p) => {
+            const status = containerStatusFor(p.name);
+            return status && status !== p.status ? { ...p, status } : p;
+        });
     });
-
-    // After a sandbox mutates its deploy/lifecycle state, refresh both overlays it depends on.
-    function reload() {
-        return Promise.all([loadDeployments(), loadProjects()]);
-    }
-
-    let pollId: ReturnType<typeof setInterval>;
-
-    // The normal load sequence, run only once Podman is confirmed ready. Sync status drifts outside
-    // the container event stream, so the caller follows this with the deployment poll.
-    function loadAll() {
-        loadProjects();
-        loadHosts();
-        loadDeployments();
-        invoke<number>("base_image_version").then((v) => (currentImageVersion = v)).catch(() => {});
-        allCapabilities().then((c) => (capabilities = c)).catch(() => {});
-    }
-
-    // Only started once Podman is confirmed ready: polling a down Podman floods the backend with
-    // failing invocations.
-    function startLoadAndPoll() {
-        loadAll();
-        pollId = setInterval(loadDeployments, 3000);
-    }
 
     onMount(async () => {
         // Probe Podman before anything else: a stopped machine after a host restart should show the
@@ -106,18 +53,17 @@
             return;
         }
         if (podmanUnavailable()) return;
-        startLoadAndPoll();
+        ensureSandboxRemoteState();
+        invoke<number>("base_image_version").then((v) => (currentImageVersion = v)).catch(() => {});
     });
 
     async function startPodman() {
-        if (await startPodmanMachine()) startLoadAndPoll();
+        if (await startPodmanMachine()) ensureSandboxRemoteState();
     }
 
     async function setupPodman() {
-        if (await provisionPodmanMachine()) startLoadAndPoll();
+        if (await provisionPodmanMachine()) ensureSandboxRemoteState();
     }
-
-    onDestroy(() => clearInterval(pollId));
 </script>
 
 <main class="p-6 pb-52">
@@ -144,8 +90,8 @@
             </Field.Group>
         </Field.Set> -->
 
-        {#if error}
-            <p class="text-destructive mt-4 text-sm">{error}</p>
+        {#if error || sandboxLoadError()}
+            <p class="text-destructive mt-4 text-sm">{error || sandboxLoadError()}</p>
         {/if}
 
         {#if podmanUnavailable() && podmanNeedsSetup()}
@@ -183,14 +129,12 @@
                 {#each projects as project (project.id)}
                     <SandboxItem
                         {project}
-                        {hosts}
                         {currentImageVersion}
-                        deployment={deployments[project.name]}
-                        capabilities={capabilities?.[project.provider]}
-                        onChanged={reload}
+                        deployment={deploymentFor(project.name)}
+                        onChanged={refreshSandboxState}
                     />
                 {/each}
-                <CreateSandboxItem onCreated={reload} />
+                <CreateSandboxItem onCreated={refreshSandboxState} />
             </ul>
         {/if}
     </div>
