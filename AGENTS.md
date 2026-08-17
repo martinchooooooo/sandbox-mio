@@ -52,7 +52,8 @@ a time (`docs/features/parallel-worktree-e2e/02_dev.md`).
 
 All read via `std::env::var` at call time, never cached:
 
-- `PODMAN_CONNECTION` — Podman system connection name; default `podman-machine-default` (`src-tauri/src/backends/mod.rs`).
+- `PODMAN_CONNECTION` — Podman system connection name; default `podman-machine-default` (`src-tauri/src/backends/mod.rs`). Steers container/runtime operations only; machine lifecycle (`src-tauri/src/machine/mod.rs`) always targets the default machine, since a connection may name a remote SSH endpoint no `podman machine` subcommand can act on.
+- `MIO_PODMAN_MACHINE` — test-only override for the machine `src-tauri/src/machine/mod.rs` targets; default `podman-machine-default`. Set only by the E2E harness.
 - `SANDBOX_WORKSPACE_ROOT` — root for sandbox workspace directories; default `<Documents>/sandbox-mio` (`workspace_root()` in `src-tauri/src/backends/mod.rs`).
 - `MIO_MOCK_BACKEND=1` — swaps every subsystem trait to its in-memory mock; used by the e2e `light` tier (`mock_backend_enabled()` in `src-tauri/src/backends/mod.rs`).
 - `MIO_MACHINE_PROVIDER` — overrides the persisted `default_provider` setting for the process (`podman` or `msb`), so a run can point the create-sandbox flow at a provider without writing that choice to `settings.json` (`load()` in `src-tauri/src/settings/mod.rs`).

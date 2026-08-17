@@ -63,8 +63,12 @@ pub fn dismiss_image_update(workspace_path: &str, version: u32) -> Result<(), Ba
     Ok(crate::mio_files::write_text(&path, &version.to_string())?)
 }
 
-/// The Podman connection/machine name to target: `PODMAN_CONNECTION` when set (e2e points this at
-/// a non-default machine, e.g. `mio-tests`)
+/// The Podman connection name container and runtime operations target: `PODMAN_CONNECTION` when set
+/// (e2e points this at a non-default machine, e.g. `mio-tests`), else `DEFAULT_MACHINE_NAME`.
+///
+/// Does not steer machine lifecycle (`src-tauri/src/machine/mod.rs`, which has its own
+/// `MIO_PODMAN_MACHINE` override): a connection name isn't guaranteed to name a local machine — see
+/// `add_host` below — so `podman machine` subcommands can't safely run against it.
 pub(crate) fn connection_name() -> String {
     std::env::var("PODMAN_CONNECTION").unwrap_or_else(|_| DEFAULT_MACHINE_NAME.to_string())
 }

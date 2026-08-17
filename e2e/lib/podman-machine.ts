@@ -153,6 +153,29 @@ const START_RECOVERY_STEPS: RecoveryStep[] = [
   },
 ];
 
+/** Creates `machineName` if absent; never starts or socket-activates it. */
+export function ensureMachineInitialized(machineName: string): void {
+  const listResult = spawnSync("podman", ["machine", "list", "--format", "json"], {
+    encoding: "utf8",
+    shell: true,
+  });
+
+  let machines: MachineListEntry[] = [];
+  try {
+    machines = JSON.parse(listResult.stdout || "[]");
+  } catch {
+    machines = [];
+  }
+
+  if (!machines.some((m) => m.Name === machineName)) {
+    console.log(`Creating podman machine "${machineName}"...`);
+    const init = podmanHost(["machine", "init", machineName], { stdio: "inherit" });
+    if (init.status !== 0) {
+      throw new Error(`podman machine init "${machineName}" failed (exit ${init.status})`);
+    }
+  }
+}
+
 /** Idempotent — safe to call every run. */
 export function provisionMachine(machineName: string): void {
   const listResult = spawnSync("podman", ["machine", "list", "--format", "json"], {

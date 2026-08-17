@@ -8,6 +8,7 @@ import { fileURLToPath } from "url";
 import {
   DEFAULT_MACHINE,
   provisionMachine,
+  ensureMachineInitialized,
   stopMachine,
   removeMachine,
   ensureMiseBaseImage,
@@ -41,8 +42,9 @@ import {
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
-// Every machine a standard run needs answering before the first spec starts.
-const REQUIRED_MACHINES = [DEFAULT_MACHINE, LOCAL_CONNECTION, REMOTE_CONNECTION];
+// Every machine a standard run needs answering before the first spec starts. DEFAULT_MACHINE is
+// excluded: onPrepare only initialises it, never starts it (see the comment there).
+const REQUIRED_MACHINES = [LOCAL_CONNECTION, REMOTE_CONNECTION];
 // Short per-machine probe: these are already provisioned, so this confirms rather than waits out a
 // boot. A repair pass can knock another machine down, so allow a few passes to reach a clean sweep.
 const VERIFY_TIMEOUT_MS = 5000;
@@ -274,15 +276,15 @@ export const config: WebdriverIO.Config = {
     if (IS_LIGHT_RUN) {
       console.log("[e2e] light suite: skipping podman machine provisioning (MIO_MOCK_BACKEND=1).");
     } else {
-      // check_podman_ready probes DEFAULT_MACHINE unconditionally regardless of PODMAN_CONNECTION,
-      // so every standard spec needs it running. Abort on failure — WDIO logs onPrepare errors but
-      // keeps going, and the app would otherwise start against the "Start Podman" gate.
+      // Init only, not started: podman-startup-recovery.spec.ts stops this machine itself, and every
+      // other session's probe follows MIO_PODMAN_MACHINE onto LOCAL_CONNECTION instead.
       try {
-        provisionMachine(DEFAULT_MACHINE);
+        ensureMachineInitialized(DEFAULT_MACHINE);
       } catch (e) {
-        console.error(`[e2e] ${DEFAULT_MACHINE} not ready: ${e instanceof Error ? e.message : String(e)}`);
-        console.error("[e2e] Aborting suite — the startup-recovery probe targets this machine unconditionally.");
-        process.exit(1);
+        console.warn(
+          `[e2e] ${DEFAULT_MACHINE} could not be initialized: ${e instanceof Error ? e.message : String(e)}`,
+        );
+        console.warn("[e2e] podman-startup-recovery.spec.ts will likely fail.");
       }
       try {
         provisionMachine(LOCAL_CONNECTION);
@@ -395,7 +397,9 @@ export const config: WebdriverIO.Config = {
       forwardCreate(SWEEP_ORPHAN_SESSION, "tcp:127.0.0.1:38471", "tcp:127.0.0.1:1");
       forwardCreate(SWEEP_KEEP_SESSION, "tcp:127.0.0.1:38473", "tcp:127.0.0.1:1");
     }
-    await spawnTauriDriver(sessionConfig, specs, isLightSession);
+    // This spec's hooks depend on the probe and the sandbox backend resolving different machines.
+    const isRecoverySession = specs.some((s) => s.includes("podman-startup-recovery"));
+    await spawnTauriDriver(sessionConfig, specs, isLightSession, isRecoverySession);
   },
   // One merged chrome webview hosts the whole app UI (docs/features/consolidate-app-container/02_dev.md);
   // each Terminal/AgentWeb pane opens its own overlay webview. Pin the session to the app UI
@@ -543,6 +547,7 @@ async function spawnTauriDriver(
   config: { port?: number },
   specs: string[],
   isLightSession: boolean,
+  isRecoverySession: boolean,
 ): Promise<void> {
   const ATTEMPTS = 2;
   for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
@@ -569,6 +574,8 @@ async function spawnTauriDriver(
         env: {
           ...process.env,
           PODMAN_CONNECTION: LOCAL_CONNECTION,
+          // Left unset for the recovery spec so its probe falls back to DEFAULT_MACHINE_NAME.
+          ...(isLightSession || isRecoverySession ? {} : { MIO_PODMAN_MACHINE: LOCAL_CONNECTION }),
           ...(isLightSession ? { MIO_MOCK_BACKEND: "1" } : {}),
         },
       },
