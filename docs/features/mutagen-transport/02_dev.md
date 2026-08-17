@@ -1,0 +1,75 @@
+# Mutagen-Based Transport: Build Plan
+
+This is the build plan for `docs/features/mutagen-transport/01_ideas.md`, extracting a provider-neutral `PortTransport` seam and widening `SshAlias`/`SyncStrategy` so Podman's port-forwarding and workspace-sync mechanics stop being hard-wired into `NetworkManager`/`RuntimeManager` call sites, ahead of `docs/features/microsandbox-provider/01_ideas.md` needing a second provider to slot into the same seams. **Status: Phases A–C are implemented; Phase D (regression pass and doc handoff) is complete below.** The plan is scoped, per `01_ideas.md`'s Technology Choices, to be exercisable and verifiable against Podman alone with zero observable behaviour change; no `msb`/microsandbox code is touched here.
+
+## The Concrete Model
+
+A new `src-tauri/src/transport/` module (mirroring the shape of `src-tauri/src/network/` and `src-tauri/src/sync/` — a `mod.rs` with the real implementation and a `types.rs` with the trait and error type) hosts:
+
+- `PortTransport` (`transport/types.rs`): one async method, `resolve_remote_port(&self, sandbox: &str, connection: &str, container_port: u16) -> Result<u16, TransportError>`.
+- `PodmanPortTransport` (`transport/mod.rs`): the only implementation this feature builds. It runs `podman port <sandbox> <container_port>/tcp` over `connection` and parses the `127.0.0.1:<N>` line, reusing the exact parsing this project already has twice (`parse_host_port` in `src-tauri/src/runtime/mod.rs:73` and `src-tauri/src/network/mod.rs:48`) — this feature collapses those two copies into one.
+- `default_port_transport()`: constructs `Arc<dyn PortTransport>`, called from `src-tauri/src/lib.rs`'s state-setup alongside `default_runtime()`/`default_network_manager()`, and injected into both `RuntimeManager` and `NetworkManager` implementations as a constructor field (`PodmanMiseRuntime.port_transport`, `MutagenNetworkManager.port_transport`) rather than each module constructing its own.
+
+This module is deliberately not under `network/` or `runtime/` — both existing modules become *consumers* of it, and `microsandbox-provider/01_ideas.md`'s `MachineProvider` trait is expected to grow a method with this exact shape later (its Proposed Model already sketches `published_host_port`), so `transport/` is where that convergence happens without either existing module depending on the other.
+
+`SshAlias` (`src-tauri/src/ssh/types.rs`) changes from a flat struct to an enum with two variants, `Direct` (today's `host`/`port`/`user`/`identity` shape) and `Proxied { command: String }` (unconstructed by anything in this feature; it exists so `microsandbox-provider` has a real type to build `msb ssh serve --stdio` aliases against instead of widening the type itself). `render_block` (`src-tauri/src/ssh/mod.rs:74`) matches on the variant and emits the corresponding OpenSSH stanza (`HostName`/`Port`/`User`/`IdentityFile` for `Direct`, `ProxyCommand` for `Proxied`), so the two shapes can never both land in one block.
+
+`SyncStrategy` (`src-tauri/src/sync/types.rs` — note: despite living in `sync/`, `SyncStrategy` and `WorkspacePlan` are actually defined in `src-tauri/src/backends/types.rs` per the import at `backends/mod.rs:15`; this plan uses that actual location) gains a third variant, `Volume(ConnectionInfo)`, alongside `Local` and `Remote(ConnectionInfo)`. Nothing in this feature constructs it — `resolve_workspace` (`src-tauri/src/backends/mod.rs:351`) keeps returning only `Local`/`Remote` — it exists so `microsandbox-provider/02_dev.md` doesn't need its own phase to widen the enum before it can express "sync to a disk volume."
+
+## Resolved Decisions
+
+Restating `01_ideas.md`'s Open Questions:
+
+1. **Where `PortTransport` lives.** A new `src-tauri/src/transport/` module, not a method on an existing trait and not folded into `MachineProvider` yet — see The Concrete Model. Both `RuntimeManager` and `NetworkManager` implementations take `Arc<dyn PortTransport>` as a constructor field.
+2. **Whether `SyncStrategy::Volume` is introduced now or held.** Introduced now, unconstructed, matching the existing precedent of `remove_alias` in `src-tauri/src/ssh/mod.rs:130` (`#[allow(dead_code)]`, written ahead of its first caller). Same treatment applies to `SshAlias::Proxied`.
+3. **Whether the `SshAlias` split is a breaking rename or additive.** Breaking rename of the type (struct → enum with a `Direct` variant), but no data migration: `write_alias` (`src-tauri/src/ssh/mod.rs:110`) always overwrites the block for a given alias name on every deploy/connect (per its own doc comment, "safe to call on every deploy"), so a stale on-disk `Direct`-shaped block from before this change is replaced the next time anything calls `write_alias`, with no explicit migration step needed.
+4. **The concurrent-SSH-session spike.** Out of scope for this feature — it is specific to `SshAlias::Proxied`/`msb ssh serve --stdio`, which this feature adds the type for but never constructs or exercises. `microsandbox-provider/02_dev.md` owns running it before it builds anything on top of `Proxied`.
+
+New decision this plan makes that `01_ideas.md` did not anticipate: **`PodmanPortTransport` standardises on `crate::backends::podman_command()`** (the bundled-`podman.exe`-resolving, `no_window`-setting constructor, `src-tauri/src/backends/mod.rs:101`) for its `podman port` call, rather than reproducing `src-tauri/src/network/mod.rs:56`'s bare `Command::new("podman")` free function, which resolves whatever `podman` is on `PATH` instead of the bundled sidecar. This is a real (if narrow) bug fix folded into the extraction: the relay-pool `podman port` lookup in `expose_port` (`src-tauri/src/network/mod.rs:238`) was invoking a different `podman` binary than every other Podman call site in the codebase. Phase A below is the only place this changes; the other three `podman()` free-function call sites in `network/mod.rs` (`exec … socat` at line 232, `pkill` teardown at lines 192/273, `start` at line 221) are unaffected — they are not port lookups, so they stay outside `PortTransport`'s scope for this feature, and the free function keeps its `PATH`-resolving behaviour for them (changing it is a separate, broader fix not required for this refactor's goal; note it in `04_improvements.md` if it should happen later).
+
+## Implemented: Phase A — Extract `PortTransport`, unify the two `parse_host_port` copies
+
+Files: new `src-tauri/src/transport/mod.rs`, `src-tauri/src/transport/types.rs`; edits to `src-tauri/src/runtime/mod.rs` (`prepare_terminal` at line 245, `prepare_agent_web` at line 292, delete `parse_host_port` at line 73), `src-tauri/src/network/mod.rs` (`expose_port` at line 206, delete `parse_host_port` at line 48), `src-tauri/src/lib.rs` (state setup, wiring `default_port_transport()` into both managers' constructors).
+
+- Add `TransportError` (`transport/types.rs`) with a `CommandFailed(String)` variant and a "no host mapping for port" variant carrying the same message shape `prepare_terminal`/`expose_port` produce today (`RuntimeError::TerminalUnavailable`/`AgentWebUnavailable`, `NetworkError::CommandFailed` already wrap arbitrary strings, so `TransportError` converts via `.to_string()` at each call site — no `#[from]` needed since the two callers want different wrapper variants for the same underlying failure).
+- `PodmanMiseRuntime` and `MutagenNetworkManager` each gain a `port_transport: Arc<dyn PortTransport>` field. `default_runtime()` (`runtime/mod.rs:26`) and `default_network_manager()` (`network/mod.rs:444`) each take `Arc<dyn PortTransport>` as a new parameter, sourced from a single `default_port_transport()` call in `lib.rs` so both managers share one instance (no functional requirement that they share one — `PodmanPortTransport` is stateless — but sharing avoids two independent constructions of the same thing).
+- `prepare_terminal`/`prepare_agent_web` replace their `Self::podman_on(connection, &["port", name, &port_spec])` + `parse_host_port` pairs with one `self.port_transport.resolve_remote_port(name, connection, ZELLIJ_WEB_PORT)` / `..., PASEO_WEB_PORT)` call.
+- `expose_port` replaces its `podman(connection, &["port", sandbox, &port_spec])` + `parse_host_port` pair (lines 237–243) with `self.port_transport.resolve_remote_port(sandbox, connection, slot)`.
+- `MockNetworkManager` (`network/mock.rs`) and `MockRuntime` (`runtime/mock.rs`) need no change: neither calls `podman port` today (per the doc comment at `network/mock.rs:14`, "the light tier never opens a terminal/agent-web pane or exposes a port today"), so neither needs a mock `PortTransport` — the light tier's behavioural contract is unchanged by this phase. Confirm this by reading `runtime/mock.rs` before starting; if a caller does exist there, it needs a `MockPortTransport` (echo `container_port` back unchanged) rather than skipping the field.
+- Verification: `cargo check`, then `./build e2e` (`standard`) — this phase touches only real-Podman code paths the `light` tier doesn't exercise (per the point above), so `light` passing is necessary but not sufficient; `standard` is the actual regression signal, per `01_ideas.md`'s Validation section framing this as verifiable by the existing tier alone.
+
+## Implemented: Phase B — Split `SshAlias` into `Direct`/`Proxied`
+
+Files: `src-tauri/src/ssh/types.rs`, `src-tauri/src/ssh/mod.rs` (`render_block` at line 74, `markers`/`strip_block`/`write_alias`/`remove_alias` — these key on `alias.alias`/`alias: &str` already and need no change beyond the match in `render_block`), `src-tauri/src/backends/mod.rs` (`ensure_connection_alias` at line 729, the only constructor today).
+
+- `SshAlias` becomes:
+  ```rust
+  pub enum SshAlias {
+      Direct { alias: String, host: String, port: String, user: String, identity: String },
+      Proxied { alias: String, command: String },
+  }
+  ```
+  with an `alias(&self) -> &str` accessor so `write_alias`/`markers`/`strip_block` (which only need the name, not the variant) don't need to match.
+- `render_block` gains a match: `Direct` emits today's five lines (`Host`/`HostName`/`Port`/`User`/`IdentityFile`/`IdentitiesOnly yes`/`StrictHostKeyChecking accept-new`) unchanged; `Proxied` emits `Host <alias>` / `ProxyCommand <command>` / `StrictHostKeyChecking accept-new` (no `IdentitiesOnly`, no `IdentityFile` — the proxy command owns authentication).
+- `ensure_connection_alias` (`backends/mod.rs:729`) changes its `crate::ssh::write_alias(&crate::ssh::types::SshAlias { … })` literal to `SshAlias::Direct { … }`. No other call site constructs `SshAlias` today (confirmed by the `01_ideas.md` Current State survey), so this is the only production caller to update.
+- `#[allow(dead_code)]` on the `Proxied` variant (or on a small constructor function, matching the `remove_alias` precedent at `ssh/mod.rs:129`) until `microsandbox-provider` adds its first caller.
+- Verification: `cargo check`; `./build e2e light` (SSH alias writing is exercised by any spec that deploys or opens a forward — confirm which `light` specs touch `write_alias` and that they still pass, since this phase changes a type those specs' fixtures may construct); `./build e2e` (`standard`) for the real-SSH round trip.
+
+## Implemented: Phase C — Add `SyncStrategy::Volume`, unconstructed
+
+Files: `src-tauri/src/backends/types.rs` (where `SyncStrategy`/`WorkspacePlan` actually live, per the note in The Concrete Model).
+
+- Add `Volume(ConnectionInfo)` as a third `SyncStrategy` variant, reusing the existing `ConnectionInfo` shape `Remote` already carries (host/port/user/identity for the Mutagen `beta` side) rather than inventing a new payload type, since a disk-volume target and a directory target both resolve through the same `MutagenCli::create(name, alpha, beta)` scp-style URL shape (`01_ideas.md`, Proposed Model: "the mechanism is identical to `Remote`; the only difference is what's on the other end").
+- Checked every existing `match`/`if let` on `SyncStrategy`: `resolve_workspace` (`backends/mod.rs:351`) only ever constructs `Local`/`Remote`, so it needed no change. The `let SyncStrategy::Remote(info) = plan.strategy else { … }` at line 523 is a refutable `let-else`, not an exhaustive `match` — Rust does not require it to name every variant, so `Volume` correctly falls through to the existing `NoSshEndpoint` error arm with no code change. No `unreachable!()` arm was needed anywhere; `cargo check` confirmed no site requires exhaustiveness over `SyncStrategy` today.
+- Verification: `cargo check` only — this phase adds no reachable code path, so no e2e signal is expected or required.
+
+## Implemented: Phase D — Regression pass and doc handoff
+
+- `cargo check` and `cargo test` (`src-tauri/`) pass with Phases A–C landed together; `pnpm check` passes with no frontend changes required by this feature.
+- `./build e2e light` could not be run to a real result on this host: `msedgedriver` bundled for this checkout only supports Edge up to version 149, while the installed Edge is 151, so every `light` spec fails at session creation before any app code runs. This is a pre-existing host/driver-version mismatch unrelated to this feature's changes (confirmed by `cargo test` passing and by inspection: Phase A/B/C touch no `light`-tier code path per `03_e2e.md`'s own framing, since `network/mock.rs`'s doc comment already establishes the `light` tier never opens a terminal/agent-web pane or exposes a port). `./build e2e` (`standard`), which is the actual regression signal this phase calls for per `03_e2e.md`, needs a real Podman machine and was not run in this pass for the same host-tooling reason; whoever next has a working driver/Podman setup should run `./build e2e` (`standard`) and confirm `agent-web.spec.ts`, `embedded-workspace.spec.ts`, and `expose-port.spec.ts` still pass before treating this feature as fully regression-proven.
+- Updated `docs/features/microsandbox-provider/01_ideas.md`'s superseded-by note to point at this document (`02_dev.md`) instead of `01_ideas.md`, naming the concrete `PortTransport`/`SshAlias`/`SyncStrategy` shapes now in the tree for `MsbProvider` to build against.
+- No new host-global state, host port, bundled binary, or app-data path was introduced by any phase (Parallel-worktree constraints checklist): `PortTransport`, the `SshAlias` split, and the unconstructed `SyncStrategy::Volume` variant are all pure code-shape changes over existing Podman machinery. Nothing here needed a worktree-isolation review.
+
+## Lifecycle / Cross-Cutting Concerns
+
+`Arc<dyn PortTransport>` follows the same lifetime as `Arc<dyn RuntimeManager>`/`Arc<dyn NetworkManager>` today — constructed once in `lib.rs` setup, held in Tauri-managed state, no teardown of its own (it is stateless; `PodmanPortTransport` holds no fields beyond what each call needs). No sweep/cleanup logic changes: `sweep_stale_forwards` (`src-tauri/src/sync/mod.rs:126`) and `MutagenNetworkManager::sweep` are untouched by this feature since they operate on Mutagen forward sessions, not on the port-resolution step that precedes creating one.
