@@ -1,6 +1,6 @@
 import AppPage, { type Element } from "./app.page.js";
 import ProjectRow from "./project-row.component.js";
-import { COMMAND, PODMAN_RECOVERY, UI_SETTLE } from "../../lib/timeouts.js";
+import { COMMAND, PODMAN_RECOVERY, SUBPROCESS, UI_SETTLE } from "../../lib/timeouts.js";
 
 class ProjectsPage extends AppPage {
   get navLink(): Element {
@@ -97,9 +97,12 @@ class ProjectsPage extends AppPage {
     await this.createButton.waitForDisplayed({ timeout: UI_SETTLE });
   }
 
-  // Widen `timeout` for the first sandbox on a connection: it triggers the one-time base-image
+  // Default budget is SUBPROCESS, not COMMAND: create_sandbox chains real podman lifecycle calls
+  // (create_instance, SSH identity/key install) that measured ~5.5s combined even on an idle
+  // machine with no concurrent load — COMMAND's 10s left near-zero margin (docs/features/lib-decomposition/04_improvements.md).
+  // Widen further for the first sandbox on a connection: it triggers the one-time base-image
   // build, so the row can take minutes to appear.
-  async createProject(name: string, { timeout = COMMAND }: { timeout?: number } = {}): Promise<ProjectRow> {
+  async createProject(name: string, { timeout = SUBPROCESS }: { timeout?: number } = {}): Promise<ProjectRow> {
     await (await this.nameInput).setValue(name);
     const btn = await this.createButton;
     await btn.waitForClickable({ timeout: UI_SETTLE });
