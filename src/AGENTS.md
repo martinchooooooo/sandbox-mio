@@ -1,6 +1,6 @@
 # Frontend Orientation
 
-The `src/` tree is a SvelteKit app (Svelte 5 runes, static adapter, Tailwind 4) rendered inside the Tauri webview. All backend access goes through `invoke()` from `@tauri-apps/api/core` calling commands listed in `src-tauri/src/lib.rs`; there is no HTTP API. UI conventions (shadcn-svelte components, Paraglide i18n, error handling) are specified in the root `AGENTS.md` — read that first; only frontend-specific structure is documented here.
+The `src/` tree is a SvelteKit app (Svelte 5 runes, static adapter, Tailwind 4) rendered inside the Tauri webview. All backend access goes through `invoke()` from `@tauri-apps/api/core` calling commands listed in `src-tauri/src/commands/mod.rs`; there is no HTTP API. UI conventions (shadcn-svelte components, Paraglide i18n, error handling) are specified in the root `AGENTS.md` — read that first; only frontend-specific structure is documented here.
 
 ## Route Map
 

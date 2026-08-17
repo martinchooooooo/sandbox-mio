@@ -1,6 +1,16 @@
 # Rust Backend Orientation
 
-The `src-tauri/src/` crate is the Tauri backend: every capability the frontend uses is a `#[tauri::command]` in `src-tauri/src/lib.rs` delegating to a subsystem module. Read `src-tauri/src/backends/types.rs` first (core data shapes and the `SandboxBackend` trait), then `src-tauri/src/lib.rs` (command inventory and state wiring), then only the subsystem module the task touches.
+The `src-tauri/src/` crate is the Tauri backend: every capability the frontend uses is a `#[tauri::command]` under `src-tauri/src/commands/` delegating to a service or a subsystem module. Read `src-tauri/src/backends/types.rs` first (core data shapes and the `SandboxBackend` trait), then `src-tauri/src/commands/mod.rs` (the command inventory) and `src-tauri/src/bootstrap.rs` (state wiring), then only the subsystem module the task touches.
+
+## Three Layers
+
+`commands/` holds only `#[tauri::command]` functions, one file per domain. A command decodes its arguments, requests Tauri state, delegates, and converts the result into `AppError`.
+
+`services/` holds orchestration spanning more than one subsystem, and is the only layer permitted to compose subsystems. A service may depend on any subsystem and must not depend on `commands/`.
+
+Subsystem modules never depend on each other — that independence is what keeps each one mockable on its own for the e2e `light` tier. A command needing more than two subsystems is the signal that a service is missing.
+
+**State narrowing rule:** a command names the narrowest state handle that can do its job. One driving a single subsystem keeps its single `Arc<dyn Trait>` parameter; one spanning subsystems takes one service handle rather than four to six trait handles. `SandboxRouter` (`services/routing.rs`) is the worked example — it stands in for `SandboxBackend` + `SyncEngine` + `ProviderRegistry` across the pane and port commands. See `docs/features/lib-decomposition/02_dev.md`.
 
 ## Subsystem Pattern: Trait + Real Impl + Mock
 
@@ -14,7 +24,7 @@ Every subsystem that touches external processes is a trait injected into Tauri s
 | `MachineManager` | `machine/types.rs` | podman machine / WSL lifecycle | same struct, `ScriptedPodmanRunner` | `default_machine_manager()` in `machine/mod.rs` |
 | `NetworkManager` | `network/types.rs` | `MutagenNetworkManager` (forward lifecycle, relay-pool port exposure) | `network/mock.rs` | `default_network_manager()` in `network/mod.rs` |
 
-Command handlers in `src-tauri/src/lib.rs` orchestrate across subsystems (e.g. deploy commands hold both `SandboxBackend` and `SyncEngine` state) so subsystems never depend on each other. When adding a new external-process capability, route it through one of these traits rather than shelling out from `lib.rs` — otherwise the e2e `light` tier (see `e2e/AGENTS.md`) breaks for every flow touching the new capability. Prefer the runner path over a new mock struct: a hand-written mock reimplements the logic it stands in for and drifts from it (`docs/features/scriptable-mock-backend/02_dev.md`, "Superseded").
+Cross-subsystem orchestration lives in `services/` (e.g. the deploy teardown ordering in `services/sandbox.rs` drives both `SandboxBackend` and `SyncEngine`) so subsystems never depend on each other. When adding a new external-process capability, route it through one of these traits rather than shelling out from a command — otherwise the e2e `light` tier (see `e2e/AGENTS.md`) breaks for every flow touching the new capability. Prefer the runner path over a new mock struct: a hand-written mock reimplements the logic it stands in for and drifts from it (`docs/features/scriptable-mock-backend/02_dev.md`, "Superseded").
 
 ## Module Inventory
 
@@ -33,7 +43,7 @@ Modules follow one layout: `types.rs` declares the public types/trait, `mod.rs` 
 - `mockctl/` — runtime control plane for the e2e `light` tier: the scripted half of each
   `ProcessRunner` pair (`ScriptedPodmanRunner`, `ScriptedMsbRunner`, `ScriptedMutagenRunner`),
   `MockDirector` (override registry, keyed `<binary>.<subcommand>`), the `Behaviour` enum, and the
-  `KNOWN_CALLS` validator table. Exposed via the `mock_configure`/`mock_reset` commands in `lib.rs`.
+  `KNOWN_CALLS` validator table. Exposed via the `mock_configure`/`mock_reset` commands in `commands/mockctl.rs`.
   `PodmanCliBackend`/`PodmanMachineManager` share one podman runner and `MutagenCli` holds a mutagen
   one; all three run unmodified against them, so there is no separate mock struct for
   `backends`/`machine`/`sync`. Depends on `process/`, never the reverse. See
@@ -45,13 +55,18 @@ Modules follow one layout: `types.rs` declares the public types/trait, `mod.rs` 
 - `settings/` — persisted `AppSettings`.
 - `ssh/` — SSH config manipulation for remote hosts.
 - `workspace/` — embedded-pane registry (`WorkspaceRegistry`): which Terminal/Dashboard/agent-web panes are open per sandbox; emits `workspace://state`. Contains the crate's only unit tests.
+- `commands/` — the `#[tauri::command]` surface, one file per domain (`panes`, `inference`, `machine`, `agents`, `sandbox`, `deploy`, `image`, `credentials`, `packages`, `hosts`, `app`, `network`, `mockctl`), plus the `tauri::generate_handler!` inventory in `commands/mod.rs`.
+- `services/` — cross-subsystem orchestration: `routing.rs` (`SandboxRouter`, resolving a sandbox to its provider, machine, exec capability, and SSH alias), `panes.rs` (terminal and agent-web pane preparation), `sandbox.rs` (create and teardown sequencing).
+- `bootstrap.rs` — startup wiring: process-runner construction, every `manage` call, and the exit handler. `backends::set_podman_runner` runs in `build()`, ahead of all of them.
+- `logging.rs` — `init_logging`. Returns a `WorkerGuard` whose `Drop` is the only thing that drains the log file's non-blocking writer, so it must be handed to `manage`.
+- `mio_files.rs` — reads and writes for the JSON documents under a workspace's `.mio` directory, formatting the path into the failure message in one place.
 - `error.rs` — `AppError`, the IPC boundary type; see the Error Handling section of the root `AGENTS.md`.
 
 ## Adding a Tauri Command
 
 1. Implement the capability on the owning subsystem trait (all impls including the mock must compile).
-2. Add the `#[tauri::command]` fn in `src-tauri/src/lib.rs`, returning `Result<T, AppError>` — never `Result<T, String>`.
-3. Register the fn in `generate_handler![]` in `src-tauri/src/lib.rs`.
+2. Add the `pub` `#[tauri::command]` fn to the matching domain file under `src-tauri/src/commands/`, returning `Result<T, AppError>` — never `Result<T, String>`. If it needs more than two subsystems, put the orchestration in `src-tauri/src/services/` and give the command one service handle.
+3. Register its `<domain>::<name>` path in `tauri::generate_handler![]` in `src-tauri/src/commands/mod.rs`.
 4. New long-running work reports progress through `activity::TaskRegistry`, not ad-hoc events.
 5. Verify with `cargo check` in `src-tauri/`, then exercise via `./build e2e light` (repo root) if the mock covers the flow.
 
@@ -59,7 +74,7 @@ Modules follow one layout: `types.rs` declares the public types/trait, `mod.rs` 
 
 | Gotcha | Cause | Fix |
 |---|---|---|
-| `invoke()` rejects with "command not found" for a compiled command | Command fn missing from `generate_handler![]` in `src-tauri/src/lib.rs` | Add the fn name to `generate_handler![]` in `src-tauri/src/lib.rs` |
+| `invoke()` rejects with "command not found" for a compiled command | Command fn missing from `generate_handler![]` in `src-tauri/src/commands/mod.rs` | Add the `<domain>::<name>` path to `generate_handler![]` in `src-tauri/src/commands/mod.rs` |
 | e2e `light` tier hangs or errors on a new command | New command shells out directly instead of going through a mocked trait, so `MIO_MOCK_BACKEND=1` has no effect on the command | Route the external call through one of the subsystem traits and implement the mock method |
 | `podman -v` rejects the workspace mount path | Podman does not expand `~` or `$HOME`, and rejects backslash Windows paths | Use `WORKSPACE_MOUNT` (`/root/work`) and `workspace_path()` in `src-tauri/src/backends/mod.rs`, which forward-slashes the host path |
 | Container base-image change silently ignored | `ensure_base_image` short-circuits on `podman image exists <tag>` | Bump `BASE_IMAGE_VERSION` in `src-tauri/src/backends/mod.rs` together with any `src-tauri/resources/Containerfile` change |
@@ -70,7 +85,7 @@ Modules follow one layout: `types.rs` declares the public types/trait, `mod.rs` 
 | A `light` spec restarts or reconfigures the developer's real Podman machine | A `podman` call that spawns a child rather than issuing a one-shot call bypasses the scripted `ProcessRunner` seam, so `MIO_MOCK_BACKEND=1` does not divert it | Gate the spawning method on `mock_backend_enabled()`, as `PodmanMachineManager::activate_podman_socket` and `run_host_wsl()` (`src-tauri/src/machine/mod.rs`) already do |
 | `provision_podman` fails with `PodmanRebootRequired` on a `light` run on a host without WSL installed | The mock path of `PodmanMachineManager::install_wsl` (`src-tauri/src/machine/mod.rs`) returns `Ok(true)`, which means reboot-required per the `MachineManager` contract in `src-tauri/src/machine/types.rs` | Return `Ok(false)` from the mock path of `install_wsl`; `wsl_is_ready` is deliberately ungated as a read-only probe, so the mock path is reachable on any host without WSL |
 | A panicking `wsl` blocking task reports success instead of an error | `run_host_wsl` (`src-tauri/src/machine/mod.rs`) maps a `tokio::task::JoinError` to the same `None` that signals the `MIO_MOCK_BACKEND=1` skip | Keep `None` reserved for the mock skip: `run_host_wsl` wraps a `JoinError` into an `std::io::Error` and returns `Some(Err(..))`, which callers map to `BackendError::CommandFailed` |
-| `podman_global_runner` panics with "set_podman_runner must run before any free-function podman call" | The `PODMAN_RUNNER` `OnceLock` in `src-tauri/src/backends/mod.rs` is unset because `set_podman_runner` was not called before the first free-function podman call in `run()` (`src-tauri/src/lib.rs`) | Call `set_podman_runner` before any Tauri state wiring in `run()`; a new podman call site on `PodmanCliBackend` must use `self.podman`/`self.podman_on`/`self.podman_unbound`, leaving the global to `ensure_connection_alias` |
+| `podman_global_runner` panics with "set_podman_runner must run before any free-function podman call" | The `PODMAN_RUNNER` `OnceLock` in `src-tauri/src/backends/mod.rs` is unset because `set_podman_runner` was not called before the first free-function podman call | Keep `set_podman_runner` in `build()` in `src-tauri/src/bootstrap.rs`, ahead of every `manage` call in `register_state`; a new podman call site on `PodmanCliBackend` must use `self.podman`/`self.podman_on`/`self.podman_unbound`, leaving the global to `ensure_connection_alias` |
 | `MockRuntime::list` returns no packages for a sandbox whose packages installed successfully | `workspace_name()` in `src-tauri/src/runtime/mock.rs` keys `list()` off the workspace path's final segment, which differs from the sandbox name when the sandbox was created from an `existing_path` argument to `resolve_create_workspace` (`src-tauri/src/backends/mod.rs`) | Assert light-tier package state only on sandboxes created without `existing_path`, as the `MockRuntime` doc comment requires; keying the map by sandbox name on both sides needs `RuntimeManager::list` (`src-tauri/src/runtime/types.rs`) widened, since it receives no name |
 | A newly added spawn site hangs forever on Windows when the app was launched from a terminal | The command was built with a raw `Command::new` instead of the detached constructor, so it inherits the launching console's handles | Build every external command through `detached_command`/`detached_command_std` in `src-tauri/src/process/mod.rs`; never call `Command::new` for an external binary elsewhere |
 | A `BackendError` variant reaches the frontend as `kind: "Backend"` despite having its own `AppError` variant | `From<BackendError> for AppError` (`src-tauri/src/error.rs`) is hand-written and maps only the variants listed in it | Add the variant's arm to that `From` impl as well as to `kind()`, and mirror the discriminant into `AppErrorKind` (`src/lib/errors.ts`) |

@@ -57,7 +57,7 @@ All read via `std::env::var` at call time, never cached:
 - `MIO_MOCK_BACKEND=1` — swaps every subsystem trait to its in-memory mock; used by the e2e `light` tier (`mock_backend_enabled()` in `src-tauri/src/backends/mod.rs`).
 - `MIO_MACHINE_PROVIDER` — overrides the persisted `default_provider` setting for the process (`podman` or `msb`), so a run can point the create-sandbox flow at a provider without writing that choice to `settings.json` (`load()` in `src-tauri/src/settings/mod.rs`).
 - `MIO_TEST_MODEL` — overrides the model used by inference e2e specs.
-- `MIO_APP_DATA_DIR` — app-data and log root; default the compiled-in `app_data_dir()`, and for logs `app_log_dir()` (`src-tauri/src/paths.rs`, `init_logging()` in `src-tauri/src/lib.rs`). Set by the e2e harness to a per-worktree directory, never by a shipped install.
+- `MIO_APP_DATA_DIR` — app-data and log root; default the compiled-in `app_data_dir()`, and for logs `app_log_dir()` (`src-tauri/src/paths.rs`, `init_logging()` in `src-tauri/src/logging.rs`). Set by the e2e harness to a per-worktree directory, never by a shipped install.
 - `MIO_SETTINGS_DIR` — relocates `settings.json`; takes precedence over `MIO_APP_DATA_DIR` (`settings_path()` in `src-tauri/src/settings/mod.rs`).
 - `MIO_CREDENTIALS_DIR` — relocates the credential bundle store; takes precedence over `MIO_APP_DATA_DIR` (`store_dir()` in `src-tauri/src/credentials/mod.rs`).
 - `MIO_PORT_BASE` — base of the e2e WebDriver port band each worktree's run claims a 16-port window from; default `45000` (`e2e/lib/run-identity.ts`).
@@ -171,7 +171,7 @@ Good — states the constraint the code can't show:
 
 | Gotcha | Cause | Fix |
 |---|---|---|
-| New Tauri command exists in Rust but `invoke()` rejects with "command not found" | Command function not added to the `tauri::generate_handler![]` list in `src-tauri/src/lib.rs` | Add the command name to `generate_handler![]` in `src-tauri/src/lib.rs` |
+| New Tauri command exists in Rust but `invoke()` rejects with "command not found" | Command function not added to the `tauri::generate_handler![]` inventory in `src-tauri/src/commands/mod.rs` | Add the command's `<domain>::<name>` path to `tauri::generate_handler![]` in `src-tauri/src/commands/mod.rs` |
 | New `AppError` variant does not compile | `kind()` in `src-tauri/src/error.rs` has an exhaustive match over variants | Add a `kind()` arm in `src-tauri/src/error.rs` and mirror the string in `AppErrorKind` in `src/lib/errors.ts` |
 | A status badge shows a raw English string like `up-to-date` in non-English locales | Backend emitted a status value with no `status_<value>` key | Add `status_<value>` to every file in `messages/` and an entry to the `map` in `translateStatus()` (`src/lib/sandbox.ts`) |
 | Containerfile change has no effect on new sandboxes | `ensure_base_image` short-circuits on `podman image exists`, so an unchanged image tag keeps the stale image | Bump `BASE_IMAGE_VERSION` in `src-tauri/src/backends/mod.rs` whenever `src-tauri/resources/Containerfile` changes |

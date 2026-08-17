@@ -29,6 +29,18 @@ pub enum RuntimeError {
     AgentWebUnavailable(String),
 }
 
+impl RuntimeError {
+    /// [`RuntimeError::TerminalUnavailable`] from any displayable cause.
+    pub fn terminal_unavailable(cause: impl std::fmt::Display) -> Self {
+        RuntimeError::TerminalUnavailable(cause.to_string())
+    }
+
+    /// [`RuntimeError::AgentWebUnavailable`] from any displayable cause.
+    pub fn agent_web_unavailable(cause: impl std::fmt::Display) -> Self {
+        RuntimeError::AgentWebUnavailable(cause.to_string())
+    }
+}
+
 impl From<crate::provider::types::ProviderError> for RuntimeError {
     fn from(e: crate::provider::types::ProviderError) -> Self {
         match e {

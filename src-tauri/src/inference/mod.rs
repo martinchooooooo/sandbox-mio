@@ -17,6 +17,22 @@ use types::{
     ModelDownloadEvent, StaticMachineSpecs,
 };
 
+/// The Mutagen forward carrying the inference server into the Podman VM. Named here because both
+/// `start_inference` and `stop_inference` address it.
+pub const INFERENCE_FORWARD: &str = "inference-reverse";
+
+/// A free host loopback port for a server about to start. Bound and released, so the caller races
+/// anything else on the host for it — acceptable because the engine binds it immediately after.
+pub fn ephemeral_port() -> Result<u16, InferenceError> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")
+        .map_err(|e| InferenceError::Sidecar(e.to_string()))?;
+    let port = listener
+        .local_addr()
+        .map_err(|e| InferenceError::Sidecar(e.to_string()))?
+        .port();
+    Ok(port)
+}
+
 pub fn engine_for(kind: EngineKind, app: &AppHandle) -> Arc<dyn InferenceEngine> {
     match kind {
         EngineKind::Llama => Arc::new(llama::LlamaServerEngine { app: app.clone() }),

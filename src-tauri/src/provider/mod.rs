@@ -90,6 +90,11 @@ impl ProviderRegistry {
         (ProviderId::Podman, self.local_podman.clone())
     }
 
+    /// [`Self::provider_of`] for the callers that need only the provider, not its id.
+    pub async fn engine_of(&self, name: &str) -> Arc<dyn MachineProvider> {
+        self.provider_of(name).await.1
+    }
+
     /// Every provider, for the cross-provider operations (`list`, name-uniqueness) that have to ask
     /// all of them rather than one.
     pub fn all(&self) -> [(ProviderId, Arc<dyn MachineProvider>); 2] {

@@ -147,7 +147,7 @@ existing env-steering precedent (`PODMAN_CONNECTION`, `SANDBOX_WORKSPACE_ROOT`, 
 read once with `std::env::var(...)`, no caching.
 
 **The machine-lifecycle gap.** `check_podman_ready` / `start_podman_machine`
-(`src-tauri/src/lib.rs`) do **not** go through `Arc<dyn SandboxBackend>` — they receive an
+(`src-tauri/src/commands/machine.rs`) do **not** go through `Arc<dyn SandboxBackend>` — they receive an
 `Arc<dyn MachineManager>` (the global-machine trait: `machine_is_running`,
 `check_other_machines_running`, `run_machine_start`, `run_wsl_shutdown`, `activate_podman_socket`,
 `poll_ready`). Under `MIO_MOCK_BACKEND=1`, `podman.machine-list`'s built-in default (no override
