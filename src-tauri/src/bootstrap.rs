@@ -125,6 +125,8 @@ impl Bootstrap {
                     Err(_) => return,
                 };
                 handle.state::<Arc<dyn NetworkManager>>().sweep(&live).await;
+                crate::proxy::sweep(&handle, handle.state::<Arc<provider::ProviderRegistry>>().inner(), &live)
+                    .await;
             });
         }
         Ok(())

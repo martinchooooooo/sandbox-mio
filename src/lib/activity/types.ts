@@ -5,7 +5,8 @@ export type TaskKind =
   | "inference-setup"
   | "host-provision"
   | "agent-install"
-  | "podman-startup";
+  | "podman-startup"
+  | "proxy-image-pull";
 export type TaskStatus = "running" | "succeeded" | "failed";
 
 /** One long-running background operation (mirrors Rust `Task`). */

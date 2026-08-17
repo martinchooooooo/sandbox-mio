@@ -55,6 +55,43 @@ pub struct InstanceSpec {
     /// `key=value` label pairs stamped on the instance.
     pub labels: Vec<(String, String)>,
     pub publish_model: PublishModel,
+    /// `key=value` environment pairs stamped on the instance (`--env` at create time), visible to
+    /// every process tree including non-interactive `exec` sessions.
+    pub env: Vec<(String, String)>,
+    /// A network attachment that *replaces* the provider's default network mode
+    /// (`docs/features/network-proxy/02_dev.md`, Spike Results: Podman rejects combining `pasta`
+    /// with a second `--network`).
+    pub network: Option<InstanceNetwork>,
+}
+
+/// A network attachment for [`InstanceSpec`], optionally pinned to a static IP — needed because the
+/// network this feature creates has DNS disabled (`docs/features/network-proxy/02_dev.md`, Spike
+/// Results: `aardvark-dns` cannot start on this project's podman machine).
+pub struct InstanceNetwork {
+    pub name: String,
+    pub ip: Option<String>,
+}
+
+/// A bind mount for [`SidecarSpec`]: `host_path` mounted at `dest` inside the container.
+pub struct SidecarMount {
+    pub host_path: String,
+    pub dest: String,
+    pub read_only: bool,
+}
+
+/// Provider-neutral inputs for a sidecar container — a shape [`InstanceSpec`] cannot express: an
+/// arbitrary number of mounts at caller-chosen destinations, a caller-chosen launch command, no
+/// implicit `/bin/sh` entrypoint. Used only by the network-proxy mitmproxy container
+/// (`docs/features/network-proxy/02_dev.md`); every sandbox is still created through
+/// [`MachineProvider::create_instance`].
+pub struct SidecarSpec {
+    pub name: String,
+    pub image: String,
+    pub network: InstanceNetwork,
+    pub mounts: Vec<SidecarMount>,
+    pub command: Vec<String>,
+    /// `key=value` label pairs stamped on the container.
+    pub labels: Vec<(String, String)>,
 }
 
 /// Options for a one-shot exec: working directory, environment pairs, and a detached flag
@@ -207,6 +244,13 @@ pub trait MachineProvider: Send + Sync {
     async fn base_image_ready(&self) -> Result<bool, ProviderError>;
     /// Create a stopped instance from `spec`; returns the created instance id.
     async fn create_instance(&self, spec: &InstanceSpec) -> Result<String, ProviderError>;
+    /// Create a stopped sidecar container from `spec` — a shape `create_instance` cannot express.
+    /// Podman-only; `MsbProvider` returns [`ProviderError::CommandFailed`].
+    async fn create_sidecar(&self, spec: &SidecarSpec) -> Result<String, ProviderError>;
+    /// Pull `image` if not already present locally. Unlike `ensure_base_image`, never builds —
+    /// always pulls from a registry. Used for the mitmproxy sidecar image, which this app never
+    /// builds itself (`docs/features/network-proxy/02_dev.md`, Resolved Decision 10).
+    async fn pull_image(&self, image: &str) -> Result<(), ProviderError>;
     /// List all instances (running and stopped) as the provider-neutral [`Sandbox`] shape.
     async fn list_instances(&self) -> Result<Vec<Sandbox>, ProviderError>;
     /// Start a stopped instance.
@@ -235,4 +279,11 @@ pub trait MachineProvider: Send + Sync {
     fn exec_command(&self, name: &str, argv: &[&str], opts: ExecOpts) -> tokio::process::Command;
     /// Copy `host_path` into `name` at the in-instance path `dest` (`podman cp`).
     async fn copy_in(&self, name: &str, host_path: &str, dest: &str) -> Result<(), ProviderError>;
+    /// Create a DNS-disabled network with the given subnet (CIDR), for a caller that needs
+    /// reachability between two instances without relying on `aardvark-dns`
+    /// (`docs/features/network-proxy/02_dev.md`, Spike Results). Idempotent name collision is the
+    /// caller's concern, not this method's.
+    async fn create_network(&self, name: &str, subnet: &str) -> Result<(), ProviderError>;
+    /// Remove a network created by [`Self::create_network`]. Fails if an instance is still attached.
+    async fn remove_network(&self, name: &str) -> Result<(), ProviderError>;
 }

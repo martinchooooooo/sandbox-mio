@@ -55,6 +55,11 @@ pub enum BackendError {
     /// Error from SSH config management.
     #[error(transparent)]
     Ssh(#[from] SshError),
+    /// `deploy` was asked for a sandbox that has a proxy sidecar. Remote proxy creation is out of
+    /// scope for v1 (`docs/features/network-proxy/02_dev.md`, Resolved Decision 6) and deploying
+    /// without the proxy would silently move an inspected sandbox onto an uninspected network.
+    #[error("{name:?} has traffic inspection enabled, which cannot be deployed to a remote host")]
+    ProxyDeployUnsupported { name: String },
 }
 
 /// Classifies a raw spawn/wait failure from the process seam. `TimedOut` is the marker
@@ -163,12 +168,16 @@ pub trait SandboxBackend: Send + Sync {
     ) -> Result<bool, BackendError>;
     /// Create a stopped instance on `provider` with the workspace reachable at `/root/work` — a
     /// host bind mount for Podman, a synced disk volume for microsandbox. With `existing_path:
-    /// None`, uses `<Documents>/sandbox-mio/<name>`; with Some, validates and uses it.
+    /// None`, uses `<Documents>/sandbox-mio/<name>`; with Some, validates and uses it. `proxy`,
+    /// when `Some`, attaches the sandbox to its proxy sidecar's network and environment in place of
+    /// the provider's default network mode — refused when the provider/image is not exec-capable
+    /// (`docs/features/network-proxy/02_dev.md`).
     async fn create(
         &self,
         name: &str,
         existing_path: Option<&str>,
         provider: crate::provider::types::ProviderId,
+        proxy: Option<&crate::proxy::types::ProxyAttachment>,
     ) -> Result<Sandbox, BackendError>;
     /// Return every provider's instances (running and stopped), each tagged with its provider.
     async fn list(&self) -> Result<Vec<Sandbox>, BackendError>;

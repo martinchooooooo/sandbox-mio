@@ -103,7 +103,9 @@ pub async fn ensure_auth_container(
         // throwaway the app creates and destroys around one login, so it has no reason to pay a
         // microsandbox sandbox's volume-plus-sync setup.
         backend.ensure_base_image(ProviderId::Podman).await?;
-        let sandbox = backend.create(name, None, ProviderId::Podman).await?;
+        // An auth container is a throwaway the app creates and destroys around one login; it is
+        // never proxied.
+        let sandbox = backend.create(name, None, ProviderId::Podman, None).await?;
         runtime.init(&sandbox.workspace_path).await?;
     }
     Ok(())

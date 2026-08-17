@@ -9,20 +9,26 @@ use crate::credentials;
 use crate::error::AppError;
 use crate::network::types::NetworkManager;
 use crate::provider::types::ProviderId;
+use crate::provider::ProviderRegistry;
+use crate::proxy;
 use crate::runtime::types::RuntimeManager;
 use crate::services;
 use crate::settings;
 use crate::sync::types::SyncEngine;
 
-/// Create a sandbox on `provider`, defaulting to the persisted `default_provider` setting.
+/// Create a sandbox on `provider`, defaulting to the persisted `default_provider` setting. `proxy`
+/// opts the sandbox into a per-sandbox traffic-inspection sidecar (`docs/features/network-proxy/02_dev.md`);
+/// defaults to off.
 #[tauri::command]
 pub async fn create_sandbox(
     name: String,
     existing_path: Option<String>,
     provider: Option<ProviderId>,
+    proxy: Option<bool>,
     store: State<'_, Arc<dyn SandboxBackend>>,
     runtime: State<'_, Arc<dyn RuntimeManager>>,
     engine: State<'_, Arc<dyn SyncEngine>>,
+    registry: State<'_, Arc<ProviderRegistry>>,
     app: tauri::AppHandle,
 ) -> Result<Sandbox, AppError> {
     let provider = match provider {
@@ -33,9 +39,12 @@ pub async fn create_sandbox(
         &name,
         existing_path.as_deref(),
         provider,
+        proxy.unwrap_or(false),
         &store,
         &runtime,
         &engine,
+        &registry,
+        &app,
     )
     .await
 }
@@ -47,6 +56,7 @@ pub async fn list_sandboxes(store: State<'_, Arc<dyn SandboxBackend>>) -> Result
         .await?
         .into_iter()
         .filter(|s| !s.name.starts_with(credentials::types::AUTH_CONTAINER_PREFIX))
+        .filter(|s| !s.name.ends_with(proxy::types::PROXY_CONTAINER_SUFFIX))
         .collect())
 }
 
@@ -68,9 +78,10 @@ pub async fn destroy_sandbox(
     store: State<'_, Arc<dyn SandboxBackend>>,
     engine: State<'_, Arc<dyn SyncEngine>>,
     network: State<'_, Arc<dyn NetworkManager>>,
+    registry: State<'_, Arc<ProviderRegistry>>,
     app: tauri::AppHandle,
 ) -> Result<(), AppError> {
-    services::sandbox::destroy(&name, force, &store, &engine, &network, &app).await
+    services::sandbox::destroy(&name, force, &store, &engine, &network, &registry, &app).await
 }
 
 #[tauri::command]

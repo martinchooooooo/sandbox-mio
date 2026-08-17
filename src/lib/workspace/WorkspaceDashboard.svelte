@@ -12,6 +12,7 @@
     import AgentManager from "../../routes/projects/AgentManager.svelte";
     import PortsManager from "../../routes/projects/PortsManager.svelte";
     import RemoteManager from "../../routes/projects/RemoteManager.svelte";
+    import ProxyPanel from "../../routes/projects/ProxyPanel.svelte";
     import type { Project } from "$lib/sandbox";
     import type { ProviderId } from "$lib/providers";
     import { LoaderPinwheelIcon, Folder01Icon, Delete02Icon } from "@hugeicons/core-free-icons";
@@ -157,6 +158,7 @@
             {#if provider}
                 <RemoteManager {sandboxName} {workspacePath} {provider} {action} />
             {/if}
+            <ProxyPanel {sandboxName} {workspacePath} {action} />
 
             <div class="flex justify-end border-t pt-4">
                 <Button variant="destructive" size="sm" onclick={destroySandbox} title={m.projects_destroy()}

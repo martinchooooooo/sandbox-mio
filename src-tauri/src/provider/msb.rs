@@ -9,7 +9,7 @@ use crate::process::types::ProcessRunner;
 
 use super::types::{
     ExecOpts, InstanceSpec, MachineProvider, ProviderCapabilities, ProviderError, ProviderId,
-    PublishModel,
+    PublishModel, SidecarSpec,
 };
 use super::{check, parse_image_version, WORKSPACE_LABEL, WORKSPACE_MOUNT};
 
@@ -239,6 +239,14 @@ impl MachineProvider for MsbProvider {
                 "microsandbox only supports exec-tunnelled publishing".to_string(),
             ));
         }
+        if spec.network.is_some() || !spec.env.is_empty() {
+            // Network-proxy sidecars are Podman-only for v1
+            // (`docs/features/network-proxy/02_dev.md`, Resolved Decision 9).
+            return Err(ProviderError::CommandFailed(
+                "microsandbox does not support a network attachment or environment variables"
+                    .to_string(),
+            ));
+        }
         let volume = workspace_volume_name(&spec.name);
         self.ensure_volume(&volume).await?;
         let mount = format!("{volume}:{WORKSPACE_MOUNT}:kind=disk,size={WORKSPACE_VOLUME_SIZE}");
@@ -266,6 +274,18 @@ impl MachineProvider for MsbProvider {
         }
         // microsandbox has no separate instance id; the name is the id.
         Ok(spec.name.clone())
+    }
+
+    async fn create_sidecar(&self, _spec: &SidecarSpec) -> Result<String, ProviderError> {
+        Err(ProviderError::CommandFailed(
+            "microsandbox does not support network-proxy sidecars".to_string(),
+        ))
+    }
+
+    async fn pull_image(&self, _image: &str) -> Result<(), ProviderError> {
+        Err(ProviderError::CommandFailed(
+            "microsandbox does not support network-proxy sidecars".to_string(),
+        ))
     }
 
     async fn list_instances(&self) -> Result<Vec<Sandbox>, ProviderError> {
@@ -414,6 +434,18 @@ impl MachineProvider for MsbProvider {
         let out = self.exec_piped(name, &["sh", "-c", &script], &bytes).await?;
         check(out).map(|_| ())
     }
+
+    async fn create_network(&self, _name: &str, _subnet: &str) -> Result<(), ProviderError> {
+        Err(ProviderError::CommandFailed(
+            "microsandbox does not support network-proxy sidecars".to_string(),
+        ))
+    }
+
+    async fn remove_network(&self, _name: &str) -> Result<(), ProviderError> {
+        Err(ProviderError::CommandFailed(
+            "microsandbox does not support network-proxy sidecars".to_string(),
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -469,6 +501,8 @@ mod tests {
             workspace_source: "C:/work".to_string(),
             labels: vec![(WORKSPACE_LABEL.to_string(), "C:/work".to_string())],
             publish_model: PublishModel::ExecTunnelled,
+            env: Vec::new(),
+            network: None,
         }
     }
 

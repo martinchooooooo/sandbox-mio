@@ -11,7 +11,7 @@ use crate::backends::{base_image, podman_command};
 use crate::process::types::ProcessRunner;
 use types::{
     ExecOpts, InstanceSpec, MachineProvider, MachineRef, ProviderCapabilities, ProviderError,
-    ProviderId, PublishModel,
+    ProviderId, PublishModel, SidecarSpec,
 };
 
 /// Spelled literally because `podman -v` rejects a bare `~` and does not expand `$HOME`.
@@ -257,15 +257,25 @@ impl MachineProvider for PodmanProvider {
             "--pull=missing".to_string(),
             "--tty".to_string(),
         ];
-        match spec.publish_model {
-            PublishModel::ExecTunnelled => {
+        match (&spec.network, &spec.publish_model) {
+            (Some(net), _) => {
+                // Replaces the publish_model's own `--network` entirely: Podman rejects combining
+                // `pasta` with a second network (`docs/features/network-proxy/02_dev.md`, Spike
+                // Results), so a proxy-enabled sandbox drops `pasta` rather than adding to it.
+                args.push("--network".to_string());
+                args.push(match &net.ip {
+                    Some(ip) => format!("{}:ip={ip}", net.name),
+                    None => net.name.clone(),
+                });
+            }
+            (None, PublishModel::ExecTunnelled) => {
                 // No `--network pasta:--host-lo-to-ns-lo`, no `--publish` at all: reachability goes
                 // through `podman exec`-tunneled `sshd`, not a published loopback port — see
                 // docs/features/podman-exec-transport/02_dev.md.
                 args.push("--network".to_string());
                 args.push("pasta".to_string());
             }
-            PublishModel::PublishRelay => {
+            (None, PublishModel::PublishRelay) => {
                 // Publish zellij's web port to an ephemeral host-loopback port. `--host-lo-to-ns-lo`
                 // is the decisive pasta flag: it forwards the host-loopback-published port to the
                 // container's loopback, where zellij binds; without it pasta forwards to the
@@ -299,10 +309,41 @@ impl MachineProvider for PodmanProvider {
             args.push("--label".to_string());
             args.push(format!("{k}={v}"));
         }
+        for (k, v) in &spec.env {
+            args.push("--env".to_string());
+            args.push(format!("{k}={v}"));
+        }
         args.push("--name".to_string());
         args.push(spec.name.clone());
         args.push(spec.image.clone());
         args.push("/bin/sh".to_string());
+        let out = self.run(&args.iter().map(String::as_str).collect::<Vec<_>>()).await?;
+        Ok(check(out)?.trim().to_string())
+    }
+
+    async fn create_sidecar(&self, spec: &SidecarSpec) -> Result<String, ProviderError> {
+        // No `--pull=missing`: the caller pulls explicitly first (`pull_image`,
+        // `docs/features/network-proxy/02_dev.md`, Resolved Decision 10) so a first-ever ~200 MB
+        // pull is reported through `activity::TaskRegistry` instead of looking like a hung create.
+        let mut args: Vec<String> = vec!["create".to_string()];
+        args.push("--network".to_string());
+        args.push(match &spec.network.ip {
+            Some(ip) => format!("{}:ip={ip}", spec.network.name),
+            None => spec.network.name.clone(),
+        });
+        for m in &spec.mounts {
+            args.push("--volume".to_string());
+            let suffix = if m.read_only { ":ro" } else { "" };
+            args.push(format!("{}:{}{suffix}", m.host_path, m.dest));
+        }
+        for (k, v) in &spec.labels {
+            args.push("--label".to_string());
+            args.push(format!("{k}={v}"));
+        }
+        args.push("--name".to_string());
+        args.push(spec.name.clone());
+        args.push(spec.image.clone());
+        args.extend(spec.command.iter().cloned());
         let out = self.run(&args.iter().map(String::as_str).collect::<Vec<_>>()).await?;
         Ok(check(out)?.trim().to_string())
     }
@@ -415,5 +456,28 @@ impl MachineProvider for PodmanProvider {
 
     async fn copy_in(&self, name: &str, host_path: &str, dest: &str) -> Result<(), ProviderError> {
         check(self.run(&["cp", host_path, &format!("{name}:{dest}")]).await?).map(|_| ())
+    }
+
+    async fn create_network(&self, name: &str, subnet: &str) -> Result<(), ProviderError> {
+        // `--disable-dns`: `aardvark-dns` cannot start on this project's podman machine
+        // (`docs/features/network-proxy/02_dev.md`, Spike Results) — every network this feature
+        // creates must pass it, or every container on it fails to start.
+        check(
+            self.run(&["network", "create", "--disable-dns", "--subnet", subnet, name])
+                .await?,
+        )
+        .map(|_| ())
+    }
+
+    async fn remove_network(&self, name: &str) -> Result<(), ProviderError> {
+        check(self.run(&["network", "rm", "--force", name]).await?).map(|_| ())
+    }
+
+    async fn pull_image(&self, image: &str) -> Result<(), ProviderError> {
+        let exists = self.run(&["image", "exists", image]).await?.status.success();
+        if exists {
+            return Ok(());
+        }
+        check(self.run(&["pull", image]).await?).map(|_| ())
     }
 }

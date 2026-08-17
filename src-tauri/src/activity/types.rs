@@ -16,6 +16,10 @@ pub enum TaskKind {
     #[allow(dead_code)]
     AgentInstall,
     PodmanStartup,
+    /// The mitmproxy sidecar image's first pull (~200 MB), reported explicitly rather than left to
+    /// look like a hung sandbox create (`docs/features/network-proxy/02_dev.md`, Resolved
+    /// Decision 10).
+    ProxyImagePull,
 }
 
 #[derive(serde::Serialize, Clone, Copy, PartialEq, Eq)]

@@ -3,6 +3,7 @@
     import * as Field from "$lib/components/ui/field";
     import { Input } from "$lib/components/ui/input";
     import AdvancedSection from "$lib/components/AdvancedSection.svelte";
+    import { Switch } from "$lib/components/ui/switch";
     import { invoke } from "@tauri-apps/api/core";
     import { open } from "@tauri-apps/plugin-dialog";
     import { m } from "$lib/paraglide/messages.js";
@@ -18,6 +19,9 @@
     let name = $state("");
     let existingPath = $state<string | undefined>(undefined);
     let provider = $state<ProviderId>("podman");
+    // Off by default (docs/features/network-proxy/02_dev.md, Resolved Decision 3); disabled
+    // outright for microsandbox, which has no confirmed network-attachment story.
+    let proxy = $state(false);
 
     const action = createActionRunner();
 
@@ -63,7 +67,7 @@
         const ok = await action.run(
             "create",
             async () => {
-                await invoke("create_sandbox", { name: trimmed, existingPath: path, provider });
+                await invoke("create_sandbox", { name: trimmed, existingPath: path, provider, proxy });
             },
             { message: m.projects_status_creating({ name: trimmed }) }
         );
@@ -126,10 +130,25 @@
                                 variant={provider === option ? "default" : "outline"}
                                 size="sm"
                                 disabled={action.busy !== null}
-                                onclick={() => (provider = option)}
+                                onclick={() => {
+                                    provider = option;
+                                    if (option === "microsandbox") proxy = false;
+                                }}
                             >{providerLabel(option)}</Button>
                         {/each}
                     </div>
+                </Field.Field>
+                <Field.Field orientation="horizontal">
+                    <Field.Label>
+                        <!-- TODO(i18n) -->
+                        Inspect traffic
+                    </Field.Label>
+                    <Switch
+                        data-proxy-toggle
+                        checked={proxy}
+                        disabled={action.busy !== null || provider === "microsandbox"}
+                        onCheckedChange={(v) => (proxy = v)}
+                    />
                 </Field.Field>
             </AdvancedSection>
         </Field.Group>

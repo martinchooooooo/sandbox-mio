@@ -12,6 +12,7 @@ pub mod mockctl;
 pub mod network;
 pub mod packages;
 pub mod panes;
+pub mod proxy;
 pub mod sandbox;
 
 /// The whole `#[tauri::command]` inventory, registered once by `run()`. A command that compiles but
@@ -98,6 +99,12 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         app::get_settings,
         app::set_settings,
         mockctl::mock_configure,
-        mockctl::mock_reset
+        mockctl::mock_reset,
+        proxy::proxy_status,
+        proxy::list_proxy_rules,
+        proxy::set_proxy_rules,
+        proxy::set_proxy_secret,
+        proxy::delete_proxy_secret,
+        proxy::restart_proxy
     ]
 }

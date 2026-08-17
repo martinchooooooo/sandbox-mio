@@ -49,6 +49,13 @@ static KNOWN_CALLS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "podman.image-exists",
         "podman.build",
         "podman.info",
+        // `MachineProvider::create_network`/`remove_network` (docs/features/network-proxy/02_dev.md,
+        // Phase A).
+        "podman.network-create",
+        "podman.network-rm",
+        "podman.network-inspect",
+        // `MachineProvider::pull_image` (docs/features/network-proxy/02_dev.md, Resolved Decision 10).
+        "podman.pull",
         // Mutagen's `sync` subcommands only — `forward`/`version`/`daemon` reach the sidecar via
         // `sync::run` (NetworkManager territory), unscripted for now (docs/features/scriptable-mock-backend/04_improvements.md).
         "mutagen.sync-create",
@@ -152,6 +159,7 @@ fn derive_podman_key(stripped: &[&str]) -> String {
         "machine" => 2,
         "system" if stripped.get(1) == Some(&"connection") => 3,
         "image" => 2,
+        "network" => 2,
         _ => 1,
     };
     let depth = depth.min(stripped.len());

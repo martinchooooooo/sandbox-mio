@@ -15,6 +15,7 @@ mod network;
 mod paths;
 mod process;
 mod provider;
+mod proxy;
 mod runtime;
 mod services;
 mod settings;

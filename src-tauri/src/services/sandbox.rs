@@ -8,26 +8,68 @@ use crate::backends::types::{Sandbox, SandboxBackend};
 use crate::error::AppError;
 use crate::network::types::NetworkManager;
 use crate::provider::types::ProviderId;
+use crate::provider::ProviderRegistry;
 use crate::runtime::types::RuntimeManager;
 use crate::sync::types::{SyncEngine, SyncStatus};
 use crate::workspace;
 
-/// Creates a sandbox on `provider` and brings its workspace up.
+/// Creates a sandbox on `provider` and brings its workspace up. `proxy` opts the sandbox into a
+/// per-sandbox mitmproxy sidecar (`docs/features/network-proxy/02_dev.md`); refused by `store.create`
+/// for a provider/image that isn't exec-capable.
 pub async fn create(
     name: &str,
     existing_path: Option<&str>,
     provider: ProviderId,
+    proxy: bool,
     store: &Arc<dyn SandboxBackend>,
     runtime: &Arc<dyn RuntimeManager>,
     engine: &Arc<dyn SyncEngine>,
+    registry: &Arc<ProviderRegistry>,
+    app: &tauri::AppHandle,
 ) -> Result<Sandbox, AppError> {
     // Stage markers, so a failed create is attributable to a step from the log alone. The
     // microsandbox path spans four subsystems (provider, ssh, runtime, sync) and its failures
     // surface as one flattened string in the UI toast, which cannot say how far it got.
     tracing::info!(target: "create", %name, %provider, "create_sandbox: ensuring base image");
     store.ensure_base_image(provider).await?;
+
+    let podman = registry.local(ProviderId::Podman);
+    let attachment = if proxy {
+        tracing::info!(target: "create", %name, "create_sandbox: ensuring proxy image");
+        crate::proxy::ensure_proxy_image(app, &podman).await?;
+        tracing::info!(target: "create", %name, "create_sandbox: creating proxy sidecar");
+        Some(crate::proxy::create_proxy(app, &podman, name).await?)
+    } else {
+        None
+    };
+
     tracing::info!(target: "create", %name, "create_sandbox: creating instance");
-    let mut sandbox = store.create(name, existing_path, provider).await?;
+    let mut sandbox = match store.create(name, existing_path, provider, attachment.as_ref()).await {
+        Ok(s) => s,
+        Err(e) => {
+            // The proxy container and network exist ahead of the sandbox they attach to
+            // (`docs/features/network-proxy/02_dev.md`, Concrete Model); a failed sandbox create
+            // must not strand them.
+            if proxy {
+                crate::proxy::remove_proxy(app, &podman, name).await;
+            }
+            return Err(e.into());
+        }
+    };
+    if proxy {
+        tracing::info!(target: "create", %name, "create_sandbox: injecting proxy CA");
+        if let Err(e) = inject_proxy_ca(app, &podman, name).await {
+            tracing::error!(target: "create", %name, error = %e, "create_sandbox: CA injection failed, rolling back");
+            if let Err(destroy_err) = store.destroy(name).await {
+                tracing::error!(
+                    target: "create", %name, error = %destroy_err,
+                    "create_sandbox: rollback after CA injection failure also failed"
+                );
+            }
+            crate::proxy::remove_proxy(app, &podman, name).await;
+            return Err(e);
+        }
+    }
     tracing::info!(
         target: "create",
         %name,
@@ -75,6 +117,26 @@ pub async fn create(
     Ok(sandbox)
 }
 
+/// Reads the proxy's CA cert off the host and pipes it into the freshly created sandbox.
+async fn inject_proxy_ca(
+    app: &tauri::AppHandle,
+    podman: &Arc<dyn crate::provider::types::MachineProvider>,
+    name: &str,
+) -> Result<(), AppError> {
+    let pem = crate::proxy::read_ca_pem(app, name)?;
+    crate::proxy::inject_ca(podman, name, &pem).await?;
+    Ok(())
+}
+
+/// Removes `name`'s proxy sidecar (container, network, state directory) if one exists. Checked
+/// first rather than called unconditionally, so destroying the overwhelming majority of
+/// non-proxied sandboxes doesn't log a "container not found" warning on every teardown.
+async fn remove_proxy_if_present(app: &tauri::AppHandle, registry: &Arc<ProviderRegistry>, name: &str) {
+    if crate::proxy::exists(registry, name).await {
+        crate::proxy::remove_proxy(app, &registry.local(ProviderId::Podman), name).await;
+    }
+}
+
 /// Closes panes and forwards before anything touches the SSH channel they run over, which would
 /// otherwise orphan them. Shared by the undeploy and destroy flows, which order the steps around it
 /// differently (`docs/features/lib-decomposition/02_dev.md`, Resolved Decision 2).
@@ -119,6 +181,7 @@ pub async fn destroy(
     store: &Arc<dyn SandboxBackend>,
     engine: &Arc<dyn SyncEngine>,
     network: &Arc<dyn NetworkManager>,
+    registry: &Arc<ProviderRegistry>,
     app: &tauri::AppHandle,
 ) -> Result<(), AppError> {
     let session = engine
@@ -134,6 +197,7 @@ pub async fn destroy(
         // microsandbox sandbox's volume is gone with the instance, so its sync has nothing left to
         // reconcile and would otherwise keep retrying a dead ProxyCommand.
         let _ = engine.terminate(&backends::msb_sync_session(name)).await;
+        remove_proxy_if_present(app, registry, name).await;
         return Ok(());
     };
     let _ = engine.flush(name).await;

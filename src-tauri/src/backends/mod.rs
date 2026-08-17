@@ -457,6 +457,7 @@ impl SandboxBackend for CliBackend {
         name: &str,
         existing_path: Option<&str>,
         provider_id: ProviderId,
+        proxy: Option<&crate::proxy::types::ProxyAttachment>,
     ) -> Result<Sandbox, BackendError> {
         validate_name(name)?;
         self.ensure_name_available(name).await?;
@@ -471,12 +472,26 @@ impl SandboxBackend for CliBackend {
         // (`docs/features/microsandbox-provider/02_dev.md`, gotcha table).
         let exec_capable = provider_id == ProviderId::Microsandbox
             || BASE_IMAGE_VERSION >= EXEC_TRANSPORT_MIN_IMAGE_VERSION;
+        if proxy.is_some() && (!exec_capable || provider_id == ProviderId::Microsandbox) {
+            // A `PublishRelay` sandbox's zellij reachability depends on pasta's
+            // `--host-lo-to-ns-lo`, which a proxy attachment replaces
+            // (`docs/features/network-proxy/02_dev.md`, Resolved Decision 1); microsandbox has no
+            // confirmed network-attachment story at all (Resolved Decision 9).
+            return Err(BackendError::CommandFailed(format!(
+                "{name:?} cannot enable traffic inspection: requires the podman-exec-transport reachability model"
+            )));
+        }
         let spec = InstanceSpec {
             name: name.to_string(),
             image,
             workspace_source: workspace.clone(),
             labels: vec![(crate::provider::WORKSPACE_LABEL.to_string(), workspace.clone())],
             publish_model: publish_model(exec_capable),
+            env: proxy.map(|p| p.env.clone()).unwrap_or_default(),
+            network: proxy.map(|p| crate::provider::types::InstanceNetwork {
+                name: p.network.clone(),
+                ip: None,
+            }),
         };
         let id = provider.create_instance(&spec).await?;
         if exec_capable {
@@ -546,6 +561,11 @@ impl SandboxBackend for CliBackend {
         target_connection: &str,
     ) -> Result<RemoteDeployment, BackendError> {
         validate_name(name)?;
+        // Refused rather than silently deployed unproxied: deploy has no target-side proxy story
+        // yet (`docs/features/network-proxy/02_dev.md`, Resolved Decision 6).
+        if crate::proxy::exists(&self.registry, name).await {
+            return Err(BackendError::ProxyDeployUnsupported { name: name.to_string() });
+        }
         // The deploy picker is already hidden for a provider without remote targets
         // (`ProviderCapabilities.remote_targets`); this is the backend half of that gate, so an
         // invoke that gets through anyway fails with a reason rather than nonsense podman argv.
@@ -605,6 +625,8 @@ impl SandboxBackend for CliBackend {
             workspace_source: plan.bind_mount_source.clone(),
             labels: Vec::new(),
             publish_model: publish_model(exec_capable),
+            env: Vec::new(),
+            network: None,
         };
         target_provider.create_instance(&spec).await?;
         target_provider.start(name).await?;

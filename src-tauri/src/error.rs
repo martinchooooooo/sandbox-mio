@@ -61,6 +61,11 @@ pub enum AppError {
     /// a payload that doesn't match the key's real error/return-value shape.
     #[error("mock control plane: {0}")]
     MockControl(String),
+    /// `deploy` was asked for a proxy-enabled sandbox. Pulled out of `Backend` (like
+    /// `PodmanUnresponsive`) so the frontend can offer a specific remedy instead of a generic
+    /// backend-error toast (`docs/features/network-proxy/02_dev.md`, Resolved Decision 6).
+    #[error("{0}")]
+    ProxyDeployUnsupported(String),
 }
 
 /// Hand-written rather than `#[from]`, so the one `BackendError` variant that has its own IPC kind
@@ -69,8 +74,19 @@ impl From<BackendError> for AppError {
     fn from(e: BackendError) -> Self {
         match e {
             BackendError::PodmanUnresponsive(m) => AppError::PodmanUnresponsive(m),
+            BackendError::ProxyDeployUnsupported { .. } => {
+                AppError::ProxyDeployUnsupported(e.to_string())
+            }
             other => AppError::Backend(other),
         }
+    }
+}
+
+/// Routes through `BackendError` rather than its own `AppError` variant: the `proxy` subsystem has
+/// no IPC-visible kind of its own, matching `CredentialError`'s shape.
+impl From<crate::proxy::types::ProxyError> for AppError {
+    fn from(e: crate::proxy::types::ProxyError) -> Self {
+        AppError::from(BackendError::from(e))
     }
 }
 
@@ -94,6 +110,7 @@ impl AppError {
             AppError::PodmanUnresponsive(_) => "PodmanUnresponsive",
             AppError::PodmanRebootRequired(_) => "PodmanRebootRequired",
             AppError::MockControl(_) => "MockControl",
+            AppError::ProxyDeployUnsupported(_) => "ProxyDeployUnsupported",
         }
     }
 }
