@@ -3,7 +3,7 @@ import { configureMock, useMockControl } from "../../../lib/mock.js";
 
 // LIGHT spec for scriptable-mock-backend's control plane (docs/features/scriptable-mock-backend/02_dev.md,
 // Phase B; e2e/AGENTS.md decision rule 3 — real infra is too slow to provoke this on demand). Only
-// `podman start`'s process call is scripted; PodmanCliBackend::start's real check() still produces BackendError::CommandFailed.
+// `podman start`'s process call is scripted; CliBackend::start's real check() still produces BackendError::CommandFailed.
 describe("Sandbox start failure — error line and retry (mock backend)", function () {
   this.timeout(30000);
 

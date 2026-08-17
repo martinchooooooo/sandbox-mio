@@ -4,7 +4,7 @@ import { MISE_BASE_IMAGE } from "../../../lib/podman-machine.js";
 
 // LIGHT spec for scriptable-mock-backend's control plane (docs/features/scriptable-mock-backend/02_dev.md,
 // Phase B). Scripts `podman.ps` directly (bypassing createProject()) to exercise the real
-// PodmanCliBackend::list() parsing against a fabricated line, not ScriptedPodmanRunner's create-tracking default.
+// CliBackend::list() parsing against a fabricated line, not ScriptedPodmanRunner's create-tracking default.
 describe("Sandbox list — real list() parsing from a scripted podman.ps (mock backend)", function () {
   this.timeout(30000);
 

@@ -213,10 +213,10 @@ pub trait SandboxBackend: Send + Sync {
 }
 
 /// Real [`SandboxBackend`]. Instance lifecycle dispatches through `registry` to whichever provider
-/// owns the sandbox, so it is no longer Podman-only despite the name; the orchestration that *is*
-/// Podman-only (deploy, host registry, event stream) stays here and still drives the `podman` CLI
-/// over `connection` directly.
-pub(super) struct PodmanCliBackend {
+/// owns the sandbox, so it is provider-neutral there; the orchestration that *is* Podman-only
+/// (deploy, host registry, event stream) stays here and still drives the `podman` CLI over
+/// `connection` directly — hence `Cli`, not `Podman`, in the name.
+pub(super) struct CliBackend {
     pub connection: String,
     /// Resolves each operation to the provider that owns the sandbox
     /// (`docs/features/microsandbox-provider/02_dev.md`, Phase J).

@@ -1,6 +1,6 @@
 //! Runtime control plane for the e2e `light` tier (`MIO_MOCK_BACKEND=1`). Scripts the external
 //! **process** each subsystem shells out to (`podman`, `msb`, the Mutagen sidecar) rather than a
-//! subsystem-level mock, so the real orchestration structs (`PodmanCliBackend`,
+//! subsystem-level mock, so the real orchestration structs (`CliBackend`,
 //! `PodmanMachineManager`, ...) run unmodified against a scripted [`ProcessRunner`]. Exposed to
 //! running specs via the `mock_configure`/`mock_reset` Tauri commands in `src-tauri/src/lib.rs`.
 //! See `docs/features/scriptable-mock-backend/02_dev.md`.

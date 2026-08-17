@@ -79,7 +79,7 @@ across `it` blocks (see Mock control plane below).
 
 ## Mock control plane: scripting the process layer (`e2e/lib/mock.ts`)
 
-The real `PodmanCliBackend`/`PodmanMachineManager`/`MutagenCli` structs run unmodified against a
+The real `CliBackend`/`PodmanMachineManager`/`MutagenCli` structs run unmodified against a
 scripted `ProcessRunner` — a shared `MockDirector` (`src-tauri/src/mockctl/mod.rs`) intercepts the
 external `podman` or `mutagen` call each subsystem method shells out to, so a running spec can
 provoke a failure or a rare gating condition without a hand-written subsystem-level mock to keep in
@@ -126,7 +126,7 @@ every scriptable scenario is proven by a light spec instead of a `#[test]` fn.
 The backend injects several traits as `Arc<dyn …>` Tauri state:
 
 - `SandboxBackend` (`src-tauri/src/backends/types.rs`) and `MachineManager`
-  (`src-tauri/src/machine/types.rs`) are always the real `PodmanCliBackend`/`PodmanMachineManager`
+  (`src-tauri/src/machine/types.rs`) are always the real `CliBackend`/`PodmanMachineManager`
   structs, constructed by `default_backend()`/`default_machine_manager()`
   (`backends/mod.rs`/`machine/mod.rs`) with a `runner: Arc<dyn ProcessRunner>` — real
   (`SystemPodmanRunner`) or scripted (`ScriptedPodmanRunner`) depending on `MIO_MOCK_BACKEND=1`. See

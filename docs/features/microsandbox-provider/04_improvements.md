@@ -58,15 +58,19 @@ failure above, and a cross-process fix needs a real file lock rather than the ex
 
 ## Rename `PodmanCliBackend`, which is no longer Podman-only
 
-Phase J made `SandboxBackend`'s instance lifecycle dispatch per sandbox through `ProviderRegistry`,
-so `PodmanCliBackend` (`src-tauri/src/backends/types.rs`) now creates, lists, starts, stops and
-destroys microsandbox sandboxes too. Only the orchestration around it — deploy, the host registry,
-the event stream — is still genuinely Podman-specific. The name now misleads, as does the row for it
-in `src-tauri/AGENTS.md`'s subsystem table.
+**Done**, as a standalone rename: `PodmanCliBackend` → `CliBackend` (`src-tauri/src/backends/types.rs`),
+updated across every source call site and doc comment that named it (`backends/mod.rs`,
+`machine/types.rs`, `mockctl/mod.rs`, `mockctl/types.rs`, `process/types.rs`, `provider/msb.rs`,
+`provider/mod.rs`, the two `e2e/test/specs/light/` comments) plus the `src-tauri/AGENTS.md` subsystem
+table row and Common Gotchas entries, and `e2e/AGENTS.md`'s two references. Historical feature docs
+that cite the old name in the context of decisions made under it were left as written, since they
+record what was true at the time.
 
-Deferred because a rename is pure churn across `types.rs`, `mod.rs`, `AGENTS.md` and the feature docs
-that cite it, with no behavioural content, and Phase J was already the widest change in this feature.
-Worth doing on its own, together with the `AGENTS.md` table row.
+Phase J made `SandboxBackend`'s instance lifecycle dispatch per sandbox through `ProviderRegistry`,
+so the struct now creates, lists, starts, stops and destroys microsandbox sandboxes too. Only the
+orchestration around it — deploy, the host registry, the event stream — is still genuinely
+Podman-specific, which is why the new name keeps `Cli` (still drives the `podman` CLI directly for
+that orchestration) but drops `Podman` (no longer an accurate blanket claim).
 
 ## Cache or narrow the `list()` call behind per-sandbox provider resolution
 

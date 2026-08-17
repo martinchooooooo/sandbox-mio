@@ -13,7 +13,7 @@ use crate::process::{detached_command, detached_command_std};
 use crate::provider::types::{InstanceSpec, ProviderId, PublishModel};
 use crate::provider::ProviderRegistry;
 use types::{
-    BackendError, ConnectionInfo, PodmanCliBackend, RemoteDeployment, Sandbox, SandboxBackend,
+    BackendError, CliBackend, ConnectionInfo, RemoteDeployment, Sandbox, SandboxBackend,
     SyncStrategy, WorkspacePlan,
 };
 
@@ -111,7 +111,7 @@ pub fn default_backend(
     app: tauri::AppHandle,
 ) -> std::sync::Arc<dyn SandboxBackend> {
     let connection = connection_name();
-    std::sync::Arc::new(PodmanCliBackend {
+    std::sync::Arc::new(CliBackend {
         connection,
         registry,
         runner,
@@ -172,7 +172,7 @@ fn podman_literal_path() -> String {
 static PODMAN_RUNNER: std::sync::OnceLock<Arc<dyn ProcessRunner>> = std::sync::OnceLock::new();
 
 /// Record the shared `podman` [`ProcessRunner`] for the free functions that shell out to `podman`
-/// with no `PodmanCliBackend` instance to borrow a `runner` field from — `ensure_connection_alias`,
+/// with no `CliBackend` instance to borrow a `runner` field from — `ensure_connection_alias`,
 /// called directly from Tauri command handlers in `lib.rs`, is the only such call site. Every
 /// `&self` method uses `self.runner` instead. Set once at startup from the same `Arc` passed to
 /// `default_backend`/`default_machine_manager`, so all `podman` calls share one director.
@@ -251,7 +251,7 @@ fn parse_connection_entry(entry: &serde_json::Value) -> Result<Option<Connection
     }))
 }
 
-impl PodmanCliBackend {
+impl CliBackend {
     fn image() -> String {
         base_image()
     }
@@ -443,7 +443,7 @@ fn progress(channel: &Channel<serde_json::Value>, step: &str, status: &str, mess
 }
 
 #[async_trait::async_trait]
-impl SandboxBackend for PodmanCliBackend {
+impl SandboxBackend for CliBackend {
     async fn ensure_base_image(&self, provider: ProviderId) -> Result<(), BackendError> {
         Ok(self.registry.local(provider).ensure_base_image().await?)
     }
@@ -771,7 +771,7 @@ impl SandboxBackend for PodmanCliBackend {
 /// `mutagen forward create` that targets `connection`.
 pub async fn ensure_connection_alias(connection: &str) -> Result<(), BackendError> {
     let Some(info) =
-        PodmanCliBackend::remote_connection_info(podman_global_runner(), connection).await?
+        CliBackend::remote_connection_info(podman_global_runner(), connection).await?
     else {
         return Err(BackendError::NoSshEndpoint { connection: connection.to_string() });
     };
@@ -788,7 +788,7 @@ pub async fn ensure_connection_alias(connection: &str) -> Result<(), BackendErro
 /// Per-sandbox ed25519 keypair for the exec-transport `Proxied` alias, generated once and reused
 /// for the sandbox's lifetime. Lives under app data (not `~/.ssh`), per-sandbox and
 /// per-worktree-isolatable via `MIO_APP_DATA_DIR`. Returns the private key path. Free function
-/// (not a `PodmanCliBackend` method) so `lib.rs`'s terminal/agent-web/expose-port command handlers
+/// (not a `CliBackend` method) so `lib.rs`'s terminal/agent-web/expose-port command handlers
 /// can re-derive an already-created sandbox's identity path deterministically from its name,
 /// without persisting the path anywhere new.
 pub fn ensure_sandbox_identity(
@@ -801,7 +801,7 @@ pub fn ensure_sandbox_identity(
     std::fs::create_dir_all(&dir)
         .map_err(|e| BackendError::CommandFailed(format!("failed to create {dir:?}: {e}")))?;
     let identity_path = dir.join("id_ed25519").to_string_lossy().replace('\\', "/");
-    PodmanCliBackend::ensure_key(&identity_path)?;
+    CliBackend::ensure_key(&identity_path)?;
     Ok(identity_path)
 }
 

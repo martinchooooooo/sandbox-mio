@@ -54,7 +54,7 @@ pub(super) struct TrackedContainer {
 /// Scripted `podman` invocations: derives the override key, consults `director`, and returns the
 /// scripted [`Output`] when one is installed. With no override, `create`/`start`/`stop`/`rm` update
 /// a small in-memory container list and `ps` reports it — **not** a second hand-maintained mock of
-/// `PodmanCliBackend`'s logic, only enough state for `create` → `list` → `start` → `list` to round-
+/// `CliBackend`'s logic, only enough state for `create` → `list` → `start` → `list` to round-
 /// trip through the real struct's own parsing without every light spec having to script `podman.ps`
 /// by hand for the common case. A spec that needs specific `ps` output (a fabricated status, a
 /// foreign container) still overrides `podman.ps` directly, which always takes precedence over this

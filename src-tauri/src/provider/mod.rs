@@ -38,7 +38,7 @@ const MSB_LOCAL_ID: &str = "local";
 pub struct ProviderRegistry {
     podman_runner: Arc<dyn ProcessRunner>,
     /// The Podman system connection a locally-created sandbox lives on. Read once at startup, like
-    /// `PodmanCliBackend::connection` and `MiseRuntime::connection` already do.
+    /// `CliBackend::connection` and `MiseRuntime::connection` already do.
     local_connection: String,
     /// Cached rather than rebuilt per call so every local Podman operation shares one base-image
     /// build lock — a fresh `PodmanProvider` per call would each hold their own and race the build.
