@@ -15,8 +15,10 @@ import { COMMAND, SUBPROCESS } from "../../../lib/timeouts.js";
 // through `.mio/ports.json` to exercise the `watch_ports_file` auto-expose/auto-unexpose path.
 const MANUAL_PORT = 4000;
 const FILE_PORT = 5000;
+const UPGRADE_PORT = 4001;
 const MANUAL_TOKEN = "manual-echo";
 const FILE_TOKEN = "file-echo";
+const UPGRADE_TOKEN = "upgrade-echo";
 
 // Starts a throwaway TCP "service" inside the sandbox with socat (already apt-installed for the
 // relay itself, see src-tauri/resources/Containerfile): on every connection it writes `token` and
@@ -64,6 +66,7 @@ describe("Exposing sandbox ports (network::expose_port / unexpose_port / watch_p
   after(() => {
     forwardTerminate(`expose-${projectName}-${MANUAL_PORT}`);
     forwardTerminate(`expose-${projectName}-${FILE_PORT}`);
+    forwardTerminate(`expose-${projectName}-${UPGRADE_PORT}`);
   });
 
   captureDiagOnFailure();
@@ -110,6 +113,38 @@ describe("Exposing sandbox ports (network::expose_port / unexpose_port / watch_p
     assert(
       fs.existsSync(portsJsonPath),
       `expose_port must bootstrap ${portsJsonPath} on first expose (ensure_ports_file, src-tauri/src/network/mod.rs)`
+    );
+  });
+
+  it("an explicit expose upgrades a port the listening-socket scan already auto-detected", async () => {
+    // Regression coverage for the race documented in docs/features/expose-ports/04_improvements.md:
+    // start the service (and let the scan claim it as `Auto :`) *before* exposing it via the UI, so
+    // the manual expose_port call always finds the port already tracked as auto_detected.
+    startFakeService(projectName, UPGRADE_PORT, UPGRADE_TOKEN);
+
+    const autoLabel = `Auto :${UPGRADE_PORT}`;
+    await workspaceDashboard.waitForPortRow(autoLabel, SUBPROCESS);
+    assert(
+      !(await workspaceDashboard.hasCloseButton(autoLabel)),
+      `scan-claimed row "${autoLabel}" should not show a "Stop exposing" button before the manual upgrade`
+    );
+
+    await workspaceDashboard.exposePort(UPGRADE_PORT);
+    const exposedLabel = `Exposed :${UPGRADE_PORT}`;
+    await workspaceDashboard.waitForPortRow(exposedLabel);
+    await workspaceDashboard.waitForPortRowGone(autoLabel);
+
+    assert(
+      await workspaceDashboard.hasCloseButton(exposedLabel),
+      `upgraded row "${exposedLabel}" should show a "Stop exposing" button after the manual expose wins ownership`
+    );
+
+    const hostPort = await workspaceDashboard.portRowHostPort(exposedLabel);
+    const received = await readOnce(hostPort);
+    assert.strictEqual(
+      received,
+      UPGRADE_TOKEN,
+      `Dialing the upgraded host port ${hostPort} did not reach the fake service on container port ${UPGRADE_PORT}. Got: "${received}".`
     );
   });
 
@@ -163,9 +198,9 @@ describe("Exposing sandbox ports (network::expose_port / unexpose_port / watch_p
       timeoutMsg: `mutagen forward expose-${projectName}-${MANUAL_PORT} is still Connected after clicking its close button`,
     });
 
-    // No "No ports open." assertion here: the workspace's Terminal/Agents forwards share the same list
-    // (PortsManager.svelte's `forwards.length > 0`), and the scan re-exposes the still-listening socat
-    // as `Auto :`. See docs/features/expose-ports/04_improvements.md.
+    // No "No ports open." assertion here: unexpose_port only drops the tracked forward, it doesn't
+    // suppress re-detection, so the still-listening fake service comes back as `Auto :` on the next
+    // poll_ports_file tick. See docs/features/expose-ports/04_improvements.md.
   });
 
   it("destroy removes the container and its forwards stay gone", async () => {
