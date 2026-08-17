@@ -8,6 +8,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::agents::types::AgentError;
 use crate::backends::types::BackendError;
 
 /// A failed read or write. Carries the path in its message, so a caller can wrap it in whatever
@@ -24,6 +25,12 @@ impl std::fmt::Display for FileError {
 impl From<FileError> for BackendError {
     fn from(e: FileError) -> Self {
         BackendError::CommandFailed(e.0)
+    }
+}
+
+impl From<FileError> for AgentError {
+    fn from(e: FileError) -> Self {
+        AgentError::ConfigWriteFailed(e.0)
     }
 }
 

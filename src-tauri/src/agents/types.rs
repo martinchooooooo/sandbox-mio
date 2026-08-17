@@ -13,6 +13,8 @@ pub enum AgentError {
     AuthSessionNotFound(String),
     #[error("credential read failed: {0}")]
     CredentialReadFailed(String),
+    #[error("config write failed: {0}")]
+    ConfigWriteFailed(String),
 }
 
 impl From<RuntimeError> for AgentError {

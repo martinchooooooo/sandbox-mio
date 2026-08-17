@@ -14,11 +14,11 @@ Phase E of `docs/features/lib-decomposition/02_dev.md` narrows the four pane com
 
 Deferred because `SandboxRouter` captures most of the reduction (25 state parameters to 15 across the five densest commands) and a second facade risks the per-domain-facade outcome rejected in `docs/features/lib-decomposition/01_ideas.md`: passthrough wrappers for domains that genuinely drive one subsystem. Worth revisiting only if a later feature adds a fifth pane command.
 
-## IPC Surface Renames
+## IPC Surface Renames — Done
 
-Several command names read inconsistently across domains — `open_workspace` starts a port-file watch rather than opening anything visible, `runtime_setup_steps` in `src-tauri/src/commands/inference.rs` refers to an inference engine rather than to the `runtime/` subsystem, and `machine_setup_steps` in `src-tauri/src/commands/machine.rs` is the provider-neutral counterpart with no naming relationship to it.
+Several command names read inconsistently across domains — `open_workspace` starts a port-file watch rather than opening anything visible, and `runtime_setup_steps` in `src-tauri/src/commands/inference.rs` referred to an inference engine rather than to the `runtime/` subsystem.
 
-Deferred by Resolved Decision 6 in `docs/features/lib-decomposition/02_dev.md`. A frozen IPC surface is what makes a `light` e2e failure identify a bad code move during the decomposition; a rename mixed into the same phase would require simultaneous edits under `src/` and `e2e/`, and a failing spec could no longer distinguish the two causes. Renames belong in a separate change once the decomposition has landed and its `standard` tier run is green.
+Was deferred by Resolved Decision 6 in `docs/features/lib-decomposition/02_dev.md` until the decomposition landed and its `standard` tier run was green (Phase H: 13 of 15 spec files passing, the other 2 the pre-existing machine flakiness recorded above). Implemented as a follow-up: `open_workspace` renamed to `watch_workspace_ports` (`src-tauri/src/commands/panes.rs`), `runtime_setup_steps` renamed to `inference_setup_steps` (`src-tauri/src/commands/inference.rs`), both renames threaded through `src-tauri/src/commands/mod.rs`'s `generate_handler!` list and every `invoke()` call site and comment under `src/` and `e2e/`. `machine_setup_steps` in `src-tauri/src/commands/machine.rs` needed no change — the confusion was the naming collision with `runtime_setup_steps`, which the rename resolves.
 
 ## Thin-Delegation Boilerplate
 

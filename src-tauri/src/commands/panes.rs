@@ -42,7 +42,7 @@ pub async fn open_terminal(
 
 /// Start watching ports file. Idempotent; safe to call on every view.
 #[tauri::command]
-pub async fn open_workspace(
+pub async fn watch_workspace_ports(
     name: String,
     workspace_path: String,
     router: State<'_, SandboxRouter>,

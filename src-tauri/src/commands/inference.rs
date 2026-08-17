@@ -59,7 +59,7 @@ pub fn downloaded_models(app: tauri::AppHandle) -> Result<Vec<String>, AppError>
 
 /// Return engine's ordered setup checklist (no-op).
 #[tauri::command]
-pub fn runtime_setup_steps(engine: EngineKind, app: tauri::AppHandle) -> Result<Vec<SetupStep>, AppError> {
+pub fn inference_setup_steps(engine: EngineKind, app: tauri::AppHandle) -> Result<Vec<SetupStep>, AppError> {
     Ok(inference::engine_for(engine, &app).setup_steps())
 }
 

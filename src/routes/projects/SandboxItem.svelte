@@ -151,8 +151,8 @@
     }
 
     // Primary action: navigate the merged webview's client-side view to this sandbox's Dashboard
-    // (docs/features/consolidate-app-container/02_dev.md); `open_workspace` no longer embeds a
-    // pane, it only (idempotently) starts `.mio/ports.json` watching. `hide_active_pane` clears
+    // (docs/features/consolidate-app-container/02_dev.md); `watch_workspace_ports` no longer embeds
+    // a pane, it only (idempotently) starts `.mio/ports.json` watching. `hide_active_pane` clears
     // whatever Terminal/AgentWeb overlay another sandbox may have left active, so this sandbox's
     // Dashboard actually becomes visible (its visibility is derived from `active_app` being null).
     async function openWorkspace() {
@@ -161,7 +161,7 @@
             "workspace",
             async () => {
                 await Promise.all([
-                    invoke("open_workspace", { name: project.name, workspacePath: project.workspace_path }),
+                    invoke("watch_workspace_ports", { name: project.name, workspacePath: project.workspace_path }),
                     invoke("hide_active_pane"),
                 ]);
             },

@@ -1,13 +1,9 @@
 //! Host-side agent configuration files. Pure filesystem merges over the workspace directory: they
 //! run whether or not the sandbox's container is up.
-//!
-//! Errors stay `BackendError` because the two commands wrapping these functions already surface as
-//! IPC kind `Backend`, and the decomposition freezes the IPC surface
-//! (`docs/features/lib-decomposition/02_dev.md`, Resolved Decision 6).
 
 use std::path::Path;
 
-use crate::backends::types::BackendError;
+use crate::agents::types::AgentError;
 use crate::mio_files;
 
 /// Write/merge OpenCode provider config, preserving existing user config.
@@ -17,7 +13,7 @@ pub fn provision_opencode(
     provider_id: String,
     provider_json: serde_json::Value,
     default_model: Option<String>,
-) -> Result<(), BackendError> {
+) -> Result<(), AgentError> {
     let path = Path::new(workspace_path).join(relative_path);
     let mut obj = mio_files::read_object(&path)?;
 
@@ -46,7 +42,7 @@ pub fn provision_pi(
     provider_json: serde_json::Value,
     config_env: String,
     config_dir_container: String,
-) -> Result<(), BackendError> {
+) -> Result<(), AgentError> {
     let models_path = Path::new(workspace_path).join(relative_path);
     let mut models = mio_files::read_object(&models_path)?;
     let providers = models
@@ -63,12 +59,12 @@ pub fn provision_pi(
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => "[tools]\n".to_string(),
         Err(e) => {
-            return Err(BackendError::CommandFailed(format!("failed to read {}: {e}", manifest_path.to_string_lossy())))
+            return Err(AgentError::ConfigWriteFailed(format!("failed to read {}: {e}", manifest_path.to_string_lossy())))
         }
     };
     let mut manifest: toml::Table = manifest_src
         .parse()
-        .map_err(|e| BackendError::CommandFailed(format!("failed to parse {}: {e}", manifest_path.to_string_lossy())))?;
+        .map_err(|e| AgentError::ConfigWriteFailed(format!("failed to parse {}: {e}", manifest_path.to_string_lossy())))?;
     let env = manifest
         .entry("env")
         .or_insert_with(|| toml::Value::Table(toml::Table::new()));
@@ -76,6 +72,6 @@ pub fn provision_pi(
         table.insert(config_env, toml::Value::String(config_dir_container));
     }
     let manifest_out = toml::to_string(&manifest)
-        .map_err(|e| BackendError::CommandFailed(e.to_string()))?;
+        .map_err(|e| AgentError::ConfigWriteFailed(e.to_string()))?;
     Ok(mio_files::write_text(&manifest_path, &manifest_out)?)
 }

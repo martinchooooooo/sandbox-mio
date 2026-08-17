@@ -130,7 +130,7 @@
         setupEvents = [];
         reply = "";
         try {
-            setupSteps = await invoke<SetupStep[]>("runtime_setup_steps", { engine });
+            setupSteps = await invoke<SetupStep[]>("inference_setup_steps", { engine });
         } catch {
             setupSteps = [];
         }

@@ -110,7 +110,7 @@ describe("Embedded workspace (merged NavigationPanel/Switcher/Dashboard webview)
     assert(
       !fs.existsSync(path.join(workspaceDirA, ".mio", "zellij.json")),
       "zellij.json exists before any Terminal pane was requested — prepare_terminal_webview ran " +
-        "eagerly during open_workspace, defeating the lazy-Terminal goal.",
+        "eagerly during watch_workspace_ports, defeating the lazy-Terminal goal.",
     );
 
     // Structural layout proof (mirrors the Rust unit tests in workspace/mod.rs): the overlay rect is

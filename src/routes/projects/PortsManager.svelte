@@ -5,7 +5,8 @@
     import { openForwardsFor, exposePort, unexposePort, type ForwardInfo } from "$lib/network/state.svelte";
     import type { createActionRunner } from "$lib/actions.svelte";
 
-    // `.mio/ports.json` watching is started backend-side by `open_workspace` (src-tauri/src/lib.rs)
+    // `.mio/ports.json` watching is started backend-side by `watch_workspace_ports`
+    // (src-tauri/src/commands/panes.rs)
     // as soon as this sandbox's workspace pane opens, so this component only needs to read the
     // live store — no mount-time invoke here. `workspacePath` is still needed for `exposePort`,
     // which bootstraps that same file if it doesn't exist yet.

@@ -54,7 +54,7 @@
 
     async function loadSteps(forEngine: EngineKind) {
         try {
-            steps = await invoke<SetupStep[]>("runtime_setup_steps", { engine: forEngine });
+            steps = await invoke<SetupStep[]>("inference_setup_steps", { engine: forEngine });
         } catch {
             steps = [];
         }

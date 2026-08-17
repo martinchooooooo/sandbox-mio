@@ -2,7 +2,7 @@
     import { m } from "$lib/paraglide/messages.js";
     import type { SetupStep, RuntimeSetupEvent } from "./types";
 
-    // `steps` is the engine's ordered checklist (from `runtime_setup_steps`). In live mode,
+    // `steps` is the engine's ordered checklist (from `inference_setup_steps`). In live mode,
     // `events` is the running stream of `RuntimeSetupEvent`s from `start_inference`, which ticks
     // each row pending → running → done/skipped/failed. Static mode (settings explainer) passes
     // no events and the rows render as a plain plan.

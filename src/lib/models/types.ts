@@ -35,7 +35,7 @@ export interface ModelDescriptor {
 
 export type ModelRating = "recommended" | "slow" | "wont-fit";
 
-/** Live runtime-setup step list returned by `runtime_setup_steps` (mirrors Rust `SetupStep`). */
+/** Live setup step list returned by `inference_setup_steps` (mirrors Rust `SetupStep`). */
 export interface SetupStep {
   id: string;
 }
