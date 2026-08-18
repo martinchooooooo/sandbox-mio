@@ -112,6 +112,7 @@ impl Bootstrap {
             registry.clone(),
         ));
         app.manage(WorkspaceRegistry::default());
+        app.manage(crate::proxy::flowlog::FlowWatchRegistry::default());
         app.manage(AuthSessionMap::default());
         app.manage(ActiveServer::default());
         app.manage(TaskRegistry::default());

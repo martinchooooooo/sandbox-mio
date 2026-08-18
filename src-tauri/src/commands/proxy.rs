@@ -9,6 +9,7 @@ use crate::error::AppError;
 use crate::provider::types::ProviderId;
 use crate::provider::ProviderRegistry;
 use crate::proxy;
+use crate::proxy::flowlog::FlowWatchRegistry;
 use crate::proxy::rules::ProxyRule;
 use crate::proxy::types::ProxyStatus;
 
@@ -59,6 +60,18 @@ pub async fn set_proxy_secret(
 #[tauri::command]
 pub async fn delete_proxy_secret(secret_id: String, app: tauri::AppHandle) -> Result<(), AppError> {
     Ok(proxy::delete_secret(&app, &secret_id)?)
+}
+
+/// Starts the flow-log poll task behind `proxy://flows-changed` for `name`. Idempotent: a second
+/// call while the task is live is a no-op, not an error.
+#[tauri::command]
+pub async fn watch_proxy_flows(
+    name: String,
+    registry: State<'_, FlowWatchRegistry>,
+    app: tauri::AppHandle,
+) -> Result<(), AppError> {
+    proxy::flowlog::start_watch(&app, &registry, &name);
+    Ok(())
 }
 
 /// Explicit restart, for a rule/secret change the caller wants applied without going through

@@ -7,6 +7,7 @@
 //! Podman-only for v1 (Resolved Decision 9): every caller here is refused earlier, at
 //! `CliBackend::create`/`deploy`, for a microsandbox-provider sandbox.
 
+pub mod flowlog;
 pub mod rules;
 pub mod types;
 
@@ -83,6 +84,15 @@ fn host_path(p: &std::path::Path) -> String {
 /// The mitmproxy addon script this project owns, embedded so an app upgrade refreshes the copy
 /// written to `<state>/addon.py` at every `create_proxy` with no image rebuild needed.
 const ADDON_SCRIPT: &str = include_str!("../../resources/mitm_addon.py");
+
+/// The flow-log addon script, embedded and refreshed at every `create_proxy` for the same reason
+/// as `ADDON_SCRIPT` (`docs/features/proxy-traffic-viewer/02_dev.md`).
+const FLOWLOG_SCRIPT: &str = include_str!("../../resources/mitm_flowlog_addon.py");
+
+/// The NDJSON flow log `mitm_flowlog_addon.py` appends to and `flowlog::watch_flows` polls.
+pub fn flows_path(app: &AppHandle, sandbox: &str) -> Result<PathBuf, ProxyError> {
+    Ok(state_dir(app, sandbox)?.join("flows.ndjson"))
+}
 
 /// Root of the app-global secret-value store: `<app_data_root>/proxy/secrets.json`. Written by
 /// `set_proxy_secret`/`delete_proxy_secret`, never read back over IPC — only `materialise` reads it,
@@ -267,6 +277,16 @@ pub async fn create_proxy(
     let rules_path = dir.join("rules.json");
     crate::mio_files::write_compact(&rules_path, &serde_json::Value::Array(Vec::new()))
         .map_err(|e| ProxyError::CommandFailed(e.to_string()))?;
+    let flowlog_path = dir.join("flowlog_addon.py");
+    std::fs::write(&flowlog_path, FLOWLOG_SCRIPT)
+        .map_err(|e| ProxyError::Io { path: flowlog_path.to_string_lossy().to_string(), error: e.to_string() })?;
+    // Create-if-absent, unlike `rules.json` above: a re-run against an existing state directory
+    // must not wipe the captured history (Resolved Decision 5).
+    let flows_path = flows_path(app, sandbox)?;
+    if !flows_path.exists() {
+        std::fs::write(&flows_path, b"")
+            .map_err(|e| ProxyError::Io { path: flows_path.to_string_lossy().to_string(), error: e.to_string() })?;
+    }
 
     let container_name = proxy_container_name(sandbox);
     let spec = SidecarSpec {
@@ -289,6 +309,16 @@ pub async fn create_proxy(
                 dest: "/addons/rules.json".to_string(),
                 read_only: true,
             },
+            SidecarMount {
+                host_path: host_path(&flowlog_path),
+                dest: "/addons/flowlog_addon.py".to_string(),
+                read_only: true,
+            },
+            SidecarMount {
+                host_path: host_path(&flows_path),
+                dest: "/addons/flows.ndjson".to_string(),
+                read_only: false,
+            },
         ],
         command: vec![
             "mitmdump".to_string(),
@@ -298,6 +328,8 @@ pub async fn create_proxy(
             PROXY_PORT.to_string(),
             "-s".to_string(),
             "/addons/addon.py".to_string(),
+            "-s".to_string(),
+            "/addons/flowlog_addon.py".to_string(),
         ],
         labels: Vec::new(),
     };
