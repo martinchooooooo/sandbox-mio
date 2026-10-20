@@ -9,7 +9,7 @@ description: >
 Write to `docs/features/<feature>/01_ideas.md`. Ask for the feature name if it is
 not given; the directory name is the feature slug (e.g. `remote-sync`).
 
-First of three feature documents (dev and test plans come later — don't cover
+First of a few feature documents (dev and test plans come later — don't cover
 them here). Written for future AI agents; follow the `write-docs` skill
 conventions.
 
@@ -19,6 +19,10 @@ Capture the thinking *before* the build so a future agent can continue the
 design without re-deriving it: what the feature is, what already exists, the
 proposed model, which technology choices were made and why, how the approach
 was validated, and what is still undecided.
+
+The goal is to come to an understanding of the feature we want to build that is 
+not too large and focused in scope. If you are unsure of the direction the feature 
+is going, ask the user, though be sure to give a recommendation.
 
 ## Structure
 
