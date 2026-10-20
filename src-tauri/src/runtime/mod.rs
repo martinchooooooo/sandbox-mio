@@ -27,6 +27,14 @@ const PASEO_WEB_PORT: u16 = 6767;
 const PASEO_PROJECTS_DIR: &str = "/root/.paseo/projects";
 const PASEO_PROJECTS_FILE: &str = "/root/.paseo/projects/projects.json";
 
+/// Pinned rather than `node@lts` / `npm:@getpaseo/cli` (latest): `prepare_agent_web` runs this
+/// `mise use` on every "Agents" tab open, and an unpinned tag forces mise to re-resolve it over
+/// the network every time, even when the tool is already installed — slow on its own and worse
+/// through a sandbox's traffic proxy (TLS interception per request). A pinned version already
+/// present locally needs no network round trip. Bump these deliberately, not automatically.
+const PASEO_NODE_TOOL: &str = "node@24.19.0";
+const PASEO_CLI_TOOL: &str = "npm:@getpaseo/cli@0.4.0";
+
 pub fn default_runtime(
     providers: Arc<crate::provider::ProviderRegistry>,
     published_port_transport: Arc<dyn crate::transport::types::PortTransport>,
@@ -303,7 +311,7 @@ impl RuntimeManager for MiseRuntime {
 
         check(
             provider
-                .exec(name, &["mise", "use", "node@lts", "npm:@getpaseo/cli"], workdir_opts())
+                .exec(name, &["mise", "use", PASEO_NODE_TOOL, PASEO_CLI_TOOL], workdir_opts())
                 .await?,
         )?;
 
