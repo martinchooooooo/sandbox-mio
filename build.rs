@@ -66,6 +66,7 @@ fn main() {
         // Any further `e2e --<flag>` arm belongs above this one, which forwards its second argument
         // straight into `pnpm run test:{suite}` — an arm added below would run `pnpm run test:--<flag>`.
         Some("e2e") => {
+            check_e2e_driver();
             let mut suite = "standard";
             if args.len() > 2 {
                 suite = args.get(2).map(String::as_str).unwrap();
@@ -96,7 +97,8 @@ fn main() {
             eprintln!("                       `run_dev_directly`'s doc comment. Rerun after a Rust change; no");
             eprintln!("                       auto-relaunch)");
             eprintln!("  build dev --setup  - install app dependencies and stage the Mutagen sidecar + llama.cpp engine + Podman");
-            eprintln!("  build e2e          - run `pnpm test` in the e2e folder");
+            eprintln!("  build e2e          - run `pnpm test` in the e2e folder, first re-staging");
+            eprintln!("                       tools/msedgedriver.exe if it no longer matches WebView2");
             eprintln!("  build e2e --setup  - install e2e test dependencies");
             eprintln!("  build package      - stage bundled binaries and build the release NSIS installer");
             std::process::exit(1);
@@ -130,6 +132,96 @@ fn setup_e2e() {
     } else {
         todo!()
     }
+}
+
+/// Runs before every `e2e` tier: re-stages `tools/msedgedriver.exe` whenever its major version
+/// differs from the installed WebView2 runtime's, and says so. WebView2 updates itself in the
+/// background, and a stale driver fails every session with `session not created: This version of
+/// Microsoft Edge WebDriver only supports Microsoft Edge version N` before any app code runs.
+///
+/// Never fails the run: when either version cannot be read, or `msedgedriver-tool` is missing or
+/// errors, it prints what it found plus the `e2e --setup` remedy and leaves the suite to report.
+fn check_e2e_driver() {
+    if !cfg!(windows) {
+        return;
+    }
+    let driver = tools_dir().join("msedgedriver.exe");
+    let driver_version = Command::new(&driver)
+        .arg("--version")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| first_version_token(&String::from_utf8_lossy(&o.stdout)));
+    let webview_version = webview2_version();
+
+    let major = |v: &Option<String>| v.as_deref().and_then(|v| v.split('.').next()).map(str::to_string);
+    let describe = |v: &Option<String>| v.clone().unwrap_or_else(|| "unknown".into());
+
+    match (&driver_version, &webview_version) {
+        (Some(_), Some(_)) if major(&driver_version) == major(&webview_version) => {
+            println!(
+                "[e2e] msedgedriver {} matches WebView2 {}",
+                describe(&driver_version),
+                describe(&webview_version)
+            );
+            return;
+        }
+        (_, None) => {
+            println!(
+                "[e2e] warning: could not read the installed WebView2 version; skipping the \
+                 msedgedriver check (driver: {})",
+                describe(&driver_version)
+            );
+            return;
+        }
+        _ => {}
+    }
+
+    println!(
+        "[e2e] msedgedriver {} does not match WebView2 {}; re-staging tools/msedgedriver.exe",
+        describe(&driver_version),
+        describe(&webview_version)
+    );
+    fs::create_dir_all(tools_dir()).unwrap();
+    // Removed first, as in the `fetch_*` helpers: `setup_worktree()` may have hard-linked this file
+    // from a sibling worktree, and rewriting it in place would change the sibling's driver too.
+    let _ = fs::remove_file(&driver);
+    if try_run(tools_dir(), "msedgedriver-tool.exe", &[]) {
+        println!("[e2e] re-staged msedgedriver for WebView2 {}", describe(&webview_version));
+    } else {
+        println!(
+            "[e2e] warning: could not re-stage msedgedriver; run `./build.exe e2e --setup` to \
+             install msedgedriver-tool and fetch a matching driver. Light sessions will fail with \
+             `session not created` until then."
+        );
+    }
+}
+
+/// The installed Evergreen WebView2 runtime's version (`pv` under its EdgeUpdate client key),
+/// checked machine-wide first, then per-user. `None` when neither key exists.
+fn webview2_version() -> Option<String> {
+    const CLIENT: &str = r"Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}";
+    [
+        format!(r"HKLM\SOFTWARE\WOW6432Node\{CLIENT}"),
+        format!(r"HKLM\SOFTWARE\{CLIENT}"),
+        format!(r"HKCU\Software\{CLIENT}"),
+    ]
+    .iter()
+    .find_map(|key| {
+        let out = Command::new("reg").args(["query", key, "/v", "pv"]).output().ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        first_version_token(&String::from_utf8_lossy(&out.stdout))
+            .filter(|v| v != "0.0.0.0")
+    })
+}
+
+/// The first whitespace-separated token shaped like a dotted numeric version (`156.0.4314.58`).
+fn first_version_token(text: &str) -> Option<String> {
+    text.split_whitespace()
+        .find(|t| t.contains('.') && t.split('.').all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit())))
+        .map(str::to_string)
 }
 
 /// Sibling git worktrees of `target_root` (`git worktree list --porcelain`), `target_root` itself
