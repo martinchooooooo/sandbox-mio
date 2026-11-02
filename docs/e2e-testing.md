@@ -6,7 +6,7 @@ This document covers how end-to-end tests are written and run in this project. S
 
 The repository contains two distinct styles that must not be confused.
 
-**App-driven WebdriverIO specs** (`e2e/test/specs/*.spec.js`) drive the real Tauri application through `tauri-driver`. These specs exercise actual Tauri commands and are the authoritative lifecycle tests. All new feature coverage belongs here.
+**App-driven WebdriverIO specs** (`e2e/test/specs/*.spec.js`) drive the real Tauri application through `msedgedriver`. These specs exercise actual Tauri commands and are the authoritative lifecycle tests. All new feature coverage belongs here.
 
 **Standalone transport tests** (`e2e/test/remote-workspace-sync.test.js`) run a vendored Mutagen binary directly against a Podman machine without involving the application. These tests prove only the sync transport in isolation and are kept as a fast smoke test, not as application coverage.
 

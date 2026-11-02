@@ -2,7 +2,7 @@
 
 ## Overview
 
-E2E tests use WebdriverIO with `tauri-driver` and `msedgedriver`. The test suite lives in `e2e/`, configured by `e2e/wdio.conf.js`. The Tauri app is built in `onPrepare` before any sessions start.
+E2E tests use WebdriverIO talking to `msedgedriver` directly, without `tauri-driver` (`docs/features/microsandbox-provider/03_e2e.md`, Step 0). The test suite lives in `e2e/`, configured by `e2e/wdio.conf.js`. The Tauri app is built in `onPrepare` before any sessions start.
 
 ## Podman Machine Isolation
 
@@ -14,7 +14,7 @@ The `mio-tests` machine is initialised and started automatically in `ensurePodma
 
 The Tauri app drives Podman by invoking `podman --connection <name>`, where `<name>` is a Podman **system connection**. The connection is selected by the `PODMAN_CONNECTION` environment variable (`src-tauri/src/backends/`), defaulting to `podman-machine-default`. Podman performs the SSH transport to the connection's socket, so the same code path serves the local machine and any remote host.
 
-`e2e/wdio.conf.js` passes `PODMAN_CONNECTION=mio-tests` when spawning `tauri-driver` in `beforeSession`. `tauri-driver` propagates the variable to the Tauri app process. `podman machine init mio-tests` creates a connection named `mio-tests` automatically.
+`e2e/wdio.conf.js` passes `PODMAN_CONNECTION=mio-tests` when spawning `msedgedriver` in `beforeSession`. `msedgedriver` propagates the variable to the Tauri app process. `podman machine init mio-tests` creates a connection named `mio-tests` automatically.
 
 To list available connections and their SSH URIs: `podman system connection list`
 

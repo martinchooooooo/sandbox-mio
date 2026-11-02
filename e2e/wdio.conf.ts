@@ -32,7 +32,7 @@ import {
   releaseWorktreeLock,
   acquireHostLock,
   releaseHostLock,
-  allocatePortPair,
+  allocateDriverPort,
   PORT_WINDOW_BASE,
   PORT_WINDOW_INDEX,
   MIO_PORT_BASE,
@@ -148,7 +148,7 @@ function stageTreeIfMissing(src: string, dst: string): void {
   }
 }
 
-let tauriDriver: ChildProcess | undefined;
+let driver: ChildProcess | undefined;
 let exit = false;
 
 const ext = process.platform === "win32" ? ".exe" : "";
@@ -191,7 +191,7 @@ const LIGHT_SPECS = MIO_SPEC
   ? [`./test/specs/light/**/*${MIO_SPEC}*.ts`]
   : ["./test/specs/light/**/*.ts"];
 
-// Starting value only. A freshly forked worker inherits the pair the launcher allocated (process.env
+// Starting value only. A freshly forked worker inherits the port the launcher allocated (process.env
 // as of onPrepare's return — see run-identity.ts IS_LAUNCHER), and the launcher's own first parse
 // runs before onPrepare so it falls back to the window base. Either way `beforeSession` overwrites
 // `config.port` before a session is created.
@@ -211,8 +211,10 @@ export const config: WebdriverIO.Config = {
   capabilities: [
     {
       maxInstances: 1,
-      "tauri:options": {
-        application: path.resolve(__dirname, `../src-tauri/target/debug/sandbox-mio${ext}`),
+      // msedgedriver's own WebView2 form of what tauri-driver's `tauri:options` used to translate to.
+      browserName: "webview2",
+      "ms:edgeOptions": {
+        binary: path.resolve(__dirname, `../src-tauri/target/debug/sandbox-mio${ext}`),
       },
     } as WebdriverIO.Capabilities,
   ],
@@ -244,16 +246,15 @@ export const config: WebdriverIO.Config = {
       }
     }
 
-    // Provisional: the pair a worker inherits, and what the line below reports. `beforeSession` is
+    // Provisional: the port a worker inherits, and what the line below reports. `beforeSession` is
     // the authority — it re-probes and reassigns `config.port` per session, because only that hook
-    // can keep a retry's new port and the session's client in step (see spawnTauriDriver).
-    const { driverPort, nativePort } = await allocatePortPair();
+    // can keep a retry's new port and the session's client in step (see spawnDriver).
+    const driverPort = await allocateDriverPort();
     process.env.MIO_DRIVER_PORT = String(driverPort);
-    process.env.MIO_NATIVE_PORT = String(nativePort);
     wdioConfig.port = driverPort;
 
     console.log(
-      `[e2e] run slug=${RUN_SLUG} ports=${driverPort}/${nativePort} ` +
+      `[e2e] run slug=${RUN_SLUG} port=${driverPort} ` +
         `(window #${PORT_WINDOW_INDEX} base ${PORT_WINDOW_BASE}, MIO_PORT_BASE=${MIO_PORT_BASE}) ` +
         `workspace=${WORKSPACE_ROOT} appData=${APP_DATA_ROOT}`,
     );
@@ -333,7 +334,7 @@ export const config: WebdriverIO.Config = {
     const appExe = path.resolve(__dirname, `../src-tauri/target/debug/sandbox-mio${ext}`);
     fs.rmSync(appExe, { force: true });
     // Abort on a failed build: spawnSync does not throw on a non-zero exit, and a silent failure
-    // would leave no exe (or a stale one) for tauri-driver to launch.
+    // would leave no exe (or a stale one) for msedgedriver to launch.
     //
     // --no-default-features drops the `devtools` feature (src-tauri/Cargo.toml): tauri-plugin-devtools
     // claims the process's one global tracing subscriber before `init_logging()` runs, so with it
@@ -399,7 +400,7 @@ export const config: WebdriverIO.Config = {
     }
     // This spec's hooks depend on the probe and the sandbox backend resolving different machines.
     const isRecoverySession = specs.some((s) => s.includes("podman-startup-recovery"));
-    await spawnTauriDriver(sessionConfig, specs, isLightSession, isRecoverySession);
+    await spawnDriver(sessionConfig, specs, isLightSession, isRecoverySession);
   },
   // One merged chrome webview hosts the whole app UI (docs/features/consolidate-app-container/02_dev.md);
   // each Terminal/AgentWeb pane opens its own overlay webview. Pin the session to the app UI
@@ -422,7 +423,7 @@ export const config: WebdriverIO.Config = {
     logFailure(`${_test.fullTitle || _test.parent} > ${hookName}`, result);
   },
   afterSession: () => {
-    closeTauriDriver();
+    closeDriver();
   },
   onComplete: () => {
     fs.rmSync(WORKSPACE_ROOT, { recursive: true, force: true });
@@ -485,7 +486,7 @@ function logFailure(title: string, result: { passed: boolean; error?: Error }): 
   fs.appendFileSync(FAILURES_LOG, [`FAILED: ${title}`, message, stack, ""].join("\n"));
 }
 
-// tauri-driver dying takes the whole worker down via process.exit before mocha can report
+// The driver dying takes the whole worker down via process.exit before mocha can report
 // anything — write straight to FAILURES_LOG so the in-flight spec isn't a silent gap.
 function logCrash(message: string, specs: string[]): void {
   fs.appendFileSync(FAILURES_LOG, [`FAILED: ${specs.join(", ") || "(unknown spec)"}`, message, ""].join("\n"));
@@ -533,15 +534,19 @@ async function waitForDriverReady(
   return false;
 }
 
-// Allocates the session's port pair, spawns tauri-driver on it, and assigns it to `config.port`.
+// Allocates the session's port, spawns msedgedriver on it, and assigns it to `config.port`.
+//
+// msedgedriver is spawned directly rather than through tauri-driver: tauri-driver puts itself and
+// every descendant in a Windows job object that denies breakaway, and `msb create` must break away
+// to start its VM supervisor (docs/features/microsandbox-provider/03_e2e.md, Step 0).
 //
 // Allocation lives here, not in onPrepare, because this hook owns the config the WebdriverIO
 // session is built from: a retry that rebinds the driver to a different port must move the client
 // with it, or the session dials the dead port and a clear "driver exited" failure degrades into a
 // connection timeout. A port window is a strong default, not a guarantee two worktrees never
 // collide (run-identity.ts), so a driver that never comes up is retried once on a freshly probed
-// pair — both before this promise resolves, hence before the session exists.
-async function spawnTauriDriver(
+// port — both before this promise resolves, hence before the session exists.
+async function spawnDriver(
   // Structural, not `WebdriverIO.Config`: beforeSession is handed an `Omit<Testrunner,
   // "capabilities">`, and `port` is the only field this touches.
   config: { port?: number },
@@ -551,28 +556,23 @@ async function spawnTauriDriver(
 ): Promise<void> {
   const ATTEMPTS = 2;
   for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
-    const { driverPort, nativePort } = await allocatePortPair();
+    const driverPort = await allocateDriverPort();
     // Published for the app and for light/run-identity.spec.ts's port assertion; config.port is
     // what the session itself connects to.
     process.env.MIO_DRIVER_PORT = String(driverPort);
-    process.env.MIO_NATIVE_PORT = String(nativePort);
     config.port = driverPort;
 
     let spawnFailure: string | undefined;
     const child = spawn(
-      path.resolve(os.homedir(), ".cargo", "bin", `tauri-driver${ext}`),
-      [
-        "--port",
-        String(driverPort),
-        "--native-port",
-        String(nativePort),
-        "--native-driver",
-        "../tools/msedgedriver.exe",
-      ],
+      path.resolve(__dirname, "..", "tools", "msedgedriver.exe"),
+      [`--port=${driverPort}`],
       {
-        stdio: [null, process.stdout, process.stderr],
+        // stdout is the driver's own chatter, kept out of the reporter's output.
+        stdio: ["ignore", "ignore", process.stderr],
         env: {
           ...process.env,
+          // Tauri only exposes the webview to WebDriver when this is set.
+          TAURI_WEBVIEW_AUTOMATION: "true",
           PODMAN_CONNECTION: LOCAL_CONNECTION,
           // Left unset for the recovery spec so its probe falls back to DEFAULT_MACHINE_NAME.
           ...(isLightSession || isRecoverySession ? {} : { MIO_PODMAN_MACHINE: LOCAL_CONNECTION }),
@@ -580,11 +580,11 @@ async function spawnTauriDriver(
         },
       },
     );
-    tauriDriver = child;
+    driver = child;
     // Captured rather than fatal while the readiness poll is still running: a failure here is one
     // failed attempt, and the retry below decides whether it ends the run.
     child.on("error", (error) => {
-      spawnFailure = `tauri-driver error: ${error.message ?? error}`;
+      spawnFailure = `msedgedriver error: ${error.message ?? error}`;
     });
 
     if (await waitForDriverReady(child, driverPort, () => spawnFailure)) {
@@ -596,33 +596,39 @@ async function spawnTauriDriver(
         process.exit(1);
       }
       child.on("error", (error) => {
-        logCrash(`tauri-driver error: ${error.message ?? error}`, specs);
+        logCrash(`msedgedriver error: ${error.message ?? error}`, specs);
         process.exit(1);
       });
       child.on("exit", (code) => {
         if (exit) return;
-        logCrash(`tauri-driver exited unexpectedly with code: ${code}`, specs);
+        logCrash(`msedgedriver exited unexpectedly with code: ${code}`, specs);
         process.exit(1);
       });
       return;
     }
 
-    child.kill();
+    killDriverTree(child);
     const why = spawnFailure ?? `it did not bind the port (exit code ${child.exitCode})`;
     if (attempt === ATTEMPTS) {
-      logCrash(`tauri-driver failed to start on ports ${driverPort}/${nativePort}: ${why}`, specs);
+      logCrash(`msedgedriver failed to start on port ${driverPort}: ${why}`, specs);
       process.exit(1);
     }
     console.warn(
-      `[e2e] tauri-driver did not come up on ports ${driverPort}/${nativePort} (${why}); ` +
-        "retrying once against a freshly probed pair.",
+      `[e2e] msedgedriver did not come up on port ${driverPort} (${why}); ` +
+        "retrying once against a freshly probed port.",
     );
   }
 }
 
-function closeTauriDriver(): void {
+// Kills the driver and the app it launched: msedgedriver dying alone leaves the app running.
+function killDriverTree(child: ChildProcess): void {
+  if (child.pid === undefined || child.exitCode !== null) return;
+  spawnSync("taskkill", ["/T", "/F", "/PID", String(child.pid)], { stdio: "ignore" });
+}
+
+function closeDriver(): void {
   exit = true;
-  tauriDriver?.kill();
+  if (driver) killDriverTree(driver);
 }
 
 function onShutdown(fn: () => void): void {
@@ -641,7 +647,7 @@ function onShutdown(fn: () => void): void {
 }
 
 onShutdown(() => {
-  closeTauriDriver();
+  closeDriver();
   // The config module (and this registration) runs in every worker too, not only the launcher; an
   // ungated release would drop the lock as soon as the first spec file's worker exited
   // (docs/features/parallel-worktree-e2e/02_dev.md, Resolved Decision 8).

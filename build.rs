@@ -116,7 +116,6 @@ fn set_dev_diagnostics_env() {
 }
 
 fn setup_e2e() {
-    run(root_dir(), "cargo", &["install", "tauri-driver", "--locked"]);
     if cfg!(windows) {
         run(
             root_dir(),
@@ -369,9 +368,9 @@ fn asset_groups() -> Vec<AssetGroup> {
 
 /// Stages `tools/msedgedriver.exe` and all of `src-tauri/binaries/` into `target` (defaulting to
 /// the invoking worktree), plus `pnpm install` (one install covers `e2e/` too, via
-/// `pnpm-workspace.yaml`). A fresh worktree has neither: both are `.gitignore`d, so `tauri-driver`
-/// has no native driver and the Mutagen agent-bundle copy in `e2e/wdio.conf.ts`'s `onPrepare` has no
-/// source file (docs/features/parallel-worktree-e2e/02_dev.md, Phase F).
+/// `pnpm-workspace.yaml`). A fresh worktree has neither: both are `.gitignore`d, so the e2e harness
+/// has no `msedgedriver` to spawn and the Mutagen agent-bundle copy in `e2e/wdio.conf.ts`'s
+/// `onPrepare` has no source file (docs/features/parallel-worktree-e2e/02_dev.md, Phase F).
 ///
 /// Per asset group, prefers a hard link from the first sibling worktree whose `STAGED_VERSIONS`
 /// manifest agrees with this checkout's pinned version — costs no disk for the large
@@ -815,9 +814,7 @@ fn run(dir: PathBuf, cmd: &str, args: &[&str]) {
 /// `pnpm run tauri dev` (`cargo run`, under the hood). `msb create` spawns its own detached VM
 /// supervisor, and that spawn needs to break away from any job the app process itself sits in; the
 /// job `cargo run` assigns on Windows never grants that (`rust-lang/cargo#4841`, open since 2017,
-/// no known workaround besides not going through `cargo run` at all) — confirmed hands-on, including
-/// that this app's own `win_job` (below) would reintroduce the identical problem if `sandbox-mio.exe`
-/// were spawned through `run`/`try_run` instead of bypassing them here.
+/// no known workaround besides not going through `cargo run` at all) — confirmed hands-on.
 ///
 /// Costs `tauri dev`'s auto-rebuild-and-relaunch on Rust file changes: rerun `build dev` after
 /// editing Rust source. Frontend (Svelte/Vite) hot-reload is untouched either way, since it never
@@ -828,8 +825,7 @@ fn run_dev_directly() {
     run(root_dir().join("src-tauri"), "cargo", &["build"]);
 
     let exe = debug_dir().join("sandbox-mio.exe");
-    // Deliberately not `run`/`try_run`: both call `win_job::assign`, which is exactly the job
-    // membership this function exists to avoid for this one process.
+    // Not `run`/`try_run`: the app's own exit status must not panic `build.exe`.
     // stdin to the null device, stdout/stderr left inherited so dev output still reaches the
     // terminal: keeps the launching console's (possibly wedged) stdin handle out of the app's own
     // table, on top of the app sanitising its handles itself
@@ -891,6 +887,10 @@ fn spawn_background(dir: PathBuf, cmd: &str, args: &[&str]) -> std::process::Chi
 /// so a crash deep in a `pnpm` -> `node` -> `wdio` -> `vite`/`tauri build` chain — observed as
 /// `pnpm` exiting with `0xc0000005` mid-`e2e` run — no longer orphans the still-running
 /// grandchildren to keep building/testing in the background after `build.rs` has already panicked.
+///
+/// The job also grants explicit breakaway (not silent breakaway): `msb create` launches its VM
+/// supervisor with `CREATE_BREAKAWAY_FROM_JOB`, which fails with `Access is denied` otherwise
+/// (docs/features/microsandbox-provider/03_e2e.md, Step 0). Every other descendant stays a member.
 #[cfg(windows)]
 mod win_job {
     use std::ffi::c_void;
@@ -898,6 +898,7 @@ mod win_job {
     use std::process::Child;
     use std::sync::atomic::{AtomicIsize, Ordering};
 
+    const JOB_OBJECT_LIMIT_BREAKAWAY_OK: u32 = 0x0800;
     const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x2000;
     const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS: u32 = 9;
 
@@ -947,16 +948,17 @@ mod win_job {
 
     static JOB: AtomicIsize = AtomicIsize::new(0);
 
-    /// Creates the job and turns on kill-on-close. A no-op (leaving `JOB` at 0, so `assign`
-    /// harmlessly skips) if either Windows API call fails — cleanup then falls back to whatever
-    /// each tool's own teardown does, same as before this existed.
+    /// Creates the job with kill-on-close and breakaway allowed. A no-op (leaving `JOB` at 0, so
+    /// `assign` harmlessly skips) if either Windows API call fails — cleanup then falls back to
+    /// whatever each tool's own teardown does, same as before this existed.
     pub fn setup() {
         let handle = unsafe { CreateJobObjectW(std::ptr::null_mut(), std::ptr::null()) };
         if handle.is_null() {
             return;
         }
         let mut info: JobObjectExtendedLimitInformation = unsafe { std::mem::zeroed() };
-        info.basic_limit_information.limit_flags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        info.basic_limit_information.limit_flags =
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK;
         let ok = unsafe {
             SetInformationJobObject(
                 handle,

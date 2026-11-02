@@ -41,7 +41,7 @@ Launches the app with hot reloading.
 ./build e2e --setup
 ```
 
-Tests use [WebdriverIO](https://webdriver.io/) via `tauri-driver`. For more info, read [here](https://v2.tauri.app/develop/tests/webdriver/example/webdriverio/)
+Tests use [WebdriverIO](https://webdriver.io/) driving `msedgedriver` directly. For more info, read [here](https://v2.tauri.app/develop/tests/webdriver/example/webdriverio/)
 
 ### Running
 

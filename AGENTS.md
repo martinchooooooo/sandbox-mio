@@ -62,8 +62,7 @@ All read via `std::env::var` at call time, never cached:
 - `MIO_SETTINGS_DIR` — relocates `settings.json`; takes precedence over `MIO_APP_DATA_DIR` (`settings_path()` in `src-tauri/src/settings/mod.rs`).
 - `MIO_CREDENTIALS_DIR` — relocates the credential bundle store; takes precedence over `MIO_APP_DATA_DIR` (`store_dir()` in `src-tauri/src/credentials/mod.rs`).
 - `MIO_PORT_BASE` — base of the e2e WebDriver port band each worktree's run claims a 16-port window from; default `45000` (`e2e/lib/run-identity.ts`).
-- `MIO_DRIVER_PORT` — harness-set, not read by the Rust side: the `tauri-driver` WebDriver port allocated for the session (`beforeSession` in `e2e/wdio.conf.ts`, asserted by `e2e/test/specs/light/run-identity.spec.ts`).
-- `MIO_NATIVE_PORT` — harness-set, not read by the Rust side: the `msedgedriver` native port paired with `MIO_DRIVER_PORT` (`e2e/wdio.conf.ts`).
+- `MIO_DRIVER_PORT` — harness-set, not read by the Rust side: the `msedgedriver` WebDriver port allocated for the session (`beforeSession` in `e2e/wdio.conf.ts`, asserted by `e2e/test/specs/light/run-identity.spec.ts`).
 
 # UI Components
 

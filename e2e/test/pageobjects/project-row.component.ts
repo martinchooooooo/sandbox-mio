@@ -121,7 +121,7 @@ export default class ProjectRow {
     await this.#clickButton(this.stopButton);
   }
 
-  // tauri-driver cannot drive the child webview this opens; assert against workspace_state
+  // WebDriver cannot drive the child webview this opens; assert against workspace_state
   // (e2e/lib/workspace.ts) instead.
   async openWorkspace(): Promise<void> {
     await this.#clickButton(this.workspaceButton);

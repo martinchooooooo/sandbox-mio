@@ -623,14 +623,10 @@ impl ProcessRunner for SystemPodmanRunner {
 /// value makes every `msb create` underneath this app fail (`Access is denied. (os error 5)` on
 /// Windows, where executing a directory is ERROR_ACCESS_DENIED).
 ///
-/// Under `tauri dev` specifically, this app's own process sits inside a Windows Job Object
-/// tauri-cli assigns for rebuild/restart cleanup, and that job denies `JOB_OBJECT_LIMIT_BREAKAWAY_OK`
-/// — confirmed hands-on: `msb create` fails under `tauri dev` and succeeds when the identical binary
-/// is launched directly outside any job, and requesting `CREATE_BREAKAWAY_FROM_JOB` on this app's
-/// own spawn of `msb.exe` fails outright rather than helping, since a job member can never grant
-/// itself an exemption the job's owner didn't set. There is no fix from this side of the process
-/// tree; running the dev-built binary directly (bypassing `tauri dev`'s supervision) is the only
-/// workaround, and it does not affect a packaged build, which no job ever wraps.
+/// `msb create` also fails with `Access is denied` when any Windows Job Object above this app denies
+/// breakaway, since `msb` starts its VM supervisor with `CREATE_BREAKAWAY_FROM_JOB`. That cannot be
+/// fixed from here; `cargo run`'s job under `tauri dev` is one such job. A packaged build runs in
+/// none (docs/features/microsandbox-provider/03_e2e.md, Step 0).
 pub(crate) fn msb_command() -> tokio::process::Command {
     match std::env::var_os("MSB_PATH") {
         Some(exe) => detached_command(exe),

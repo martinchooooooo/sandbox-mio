@@ -212,7 +212,7 @@ export function releaseHostLock(): void {
   fs.rmSync(HOST_LOCK_PATH, { force: true });
 }
 
-// ---- Port pair allocation (Phase E) ----
+// ---- Driver port allocation (Phase E) ----
 
 const DEFAULT_PORT_BASE = 45000;
 const PORT_BAND_SIZE = 1000;
@@ -227,15 +227,15 @@ function digestToInt(value: string): number {
 
 // Windows are disjoint for distinct digests but not guaranteed disjoint across worktrees — a
 // digest reduced into a finite set collides at a birthday rate (02_dev.md, Resolved Decision 10).
-// A strong default, not a proof; allocatePortPair()'s probing and the caller's one respawn retry
+// A strong default, not a proof; allocateDriverPort()'s probing and the caller's one respawn retry
 // are what make an actual collision recoverable rather than fatal.
 export const PORT_WINDOW_INDEX = digestToInt(RUN_SLUG) % PORT_WINDOWS;
 export const PORT_WINDOW_BASE = MIO_PORT_BASE + PORT_WINDOW_INDEX * PORT_WINDOW_SIZE;
 
-// Probes 127.0.0.1 only, matching where tauri-driver binds — a listener on 0.0.0.0 holding the same
-// port is not detected, so this is a filter and not an authoritative answer. What covers the miss is
-// e2e/wdio.conf.ts's spawnTauriDriver: it waits for the driver to actually start listening and
-// respawns on a fresh pair if it never does.
+// Probes 127.0.0.1 only, matching where the driver is dialled — a listener on 0.0.0.0 holding the
+// same port is not detected, so this is a filter and not an authoritative answer. What covers the
+// miss is e2e/wdio.conf.ts's spawnDriver: it waits for the driver to actually start listening and
+// respawns on a fresh port if it never does.
 function isPortFree(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const server = net.createServer();
@@ -246,20 +246,17 @@ function isPortFree(port: number): Promise<boolean> {
   });
 }
 
-// Probes upward inside this worktree's own window for two consecutive free ports (driver, native).
+// Probes upward inside this worktree's own window for the first free port.
 // Probing rather than a fixed offset absorbs a re-run started while the previous run's ports are
 // still in TIME_WAIT; the window keeps two worktrees from ever probing the same numbers except at
 // the rare digest collision above.
-export async function allocatePortPair(): Promise<{ driverPort: number; nativePort: number }> {
-  for (let offset = 0; offset < PORT_WINDOW_SIZE - 1; offset++) {
+export async function allocateDriverPort(): Promise<number> {
+  for (let offset = 0; offset < PORT_WINDOW_SIZE; offset++) {
     const driverPort = PORT_WINDOW_BASE + offset;
-    const nativePort = driverPort + 1;
-    if ((await isPortFree(driverPort)) && (await isPortFree(nativePort))) {
-      return { driverPort, nativePort };
-    }
+    if (await isPortFree(driverPort)) return driverPort;
   }
   throw new Error(
-    `[e2e] no free port pair in window ${PORT_WINDOW_BASE}-${PORT_WINDOW_BASE + PORT_WINDOW_SIZE - 1} ` +
+    `[e2e] no free port in window ${PORT_WINDOW_BASE}-${PORT_WINDOW_BASE + PORT_WINDOW_SIZE - 1} ` +
       `(MIO_PORT_BASE=${MIO_PORT_BASE}). Set MIO_PORT_BASE to move the band.`,
   );
 }
