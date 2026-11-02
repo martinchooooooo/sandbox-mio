@@ -601,6 +601,14 @@ pub fn sidecar_provider(
     (id, registry.local(id))
 }
 
+/// Whether `instance` is a proxy sidecar rather than a sandbox. The name suffix alone is not enough:
+/// a sandbox created before the suffix was reserved can be called `x-proxy`. Sandboxes run the
+/// versioned `sandbox-mio/base:<n>` image and so carry an `image_version`; the mitmproxy image's
+/// `11.1.3` tag does not parse as one.
+pub fn is_sidecar(instance: &crate::backends::types::Sandbox) -> bool {
+    instance.name.ends_with(types::PROXY_CONTAINER_SUFFIX) && instance.image_version.is_none()
+}
+
 /// Whether `sandbox` has a proxy sidecar right now — derived from the `<sandbox>-proxy` sidecar's
 /// presence on the provider its `meta.json` names, never persisted (Resolved Decision 3).
 pub async fn exists(app: &AppHandle, registry: &Arc<ProviderRegistry>, sandbox: &str) -> bool {
@@ -608,7 +616,7 @@ pub async fn exists(app: &AppHandle, registry: &Arc<ProviderRegistry>, sandbox: 
     provider
         .list_instances()
         .await
-        .map(|instances| instances.iter().any(|s| s.name == proxy_container_name(sandbox)))
+        .map(|instances| instances.iter().any(|s| s.name == proxy_container_name(sandbox) && is_sidecar(s)))
         .unwrap_or(false)
 }
 
@@ -665,7 +673,14 @@ pub async fn remove_proxy(
     sandbox: &str,
 ) {
     let container_name = proxy_container_name(sandbox);
-    if let Err(e) = provider.remove(&container_name).await {
+    let is_a_sandbox = provider
+        .list_instances()
+        .await
+        .map(|instances| instances.iter().any(|s| s.name == container_name && !is_sidecar(s)))
+        .unwrap_or(false);
+    if is_a_sandbox {
+        tracing::warn!(target: "proxy", %sandbox, %container_name, "not removing: it is a sandbox, not a proxy sidecar");
+    } else if let Err(e) = provider.remove(&container_name).await {
         tracing::warn!(target: "proxy", %sandbox, error = %e, "failed to remove proxy container");
     }
     if provider_id == ProviderId::Podman {
@@ -690,7 +705,7 @@ pub async fn sweep(app: &AppHandle, registry: &Arc<ProviderRegistry>, live: &[St
         let Ok(instances) = provider.list_instances().await else {
             continue;
         };
-        for instance in instances {
+        for instance in instances.iter().filter(|s| is_sidecar(s)) {
             let Some(base) = instance.name.strip_suffix(types::PROXY_CONTAINER_SUFFIX) else {
                 continue;
             };
@@ -717,7 +732,7 @@ pub async fn status(
     let instances = provider.list_instances().await?;
     let network = if id == ProviderId::Podman { proxy_network_name(sandbox) } else { String::new() };
     let host_port = if id == ProviderId::Microsandbox { read_meta_host_port(app, sandbox) } else { None };
-    let Some(instance) = instances.into_iter().find(|s| s.name == container_name) else {
+    let Some(instance) = instances.into_iter().find(|s| s.name == container_name && is_sidecar(s)) else {
         return Ok(ProxyStatus {
             running: false,
             proxy_ip: String::new(),
@@ -748,6 +763,36 @@ pub async fn status(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn instance(name: &str, image_version: Option<u32>) -> crate::backends::types::Sandbox {
+        crate::backends::types::Sandbox {
+            id: name.to_string(),
+            name: name.to_string(),
+            status: "running".to_string(),
+            workspace_path: String::new(),
+            image_version,
+            provider: ProviderId::Microsandbox,
+        }
+    }
+
+    /// A sandbox named `x-proxy` (allowed before the suffix was reserved) is not `x`'s sidecar.
+    #[test]
+    fn sidecar_needs_the_suffix_and_an_unversioned_image() {
+        assert!(is_sidecar(&instance("micro-proxy", None)));
+        assert!(!is_sidecar(&instance("micro-proxy", Some(6))));
+        assert!(!is_sidecar(&instance("micro", None)));
+        assert!(!is_sidecar(&instance("micro", Some(6))));
+    }
+
+    #[test]
+    fn new_names_may_not_end_in_the_sidecar_suffix() {
+        assert!(matches!(
+            crate::backends::validate_new_name("micro-proxy"),
+            Err(crate::backends::types::BackendError::ReservedName { .. })
+        ));
+        assert!(crate::backends::validate_new_name("proxy-micro").is_ok());
+        assert!(crate::backends::validate_new_name("micro").is_ok());
+    }
 
     /// The exact line real mitmproxy 11.1.3 accepted for `pw-123` on 0.7.12 (Phase F verification).
     #[test]

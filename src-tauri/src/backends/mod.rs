@@ -98,6 +98,16 @@ fn validate_name(name: &str) -> Result<(), BackendError> {
     Ok(())
 }
 
+/// [`validate_name`] plus the checks that apply only to a name being newly claimed: the proxy
+/// sidecar suffix is reserved. Existing sandboxes that predate the reservation stay addressable.
+pub(crate) fn validate_new_name(name: &str) -> Result<(), BackendError> {
+    validate_name(name)?;
+    if name.ends_with(crate::proxy::types::PROXY_CONTAINER_SUFFIX) {
+        return Err(BackendError::ReservedName { name: name.to_string() });
+    }
+    Ok(())
+}
+
 /// Name-derived workspace path under `workspace_root()`. `pub(crate)` because
 /// `PodmanProvider::list_instances` falls back to it for containers lacking the workspace label.
 pub(crate) fn workspace_path(name: &str) -> Result<String, BackendError> {
@@ -556,7 +566,7 @@ impl SandboxBackend for CliBackend {
         proxy: Option<&crate::proxy::types::ProxyAttachment>,
         egress: Option<&types::EgressRequest>,
     ) -> Result<Sandbox, BackendError> {
-        validate_name(name)?;
+        validate_new_name(name)?;
         if egress.is_some() && !self.registry.local(provider_id).capabilities().egress_policy {
             return Err(BackendError::CommandFailed(format!(
                 "{provider_id} sandboxes cannot enforce a network policy yet"

@@ -14,6 +14,10 @@ pub enum BackendError {
     /// sandbox by name alone.
     #[error("a sandbox named {name:?} already exists on {provider}")]
     NameTaken { name: String, provider: crate::provider::types::ProviderId },
+    /// The name ends in the suffix that names a sandbox's proxy sidecar, so a sandbox called
+    /// `x-proxy` would be taken for `x`'s sidecar (`crate::proxy::types::PROXY_CONTAINER_SUFFIX`).
+    #[error("invalid sandbox name {name:?}: names ending in \"-proxy\" are reserved for traffic-inspection sidecars")]
+    ReservedName { name: String },
     /// Platform Documents directory not found (headless environment).
     #[error("could not resolve the Documents directory")]
     DocumentsDirNotFound,

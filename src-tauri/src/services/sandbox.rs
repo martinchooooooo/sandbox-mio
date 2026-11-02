@@ -28,6 +28,18 @@ pub async fn create(
     registry: &Arc<ProviderRegistry>,
     app: &tauri::AppHandle,
 ) -> Result<Sandbox, AppError> {
+    // Checked before the sidecar is created, not only in `store.create`: a sidecar create on a taken
+    // name fails, and its rollback removes `<name>-proxy` by name, which is then the existing
+    // sandbox's live sidecar.
+    backends::validate_new_name(name)?;
+    if let Some(existing) = store.list().await?.into_iter().find(|s| s.name == name) {
+        return Err(crate::backends::types::BackendError::NameTaken {
+            name: name.to_string(),
+            provider: existing.provider,
+        }
+        .into());
+    }
+
     // Stage markers, so a failed create is attributable to a step from the log alone. The
     // microsandbox path spans four subsystems (provider, ssh, runtime, sync) and its failures
     // surface as one flattened string in the UI toast, which cannot say how far it got.

@@ -64,7 +64,7 @@ pub async fn list_sandboxes(store: State<'_, Arc<dyn SandboxBackend>>) -> Result
         .await?
         .into_iter()
         .filter(|s| !s.name.starts_with(credentials::types::AUTH_CONTAINER_PREFIX))
-        .filter(|s| !s.name.ends_with(proxy::types::PROXY_CONTAINER_SUFFIX))
+        .filter(|s| !proxy::is_sidecar(s))
         .collect())
 }
 
