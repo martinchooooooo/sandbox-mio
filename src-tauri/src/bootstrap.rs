@@ -78,7 +78,11 @@ impl Bootstrap {
         app.manage(self.mock_director.clone());
         // One registry shared by every subsystem, so a sandbox resolves to the same provider
         // instance (and the same base-image build lock) wherever it is addressed from.
-        let registry = provider::default_registry(self.podman_runner.clone(), self.msb_runner.clone());
+        let registry = provider::default_registry(
+            self.podman_runner.clone(),
+            self.msb_runner.clone(),
+            Arc::new(crate::services::start_env::AppStartEnv::new(app.handle().clone())),
+        );
         app.manage(registry.clone());
         app.manage(runtime::default_runtime(registry.clone(), self.port_transport.clone()));
         // Needs `app.handle()` to resolve `crate::paths::app_data_root` for per-sandbox SSH

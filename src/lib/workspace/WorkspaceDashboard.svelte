@@ -159,7 +159,7 @@
             {#if provider}
                 <RemoteManager {sandboxName} {workspacePath} {provider} {action} />
             {/if}
-            <ProxyPanel {sandboxName} {workspacePath} {action} />
+            <ProxyPanel {sandboxName} {workspacePath} {provider} {action} />
             <TrafficPanel {sandboxName} {workspacePath} {action} />
 
             <div class="flex justify-end border-t pt-4">

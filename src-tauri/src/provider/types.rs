@@ -22,6 +22,9 @@ pub enum ProviderError {
     /// generic command failure.
     #[error("microsandbox base image requires a working Podman machine: {0}")]
     PodmanUnavailable(String),
+    /// A published host port was already taken when the engine tried to bind it.
+    #[error("host port already in use by {0}")]
+    PortInUse(String),
 }
 
 impl From<ProviderError> for BackendError {
@@ -31,6 +34,7 @@ impl From<ProviderError> for BackendError {
             ProviderError::Unresponsive(m) => BackendError::PodmanUnresponsive(m),
             ProviderError::ParseError(m) => BackendError::ParseError(m),
             ProviderError::PodmanUnavailable(m) => BackendError::CommandFailed(m),
+            e @ ProviderError::PortInUse(_) => BackendError::CommandFailed(e.to_string()),
         }
     }
 }
@@ -62,6 +66,129 @@ pub struct InstanceSpec {
     /// (`docs/features/network-proxy/02_dev.md`, Spike Results: Podman rejects combining `pasta`
     /// with a second `--network`).
     pub network: Option<InstanceNetwork>,
+    /// Outbound policy enforced by the engine itself. Only providers whose
+    /// `capabilities().egress_policy` is true accept `Some`
+    /// (`docs/features/microsandbox-network-policy/02_dev.md`).
+    pub egress: Option<EgressPolicy>,
+}
+
+/// The fallback for traffic no [`EgressRule`] matches. Serialised lowercase, as it is in
+/// `.mio/net-policy.json`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EgressMode {
+    /// Everything public is reachable unless a rule denies it.
+    #[default]
+    Open,
+    /// Only what a rule allows is reachable.
+    Allowlist,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RuleAction {
+    Allow,
+    Deny,
+}
+
+/// A named address group an [`EgressRule`] can target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NetGroup {
+    Public,
+    Private,
+    Host,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NetProtocol {
+    Tcp,
+    Udp,
+}
+
+/// What the engine does when a guest sends a secret placeholder somewhere it is not bound to.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ViolationAction {
+    Block,
+    #[default]
+    BlockAndLog,
+    BlockAndTerminate,
+}
+
+/// The one destination an [`EgressRule`] matches.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EgressTarget {
+    /// An exact hostname, or `*.suffix` with at least two suffix labels.
+    Host(String),
+    Cidr(String),
+    Group(NetGroup),
+}
+
+/// One ordered rule; the first rule matching a connection decides it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EgressRule {
+    pub action: RuleAction,
+    pub target: EgressTarget,
+    /// `None` matches both protocols.
+    pub protocol: Option<NetProtocol>,
+    /// Inclusive `(start, end)` ranges; empty matches every port.
+    pub ports: Vec<(u16, u16)>,
+}
+
+/// A secret the engine substitutes on the way out. Carries the guest variable name only — the value
+/// reaches the engine through [`StartEnvSource`], never through this shape.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SecretBindingSpec {
+    pub env_var: String,
+    /// Exact hostnames the value may be sent to.
+    pub hosts: Vec<String>,
+    /// Header names substituted; empty substitutes no header.
+    pub headers: Vec<String>,
+    pub query: bool,
+    pub body: bool,
+}
+
+/// An upstream proxy every outbound connection is dialled through — the network-proxy traffic
+/// viewer's sidecar, reached on host loopback.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChainedProxy {
+    pub host_port: u16,
+    pub username: String,
+    /// Name of the variable in the engine process's environment that holds the proxy password.
+    pub password_env: String,
+    /// Host path of the CA the proxy re-signs upstream TLS with.
+    pub upstream_ca_path: String,
+}
+
+/// Provider-neutral outbound policy for [`InstanceSpec::egress`], built from
+/// `.mio/net-policy.json` by `crate::net_policy`. Holds no secret value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EgressPolicy {
+    pub mode: EgressMode,
+    pub rules: Vec<EgressRule>,
+    /// When true, a connection whose hostname cannot be inspected is refused.
+    pub strict_hostnames: bool,
+    pub secrets: Vec<SecretBindingSpec>,
+    pub violation_action: ViolationAction,
+    pub deny_message: Option<String>,
+    pub proxy: Option<ChainedProxy>,
+}
+
+/// One blocked secret use microsandbox logged: a placeholder sent somewhere its binding does not
+/// allow. Carries the variable name, never the value or the placeholder.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SecretViolation {
+    pub ts: String,
+    pub action: String,
+    pub env_var: String,
+    pub host: String,
+    pub method: String,
+    pub path: String,
+    /// `header`, `query` or `body`.
+    pub location: String,
 }
 
 /// A network attachment for [`InstanceSpec`], optionally pinned to a static IP — needed because the
@@ -79,6 +206,23 @@ pub struct SidecarMount {
     pub read_only: bool,
 }
 
+/// A port of a sidecar published to the host: `bind:host_port` on the host forwards to `guest_port`.
+pub struct PortPublish {
+    pub bind: String,
+    pub host_port: u16,
+    pub guest_port: u16,
+}
+
+/// How to tell a sidecar's listener is actually serving: engines report an instance running
+/// seconds before the process inside listens (`docs/features/microsandbox-network-policy/spike/
+/// 04_msb-mitm-sidecar.md`, Item 6). Probed by `provider::probe::wait_sidecar_ready`.
+pub struct SidecarReadiness {
+    pub host_port: u16,
+    /// SOCKS5 username/password to complete sub-negotiation with; `None` probes no-auth SOCKS5.
+    pub socks5_auth: Option<(String, String)>,
+    pub budget_ms: u64,
+}
+
 /// Provider-neutral inputs for a sidecar container — a shape [`InstanceSpec`] cannot express: an
 /// arbitrary number of mounts at caller-chosen destinations, a caller-chosen launch command, no
 /// implicit `/bin/sh` entrypoint. Used only by the network-proxy mitmproxy container
@@ -87,8 +231,13 @@ pub struct SidecarMount {
 pub struct SidecarSpec {
     pub name: String,
     pub image: String,
-    pub network: InstanceNetwork,
+    /// Required by Podman; microsandbox chains over host loopback and ignores it.
+    pub network: Option<InstanceNetwork>,
     pub mounts: Vec<SidecarMount>,
+    /// Ports published to the host.
+    pub publish: Vec<PortPublish>,
+    /// `key=value` environment for `command`.
+    pub env: Vec<(String, String)>,
     pub command: Vec<String>,
     /// `key=value` label pairs stamped on the container.
     pub labels: Vec<(String, String)>,
@@ -119,6 +268,9 @@ pub struct ProviderCapabilities {
     pub event_stream: bool,
     /// Whether the workspace can be a direct host bind mount rather than a synced volume.
     pub host_bind_mount: bool,
+    /// Whether `create_instance` enforces [`InstanceSpec::egress`] with the engine's own network
+    /// stack (`docs/features/microsandbox-network-policy/02_dev.md`).
+    pub egress_policy: bool,
 }
 
 /// Which engine a [`MachineRef`] names. Also crosses IPC directly as a command parameter
@@ -229,6 +381,29 @@ mod machine_ref_tests {
     }
 }
 
+/// Resolves the environment a start-capable engine call (`create`, `start`, `exec`) must carry for
+/// one instance: bound secret values and a chained proxy's password. Implemented by
+/// `services::start_env::AppStartEnv`; injected into `MsbProvider` so the provider never reads app
+/// state itself (`docs/features/microsandbox-network-policy/02_dev.md`, Phase C).
+///
+/// Contract: an instance with no applied policy snapshot (a sidecar, a sandbox predating the
+/// feature) gets an empty list. A bound secret with no stored value is an error, never an omitted
+/// variable, so the engine cannot fall back to a same-named variable inherited from the app.
+pub trait StartEnvSource: Send + Sync {
+    fn env_for(&self, instance: &str) -> Result<Vec<(String, String)>, ProviderError>;
+}
+
+/// A [`StartEnvSource`] that never adds anything, for providers built without app state.
+#[cfg(test)]
+pub struct NoStartEnv;
+
+#[cfg(test)]
+impl StartEnvSource for NoStartEnv {
+    fn env_for(&self, _instance: &str) -> Result<Vec<(String, String)>, ProviderError> {
+        Ok(Vec::new())
+    }
+}
+
 /// The container-or-VM primitive seam shared by every subsystem that drives one instance engine.
 /// Declares only operations that generalise across a container engine and a microVM engine; all
 /// engine-specific argv lives in the implementation. The `PortTransport` seam
@@ -244,9 +419,15 @@ pub trait MachineProvider: Send + Sync {
     async fn base_image_ready(&self) -> Result<bool, ProviderError>;
     /// Create a stopped instance from `spec`; returns the created instance id.
     async fn create_instance(&self, spec: &InstanceSpec) -> Result<String, ProviderError>;
-    /// Create a stopped sidecar container from `spec` — a shape `create_instance` cannot express.
-    /// Podman-only; `MsbProvider` returns [`ProviderError::CommandFailed`].
+    /// Create a sidecar from `spec` — a shape `create_instance` cannot express. A published port
+    /// that turns out to be taken is [`ProviderError::PortInUse`].
     async fn create_sidecar(&self, spec: &SidecarSpec) -> Result<String, ProviderError>;
+    /// Stop a sidecar, forcing it if the engine cannot stop its launched command gracefully
+    /// (microsandbox's `--init` sidecars hang in `draining` otherwise).
+    async fn stop_sidecar(&self, name: &str) -> Result<(), ProviderError>;
+    /// Replace the instance named `spec.name` with a new one from `spec`, keeping its workspace
+    /// data. The old instance is fully removed before the new one is created.
+    async fn recreate_instance(&self, spec: &InstanceSpec) -> Result<String, ProviderError>;
     /// Pull `image` if not already present locally. Unlike `ensure_base_image`, never builds —
     /// always pulls from a registry. Used for the mitmproxy sidecar image, which this app never
     /// builds itself (`docs/features/network-proxy/02_dev.md`, Resolved Decision 10).

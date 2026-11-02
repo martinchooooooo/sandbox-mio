@@ -1,4 +1,6 @@
 pub mod msb;
+pub mod msb_policy;
+pub mod probe;
 pub mod types;
 
 use std::process::{Output, Stdio};
@@ -110,10 +112,11 @@ impl ProviderRegistry {
 pub fn default_registry(
     podman_runner: Arc<dyn ProcessRunner>,
     msb_runner: Arc<dyn ProcessRunner>,
+    start_env: Arc<dyn types::StartEnvSource>,
 ) -> Arc<ProviderRegistry> {
     let local_connection = crate::backends::connection_name();
     let local_podman = default_provider(podman_runner.clone(), local_connection.clone());
-    let msb = msb::default_msb_provider(msb_runner, local_podman.clone());
+    let msb = msb::default_msb_provider(msb_runner, local_podman.clone(), start_env);
     Arc::new(ProviderRegistry { podman_runner, local_connection, local_podman, msb })
 }
 
@@ -234,7 +237,12 @@ impl PodmanProvider {
 #[async_trait::async_trait]
 impl MachineProvider for PodmanProvider {
     fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities { remote_targets: true, event_stream: true, host_bind_mount: true }
+        ProviderCapabilities {
+            remote_targets: true,
+            event_stream: true,
+            host_bind_mount: true,
+            egress_policy: false,
+        }
     }
 
     async fn ensure_base_image(&self) -> Result<(), ProviderError> {
@@ -250,6 +258,12 @@ impl MachineProvider for PodmanProvider {
     }
 
     async fn create_instance(&self, spec: &InstanceSpec) -> Result<String, ProviderError> {
+        if spec.egress.is_some() {
+            // Podman enforcement belongs to `docs/features/proxy-network-policy/02_dev.md`.
+            return Err(ProviderError::CommandFailed(
+                "Podman sandboxes cannot enforce a network policy yet".to_string(),
+            ));
+        }
         let volume = format!("{}:{WORKSPACE_MOUNT}", spec.workspace_source);
         // `--pull=missing` satisfies the "pull if absent, then create" contract.
         let mut args: Vec<String> = vec![
@@ -325,12 +339,23 @@ impl MachineProvider for PodmanProvider {
         // No `--pull=missing`: the caller pulls explicitly first (`pull_image`,
         // `docs/features/network-proxy/02_dev.md`, Resolved Decision 10) so a first-ever ~200 MB
         // pull is reported through `activity::TaskRegistry` instead of looking like a hung create.
+        let network = spec.network.as_ref().ok_or_else(|| {
+            ProviderError::CommandFailed("a Podman sidecar needs a network attachment".to_string())
+        })?;
         let mut args: Vec<String> = vec!["create".to_string()];
         args.push("--network".to_string());
-        args.push(match &spec.network.ip {
-            Some(ip) => format!("{}:ip={ip}", spec.network.name),
-            None => spec.network.name.clone(),
+        args.push(match &network.ip {
+            Some(ip) => format!("{}:ip={ip}", network.name),
+            None => network.name.clone(),
         });
+        for p in &spec.publish {
+            args.push("--publish".to_string());
+            args.push(format!("{}:{}:{}", p.bind, p.host_port, p.guest_port));
+        }
+        for (k, v) in &spec.env {
+            args.push("--env".to_string());
+            args.push(format!("{k}={v}"));
+        }
         for m in &spec.mounts {
             args.push("--volume".to_string());
             let suffix = if m.read_only { ":ro" } else { "" };
@@ -393,6 +418,16 @@ impl MachineProvider for PodmanProvider {
 
     async fn stop(&self, name: &str) -> Result<(), ProviderError> {
         check(self.run(&["stop", name]).await?).map(|_| ())
+    }
+
+    async fn stop_sidecar(&self, name: &str) -> Result<(), ProviderError> {
+        self.stop(name).await
+    }
+
+    /// The bind-mounted workspace survives the container.
+    async fn recreate_instance(&self, spec: &InstanceSpec) -> Result<String, ProviderError> {
+        check(self.run(&["rm", "--force", &spec.name]).await?)?;
+        self.create_instance(spec).await
     }
 
     async fn remove(&self, name: &str) -> Result<(), ProviderError> {

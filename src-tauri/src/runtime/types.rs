@@ -53,6 +53,9 @@ impl From<crate::provider::types::ProviderError> for RuntimeError {
             // condition, and the message already names it. The kind survives where it is acted on
             // (`BackendError::PodmanUnresponsive`).
             crate::provider::types::ProviderError::Unresponsive(m) => RuntimeError::CommandFailed(m),
+            e @ crate::provider::types::ProviderError::PortInUse(_) => {
+                RuntimeError::CommandFailed(e.to_string())
+            }
         }
     }
 }

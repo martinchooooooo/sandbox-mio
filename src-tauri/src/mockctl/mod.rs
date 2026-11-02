@@ -17,8 +17,9 @@ use std::sync::{Arc, LazyLock};
 use crate::process::{exit_status, strip_connection};
 
 use types::{
-    Behaviour, MockDirector, ProcessRunner, ScriptedMsbRunner, ScriptedMutagenRunner,
-    ScriptedOutput, ScriptedPodmanRunner, TrackedContainer, TrackedMsbInstance,
+    Behaviour, MockDirector, ProcessRunner, RecordedCall, ScriptedMsbRunner,
+    ScriptedMutagenRunner, ScriptedOutput, ScriptedPodmanRunner, TrackedContainer,
+    TrackedMsbInstance,
 };
 
 fn validate_behaviour(behaviour: &Behaviour) -> Result<(), String> {
@@ -78,8 +79,13 @@ static KNOWN_CALLS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "msb.volume-create",
         "msb.volume-rm",
         "msb.image-ls",
-        // `MsbMachineManager::readiness`/`prepare` (Phase I).
+        // `MsbProvider::pull_image` for the mitmproxy sidecar
+        // (docs/features/microsandbox-network-policy/02_dev.md, Phase E).
+        "msb.pull",
+        // `MsbMachineManager::readiness`/`prepare` (Phase I), plus the minimum-version check
+        // (docs/features/microsandbox-network-policy/02_dev.md, Phase A).
         "msb.doctor",
+        "msb.--version",
         // `MsbProvider::ensure_base_image` builds the image with Podman before handing it to
         // `msb load` (docs/features/microsandbox-provider/02_dev.md, Phase G).
         "podman.save",
@@ -102,9 +108,23 @@ impl MockDirector {
         Ok(())
     }
 
-    /// Clear every installed override.
+    /// Clear every installed override and the call journal.
     pub fn reset(&self) {
         self.overrides.lock().unwrap().clear();
+        self.calls.lock().unwrap().clear();
+    }
+
+    /// Journalled calls whose key is `key`, oldest first.
+    pub fn calls(&self, key: &str) -> Vec<RecordedCall> {
+        self.calls.lock().unwrap().iter().filter(|c| c.key == key).cloned().collect()
+    }
+
+    fn record(&self, key: &str, args: &[&str], env: &[(String, String)]) {
+        self.calls.lock().unwrap().push(RecordedCall {
+            key: key.to_string(),
+            argv: args.iter().map(|a| a.to_string()).collect(),
+            env_names: env.iter().map(|(k, _)| k.clone()).collect(),
+        });
     }
 
     /// Consult the override for `key`, if any. Consumes a `FailOnce` override on the call that
@@ -253,6 +273,8 @@ fn default_output(key: &str) -> ScriptedOutput {
         // Mirrors `podman.machine-list`'s "already running" default: an unconfigured `msb doctor`
         // reports ready so a light spec that never scripts it doesn't land on a setup screen.
         "msb.doctor" => "Host setup is ready".to_string(),
+        // Must satisfy `MIN_MSB_VERSION` (`src-tauri/src/machine/msb.rs`) for the same reason.
+        "msb.--version" => "msb 0.7.12".to_string(),
         _ => String::new(),
     };
     ScriptedOutput { exit_code: 0, stdout, stderr: String::new() }
@@ -342,6 +364,18 @@ impl ScriptedMsbRunner {
         ScriptedOutput { exit_code: 0, stdout: String::new(), stderr: String::new() }
     }
 
+    /// `msb pull <ref>`: records the reference like `track_load`, so a repeated `pull_image` is a
+    /// no-op under mock as it is against the real store.
+    fn track_pull(&self, args: &[&str]) -> ScriptedOutput {
+        if let Some(&reference) = args.get(1) {
+            let mut images = self.images.lock().unwrap();
+            if !images.iter().any(|i| i == reference) {
+                images.push(reference.to_string());
+            }
+        }
+        ScriptedOutput { exit_code: 0, stdout: String::new(), stderr: String::new() }
+    }
+
     /// `msb image ls --format json`: real output carries digest/size/architecture too, but
     /// `reference` is the only field `MsbProvider` reads.
     fn tracked_image_ls(&self) -> ScriptedOutput {
@@ -357,7 +391,7 @@ impl ScriptedMsbRunner {
     }
 
     /// `msb volume create <name> --kind disk --size <n>`: rejects a duplicate name exactly as real
-    /// `msb` 0.6.6 does, so `MsbProvider::ensure_volume`'s tolerance of a leftover volume is
+    /// `msb` 0.7.12 does, so `MsbProvider::ensure_volume`'s tolerance of a leftover volume is
     /// exercised under mock rather than only against the real binary.
     fn track_volume_create(&self, args: &[&str]) -> ScriptedOutput {
         let name = args.get(2).copied().unwrap_or_default().to_string();
@@ -416,7 +450,7 @@ impl ScriptedMsbRunner {
         ScriptedOutput { exit_code: 0, stdout: String::new(), stderr: String::new() }
     }
 
-    /// `msb start <name>`: rejects an instance that is already running the way real `msb` 0.6.6
+    /// `msb start <name>`: rejects an instance that is already running the way real `msb` 0.7.12
     /// does, so `MsbProvider::start`'s tolerance of that failure is exercised under mock rather than
     /// only against the real binary — the same reason `track_volume_create` models its duplicate.
     fn track_start(&self, args: &[&str]) -> ScriptedOutput {
@@ -504,9 +538,18 @@ impl ScriptedMsbRunner {
 #[async_trait::async_trait]
 impl ProcessRunner for ScriptedMsbRunner {
     async fn run(&self, args: &[&str]) -> std::io::Result<Output> {
+        self.run_with_env(args, &[]).await
+    }
+
+    async fn run_with_env(
+        &self,
+        args: &[&str],
+        env: &[(String, String)],
+    ) -> std::io::Result<Output> {
         let key = derive_msb_key(args);
+        self.director.record(&key, args, env);
         if let Some(scripted) = self.director.consult(&key) {
-            // Real `msb` 0.6.6 inserts the sandbox record before the step a failing `msb create`
+            // Real `msb` 0.7.12 inserts the sandbox record before the step a failing `msb create`
             // dies on, so a scripted failure has to leave that record behind too — it is what
             // `MsbProvider::create_instance`'s rollback exists to remove.
             if key == "msb.create" && scripted.exit_code != 0 {
@@ -524,6 +567,7 @@ impl ProcessRunner for ScriptedMsbRunner {
             "msb.volume-create" => self.track_volume_create(args),
             "msb.volume-rm" => self.track_volume_remove(args),
             "msb.load" => self.track_load(args),
+            "msb.pull" => self.track_pull(args),
             "msb.image-ls" => self.tracked_image_ls(),
             _ => default_output(&key),
         };

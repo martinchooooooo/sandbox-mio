@@ -46,6 +46,11 @@ export interface AgentDescriptor {
   auth?: AuthStrategy;
   provision?: ProviderProvisionConfig;
   credentialService?: string;
+  /**
+   * Hosts the agent itself must reach, seeded into a new allowlist network policy
+   * (docs/features/microsandbox-network-policy/02_dev.md, Resolved Decision 13).
+   */
+  apiHosts: string[];
 }
 
 export type AgentInstallEvent =

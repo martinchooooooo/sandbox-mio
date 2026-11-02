@@ -46,6 +46,7 @@ const kindLabels: Record<TaskKind, () => string> = {
     "podman-startup": m.task_podman_startup_label,
     // TODO(i18n)
     "proxy-image-pull": () => "Pulling proxy image",
+    "network-reapply": () => "Applying network settings", // TODO(i18n)
 };
 
 export function taskLabel(kind: TaskKind): string {

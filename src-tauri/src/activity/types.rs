@@ -20,6 +20,9 @@ pub enum TaskKind {
     /// look like a hung sandbox create (`docs/features/network-proxy/02_dev.md`, Resolved
     /// Decision 10).
     ProxyImagePull,
+    /// Recreating a microsandbox sandbox to apply its network policy or viewer change
+    /// (`docs/features/microsandbox-network-policy/02_dev.md`, Phase G).
+    NetworkReapply,
 }
 
 #[derive(serde::Serialize, Clone, Copy, PartialEq, Eq)]

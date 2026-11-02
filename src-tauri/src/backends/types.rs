@@ -172,12 +172,24 @@ pub trait SandboxBackend: Send + Sync {
     /// when `Some`, attaches the sandbox to its proxy sidecar's network and environment in place of
     /// the provider's default network mode — refused when the provider/image is not exec-capable
     /// (`docs/features/network-proxy/02_dev.md`).
+    /// `egress` is the create dialog's network choice; only a provider that enforces
+    /// `.mio/net-policy.json` itself accepts it (`docs/features/microsandbox-network-policy/02_dev.md`).
     async fn create(
         &self,
         name: &str,
         existing_path: Option<&str>,
         provider: crate::provider::types::ProviderId,
         proxy: Option<&crate::proxy::types::ProxyAttachment>,
+        egress: Option<&EgressRequest>,
+    ) -> Result<Sandbox, BackendError>;
+    /// Replace `name`'s instance under the same name around its preserved workspace, with the
+    /// current `.mio/net-policy.json` and the given viewer attachment. Microsandbox only for now
+    /// (`docs/features/microsandbox-network-policy/02_dev.md`, Phase G).
+    async fn recreate(
+        &self,
+        name: &str,
+        proxy: Option<&crate::proxy::types::ProxyAttachment>,
+        egress: Option<&EgressRequest>,
     ) -> Result<Sandbox, BackendError>;
     /// Return every provider's instances (running and stopped), each tagged with its provider.
     async fn list(&self) -> Result<Vec<Sandbox>, BackendError>;
@@ -237,4 +249,13 @@ pub(super) struct CliBackend {
     /// Resolves `crate::paths::app_data_root` for per-sandbox exec-transport SSH identities
     /// (`ensure_sandbox_identity`). Not used by any pre-existing method.
     pub(super) app: tauri::AppHandle,
+}
+
+/// The create dialog's network choice for [`SandboxBackend::create`]. `mode: None` keeps whatever
+/// the workspace's `.mio/net-policy.json` says; `starter_hosts` are agent API hosts merged into a
+/// new allowlist (`docs/features/microsandbox-network-policy/02_dev.md`, Resolved Decision 13).
+#[derive(Debug, Clone, Default)]
+pub struct EgressRequest {
+    pub mode: Option<crate::net_policy::EgressMode>,
+    pub starter_hosts: Vec<String>,
 }

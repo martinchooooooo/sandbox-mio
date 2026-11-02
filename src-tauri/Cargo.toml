@@ -50,6 +50,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tracing-appender = "0.2"
 # Per-sandbox PASEO_PASSWORD minting for the agents web UI (docs/features/agent-web-ui/02_dev.md).
 uuid = { version = "1", features = ["v4"] }
+# The microsandbox proxy sidecar's `{SHA}` htpasswd entry
+# (docs/features/microsandbox-network-policy/02_dev.md, Resolved Decision 7).
+sha1 = "0.10"
+base64 = "0.22"
 
 [features]
 default = ["devtools"]

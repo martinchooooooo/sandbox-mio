@@ -8,9 +8,12 @@
 # these lines under `serde(rename_all = "camelCase")`.
 
 import json
+import os
 
-RULES_PATH = "/addons/rules.json"
-FLOWS_PATH = "/addons/flows.ndjson"
+# The microsandbox sidecar mounts directories rather than single files, so it overrides both
+# (docs/features/microsandbox-network-policy/02_dev.md, Resolved Decision 19).
+RULES_PATH = os.environ.get("MIO_RULES_PATH", "/addons/rules.json")
+FLOWS_PATH = os.environ.get("MIO_FLOWS_PATH", "/addons/flows.ndjson")
 
 # Must equal FLOW_LOG_MAX_LINES in src-tauri/src/proxy/flowlog.rs and
 # src/lib/proxy/traffic.svelte.ts.

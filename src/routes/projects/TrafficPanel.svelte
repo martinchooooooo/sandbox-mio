@@ -10,6 +10,11 @@
         running: boolean;
         proxyIp: string;
         network: string;
+        provider: "podman" | "microsandbox";
+        /** The microsandbox sidecar's SOCKS5 port; null for Podman. */
+        hostPort: number | null;
+        /** Whether a running microsandbox sidecar answers; null for Podman or a stopped sidecar. */
+        healthy: boolean | null;
     }
 
     // `workspacePath`/`action` are declared to match `ProxyPanel.svelte`'s prop shape (and the
@@ -86,6 +91,18 @@
     <div class="flex flex-col gap-1.5 border-t pt-2" data-traffic-panel>
         <!-- TODO(i18n) -->
         <span class="text-muted-foreground text-xs shrink-0">Traffic</span>
+        {#if status.healthy === false}
+            <span class="text-xs text-destructive" data-traffic-unhealthy>
+                <!-- TODO(i18n) -->
+                Proxy unreachable — requests fail closed until it answers again.
+            </span>
+        {/if}
+        {#if status.provider === "microsandbox"}
+            <span class="text-muted-foreground text-xs" data-traffic-scope>
+                <!-- TODO(i18n) -->
+                Shows TCP and HTTPS traffic only; DNS and UDP never reach the viewer.
+            </span>
+        {/if}
 
         <div class="flex flex-wrap items-center gap-1">
             <input

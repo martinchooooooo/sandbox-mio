@@ -18,13 +18,16 @@ use crate::sync::types::SyncEngine;
 
 /// Create a sandbox on `provider`, defaulting to the persisted `default_provider` setting. `proxy`
 /// opts the sandbox into a per-sandbox traffic-inspection sidecar (`docs/features/network-proxy/02_dev.md`);
-/// defaults to off.
+/// defaults to off. `egress` and `starter_hosts` are the independent network-policy choice
+/// (`docs/features/microsandbox-network-policy/02_dev.md`, Resolved Decision 5).
 #[tauri::command]
 pub async fn create_sandbox(
     name: String,
     existing_path: Option<String>,
     provider: Option<ProviderId>,
     proxy: Option<bool>,
+    egress: Option<crate::net_policy::EgressMode>,
+    starter_hosts: Option<Vec<String>>,
     store: State<'_, Arc<dyn SandboxBackend>>,
     runtime: State<'_, Arc<dyn RuntimeManager>>,
     engine: State<'_, Arc<dyn SyncEngine>>,
@@ -35,11 +38,16 @@ pub async fn create_sandbox(
         Some(p) => p,
         None => settings::resolve_default_provider(&app)?,
     };
+    let egress = egress.map(|mode| crate::backends::types::EgressRequest {
+        mode: Some(mode),
+        starter_hosts: starter_hosts.unwrap_or_default(),
+    });
     services::sandbox::create(
         &name,
         existing_path.as_deref(),
         provider,
         proxy.unwrap_or(false),
+        egress.as_ref(),
         &store,
         &runtime,
         &engine,

@@ -3,12 +3,19 @@
     import Button from "$lib/components/ui/button/button.svelte";
     import { parseError } from "$lib/errors";
     import type { createActionRunner } from "$lib/actions.svelte";
+    import type { ProviderId } from "$lib/providers";
+    import NetPolicyEditor from "./NetPolicyEditor.svelte";
 
     // Mirrors Rust `proxy::types::ProxyStatus` (camelCase per its own `serde(rename_all)`).
     interface ProxyStatus {
         running: boolean;
         proxyIp: string;
         network: string;
+        provider: "podman" | "microsandbox";
+        /** The microsandbox sidecar's SOCKS5 port; null for Podman. */
+        hostPort: number | null;
+        /** Whether a running microsandbox sidecar answers; null for Podman or a stopped sidecar. */
+        healthy: boolean | null;
     }
 
     // Mirrors Rust `proxy::rules::ProxyRule` — snake_case, unrenamed, matching `.mio/proxy-rules.json`
@@ -23,12 +30,18 @@
     let {
         sandboxName,
         workspacePath,
+        provider,
         action,
     }: {
         sandboxName: string;
         workspacePath: string;
+        provider?: ProviderId;
         action: ReturnType<typeof createActionRunner>;
     } = $props();
+
+    // Microsandbox owns secret injection and egress itself, so the Podman-only
+    // `.mio/proxy-rules.json` editor is hidden for it (docs/features/microsandbox-network-policy/02_dev.md, Phase D).
+    const msb = $derived(provider === "microsandbox");
 
     let status = $state<ProxyStatus | null>(null);
     let rules = $state<ProxyRule[]>([]);
@@ -44,7 +57,7 @@
     async function refresh() {
         try {
             status = await invoke<ProxyStatus>("proxy_status", { name: sandboxName });
-            rules = await invoke<ProxyRule[]>("list_proxy_rules", { workspacePath });
+            if (!msb) rules = await invoke<ProxyRule[]>("list_proxy_rules", { workspacePath });
         } catch (e) {
             panelError = parseError(e).message;
         }
@@ -111,7 +124,16 @@
     {#if status && !status.running}
         <span class="text-muted-foreground text-xs" data-proxy-disabled>
             <!-- TODO(i18n) -->
-            Off. Recreate this sandbox with inspection enabled to turn it on.
+            {#if msb}
+                Off. Turn it on below and re-apply the network settings.
+            {:else}
+                Off. Recreate this sandbox with inspection enabled to turn it on.
+            {/if}
+        </span>
+    {:else if status?.running && msb}
+        <span class="text-muted-foreground text-xs" data-proxy-msb-chain>
+            <!-- TODO(i18n) -->
+            Traffic is chained through this sandbox's mitmproxy VM.
         </span>
     {:else if status?.running}
         <span class="text-muted-foreground text-xs" data-proxy-network>
@@ -173,3 +195,8 @@
         <span class="text-xs text-red-500">{panelError}</span>
     {/if}
 </div>
+
+{#if msb && provider}
+    <NetPolicyEditor {sandboxName} {workspacePath} {provider}
+        viewerOn={status?.running ?? false} onReapplied={refresh} />
+{/if}

@@ -35,3 +35,18 @@ pub fn mock_reset(director: State<'_, Arc<mockctl::types::MockDirector>>) -> Res
     director.reset();
     Ok(())
 }
+
+/// Journalled scripted calls for `key` since the last reset, carrying variable names but never
+/// values. See [`mock_configure`].
+#[tauri::command]
+pub fn mock_calls(
+    key: String,
+    director: State<'_, Arc<mockctl::types::MockDirector>>,
+) -> Result<Vec<mockctl::types::RecordedCall>, AppError> {
+    if !backends::mock_backend_enabled() {
+        return Err(AppError::MockControl(
+            "mock_calls is only available under MIO_MOCK_BACKEND=1".to_string(),
+        ));
+    }
+    Ok(director.calls(&key))
+}

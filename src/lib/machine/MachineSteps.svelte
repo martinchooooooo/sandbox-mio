@@ -4,7 +4,7 @@
     // `steps` is the provider's ordered checklist (from `machine_setup_steps`). `events` is the
     // running stream from `prepare_machine`, which ticks each row pending → running → done/skipped/
     // failed — same shape as `$lib/models/RuntimeSteps.svelte`, just against a different id space
-    // (Podman's four machine-lifecycle steps, or microsandbox's three).
+    // (Podman's four machine-lifecycle steps, or microsandbox's four).
     let {
         steps,
         events = [],
@@ -21,6 +21,7 @@
         "machine-start": "Start Podman machine", // TODO(i18n)
         "socket-activate": "Activate Podman socket", // TODO(i18n)
         "msb-binary": "Locate microsandbox", // TODO(i18n)
+        "msb-version": "Check microsandbox version", // TODO(i18n)
         "hypervisor-platform": "Enable Windows Hypervisor Platform", // TODO(i18n)
         "msb-doctor": "Verify microsandbox setup", // TODO(i18n)
     };
@@ -30,6 +31,7 @@
         "machine-start": "Boots the virtual machine.", // TODO(i18n)
         "socket-activate": "Starts the API the app talks to.", // TODO(i18n)
         "msb-binary": "Checks the msb CLI is installed.", // TODO(i18n)
+        "msb-version": "Needs msb 0.7.12 or newer. To update on Windows, copy msb.exe to a temporary folder and run `self update` from the copy — the running executable cannot overwrite itself.", // TODO(i18n)
         "hypervisor-platform": "Required for microsandbox's microVMs; enabling needs no restart.", // TODO(i18n)
         "msb-doctor": "Confirms the host is ready to create sandboxes.", // TODO(i18n)
     };

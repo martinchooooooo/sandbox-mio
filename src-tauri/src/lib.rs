@@ -10,6 +10,7 @@ mod inference;
 mod logging;
 mod machine;
 mod mio_files;
+mod net_policy;
 mod mockctl;
 mod network;
 mod paths;

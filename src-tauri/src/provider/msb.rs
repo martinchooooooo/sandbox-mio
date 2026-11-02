@@ -9,7 +9,7 @@ use crate::process::types::ProcessRunner;
 
 use super::types::{
     ExecOpts, InstanceSpec, MachineProvider, ProviderCapabilities, ProviderError, ProviderId,
-    PublishModel, SidecarSpec,
+    PublishModel, SidecarSpec, StartEnvSource,
 };
 use super::{check, parse_image_version, WORKSPACE_LABEL, WORKSPACE_MOUNT};
 
@@ -17,6 +17,89 @@ use super::{check, parse_image_version, WORKSPACE_LABEL, WORKSPACE_MOUNT};
 /// (spike-confirmed `used_bytes: 0` immediately after creation), so a generous capacity costs
 /// nothing until the workspace actually grows into it.
 const WORKSPACE_VOLUME_SIZE: &str = "20G";
+
+/// microsandbox's own state directory: `MSB_HOME` when set (the e2e harness sets it per worktree),
+/// otherwise `~/.microsandbox`.
+pub(crate) fn msb_home() -> Option<std::path::PathBuf> {
+    match std::env::var_os("MSB_HOME").filter(|v| !v.is_empty()) {
+        Some(dir) => Some(std::path::PathBuf::from(dir)),
+        None => dirs::home_dir().map(|h| h.join(".microsandbox")),
+    }
+}
+
+/// `<msb home>/sandboxes/<name>/logs/runtime.log`.
+pub(crate) fn runtime_log_path(name: &str) -> Option<std::path::PathBuf> {
+    msb_home().map(|h| h.join("sandboxes").join(name).join("logs").join("runtime.log"))
+}
+
+/// Whether the most recent start of `name` failed to bind a published port. `msb` exits 0 and
+/// reports this only in `runtime.log` (`docs/features/microsandbox-network-policy/02_dev.md`,
+/// Resolved Decision 8).
+fn port_bind_failed(name: &str) -> bool {
+    if crate::backends::mock_backend_enabled() {
+        return false;
+    }
+    let Some(text) = runtime_log_path(name).and_then(|p| std::fs::read_to_string(p).ok()) else {
+        return false;
+    };
+    let last_start = text.rfind("sandbox starting").unwrap_or(0);
+    text[last_start..].contains("published TCP port listener failed")
+}
+
+/// How much of the end of `runtime.log` [`secret_violations`] scans.
+const VIOLATION_SCAN_BYTES: u64 = 512 * 1024;
+
+fn parse_violation(line: &str) -> Option<super::types::SecretViolation> {
+    if !line.contains("secret violation") {
+        return None;
+    }
+    let field = |key: &str| {
+        line.split_whitespace()
+            .find_map(|t| t.strip_prefix(key).and_then(|r| r.strip_prefix('=')))
+            .unwrap_or_default()
+            .to_string()
+    };
+    Some(super::types::SecretViolation {
+        ts: line.split_whitespace().next().unwrap_or_default().to_string(),
+        action: field("action"),
+        env_var: field("secret_env_var"),
+        host: field("host"),
+        method: field("method"),
+        path: field("path"),
+        location: field("location"),
+    })
+}
+
+/// The newest `limit` blocked secret uses of sandbox `name`, newest first, read from the end of
+/// its `runtime.log`. Only `block-and-log` and `block-and-terminate` write these lines. Empty on
+/// the light tier, where no log exists.
+pub fn secret_violations(name: &str, limit: usize) -> Vec<super::types::SecretViolation> {
+    use std::io::{Read, Seek, SeekFrom};
+    if crate::backends::mock_backend_enabled() {
+        return Vec::new();
+    }
+    let Some(path) = runtime_log_path(name) else {
+        return Vec::new();
+    };
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return Vec::new();
+    };
+    let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+    let _ = file.seek(SeekFrom::Start(len.saturating_sub(VIOLATION_SCAN_BYTES)));
+    let mut bytes = Vec::new();
+    if file.read_to_end(&mut bytes).is_err() {
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&bytes).lines().rev().filter_map(parse_violation).take(limit).collect()
+}
+
+/// An `msb` diagnostic naming an address-in-use condition.
+fn is_port_in_use(stderr: &str) -> bool {
+    let s = stderr.to_ascii_lowercase();
+    s.contains("address already in use")
+        || s.contains("os error 10048")
+        || s.contains("only one usage of each socket address")
+}
 
 fn workspace_volume_name(name: &str) -> String {
     format!("{name}-ws")
@@ -36,16 +119,16 @@ fn map_status(raw: &str) -> String {
 }
 
 /// POSIX single-quote escaping for embedding an argument inside a `bash -c`/`sh -c` script string.
-fn shell_quote(s: &str) -> String {
+pub(super) fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 /// The guest-shell backgrounding wrapper satisfying `ExecOpts.detached` (`msb exec` has no `-d`).
 /// Must run under `bash -c`, not `sh -c`: this image's `/bin/sh` is `dash`, which has no `disown`
 /// builtin and exits 127 before backgrounding is confirmed, even though the `&` itself still
-/// detaches the process successfully — confirmed hands-on against real `msb` 0.6.6, see the
-/// addendum in `docs/features/microsandbox-provider/spike/hands-on-cli.md`
-/// (Resolved Decision 4).
+/// detaches the process successfully — confirmed against real `msb` 0.6.6 (addendum in
+/// `docs/features/microsandbox-provider/spike/hands-on-cli.md`, Resolved Decision 4) and unchanged
+/// in 0.7.12 (`docs/features/microsandbox-network-policy/spike/01_egress-baseline.md`).
 fn detached_wrapper(argv: &[&str]) -> String {
     let joined = argv.iter().map(|a| shell_quote(a)).collect::<Vec<_>>().join(" ");
     format!("{joined} >/tmp/out.log 2>&1 & disown")
@@ -57,8 +140,14 @@ fn detached_wrapper(argv: &[&str]) -> String {
 pub fn default_msb_provider(
     msb_runner: Arc<dyn ProcessRunner>,
     podman: Arc<dyn MachineProvider>,
+    start_env: Arc<dyn StartEnvSource>,
 ) -> Arc<dyn MachineProvider> {
-    Arc::new(MsbProvider { runner: msb_runner, podman, build_lock: tokio::sync::Mutex::new(()) })
+    Arc::new(MsbProvider {
+        runner: msb_runner,
+        podman,
+        start_env,
+        build_lock: tokio::sync::Mutex::new(()),
+    })
 }
 
 /// Real [`MachineProvider`] driving the `msb` CLI. Unlike [`super::PodmanProvider`], microsandbox
@@ -68,6 +157,9 @@ pub(crate) struct MsbProvider {
     runner: Arc<dyn ProcessRunner>,
     /// Drives `ensure_base_image`'s Podman-build half only; never touched by any other method.
     podman: Arc<dyn MachineProvider>,
+    /// Environment every start-capable call carries; microsandbox re-reads secret values at each
+    /// start (`docs/features/microsandbox-network-policy/spike/02_secrets.md`, Item 4).
+    start_env: Arc<dyn StartEnvSource>,
     /// Serializes base image build to prevent concurrent races (mirrors `PodmanProvider`).
     build_lock: tokio::sync::Mutex<()>,
 }
@@ -86,8 +178,23 @@ fn for_log(bytes: &[u8]) -> String {
 
 impl MsbProvider {
     async fn run(&self, argv: &[&str]) -> Result<Output, ProviderError> {
+        self.run_env(argv, &[]).await
+    }
+
+    /// A call that may start `name` (`create`, `start`, `exec`), carrying its start environment.
+    /// Only variable names are ever logged.
+    async fn run_starting(&self, name: &str, argv: &[&str]) -> Result<Output, ProviderError> {
+        let env = self.start_env.env_for(name)?;
+        self.run_env(argv, &env).await
+    }
+
+    async fn run_env(
+        &self,
+        argv: &[&str],
+        env: &[(String, String)],
+    ) -> Result<Output, ProviderError> {
         let started = std::time::Instant::now();
-        let result = self.runner.run(argv).await;
+        let result = self.runner.run_with_env(argv, env).await;
         let ms = started.elapsed().as_millis();
         match &result {
             // Non-zero exit is logged but not returned as an error here: several callers
@@ -116,9 +223,14 @@ impl MsbProvider {
     /// `reference` field exactly rather than substring-matching the plain-text listing, which would
     /// also accept `sandbox-mio/base:70` when asked for `sandbox-mio/base:7`. Both the `--format
     /// json` flag and `reference` carrying the full `name:tag` an image was loaded under are
-    /// verified against real `msb` 0.6.6.
+    /// verified against real `msb` 0.7.12 (`docs/features/microsandbox-network-policy/spike/
+    /// 01_egress-baseline.md`, "0.6 → 0.7 Breaking Changes").
     async fn image_exists(&self) -> Result<bool, ProviderError> {
-        let image = crate::backends::base_image();
+        self.image_present(&crate::backends::base_image()).await
+    }
+
+    /// Whether `image` is in the local `msb` store, by exact `reference`.
+    async fn image_present(&self, image: &str) -> Result<bool, ProviderError> {
         let stdout = check(self.run(&["image", "ls", "--format", "json"]).await?)?;
         // An empty store prints nothing rather than `[]` on some paths; that is no images, not a
         // parse failure.
@@ -127,12 +239,12 @@ impl MsbProvider {
         }
         let entries: Vec<serde_json::Value> =
             serde_json::from_str(&stdout).map_err(|e| ProviderError::ParseError(e.to_string()))?;
-        Ok(entries.iter().any(|e| e["reference"].as_str() == Some(image.as_str())))
+        Ok(entries.iter().any(|e| e["reference"].as_str() == Some(image)))
     }
 
     /// Creates the instance's workspace volume, tolerating one that already exists. `msb volume
     /// create` exits 1 with `volume already exists: <name>` on a taken name (confirmed against real
-    /// `msb` 0.6.6), so a volume orphaned by an interrupted create would otherwise brick every
+    /// `msb` 0.7.12), so a volume orphaned by an interrupted create would otherwise brick every
     /// later create of the same sandbox name until the user removed it by hand. Reusing it is safe:
     /// `remove` deletes an instance's volume, so a surviving one never belongs to a live instance,
     /// and the workspace's contents come from the Mutagen sync rather than the volume.
@@ -163,8 +275,18 @@ impl MsbProvider {
     /// Configured, unspawned `msb exec --stream` command shared by the streamed paths. `--stream`
     /// is byte-faithful piped stdin/stdout with no PTY (spike finding 7), the microsandbox
     /// counterpart of Podman's `exec -i`.
+    /// `msb exec` on a stopped sandbox is an implicit start, so it carries the start environment
+    /// too. An `env_for` failure leaves it out: the start then fails closed on the missing variable.
     fn exec_command_inner(&self, name: &str, argv: &[&str], opts: &ExecOpts) -> Command {
         let mut cmd = crate::process::msb_command();
+        match self.start_env.env_for(name) {
+            Ok(env) => {
+                cmd.envs(env);
+            }
+            Err(e) => {
+                tracing::warn!(target: "msb", %name, error = %e, "start environment unavailable")
+            }
+        }
         cmd.arg("exec").arg("--stream");
         if let Some(workdir) = &opts.workdir {
             cmd.arg("--workdir").arg(workdir);
@@ -183,7 +305,12 @@ impl MsbProvider {
 #[async_trait::async_trait]
 impl MachineProvider for MsbProvider {
     fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities { remote_targets: false, event_stream: false, host_bind_mount: false }
+        ProviderCapabilities {
+            remote_targets: false,
+            event_stream: false,
+            host_bind_mount: false,
+            egress_policy: true,
+        }
     }
 
     async fn ensure_base_image(&self) -> Result<(), ProviderError> {
@@ -249,6 +376,8 @@ impl MachineProvider for MsbProvider {
         }
         let volume = workspace_volume_name(&spec.name);
         self.ensure_volume(&volume).await?;
+        // msb 0.7 validates the workdir in the guest at create; without a `/root/work` mount the
+        // create fails `could not validate workdir in guest`.
         let mount = format!("{volume}:{WORKSPACE_MOUNT}:kind=disk,size={WORKSPACE_VOLUME_SIZE}");
         let mut args: Vec<String> = vec![
             "create".to_string(),
@@ -262,8 +391,11 @@ impl MachineProvider for MsbProvider {
             args.push("--label".to_string());
             args.push(format!("{k}={v}"));
         }
-        if let Err(e) = check(self.run(&args.iter().map(String::as_str).collect::<Vec<_>>()).await?)
-        {
+        if let Some(egress) = &spec.egress {
+            args.extend(super::msb_policy::render(egress));
+        }
+        let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+        if let Err(e) = check(self.run_starting(&spec.name, &argv).await?) {
             // A failed `msb create` registers the sandbox before the step that fails, so roll back
             // both halves or the name is left taken with no workspace volume behind it — a record
             // `msb start` can only ever fail on. Order mirrors `remove`: record, then volume.
@@ -276,16 +408,61 @@ impl MachineProvider for MsbProvider {
         Ok(spec.name.clone())
     }
 
-    async fn create_sidecar(&self, _spec: &SidecarSpec) -> Result<String, ProviderError> {
-        Err(ProviderError::CommandFailed(
-            "microsandbox does not support network-proxy sidecars".to_string(),
-        ))
+    /// `msb create` takes no command, so `spec.command` becomes an init script; addons arrive by
+    /// `--mount-dir`, never `--copy-dir`, and no deny egress is set — the sidecar must resolve and
+    /// dial (`docs/features/microsandbox-network-policy/spike/04_msb-mitm-sidecar.md`, 2f and 6d).
+    async fn create_sidecar(&self, spec: &SidecarSpec) -> Result<String, ProviderError> {
+        let mut args: Vec<String> =
+            vec!["create".to_string(), spec.image.clone(), "--name".to_string(), spec.name.clone()];
+        for m in &spec.mounts {
+            args.push("--mount-dir".to_string());
+            let suffix = if m.read_only { ":ro" } else { "" };
+            args.push(format!("{}:{}{suffix}", m.host_path, m.dest));
+        }
+        for p in &spec.publish {
+            args.push("-p".to_string());
+            args.push(format!("{}:{}:{}", p.bind, p.host_port, p.guest_port));
+        }
+        for (k, v) in &spec.labels {
+            args.push("--label".to_string());
+            args.push(format!("{k}={v}"));
+        }
+        args.push("--script-raw".to_string());
+        args.push(format!("start={}", super::msb_policy::script_body(&spec.env, &spec.command)));
+        args.push("--init".to_string());
+        args.push("/.msb/scripts/start".to_string());
+        let out = self.run(&args.iter().map(String::as_str).collect::<Vec<_>>()).await?;
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        let bind_failed = out.status.success() && port_bind_failed(&spec.name);
+        if !out.status.success() || bind_failed {
+            // A failed create still registers the record, and a bind failure leaves a running VM,
+            // so the name has to be freed either way before a retry.
+            let _ = self.run(&["rm", "--force", &spec.name]).await;
+            if bind_failed || is_port_in_use(&stderr) {
+                return Err(ProviderError::PortInUse(spec.name.clone()));
+            }
+            return Err(ProviderError::CommandFailed(stderr));
+        }
+        Ok(spec.name.clone())
     }
 
-    async fn pull_image(&self, _image: &str) -> Result<(), ProviderError> {
-        Err(ProviderError::CommandFailed(
-            "microsandbox does not support network-proxy sidecars".to_string(),
-        ))
+    /// Keeps the workspace volume: `rm --force` without `volume rm`, awaited before the create
+    /// because a `kind=disk` volume admits one attached sandbox
+    /// (`docs/features/microsandbox-network-policy/spike/01_egress-baseline.md`).
+    async fn recreate_instance(&self, spec: &InstanceSpec) -> Result<String, ProviderError> {
+        check(self.run(&["rm", "--force", &spec.name]).await?)?;
+        self.create_instance(spec).await
+    }
+
+    async fn stop_sidecar(&self, name: &str) -> Result<(), ProviderError> {
+        check(self.run(&["stop", "-f", name]).await?).map(|_| ())
+    }
+
+    async fn pull_image(&self, image: &str) -> Result<(), ProviderError> {
+        if self.image_present(image).await? {
+            return Ok(());
+        }
+        check(self.run(&["pull", image]).await?).map(|_| ())
     }
 
     async fn list_instances(&self) -> Result<Vec<Sandbox>, ProviderError> {
@@ -316,8 +493,13 @@ impl MachineProvider for MsbProvider {
     /// and would otherwise fail with `error: sandbox still running: ... already running` (exit 1).
     /// Tolerance is modelled on [`Self::ensure_volume`]'s handling of a name already taken.
     async fn start(&self, name: &str) -> Result<(), ProviderError> {
-        let out = self.run(&["start", name]).await?;
+        let out = self.run_starting(name, &["start", name]).await?;
         if out.status.success() {
+            // A stopped sidecar releases its published port, so a start can lose it to another
+            // process; only `runtime.log` says so.
+            if port_bind_failed(name) {
+                return Err(ProviderError::PortInUse(name.to_string()));
+            }
             return Ok(());
         }
         let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
@@ -364,7 +546,7 @@ impl MachineProvider for MsbProvider {
         } else {
             full.extend(argv.iter().map(|s| s.to_string()));
         }
-        self.run(&full.iter().map(String::as_str).collect::<Vec<_>>()).await
+        self.run_starting(name, &full.iter().map(String::as_str).collect::<Vec<_>>()).await
     }
 
     async fn exec_piped(
@@ -383,8 +565,10 @@ impl MachineProvider for MsbProvider {
             // receive it.
             let mut full = vec!["exec", name, "--"];
             full.extend_from_slice(argv);
-            return self.run(&full).await;
+            return self.run_starting(name, &full).await;
         }
+        // Fails before spawning, unlike `exec_command`, because this path can return an error.
+        self.start_env.env_for(name)?;
         let mut child = self
             .exec_command_inner(name, argv, &ExecOpts::default())
             .stdin(Stdio::piped())
@@ -437,13 +621,13 @@ impl MachineProvider for MsbProvider {
 
     async fn create_network(&self, _name: &str, _subnet: &str) -> Result<(), ProviderError> {
         Err(ProviderError::CommandFailed(
-            "microsandbox does not support network-proxy sidecars".to_string(),
+            "microsandbox chains the proxy through host loopback and needs no network".to_string(),
         ))
     }
 
     async fn remove_network(&self, _name: &str) -> Result<(), ProviderError> {
         Err(ProviderError::CommandFailed(
-            "microsandbox does not support network-proxy sidecars".to_string(),
+            "microsandbox chains the proxy through host loopback and needs no network".to_string(),
         ))
     }
 }
@@ -491,7 +675,12 @@ mod tests {
         let msb_runner: Arc<dyn ProcessRunner> = msb_runner;
         let podman_runner: Arc<dyn ProcessRunner> = Arc::new(ScriptedPodmanRunner::new(director));
         let podman = super::super::default_provider(podman_runner, "unused".to_string());
-        MsbProvider { runner: msb_runner, podman, build_lock: tokio::sync::Mutex::new(()) }
+        MsbProvider {
+            runner: msb_runner,
+            podman,
+            start_env: Arc::new(super::super::types::NoStartEnv),
+            build_lock: tokio::sync::Mutex::new(()),
+        }
     }
 
     fn spec(name: &str) -> InstanceSpec {
@@ -503,6 +692,7 @@ mod tests {
             publish_model: PublishModel::ExecTunnelled,
             env: Vec::new(),
             network: None,
+            egress: None,
         }
     }
 
@@ -627,6 +817,152 @@ mod tests {
             .expect("known mock key");
 
         assert!(provider.start("test-sbx").await.is_err());
+    }
+
+    struct FakeEnv(Result<Vec<(String, String)>, String>);
+
+    impl StartEnvSource for FakeEnv {
+        fn env_for(&self, _instance: &str) -> Result<Vec<(String, String)>, ProviderError> {
+            self.0.clone().map_err(ProviderError::CommandFailed)
+        }
+    }
+
+    fn provider_with_env(director: Arc<MockDirector>, env: FakeEnv) -> MsbProvider {
+        MsbProvider { start_env: Arc::new(env), ..provider_with(director) }
+    }
+
+    /// Every start-capable call carries the start environment by name, and the value never
+    /// reaches argv.
+    #[tokio::test]
+    async fn start_capable_calls_carry_the_start_environment() {
+        let director = Arc::new(MockDirector::new());
+        let env = FakeEnv(Ok(vec![("GH_TOKEN".to_string(), "s3cret-value".to_string())]));
+        let provider = provider_with_env(director.clone(), env);
+        provider.create_instance(&spec("test-sbx")).await.expect("create succeeds");
+        provider.stop("test-sbx").await.expect("stop succeeds");
+        provider.start("test-sbx").await.expect("start succeeds");
+        provider.exec("test-sbx", &["true"], ExecOpts::default()).await.expect("exec succeeds");
+        for key in ["msb.create", "msb.start", "msb.exec"] {
+            let calls = director.calls(key);
+            assert_eq!(calls.len(), 1, "{key} journalled once");
+            assert_eq!(calls[0].env_names, ["GH_TOKEN"], "{key} carries the variable");
+            assert!(calls[0].argv.iter().all(|a| !a.contains("s3cret-value")), "{key} argv clean");
+        }
+        assert!(director.calls("msb.stop")[0].env_names.is_empty(), "stop never starts");
+    }
+
+    #[tokio::test]
+    async fn a_start_environment_error_aborts_before_any_msb_call() {
+        let director = Arc::new(MockDirector::new());
+        let env = FakeEnv(Err("secret \"gh\" has no stored value".to_string()));
+        let provider = provider_with_env(director.clone(), env);
+        let err = provider.start("test-sbx").await.expect_err("start fails");
+        assert!(err.to_string().contains("no stored value"));
+        assert!(director.calls("msb.start").is_empty());
+    }
+
+    fn sidecar_spec() -> SidecarSpec {
+        use super::super::types::{PortPublish, SidecarMount};
+        SidecarSpec {
+            name: "s-proxy".to_string(),
+            image: "docker.io/mitmproxy/mitmproxy:11.1.3".to_string(),
+            network: None,
+            mounts: vec![
+                SidecarMount {
+                    host_path: "C:/p/addons".to_string(),
+                    dest: "/addons".to_string(),
+                    read_only: true,
+                },
+                SidecarMount {
+                    host_path: "C:/p/flows".to_string(),
+                    dest: "/flows".to_string(),
+                    read_only: false,
+                },
+            ],
+            publish: vec![PortPublish { bind: "127.0.0.1".to_string(), host_port: 50123, guest_port: 1080 }],
+            env: vec![("MIO_FLOWS_PATH".to_string(), "/flows/flows.ndjson".to_string())],
+            command: vec!["mitmdump".to_string(), "--mode".to_string(), "socks5@0.0.0.0:1080".to_string()],
+            labels: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn create_sidecar_maps_mounts_publish_and_init_script() {
+        let director = Arc::new(MockDirector::new());
+        let provider = provider_with(director.clone());
+        provider.create_sidecar(&sidecar_spec()).await.expect("create succeeds");
+        let argv = director.calls("msb.create")[0].argv.clone();
+        let pos = |flag: &str| argv.iter().position(|a| a == flag).expect(flag);
+        assert_eq!(argv[1], "docker.io/mitmproxy/mitmproxy:11.1.3");
+        assert!(argv.windows(2).any(|w| w == ["--mount-dir", "C:/p/addons:/addons:ro"]));
+        assert!(argv.windows(2).any(|w| w == ["--mount-dir", "C:/p/flows:/flows"]));
+        assert!(argv.windows(2).any(|w| w == ["-p", "127.0.0.1:50123:1080"]));
+        assert!(argv[pos("--script-raw") + 1].starts_with("start=#!/bin/sh\n"));
+        assert_eq!(argv[pos("--init") + 1], "/.msb/scripts/start");
+        assert!(pos("--script-raw") < pos("--init"));
+        assert!(!argv.iter().any(|a| a == "--copy-dir" || a == "--net-default-egress"));
+    }
+
+    #[tokio::test]
+    async fn create_sidecar_maps_an_address_in_use_failure() {
+        let director = Arc::new(MockDirector::new());
+        let msb_runner = Arc::new(ScriptedMsbRunner::new(director.clone()));
+        let provider = provider_over(msb_runner.clone(), director.clone());
+        director
+            .configure(
+                "msb.create",
+                Behaviour::FailOnce {
+                    exit_code: 1,
+                    stderr: "bind 127.0.0.1:50123: Only one usage of each socket address".to_string(),
+                },
+            )
+            .expect("known mock key");
+        let err = provider.create_sidecar(&sidecar_spec()).await.expect_err("create fails");
+        assert!(matches!(err, ProviderError::PortInUse(_)), "{err}");
+        assert!(msb_runner.tracked_instance_names().is_empty(), "the record is removed for a retry");
+    }
+
+    #[tokio::test]
+    async fn pull_image_skips_a_present_reference() {
+        let director = Arc::new(MockDirector::new());
+        let provider = provider_with(director.clone());
+        provider.pull_image("docker.io/mitmproxy/mitmproxy:11.1.3").await.expect("pull succeeds");
+        provider.pull_image("docker.io/mitmproxy/mitmproxy:11.1.3").await.expect("repeat succeeds");
+        assert_eq!(director.calls("msb.pull").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn stop_sidecar_forces() {
+        let director = Arc::new(MockDirector::new());
+        let provider = provider_with(director.clone());
+        provider.stop_sidecar("s-proxy").await.expect("stop succeeds");
+        assert_eq!(director.calls("msb.stop")[0].argv, ["stop", "-f", "s-proxy"]);
+    }
+
+    /// The line shape recorded in `docs/features/microsandbox-network-policy/spike/02_secrets.md`,
+    /// Item 2.
+    #[test]
+    fn parses_a_secret_violation_line() {
+        let line = "2026-11-02T10:00:00.1Z  WARN microsandbox_network::engine::secrets::handler: secret violation: placeholder detected where substitution or passthrough is not permitted action=block-and-log secret_env_var=SPIKE_TOK placeholder=$MSB_SPIKE_TOK protocol=http/1.1 sni=postman-echo.com host=postman-echo.com method=GET path=/headers location=header match_form=raw";
+        let v = parse_violation(line).expect("parses");
+        assert_eq!(v.action, "block-and-log");
+        assert_eq!(v.env_var, "SPIKE_TOK");
+        assert_eq!(v.host, "postman-echo.com");
+        assert_eq!((v.method.as_str(), v.path.as_str(), v.location.as_str()), ("GET", "/headers", "header"));
+        assert_eq!(v.ts, "2026-11-02T10:00:00.1Z");
+        assert!(parse_violation("INFO sandbox starting").is_none());
+    }
+
+    #[tokio::test]
+    async fn recreate_instance_keeps_the_workspace_volume() {
+        let director = Arc::new(MockDirector::new());
+        let msb_runner = Arc::new(ScriptedMsbRunner::new(director.clone()));
+        let provider = provider_over(msb_runner.clone(), director.clone());
+        provider.create_instance(&spec("test-sbx")).await.expect("create succeeds");
+        provider.recreate_instance(&spec("test-sbx")).await.expect("recreate succeeds");
+        assert!(director.calls("msb.volume-rm").is_empty(), "the volume must survive");
+        assert_eq!(msb_runner.tracked_instance_names(), ["test-sbx"]);
+        assert_eq!(msb_runner.tracked_volumes(), ["test-sbx-ws"]);
     }
 
     #[tokio::test]

@@ -639,6 +639,16 @@ impl ProcessRunner for SystemMsbRunner {
     async fn run(&self, args: &[&str]) -> std::io::Result<Output> {
         run_capturing_via_files(msb_command(), args, "msb").await
     }
+
+    async fn run_with_env(
+        &self,
+        args: &[&str],
+        env: &[(String, String)],
+    ) -> std::io::Result<Output> {
+        let mut cmd = msb_command();
+        cmd.envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+        run_capturing_via_files(cmd, args, "msb").await
+    }
 }
 
 impl SystemMutagenRunner {

@@ -30,6 +30,7 @@ export const AGENTS: AgentDescriptor[] = [
       },
     },
     credentialService: "anthropic",
+    apiHosts: ["api.anthropic.com", "console.anthropic.com", "claude.ai", "statsig.anthropic.com"],
   },
   {
     id: "opencode",
@@ -38,6 +39,7 @@ export const AGENTS: AgentDescriptor[] = [
     misePackages: ["opencode"],
     postInstallSteps: [],
     provision: { kind: "opencode-provider", providerId: "local-llm", relativeConfigPath: "opencode.json" },
+    apiHosts: ["models.dev", "opencode.ai"],
   },
   {
     id: "pi",
@@ -46,8 +48,15 @@ export const AGENTS: AgentDescriptor[] = [
     misePackages: ["pi"],
     postInstallSteps: [],
     provision: { kind: "pi-provider", providerId: "local-llm", relativeConfigPath: ".mio/pi-agent/models.json" },
+    // The local LLM is reached through the reverse forward, which is not egress.
+    apiHosts: [],
   },
 ];
+
+/** Every catalogue agent's API hosts, deduplicated — installed or not (Resolved Decision 13). */
+export function allAgentApiHosts(): string[] {
+  return [...new Set(AGENTS.flatMap((a) => a.apiHosts))];
+}
 
 export function onboardingSeed(agent: AgentDescriptor): OnboardingSeed | null {
   const auth = agent.auth;

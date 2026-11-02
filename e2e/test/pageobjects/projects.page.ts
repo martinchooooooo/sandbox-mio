@@ -64,6 +64,19 @@ class ProjectsPage extends AppPage {
     await btn.click();
   }
 
+  // docs/features/microsandbox-network-policy — the egress choice, shown only for a provider whose
+  // ProviderCapabilities.egressPolicy is true. Call after chooseProvider(), which opens Advanced.
+  egressOption(mode: string): Element {
+    return this.createRow.$(`button[data-egress-option='${mode}']`);
+  }
+
+  /** Select the network mode the next `createProject()` creates with. */
+  async chooseEgress(mode: "open" | "allowlist"): Promise<void> {
+    const btn = await this.egressOption(mode);
+    await btn.waitForClickable({ timeout: UI_SETTLE });
+    await btn.click();
+  }
+
   // ── Podman startup-recovery gate ─────────────────────────────────────────────
   // This button's presence is the gate signal, not the Create button: the create form stays
   // mounted while the recovery screen replaces the sandbox list.

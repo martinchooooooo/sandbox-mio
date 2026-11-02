@@ -11,6 +11,8 @@ export interface ProviderCapabilities {
     remoteTargets: boolean;
     eventStream: boolean;
     hostBindMount: boolean;
+    /** Whether the engine enforces `.mio/net-policy.json` itself (microsandbox). */
+    egressPolicy: boolean;
 }
 
 // TODO(i18n)

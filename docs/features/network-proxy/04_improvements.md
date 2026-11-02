@@ -49,6 +49,8 @@ is a larger change than the toggle it would serve.
 
 `01_ideas.md` scopes to Podman only. Microsandbox has no confirmed `host.containers.internal`-equivalent (`docs/features/microsandbox-provider/01_ideas.md` does not address container-to-container reachability at all), and its own networking model is still described as beta/Windows-preview-quality in that document's Validation section. Revisit once that provider's networking story is further along.
 
+Picked up by `docs/features/microsandbox-network-policy/01_ideas.md`: microsandbox 0.7.12 enforces egress and host-held secrets in its own host-side network stack, and its `--proxy socks5://…` option chains a host-reachable mitmproxy for the traffic viewer instead of the Podman sidecar.
+
 ## Non-HTTP(S) traffic capture
 
 `01_ideas.md` accepts that anything ignoring `http_proxy`/`https_proxy` (raw TCP clients, git-over-SSH) bypasses the proxy silently. A future iteration could surface "N connections were not inspected" in the UI, or explore a mitmproxy SOCKS5/generic-TCP mode for tools that support a SOCKS proxy setting even when they don't support an HTTP one. Deferred: it does not change the core inspection/injection design and is better scoped once real usage shows how often it matters.

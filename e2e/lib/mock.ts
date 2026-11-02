@@ -63,7 +63,20 @@ export async function configureMockExpectingError(
   );
 }
 
-/** Clears every installed override. Safe to call even with none installed. */
+/** One journalled scripted call (mirrors `RecordedCall` in src-tauri/src/mockctl/types.rs). */
+export interface RecordedCall {
+  key: string;
+  argv: string[];
+  /** Names of the extra environment variables the call carried; values are never recorded. */
+  env_names: string[];
+}
+
+/** Journalled calls for `key` (e.g. `msb.create`) since the last reset, oldest first. */
+export async function mockCalls(key: string): Promise<RecordedCall[]> {
+  return invokeCmd<RecordedCall[]>("mock_calls", { key });
+}
+
+/** Clears every installed override and the call journal. Safe to call even with none installed. */
 export async function resetMocks(): Promise<void> {
   await invokeCmd("mock_reset");
 }

@@ -148,3 +148,9 @@ Deferred because having both needs either an upstream change to `tauri-plugin-de
 its `Layer` for composition, or a local reimplementation of the plugin's aggregator wiring against a
 shared registry — a larger piece of work than the diagnostic session that surfaced the conflict could
 justify. Revisit if developers start needing the inspector and the log file in the same run.
+
+## Revisit the bind-mount workspace option on msb 0.7.12
+
+On `msb` 0.7.12, `statx` on a Windows `--mount-dir` bind mount no longer returns `ELOOP` (issue #1219), `cat`, `ls -l`, `touch` and `git status` inside the mount exit 0, and the `close()` `EACCES` exit-code symptom of #1218 also looks fixed. Evidence: `docs/features/microsandbox-network-policy/spike/01_egress-baseline.md`, Item 5. Not tested: inotify propagation, file locking (#949) and performance.
+
+Deferred because the `host_bind_mount` capability probe in `docs/features/microsandbox-provider/02_dev.md` and the bind-mount workspace option were designed around the 0.6.6 failures. Revisit them once the broader behaviour (watchers, locking, speed) has been measured.

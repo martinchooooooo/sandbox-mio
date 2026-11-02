@@ -9,7 +9,8 @@
     import { m } from "$lib/paraglide/messages.js";
     import { createActionRunner } from "$lib/actions.svelte";
     import StatusRow from "./StatusRow.svelte";
-    import { PROVIDERS, providerLabel, type ProviderId } from "$lib/providers";
+    import { PROVIDERS, providerCapabilities, providerLabel, type ProviderId } from "$lib/providers";
+    import { allAgentApiHosts } from "$lib/agents/catalogue";
     import { onMount } from "svelte";
     import { checkPodman, podmanUnavailable } from "$lib/podman/setup.svelte";
 
@@ -19,9 +20,20 @@
     let name = $state("");
     let existingPath = $state<string | undefined>(undefined);
     let provider = $state<ProviderId>("podman");
-    // Off by default (docs/features/network-proxy/02_dev.md, Resolved Decision 3); disabled
-    // outright for microsandbox, which has no confirmed network-attachment story.
+    // Off by default (docs/features/network-proxy/02_dev.md, Resolved Decision 3).
     let proxy = $state(false);
+    // Open by default (docs/features/microsandbox-network-policy/02_dev.md, Resolved Decision 3).
+    let egress = $state<"open" | "allowlist">("open");
+    let egressSupported = $state(false);
+
+    $effect(() => {
+        const p = provider;
+        providerCapabilities(p)
+            .then((caps) => {
+                if (p === provider) egressSupported = caps.egressPolicy;
+            })
+            .catch(() => (egressSupported = false));
+    });
 
     const action = createActionRunner();
 
@@ -67,7 +79,10 @@
         const ok = await action.run(
             "create",
             async () => {
-                await invoke("create_sandbox", { name: trimmed, existingPath: path, provider, proxy });
+                const network = egressSupported
+                    ? { egress, starterHosts: allAgentApiHosts() }
+                    : {};
+                await invoke("create_sandbox", { name: trimmed, existingPath: path, provider, proxy, ...network });
             },
             { message: m.projects_status_creating({ name: trimmed }) }
         );
@@ -130,10 +145,7 @@
                                 variant={provider === option ? "default" : "outline"}
                                 size="sm"
                                 disabled={action.busy !== null}
-                                onclick={() => {
-                                    provider = option;
-                                    if (option === "microsandbox") proxy = false;
-                                }}
+                                onclick={() => (provider = option)}
                             >{providerLabel(option)}</Button>
                         {/each}
                     </div>
@@ -146,10 +158,43 @@
                     <Switch
                         data-proxy-toggle
                         checked={proxy}
-                        disabled={action.busy !== null || provider === "microsandbox"}
+                        disabled={action.busy !== null}
                         onCheckedChange={(v) => (proxy = v)}
                     />
                 </Field.Field>
+                {#if proxy && provider === "microsandbox"}
+                    <Field.Description data-proxy-msb-hint>
+                        <!-- TODO(i18n) -->
+                        Runs a second VM (about 115 MiB) that sees every request, including substituted secret values.
+                    </Field.Description>
+                {/if}
+                {#if egressSupported}
+                    <Field.Field>
+                        <Field.Label>
+                            <!-- TODO(i18n) -->
+                            Network access
+                        </Field.Label>
+                        <div data-egress-picker class="flex gap-2">
+                            {#each [["open", "Open"], ["allowlist", "Allowlist"]] as const as [value, label] (value)}
+                                <Button
+                                    data-egress-option={value}
+                                    aria-pressed={egress === value}
+                                    variant={egress === value ? "default" : "outline"}
+                                    size="sm"
+                                    disabled={action.busy !== null}
+                                    onclick={() => (egress = value)}
+                                >{label}</Button><!-- TODO(i18n) -->
+                            {/each}
+                        </div>
+                        <Field.Description>
+                            {#if egress === "allowlist"}
+                                Only package registries, GitHub and the agents' APIs are reachable; edit the list after creating. <!-- TODO(i18n) -->
+                            {:else}
+                                Every public host is reachable. <!-- TODO(i18n) -->
+                            {/if}
+                        </Field.Description>
+                    </Field.Field>
+                {/if}
             </AdvancedSection>
         </Field.Group>
     </Field.Set>

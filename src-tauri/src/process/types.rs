@@ -8,6 +8,24 @@ use std::process::Output;
 #[async_trait::async_trait]
 pub trait ProcessRunner: Send + Sync {
     async fn run(&self, args: &[&str]) -> std::io::Result<Output>;
+
+    /// [`Self::run`] with extra `(name, value)` pairs set in the child's environment only — the one
+    /// way a secret value reaches `msb` without entering argv or this process's own environment
+    /// (`docs/features/microsandbox-network-policy/02_dev.md`). A runner that does not override
+    /// this refuses non-empty `env` rather than dropping it, so a secret is never silently lost.
+    async fn run_with_env(
+        &self,
+        args: &[&str],
+        env: &[(String, String)],
+    ) -> std::io::Result<Output> {
+        if env.is_empty() {
+            return self.run(args).await;
+        }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "this process runner cannot pass environment variables",
+        ))
+    }
 }
 
 /// Real `podman` invocations: wraps `podman_command_std()` (`src-tauri/src/backends/mod.rs`),

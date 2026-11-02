@@ -40,9 +40,16 @@ pub async fn set_proxy_rules(
     registry: State<'_, Arc<ProviderRegistry>>,
     app: tauri::AppHandle,
 ) -> Result<(), AppError> {
+    if registry.provider_of(&name).await.0 == ProviderId::Microsandbox {
+        // Microsandbox substitutes secrets itself from `.mio/net-policy.json`.
+        return Err(crate::backends::types::BackendError::CommandFailed(
+            "microsandbox sandboxes bind secrets in the network policy, not proxy rules".to_string(),
+        )
+        .into());
+    }
     proxy::rules::save_rules(&workspace_path, &rules)?;
-    if proxy::exists(&registry, &name).await {
-        proxy::apply_rules(&app, &registry.local(ProviderId::Podman), &name, &workspace_path).await?;
+    if proxy::exists(&app, &registry, &name).await {
+        proxy::apply_rules(&app, &registry, &name, &workspace_path).await?;
     }
     Ok(())
 }
@@ -77,6 +84,10 @@ pub async fn watch_proxy_flows(
 /// Explicit restart, for a rule/secret change the caller wants applied without going through
 /// `set_proxy_rules`.
 #[tauri::command]
-pub async fn restart_proxy(name: String, registry: State<'_, Arc<ProviderRegistry>>) -> Result<(), AppError> {
-    Ok(proxy::restart_proxy_container(&registry.local(ProviderId::Podman), &name).await?)
+pub async fn restart_proxy(
+    name: String,
+    registry: State<'_, Arc<ProviderRegistry>>,
+    app: tauri::AppHandle,
+) -> Result<(), AppError> {
+    Ok(proxy::restart_proxy_container(&app, &registry, &name).await?)
 }

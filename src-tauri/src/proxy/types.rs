@@ -28,15 +28,18 @@ impl From<ProxyError> for BackendError {
 /// `credentials::types::AUTH_CONTAINER_PREFIX` filters out throwaway auth containers.
 pub const PROXY_CONTAINER_SUFFIX: &str = "-proxy";
 
-/// What `SandboxBackend::create` needs to build a proxy-enabled sandbox's `InstanceSpec`: the
-/// network to join *instead of* `pasta`, and the environment (proxy vars, CA trust vars) to stamp
-/// on the sandbox container at create time.
-pub struct ProxyAttachment {
-    pub network: String,
-    pub env: Vec<(String, String)>,
+/// What `SandboxBackend::create` needs to chain a sandbox through its proxy sidecar.
+pub enum ProxyAttachment {
+    /// Podman: the network to join *instead of* `pasta`, and the environment (proxy vars, CA trust
+    /// vars) to stamp on the sandbox container at create time.
+    PodmanBridge { network: String, env: Vec<(String, String)> },
+    /// Microsandbox: the sidecar's SOCKS5 port on host loopback, the variable the agent `msb`
+    /// child reads its password from, and the sidecar CA the agent trusts upstream
+    /// (`docs/features/microsandbox-network-policy/02_dev.md`, The Concrete Model).
+    MsbChain { host_port: u16, password_env: String, upstream_ca_path: String },
 }
 
-/// Frontend-facing proxy status. Derived from the `<sandbox>-proxy` container's presence rather
+/// Frontend-facing proxy status. Derived from the `<sandbox>-proxy` sidecar's presence rather
 /// than persisted (`docs/features/network-proxy/02_dev.md`, Resolved Decision 3).
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -44,4 +47,10 @@ pub struct ProxyStatus {
     pub running: bool,
     pub proxy_ip: String,
     pub network: String,
+    pub provider: crate::provider::types::ProviderId,
+    /// The SOCKS5 port a microsandbox sidecar publishes; `None` for Podman.
+    pub host_port: Option<u16>,
+    /// Whether a running microsandbox sidecar answers a SOCKS5 greeting; `None` for Podman or a
+    /// stopped sidecar.
+    pub healthy: Option<bool>,
 }

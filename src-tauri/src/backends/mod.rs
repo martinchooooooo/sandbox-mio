@@ -369,6 +369,67 @@ impl CliBackend {
     /// directory, and rejects it as `PathAlreadyTracked` if it falls inside `workspace_root()` or
     /// exactly matches an already-tracked sandbox's workspace — without touching the filesystem
     /// further.
+    /// Installs the sandbox's SSH key and writes its alias, after which the exec transport works. A
+    /// recreated instance has a fresh host key, which `forget_sandbox_host_key` clears.
+    async fn provision_exec_transport(
+        &self,
+        provider: &Arc<dyn crate::provider::types::MachineProvider>,
+        name: &str,
+        provider_id: ProviderId,
+    ) -> Result<(), BackendError> {
+        let identity_path = ensure_sandbox_identity(&self.app, name)?;
+        forget_sandbox_host_key(&identity_path);
+        tracing::info!(
+            target: "backends",
+            %name,
+            provider = %provider_id,
+            %identity_path,
+            "installing sandbox ssh key"
+        );
+        // The key install is provider-neutral: both aliases tunnel to the base image's own
+        // `mio-sshd`, so both need the pubkey at the path its `sshd_config.container` names.
+        // Notably *not* `msb ssh authorize` for microsandbox — that authorizes against
+        // microsandbox's own SSH server, which `ensure_msb_sandbox_alias` no longer uses.
+        self.install_sandbox_key(provider, name, &identity_path).await?;
+        match provider_id {
+            ProviderId::Podman => ensure_sandbox_alias(name, &self.connection, &identity_path).await?,
+            ProviderId::Microsandbox => ensure_msb_sandbox_alias(name, &identity_path).await?,
+        }
+        tracing::info!(target: "backends", %name, "ssh key installed and alias written");
+        Ok(())
+    }
+
+    /// Settles a microsandbox sandbox's policy before `msb create`: loads the workspace file, seeds
+    /// the starter allowlist when the dialog chose allowlist and the file has no rules, applies the
+    /// dialog's mode (an imported workspace's file wins otherwise), validates, and snapshots it as
+    /// `applied.json` (`docs/features/microsandbox-network-policy/02_dev.md`, Phase D).
+    fn prepare_egress(
+        &self,
+        name: &str,
+        workspace: &str,
+        request: Option<&types::EgressRequest>,
+        caps: crate::provider::types::ProviderCapabilities,
+        chain: Option<crate::provider::types::ChainedProxy>,
+    ) -> Result<crate::provider::types::EgressPolicy, BackendError> {
+        use crate::net_policy;
+        let mut policy = net_policy::load(workspace)?;
+        let mode = request.and_then(|r| r.mode);
+        if let Some(mode) = mode {
+            if mode == net_policy::EgressMode::Allowlist && policy.rules.is_empty() {
+                let starter = net_policy::starter(&request.map(|r| r.starter_hosts.clone()).unwrap_or_default());
+                policy.rules = starter.rules;
+            }
+            policy.egress = mode;
+        }
+        net_policy::validate(&policy, caps)?;
+        if mode.is_some() {
+            net_policy::save(workspace, &policy)?;
+        }
+        let applied = net_policy::AppliedPolicy { policy, chained_proxy: chain.is_some() };
+        net_policy::write_applied(&self.app, name, &applied)?;
+        Ok(net_policy::to_egress(&applied.policy, chain)?)
+    }
+
     async fn resolve_create_workspace(
         &self,
         name: &str,
@@ -442,6 +503,41 @@ fn progress(channel: &Channel<serde_json::Value>, step: &str, status: &str, mess
     }));
 }
 
+/// Splits a proxy attachment into the Podman bridge (`network`, `env`) and the microsandbox chain.
+/// A microsandbox attachment never maps onto `network`/`env`, which `MsbProvider` refuses.
+fn split_attachment(
+    name: &str,
+    provider_id: ProviderId,
+    proxy: Option<&crate::proxy::types::ProxyAttachment>,
+) -> Result<
+    (Option<(String, Vec<(String, String)>)>, Option<crate::provider::types::ChainedProxy>),
+    BackendError,
+> {
+    use crate::proxy::types::ProxyAttachment;
+    match proxy {
+        None => Ok((None, None)),
+        Some(ProxyAttachment::PodmanBridge { network, env }) if provider_id == ProviderId::Podman => {
+            Ok((Some((network.clone(), env.clone())), None))
+        }
+        Some(ProxyAttachment::MsbChain { host_port, password_env, upstream_ca_path })
+            if provider_id == ProviderId::Microsandbox =>
+        {
+            Ok((
+                None,
+                Some(crate::provider::types::ChainedProxy {
+                    host_port: *host_port,
+                    username: crate::provider::msb_policy::SOCKS_USERNAME.to_string(),
+                    password_env: password_env.clone(),
+                    upstream_ca_path: upstream_ca_path.clone(),
+                }),
+            ))
+        }
+        Some(_) => Err(BackendError::CommandFailed(format!(
+            "{name:?}: the proxy attachment does not match the {provider_id} provider"
+        ))),
+    }
+}
+
 #[async_trait::async_trait]
 impl SandboxBackend for CliBackend {
     async fn ensure_base_image(&self, provider: ProviderId) -> Result<(), BackendError> {
@@ -458,8 +554,14 @@ impl SandboxBackend for CliBackend {
         existing_path: Option<&str>,
         provider_id: ProviderId,
         proxy: Option<&crate::proxy::types::ProxyAttachment>,
+        egress: Option<&types::EgressRequest>,
     ) -> Result<Sandbox, BackendError> {
         validate_name(name)?;
+        if egress.is_some() && !self.registry.local(provider_id).capabilities().egress_policy {
+            return Err(BackendError::CommandFailed(format!(
+                "{provider_id} sandboxes cannot enforce a network policy yet"
+            )));
+        }
         self.ensure_name_available(name).await?;
         let provider = self.registry.local(provider_id);
         let image = Self::image();
@@ -472,55 +574,94 @@ impl SandboxBackend for CliBackend {
         // (`docs/features/microsandbox-provider/02_dev.md`, gotcha table).
         let exec_capable = provider_id == ProviderId::Microsandbox
             || BASE_IMAGE_VERSION >= EXEC_TRANSPORT_MIN_IMAGE_VERSION;
-        if proxy.is_some() && (!exec_capable || provider_id == ProviderId::Microsandbox) {
+        if proxy.is_some() && !exec_capable {
             // A `PublishRelay` sandbox's zellij reachability depends on pasta's
             // `--host-lo-to-ns-lo`, which a proxy attachment replaces
-            // (`docs/features/network-proxy/02_dev.md`, Resolved Decision 1); microsandbox has no
-            // confirmed network-attachment story at all (Resolved Decision 9).
+            // (`docs/features/network-proxy/02_dev.md`, Resolved Decision 1).
             return Err(BackendError::CommandFailed(format!(
                 "{name:?} cannot enable traffic inspection: requires the podman-exec-transport reachability model"
             )));
         }
+        let (bridge, chain) = split_attachment(name, provider_id, proxy)?;
+        let egress_policy = if provider_id == ProviderId::Microsandbox {
+            Some(self.prepare_egress(name, &workspace, egress, provider.capabilities(), chain)?)
+        } else {
+            None
+        };
         let spec = InstanceSpec {
             name: name.to_string(),
             image,
             workspace_source: workspace.clone(),
             labels: vec![(crate::provider::WORKSPACE_LABEL.to_string(), workspace.clone())],
             publish_model: publish_model(exec_capable),
-            env: proxy.map(|p| p.env.clone()).unwrap_or_default(),
-            network: proxy.map(|p| crate::provider::types::InstanceNetwork {
-                name: p.network.clone(),
+            env: bridge.as_ref().map(|(_, env)| env.clone()).unwrap_or_default(),
+            network: bridge.map(|(network, _)| crate::provider::types::InstanceNetwork {
+                name: network,
                 ip: None,
             }),
+            egress: egress_policy,
         };
-        let id = provider.create_instance(&spec).await?;
-        if exec_capable {
-            let identity_path = ensure_sandbox_identity(&self.app, name)?;
-            forget_sandbox_host_key(&identity_path);
-            tracing::info!(
-                target: "backends",
-                %name,
-                provider = %provider_id,
-                %identity_path,
-                "installing sandbox ssh key"
-            );
-            // The key install is provider-neutral: both aliases tunnel to the base image's own
-            // `mio-sshd`, so both need the pubkey at the path its `sshd_config.container` names.
-            // Notably *not* `msb ssh authorize` for microsandbox — that authorizes against
-            // microsandbox's own SSH server, which `ensure_msb_sandbox_alias` no longer uses.
-            self.install_sandbox_key(&provider, name, &identity_path).await?;
-            match provider_id {
-                ProviderId::Podman => {
-                    ensure_sandbox_alias(name, &self.connection, &identity_path).await?
-                }
-                ProviderId::Microsandbox => ensure_msb_sandbox_alias(name, &identity_path).await?,
+        let id = match provider.create_instance(&spec).await {
+            Ok(id) => id,
+            Err(e) => {
+                crate::net_policy::remove_applied(&self.app, name);
+                return Err(e.into());
             }
-            tracing::info!(target: "backends", %name, "ssh key installed and alias written");
+        };
+        if exec_capable {
+            self.provision_exec_transport(&provider, name, provider_id).await?;
         }
         Ok(Sandbox {
             id,
             name: name.to_string(),
             status: "created".to_string(),
+            workspace_path: workspace,
+            image_version: Some(BASE_IMAGE_VERSION),
+            provider: provider_id,
+        })
+    }
+
+    async fn recreate(
+        &self,
+        name: &str,
+        proxy: Option<&crate::proxy::types::ProxyAttachment>,
+        egress: Option<&types::EgressRequest>,
+    ) -> Result<Sandbox, BackendError> {
+        let (provider_id, provider) = self.registry.provider_of(name).await;
+        let current = self
+            .list()
+            .await?
+            .into_iter()
+            .find(|s| s.name == name)
+            .ok_or_else(|| BackendError::CommandFailed(format!("no sandbox named {name:?}")))?;
+        if provider_id != ProviderId::Microsandbox {
+            // Podman recreate belongs to `docs/features/proxy-toggle-management/02_dev.md`.
+            return Err(BackendError::CommandFailed(format!(
+                "{name:?}: re-applying network settings is only supported for microsandbox sandboxes"
+            )));
+        }
+        let workspace = current.workspace_path.clone();
+        let (_, chain) = split_attachment(name, provider_id, proxy)?;
+        // The snapshot is rewritten from the current workspace file, which is the point of a
+        // re-apply (`docs/features/microsandbox-network-policy/02_dev.md`, Phase G).
+        let egress_policy =
+            self.prepare_egress(name, &workspace, egress, provider.capabilities(), chain)?;
+        let spec = InstanceSpec {
+            name: name.to_string(),
+            image: Self::image(),
+            workspace_source: workspace.clone(),
+            labels: vec![(crate::provider::WORKSPACE_LABEL.to_string(), workspace.clone())],
+            publish_model: publish_model(true),
+            env: Vec::new(),
+            network: None,
+            egress: Some(egress_policy),
+        };
+        let id = provider.recreate_instance(&spec).await?;
+        self.provision_exec_transport(&provider, name, provider_id).await?;
+        Ok(Sandbox {
+            id,
+            name: name.to_string(),
+            status: "running".to_string(),
             workspace_path: workspace,
             image_version: Some(BASE_IMAGE_VERSION),
             provider: provider_id,
@@ -563,7 +704,7 @@ impl SandboxBackend for CliBackend {
         validate_name(name)?;
         // Refused rather than silently deployed unproxied: deploy has no target-side proxy story
         // yet (`docs/features/network-proxy/02_dev.md`, Resolved Decision 6).
-        if crate::proxy::exists(&self.registry, name).await {
+        if crate::proxy::exists(&self.app, &self.registry, name).await {
             return Err(BackendError::ProxyDeployUnsupported { name: name.to_string() });
         }
         // The deploy picker is already hidden for a provider without remote targets
@@ -627,6 +768,7 @@ impl SandboxBackend for CliBackend {
             publish_model: publish_model(exec_capable),
             env: Vec::new(),
             network: None,
+            egress: None,
         };
         target_provider.create_instance(&spec).await?;
         target_provider.start(name).await?;
