@@ -96,6 +96,7 @@ impl Bootstrap {
         if !backends::mock_backend_enabled() {
             if let Ok(resource_dir) = app.path().resource_dir() {
                 backends::set_podman_resource_dir(resource_dir.join("podman"));
+                process::set_msb_resource_dir(resource_dir.join("msb"));
             }
         }
         let mutagen_runner: Arc<dyn ProcessRunner> = if backends::mock_backend_enabled() {

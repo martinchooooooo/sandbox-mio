@@ -557,8 +557,7 @@ impl MachineProvider for MsbProvider {
     ) -> Result<Output, ProviderError> {
         if crate::backends::mock_backend_enabled() {
             // Spawns `msb_command()` directly, so `ScriptedMsbRunner` cannot divert it and a light
-            // spec would drive the host's real `msb` (or an `MSB_PATH` mock that speaks no exec
-            // protocol) — the gate `src-tauri/AGENTS.md` requires of any spawning method, as
+            // spec would drive the real bundled `msb` — the gate `src-tauri/AGENTS.md` requires of any spawning method, as
             // `CliBackend::listen_events` already does. The scripted runner models one-shot
             // calls with no stdin, which is exactly what a `copy_in` under mock needs to be: the
             // call is recorded as `msb.exec` and the payload goes nowhere, since no guest exists to

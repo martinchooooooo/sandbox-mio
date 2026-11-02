@@ -30,8 +30,8 @@
         "machine-init": "Downloads the machine image on first run.", // TODO(i18n)
         "machine-start": "Boots the virtual machine.", // TODO(i18n)
         "socket-activate": "Starts the API the app talks to.", // TODO(i18n)
-        "msb-binary": "Checks the msb CLI is installed.", // TODO(i18n)
-        "msb-version": "Needs msb 0.7.12 or newer. To update on Windows, copy msb.exe to a temporary folder and run `self update` from the copy — the running executable cannot overwrite itself.", // TODO(i18n)
+        "msb-binary": "Checks the bundled msb CLI starts.", // TODO(i18n)
+        "msb-version": "Needs msb 0.7.12 or newer; the app ships its own copy, so reinstall sandbox-mio if this fails.", // TODO(i18n)
         "hypervisor-platform": "Required for microsandbox's microVMs; enabling needs no restart.", // TODO(i18n)
         "msb-doctor": "Confirms the host is ready to create sandboxes.", // TODO(i18n)
     };

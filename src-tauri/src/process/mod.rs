@@ -614,24 +614,44 @@ impl ProcessRunner for SystemPodmanRunner {
     }
 }
 
-/// `msb` is never bundled (see [`SystemMsbRunner`]'s doc comment), so this only needs to honour an
-/// `MSB_PATH` override the way `podman_command()` honours its bundled resource dir, falling back to
-/// a bare `msb` off `PATH`.
+static MSB_RESOURCE_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// Record the bundled microsandbox resource directory (`msb` plus its adjacent `libkrunfw`) for
+/// [`msb_executable`]. Called once at startup, before any `msb` call, mirroring
+/// `backends::set_podman_resource_dir`.
+pub fn set_msb_resource_dir(dir: std::path::PathBuf) {
+    let _ = MSB_RESOURCE_DIR.set(dir);
+}
+
+/// The bundled `msb` executable — the only one this app ever runs. There is deliberately no
+/// `MSB_PATH` override and no `PATH` fallback: a missing bundle fails the spawn with `NotFound`.
 ///
-/// `MSB_PATH` is the path *to the `msb` executable*, never a directory containing it. The spawned
-/// `msb` inherits the variable and resolves its own detached VM supervisor from it, so a directory
-/// value makes every `msb create` underneath this app fail (`Access is denied. (os error 5)` on
-/// Windows, where executing a directory is ERROR_ACCESS_DENIED).
+/// Before [`set_msb_resource_dir`] runs (unit tests only) this is the relative `msb/msb[.exe]`;
+/// containing a separator, it is never searched for on `PATH` either.
+pub(crate) fn msb_executable() -> std::path::PathBuf {
+    let name = if cfg!(windows) { "msb.exe" } else { "msb" };
+    match MSB_RESOURCE_DIR.get() {
+        Some(dir) => dir.join(name),
+        None => std::path::Path::new("msb").join(name),
+    }
+}
+
+/// Builds an `msb` invocation against [`msb_executable`], pinning its runtime to the bundle
+/// whatever the app inherited. `MSB_PATH` is the *executable* path (a directory fails every
+/// `msb create` with `Access is denied`); `msb` spawns its VM supervisor from it and resolves the
+/// adjacent `libkrunfw`, so the library and agentd overrides are cleared to keep the pair intact.
 ///
 /// `msb create` also fails with `Access is denied` when any Windows Job Object above this app denies
 /// breakaway, since `msb` starts its VM supervisor with `CREATE_BREAKAWAY_FROM_JOB`. That cannot be
 /// fixed from here; `cargo run`'s job under `tauri dev` is one such job. A packaged build runs in
 /// none (docs/features/microsandbox-provider/03_e2e.md, Step 0).
 pub(crate) fn msb_command() -> tokio::process::Command {
-    match std::env::var_os("MSB_PATH") {
-        Some(exe) => detached_command(exe),
-        None => detached_command("msb"),
-    }
+    let exe = msb_executable();
+    let mut cmd = detached_command(&exe);
+    cmd.env("MSB_PATH", &exe)
+        .env_remove("MSB_LIBKRUNFW_PATH")
+        .env_remove("MSB_AGENTD_PATH");
+    cmd
 }
 
 #[async_trait::async_trait]

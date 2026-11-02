@@ -13,6 +13,7 @@ use super::types::{MachineReadiness, MachineReadinessProvider, MachineSetupEvent
 
 /// The only `msb` release the network-policy spikes validated
 /// (`docs/features/microsandbox-network-policy/02_dev.md`, Resolved Decision 1).
+/// Must not exceed the bundled `MSB_VERSION` in `build.rs` (repo root), or readiness always fails.
 pub const MIN_MSB_VERSION: (u32, u32, u32) = (0, 7, 12);
 
 /// The first `x.y.z` token in `msb --version` output (`msb 0.7.12`), or `None` if there is none.
@@ -35,8 +36,10 @@ fn version_instruction(stdout: &str) -> String {
     let (a, b, c) = MIN_MSB_VERSION;
     let found = stdout.trim();
     let found = if found.is_empty() { "an unknown version" } else { found };
+    // Never `msb self update`: that would rewrite the app's own bundled files in place.
     format!(
-        "microsandbox {a}.{b}.{c} or newer is required (found {found}). Copy msb.exe to a temporary          folder and run `<copy> self update` there — the running msb.exe cannot replace itself."
+        "microsandbox {a}.{b}.{c} or newer is required, but the bundled copy reports {found}. \
+         Reinstall sandbox-mio to restore its bundled microsandbox."
     )
 }
 
@@ -110,7 +113,9 @@ impl MachineReadinessProvider for MsbMachineManager {
     async fn prepare(&self, on_step: &Channel<serde_json::Value>) -> Result<(), BackendError> {
         MachineSetupEvent::StepStart { id: "msb-binary".into() }.send(on_step);
         let Some(version) = self.version_output().await else {
-            return Err(fail(on_step, "msb-binary", "the msb CLI could not be started".to_string()));
+            let exe = crate::process::msb_executable();
+            let error = format!("the bundled msb CLI could not be started ({})", exe.display());
+            return Err(fail(on_step, "msb-binary", error));
         };
         MachineSetupEvent::StepDone { id: "msb-binary".into(), detail: None }.send(on_step);
 

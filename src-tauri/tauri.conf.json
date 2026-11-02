@@ -23,6 +23,7 @@
     "resources": {
       "binaries/llama": "llama",
       "binaries/podman": "podman",
+      "binaries/msb": "msb",
       "binaries/mutagen-agents.tar.gz": "mutagen-agents.tar.gz"
     },
     "icon": [

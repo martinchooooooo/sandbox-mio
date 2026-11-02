@@ -41,9 +41,7 @@ pub struct SystemMutagenRunner {
     pub(super) app: tauri::AppHandle,
 }
 
-/// Real `msb` invocations. Unlike `podman`/Mutagen, microsandbox is never bundled — it is a
-/// system-installed prerequisite (its own Windows Hypervisor Platform setup is not something this
-/// app can vendor), so this simply runs `msb` off `PATH`, honouring an `MSB_PATH` override the same
-/// way `podman_command()` honours a bundled resource dir for Podman. See
-/// `docs/features/microsandbox-provider/02_dev.md`.
+/// Real `msb` invocations, always against the bundled `msb` + `libkrunfw` resource dir
+/// (`msb_command()` in `src-tauri/src/process/mod.rs`); never a host install. The binary is bundled; the Windows Hypervisor Platform feature it needs is not, so that stays
+/// a host prerequisite reported by `msb doctor`. See `docs/features/microsandbox-provider/02_dev.md`.
 pub struct SystemMsbRunner;

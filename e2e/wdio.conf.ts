@@ -37,7 +37,6 @@ import {
   PORT_WINDOW_INDEX,
   MIO_PORT_BASE,
   MSB_HOME,
-  MSB_PATH,
 } from "./lib/run-identity.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
@@ -61,12 +60,10 @@ const MIO_REMOTE_REMOVE = process.env.MIO_REMOTE_REMOVE === "1";
 process.env.SANDBOX_WORKSPACE_ROOT = WORKSPACE_ROOT;
 
 // MSB_HOME isolates microsandbox's own state (db, sandboxes, cache, logs) per worktree, mirroring
-// SANDBOX_WORKSPACE_ROOT above; MSB_PATH pins the host-wide `msb` executable so a slug-keyed home
-// with no `bin/` still resolves. Both are read by the `msb` binary itself (upstream
-// `resolve_home()`) as well as by this app (docs/features/microsandbox-provider/02_dev.md,
-// "E2E isolation").
+// SANDBOX_WORKSPACE_ROOT above, and is read by the `msb` binary itself (upstream `resolve_home()`).
+// No MSB_PATH export: the app always runs its bundled `msb` and overrides the variable itself
+// (docs/features/microsandbox-provider/02_dev.md, "Implemented: bundled `msb` runtime").
 process.env.MSB_HOME = MSB_HOME;
-process.env.MSB_PATH = MSB_PATH;
 
 // Test-only GGUF for the `test_model` command, kept out of the shipped catalogue (see
 // docs/features/local-llm/03_e2e.md). Set in process.env so the spawned app sees it too.

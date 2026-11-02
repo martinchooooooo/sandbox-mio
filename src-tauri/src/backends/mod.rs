@@ -1019,14 +1019,11 @@ pub async fn ensure_sandbox_alias(
 const MSB_WORKSPACE_MOUNT: &str = "/root/work";
 
 /// The literal argv token for `msb`, for embedding in an OpenSSH `ProxyCommand` string — the
-/// counterpart of [`podman_literal_path`], honouring the same `MSB_PATH` override
-/// [`crate::mockctl::msb_command`] resolves so an e2e run's scripted `msb` is the one the transport
-/// spawns too.
+/// counterpart of [`podman_literal_path`], resolved by the same [`crate::process::msb_executable`]
+/// as every other `msb` call so the transport spawns the bundled binary too.
 fn msb_literal_path() -> String {
-    match std::env::var("MSB_PATH") {
-        Ok(exe) if !exe.is_empty() => format!("\"{}\"", exe.replace('\\', "/")),
-        _ => "msb".to_string(),
-    }
+    let exe = crate::process::msb_executable();
+    format!("\"{}\"", exe.to_string_lossy().replace('\\', "/"))
 }
 
 /// The `ProxyCommand` [`ensure_msb_sandbox_alias`] pins, split out from the alias write so the
@@ -1050,7 +1047,7 @@ fn msb_proxy_command(name: &str) -> String {
 /// it fixes `scp` and costs nothing (confirmed hands-on against real `msb` 0.6.6: `ssh` and `scp`
 /// both exit 0 over this ProxyCommand, `scp` exits 1 over `msb ssh serve`).
 ///
-/// Both `msb` (unless `MSB_PATH`-overridden) and `mio-sshd` are referenced by bare name, so the
+/// `mio-sshd` is referenced by bare name and the bundled `msb` path is forward-slashed, so the
 /// command carries no MSYS-manglable token — see [`ensure_sandbox_alias`] on why that matters for a
 /// pre-existing Mutagen daemon.
 pub async fn ensure_msb_sandbox_alias(name: &str, identity_path: &str) -> Result<(), BackendError> {

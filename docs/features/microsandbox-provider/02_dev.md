@@ -684,6 +684,31 @@ I is welcome-flow polish that only matters once G/H work. J is sequenced last be
 riskiest change (every `connection: &str` call site) and should only happen once both providers are
 independently proven.
 
+## Implemented: bundled `msb` runtime (supersedes "`msb` is never bundled")
+
+- The release bundle for the build host (`microsandbox-<os>-<arch>.zip`/`.tar.gz`, holding `msb` and
+  its matching `libkrunfw`) is fetched, checked against the release's `checksums.sha256`, and staged
+  flat into `src-tauri/binaries/msb` by `fetch_msb` in `build.rs`, pinned to `MSB_VERSION`. It runs
+  from `build dev --setup`, `build dev`, `build package` and `setup_worktree`.
+- `tauri.conf.json` ships the directory as the `msb` resource. `bootstrap.rs` records
+  `resource_dir()/msb` via `process::set_msb_resource_dir`.
+- Every `msb` call uses the bundled copy, with no exceptions. `msb_executable()`
+  (`src-tauri/src/process/mod.rs`) returns only `resource_dir()/msb/msb[.exe]`: an inherited
+  `MSB_PATH` is not honoured, and there is no fallback to `msb` on `PATH`. A missing bundle fails
+  the spawn. `msb_command()` sets `MSB_PATH` to the bundled exe on the child and clears
+  `MSB_LIBKRUNFW_PATH`/`MSB_AGENTD_PATH`. The SSH `ProxyCommand` (`msb_literal_path` in
+  `src-tauri/src/backends/mod.rs`) uses the same resolver.
+- The readiness version row never suggests `msb self update`, since that would rewrite the app's
+  own bundled files. A version below `MIN_MSB_VERSION` means the bundle is broken: reinstall.
+- Upstream `msb` resolves `libkrunfw` beside its own executable once `MSB_PATH` names it, and the
+  CLI sets `MSB_PATH` to itself when unset. A bundled copy therefore needs no host install:
+  `msb doctor` passes against an empty `MSB_HOME`. `MSB_HOME` keeps its default, so existing sandbox
+  state carries over.
+- The Windows Hypervisor Platform feature is still a host prerequisite, reported by `msb doctor`.
+- The e2e harness's own `msb` calls (`MSB_PATH` in `e2e/lib/run-identity.ts`) use the worktree's
+  bundled copy too. `e2e/wdio.conf.ts` no longer exports `MSB_PATH`; it still exports the
+  slug-keyed `MSB_HOME`.
+
 ## Cross-cutting concerns
 
 - **No new host-global state.** This phase adds a `provider/` module and one managed `Arc<dyn
