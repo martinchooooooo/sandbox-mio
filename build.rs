@@ -1,5 +1,8 @@
 use std::{env, fs, net::TcpStream, path::{Path, PathBuf}, process::Command, time::{Duration, Instant}};
 
+/// `build docs`: the documentation rules, as code (`docs_check.rs`).
+mod docs_check;
+
 /// Mutagen release staged as the Tauri sidecar. Pinned to match the e2e suite's Mutagen.
 const MUTAGEN_VERSION: &str = "v0.18.1";
 
@@ -85,6 +88,12 @@ fn main() {
 
             run(e2e_dir(), "pnpm", &["run", &format!("test:{}", suite)]);
         }
+        Some("docs") if matches!(args.get(2).map(String::as_str), None | Some("check")) => {
+            std::process::exit(docs_check::run(&root_dir(), false));
+        }
+        Some("docs") if args.get(2).map(String::as_str) == Some("--fix") => {
+            std::process::exit(docs_check::run(&root_dir(), true));
+        }
         Some("package") => {
             // Bundling copies from src-tauri/binaries at build time (unlike `dev`, which needs
             // `stage_*` to mirror them into target/debug); make sure they're present first.
@@ -114,6 +123,8 @@ fn main() {
             eprintln!("                       tools/msedgedriver.exe if it no longer matches WebView2");
             eprintln!("  build e2e --setup  - install e2e test dependencies");
             eprintln!("  build package      - stage bundled binaries and build the release NSIS installer");
+            eprintln!("  build docs         - check docs/ against the documentation rules in docs_check.rs");
+            eprintln!("  build docs --fix   - regenerate every docs/ index.md from frontmatter, then check");
             std::process::exit(1);
         }
     }

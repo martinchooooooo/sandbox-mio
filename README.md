@@ -57,6 +57,19 @@ This will run the `standard` tests by default. To select a different suite, pass
 
 The test suite builds the debug binary automatically before launching the app.
 
+## Documentation checks
+
+```sh
+./build docs        # check
+./build docs --fix  # regenerate every index.md from frontmatter, then check
+```
+
+Checks `docs/` against the documentation rules (OKF frontmatter, feature statuses, generated
+indexes, the feature log, links, architecture-document size, and `docs/...` citations from code).
+Every `index.md` except the root `docs/index.md` is generated; never edit one by hand. The rules
+are code in `docs_check.rs`; its unit tests run with `rustc --test build.rs -o build-test` and then
+`./build-test`.
+
 ## Packaging
 
 ```sh
