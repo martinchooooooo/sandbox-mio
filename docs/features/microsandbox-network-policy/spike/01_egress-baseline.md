@@ -1,3 +1,8 @@
+---
+type: spike
+title: "Spike 01: Default-Deny Egress Baseline on msb 0.7.12"
+feature: microsandbox-network-policy
+---
 # Spike 01: Default-Deny Egress Baseline on msb 0.7.12
 
 Hands-on spike run 2026-11-01 on the Windows 11 development host against `msb 0.7.12` (`C:\Users\krist\.microsandbox\bin\msb.exe`, upgraded from 0.6.6, `msb doctor` passing). It clears Validation items 1, 4 and 5 of `docs/features/microsandbox-network-policy/01_ideas.md`; items 2 and 3 (`--secret`, chained `--proxy`) are left for later spikes. All commands ran from Git Bash. Every sandbox (`spike-netpol-*`), the spike volume, the spike image tag and the spike SSH key were removed at the end.

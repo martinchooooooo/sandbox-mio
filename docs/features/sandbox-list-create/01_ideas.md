@@ -1,3 +1,8 @@
+---
+type: ideas
+title: "Sandbox List Create-Item Ideas"
+feature: sandbox-list-create
+---
 # Sandbox List Create-Item Ideas
 
 This document covers turning the standalone "create project" form on the projects page (`src/routes/projects/+page.svelte:143-158`) into its own component that renders as a peer of `SandboxItem.svelte` inside the sandbox `<ul>`, positioned at the bottom of the list, plus adding a discreet, click-to-reveal option on that component to pick an existing directory on disk as the sandbox's workspace instead of always auto-creating a new one under `<Documents>/sandbox-mio`. The wide, inviting name-input affordance of the current form is deliberately preserved as the row's primary state; the existing-directory path is a small link that only expands into a folder picker once clicked, so it does not compete visually with "type a name to start a new project." The feature is entirely unimplemented: the create UI today is a plain `Field.Set`/`Input`/`Button` block that sits above and outside the `{#each}` loop (`+page.svelte:143-158`, `179-191`), and there is zero backend support anywhere for pointing a sandbox's workspace at an existing directory — `create_sandbox` (`src-tauri/src/lib.rs:69-81`) takes only a `name`, and `PodmanCliBackend::create` (`src-tauri/src/backends/mod.rs:318-352`) always derives the workspace path as `workspace_root().join(name)` (`workspace_path`, `mod.rs:77-80`) and unconditionally runs `std::fs::create_dir_all` on it. Relevant files: `src/routes/projects/+page.svelte`, `src/routes/projects/SandboxItem.svelte`, `src-tauri/src/backends/mod.rs`, `src-tauri/src/backends/types.rs`, `src-tauri/src/lib.rs`, `src-tauri/capabilities/default.json`, `src-tauri/Cargo.toml`, `package.json`.

@@ -1,3 +1,8 @@
+---
+type: ideas
+title: "Package Autocomplete Ideas"
+feature: package-autocomplete
+---
 # Package Autocomplete Ideas
 
 This document covers the ideation for adding autocomplete to the sandbox package install input. The install flow is fully implemented — the Rust `install_package` command runs `mise use <pkg>` in the container, `uninstall_package` runs `mise rm`, and `list_packages` reads `mise.toml` — but the frontend input in `src/routes/projects/SandboxItem.svelte` (lines 323–329) is a plain `<input>` that the user fills manually with no guidance on what is available. The proposed model replaces that input with an autocomplete-capable input that queries the mise tool registry to surface matching tool names as the user types.

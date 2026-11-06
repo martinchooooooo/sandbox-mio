@@ -1,3 +1,8 @@
+---
+type: improvements
+title: "Podman Exec Transport: Improvements"
+feature: podman-exec-transport
+---
 # Podman Exec Transport: Improvements
 
 ## Zombie `sshd -i` processes accumulate under the container's `/bin/sh` PID 1

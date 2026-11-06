@@ -1,5 +1,7 @@
 # E2E test tiers
 
+This file holds the rules and implementation detail for writing and running specs. The high-level picture of the tiers, the mock seam and run isolation is in `docs/architecture/testing.md`.
+
 Three tiers, picked by how much real infrastructure a spec's assertions need. **`standard` is the
 default** — it proves real behaviour against a real machine and is what regression confidence
 should be built on. `light` and `heavy` are for specific situations, not a default to reach for
@@ -187,7 +189,11 @@ standard failure-dump `afterEach`, same as any other spec.
 | `mock_configure` rejects a `mutagen.forward-*` key | `forward_create`, `forward_terminate` and `sweep_stale_forwards` in `src-tauri/src/sync/mod.rs` call the sidecar through `run()` with an `AppHandle`, so no `ProcessRunner` key exists for Mutagen forward subcommands | Script the flow through `MockNetworkManager` (`src-tauri/src/network/mock.rs`) instead; extending the seam is deferred in `docs/features/scriptable-mock-backend/04_improvements.md` |
 | A light spec's scripted `podman.ps` fixture reports an unexpected sandbox image version, or `readBaseImage()` throws "Could not parse BASE_IMAGE / BASE_IMAGE_VERSION" | The fixtures take their image tag from `MISE_BASE_IMAGE` (`e2e/lib/podman-machine.ts`), which regex-parses `BASE_IMAGE` and `BASE_IMAGE_VERSION` out of `src-tauri/src/backends/mod.rs` — a renamed or retyped declaration defeats the parse | Keep both declarations in their current `const NAME: <type> = …` form (the comment above them says so), and never reintroduce a literal image reference into a spec — import `MISE_BASE_IMAGE` |
 | A new launcher-side flag read through `argValues` (`e2e/wdio.conf.ts`) sees no value, so `IS_LIGHT_RUN` is false and `onPrepare` provisions a real Podman machine for a light run | `argValues` matches an exact flag argument or a `<flag>=` prefix only — a flag spelled any other way (a short alias, a differently punctuated form) falls through both branches | Pass `--suite`/`--spec` in either the space-separated or the `--flag=value` form, both of which `argValues` handles; a genuinely new spelling needs a new branch in `argValues` |
-| A light spec in a subdirectory of `test/specs/light/` never runs under `MIO_SPEC` | The filtered `LIGHT_SPECS` glob dropped the `**/` recursion the unfiltered glob has | Every tier glob in `e2e/wdio.conf.ts` is recursive (`./test/specs/light/**/*<MIO_SPEC>*.ts`, `./test/specs/standard/**/*.ts`, `./test/specs/heavy/**/*.ts`) — keep the `**/` when editing one, and keep the filtered and unfiltered light globs at the same depth |
+| A light spec in a subdirectory of `test/specs/light/` never runs under `MIO_SPEC` | The filtered `LIGHT_SPECS` glob dropped the `**/` recursion the unfiltered glob has | Every tier glob in `e2e/wdio.conf.ts` and every `test:*` script in `e2e/package.json` is recursive (`./test/specs/light/**/*<MIO_SPEC>*.ts`, `./test/specs/standard/**/*.ts`, `./test/specs/heavy/**/*.ts`) — keep the `**/` when editing one, and keep the filtered and unfiltered light globs at the same depth |
+| `Error: unable to find connection named mio-tests` | The `mio-tests` Podman machine was never initialised on this host | Run a `standard` tier once (`./build e2e`); its `onPrepare` provisions the machine. List connections with `podman system connection list` |
+| `podman --connection mio-tests-remote …` hangs right after the machine starts | The rootless Podman API socket does not start automatically in the machine's WSL image | Call `provisionMachine` (`e2e/lib/podman-machine.ts`) before any connection-qualified command; it starts the socket with `startPodmanSocket` and waits for the connection |
+| A spec cannot find the nav tabs, or lands on the welcome flow | `onboardingCompleted` is false in the run's `settings.json`, which hides the nav chrome (`src/routes/+layout.svelte`) | `onPrepare` (`e2e/wdio.conf.ts`) seeds `onboardingCompleted: true`; a welcome-flow spec resets the flag itself to reach the first-run path |
+| A compound selector such as a row plus a button-text matcher finds nothing | WebdriverIO does not combine selector strategies in one `$()` string | Resolve the parent element first, then query children with `parent.$()`, as the page objects in `e2e/test/pageobjects/` do |
 
 ## Wait budgets: use the named constants from `lib/timeouts.ts`
 
@@ -221,6 +227,7 @@ Mutagen state) — would capture whatever route happened to be loaded, which is 
 evidence. A spec without it burns its full budget and reports only that an element never appeared:
 that is how a real `undeploy` failure was lost twice.
 
-The per-run failure list is written to `e2e/failures-<tier>.log`, split by tier because `onPrepare`
-truncates it. A light run is the usual way to sanity-check a fix, and a single shared file meant that
-run wiped the standard failure being investigated before anyone read it.
+The per-run failure list is written to `e2e/failures-light.log` for a light run and
+`e2e/failures-standard.log` for any other, split because `onPrepare` truncates it. A light run is the
+usual way to sanity-check a fix, and a single shared file meant that run wiped the standard failure
+being investigated before anyone read it. `pnpm run test:failures` prints both.

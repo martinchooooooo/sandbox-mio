@@ -1,3 +1,8 @@
+---
+type: spike
+title: "Spike 02: Host-Held Secrets (`--secret`) on msb 0.7.12"
+feature: microsandbox-network-policy
+---
 # Spike 02: Host-Held Secrets (`--secret`) on msb 0.7.12
 
 Hands-on spike run 2026-11-01 on the Windows 11 development host against `msb 0.7.12`, image `sandbox-mio/base:6`. It clears Validation item 2 of `docs/features/microsandbox-network-policy/01_ideas.md` and records the secret lifecycle the design depends on (start, restart, `msb modify`, persistence). Item 3 (chained `--proxy`) is left for spike C. All commands ran from Git Bash with `MSYS_NO_PATHCONV=1`. Every sandbox (`spike-netpol-secret-*`) was removed at the end; no volume was created. Dummy value: `spike-secret-<random>` (written only to a temp file under `C:\Users\krist\.claude\jobs\c32fd5a9\tmp`).

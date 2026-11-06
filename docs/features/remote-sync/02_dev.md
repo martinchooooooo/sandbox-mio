@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "Remote Sync Implementation Plan"
+feature: remote-sync
+---
 # Remote Sync Implementation Plan
 
 This document is the build plan for taking a sandbox that was created locally and **deploying it to a remote host**, then keeping its workspace mirrored back to the user's laptop with a bundled Mutagen sidecar. It continues the Phase 2 design in `docs/remote-workspace-sync.md` and supersedes that document's assumption that remoteness is fixed when a sandbox is created. Mutagen sidecar bundling, the sync engine wrapper, the SSH transport writer, and the connection parser (phases A–C) are implemented as a reusable Rust core; the create-reverts-to-local refactor, the deploy flow with its lifecycle wiring (phase D), and the UI (phase E) are all implemented. The remaining work is the E2E coverage for the deploy/destroy/undeploy paths. Background design rationale lives in the auto-memory `workspace-sync-design`.

@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "Podman Exec Transport: Build Plan"
+feature: podman-exec-transport
+---
 # Podman Exec Transport: Build Plan
 
 This is the build plan for `docs/features/podman-exec-transport/01_ideas.md`, replacing Podman's

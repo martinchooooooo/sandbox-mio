@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "In-App Web Terminal (Zellij) — Build Plan"
+feature: web-terminal
+---
 # In-App Web Terminal (Zellij) — Build Plan
 
 This document is the build plan for the in-app web terminal whose design is in `docs/features/web-terminal/01_ideas.md`. It continues that ideation and supersedes it where a decision is now settled. The terminal is the Zellij web client (`zellij web`) run inside a sandbox container, published to the host loopback through Podman, and opened in a dedicated Tauri `WebviewWindow`. The 2026-06-27 spike recorded in `01_ideas.md` proved the end-to-end path (flox-installed Zellij serving HTTP 200 to the Windows host) and is the basis for this plan. **Status: nothing in this feature is implemented yet — all four phases (A–D) below are Remaining.** The feature touches four files of substance: `src-tauri/resources/Containerfile`, `src-tauri/src/backends/mod.rs`, `src-tauri/src/runtime/{mod.rs,types.rs}`, `src-tauri/src/lib.rs`, plus the frontend `src/routes/projects/+page.svelte`, the locale files under `messages/`, and `src-tauri/capabilities/default.json`.

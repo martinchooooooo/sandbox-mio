@@ -1,3 +1,8 @@
+---
+type: ideas
+title: "Credentials Inline Auth Ideas"
+feature: credentials-inline-auth
+---
 # Credentials Inline Auth Ideas
 
 This document covers the ideation for moving the Claude Code OAuth login UI from a separate Tauri `WebviewWindow` into an expandable inline card on the Credentials page (`src/routes/credentials/+page.svelte`). Today, clicking "Log in" opens a second window (`src/routes/agent-auth/+page.svelte`) that shows raw terminal output, extracts the OAuth URL via a client-side regex, and collects the pasted-back authorization code. Nothing of the inline-card design is implemented; the login machinery it reuses (subprocess spawn, output streaming, code submission) is fully implemented and unchanged by this feature. Related prior ideation lives in `docs/features/shared-agent-auth/01_ideas.md`, which designed the host-side credential store that this same login flow feeds into.

@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "Welcome / Onboarding Screen — Build Plan"
+feature: welcome-onboarding
+---
 # Welcome / Onboarding Screen — Build Plan
 
 This document is the build plan for the welcome/onboarding feature scoped in `docs/features/welcome-onboarding/01_ideas.md`; read that document first for the rejected alternatives behind every choice restated here. It continues every "Resolved 2026-07-08" decision already recorded there and additionally resolves the questions `01_ideas.md` left open, choosing concrete defaults for the mechanical ones rather than leaving them for a later document. **Nothing in this feature is implemented yet** — every phase below is `Remaining`. This document fixes the seams (file paths, command names, trait methods, store shapes) a future agent implementing this feature must create or touch, so `feature-implement` can proceed phase by phase without re-deriving the design.

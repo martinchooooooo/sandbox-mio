@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "Sandbox Runtime Management Build Plan"
+feature: sandbox-runtime-management
+---
 # Sandbox Runtime Management Build Plan
 
 This document is the build plan for managing the software installed inside a sandbox: installing packages, recording what is installed, and reproducing that software on a remote host at deploy time. It continues `docs/features/sandbox-runtime-management/01_ideas.md` and **supersedes the engine decision recorded in an earlier revision of this plan**: the engine was flox (built on Nix), and flox is what currently ships in the codebase, but a 2026-06-27 spike replaced flox with [mise](https://mise.jdx.dev) to shrink the sandbox base image from 1.84 GB to 324 MB. Status: the mise migration is implemented in the Rust backend and the base-image recipe (Phases A, B, C, and the reproduce engine of D); what remains is the deeper e2e spec rewrite (`runtime-management.spec.ts`), a deploy verification run, and a `GITHUB_TOKEN` pass-through. The former flox engine has been replaced in code. Relevant files: container lifecycle in `src-tauri/src/backends/mod.rs`, backend contracts in `src-tauri/src/backends/types.rs`, the runtime engine in `src-tauri/src/runtime/mod.rs` and `src-tauri/src/runtime/types.rs`, command wiring in `src-tauri/src/lib.rs`, and the workspace-sync lifecycle in `docs/features/remote-sync/02_dev.md` that this feature plugs into.

@@ -1,3 +1,8 @@
+---
+type: ideas
+title: "Proxy Traffic Viewer: Per-Sandbox Flow Log Panel"
+feature: proxy-traffic-viewer
+---
 # Proxy Traffic Viewer: Per-Sandbox Flow Log Panel
 
 This document covers a per-sandbox UI panel showing the HTTP(S) flows the `network-proxy` mitmproxy

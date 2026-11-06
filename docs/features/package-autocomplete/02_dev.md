@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "Package Autocomplete — Build Plan"
+feature: package-autocomplete
+---
 # Package Autocomplete — Build Plan
 
 This document is the build plan for the package-autocomplete feature described in `docs/features/package-autocomplete/01_ideas.md`. The feature adds autocomplete to the package install input in `src/routes/projects/SandboxItem.svelte`: a new `list_registry` Tauri command runs `mise registry --json` inside the sandbox container and returns name–description pairs; the frontend replaces the plain `<input>` with a Combobox-backed widget that filters the cached registry and shows suggestions with descriptions as the user types. The existing `install_package` / `uninstall_package` / `list_packages` commands and the `installPackage()` / `uninstallPackage()` handlers are unchanged — autocomplete is purely additive. **All work is Remaining — nothing is implemented yet.**

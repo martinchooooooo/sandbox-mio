@@ -1,3 +1,8 @@
+---
+type: improvements
+title: "Podman Startup Recovery — Deferred Improvements"
+feature: podman-startup-recovery
+---
 # Podman Startup Recovery — Deferred Improvements
 
 Findings from a review of how the app resolves its Podman target, and of the E2E cost the current resolution imposes on the `standard` tier. The subject is the split between `connection_name()` (`src-tauri/src/backends/mod.rs`) and the hardcoded `DEFAULT_MACHINE_NAME` used throughout `src-tauri/src/machine/mod.rs`. `02_dev.md` remains the record of the feature's settled design.

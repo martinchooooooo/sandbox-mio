@@ -1,3 +1,8 @@
+---
+type: ideas
+title: "Podman Exec Transport: Reaching Containers Without Publishing Ports"
+feature: podman-exec-transport
+---
 # Podman Exec Transport: Reaching Containers Without Publishing Ports
 
 This document covers replacing Podman's publish-then-forward port model with an SSH session

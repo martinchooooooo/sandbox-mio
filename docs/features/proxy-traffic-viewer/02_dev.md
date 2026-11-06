@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "Proxy Traffic Viewer: Build Plan"
+feature: proxy-traffic-viewer
+---
 # Proxy Traffic Viewer: Build Plan
 
 This document is the build plan for the per-sandbox flow-log panel scoped in

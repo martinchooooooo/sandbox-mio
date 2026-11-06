@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "Agent Web UI Dev"
+feature: agent-web-ui
+---
 # Agent Web UI Dev
 
 This is the build plan for embedding [Paseo](https://paseo.sh) as a third per-sandbox pane —

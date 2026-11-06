@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "Activity Center Build Plan"
+feature: activity-center
+---
 # Activity Center Build Plan
 
 Build plan for the global activity-and-notification subsystem described in `docs/features/activity-center/01_ideas.md`. It continues the ideas document's two load-bearing decisions unchanged — a Rust-owned `TaskRegistry` as the source of truth, and app-wide Tauri events (`app.emit`/`listen`) as the progress transport, with the existing per-invoke `Channel` streams left in place for in-context route UI — and it supersedes the ideas document's "left open" framing of persistence, cancellation, notification scope, retention, and enrollment order by resolving each below. **Status: Phases A–E are implemented (Rust registry + `list_tasks`, frontend store, `ActivityCenter.svelte` global surface with the Selector-Contract data-attributes, `sonner` toasts, and the `download_model`/`start_inference` enrollments); the `e2e/test/specs/heavy/activity-center.spec.ts` spec and `activity.page.ts` page object are added. Phases F (enroll `install_agent`/`provision_sandbox_host`, cancellation) and G (OS-native notifications) remain deferred.** Every seam it builds on already exists: the four streamed-progress commands in `src-tauri/src/lib.rs`, the `app.emit`/`listen` precedent in `src-tauri/src/agents/mod.rs`, the route-scoped `src/routes/projects/EventLog.svelte`, the module-scoped store pattern in `src/lib/registry.svelte.ts`, and the Tauri-state-registry pattern (`ActiveServer`) managed in `lib.rs` `setup`.

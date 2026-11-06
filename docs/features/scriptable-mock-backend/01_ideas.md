@@ -1,3 +1,8 @@
+---
+type: ideas
+title: "Scriptable Mock Backend Ideas"
+feature: scriptable-mock-backend
+---
 # Scriptable Mock Backend Ideas
 
 This document covers the ideation for making the e2e `light` tier's in-memory mocks configurable at runtime, so light specs can simulate backend conditions the mocks cannot express today — command failures, non-happy sync statuses, error-kind-specific frontend branches — without touching Podman. The goal is a project-level shift: lean on the `light` tier (seconds, no Podman) for day-to-day feedback, and run the `standard`/`heavy` tiers (minutes, real machine) on a periodic cadence rather than per change. The feature is entirely unimplemented today: every mock is a fixed-behaviour struct compiled into the binary and constructed once at startup, with no channel for a running spec to alter what any mock method returns. The relevant files are the five mock implementations (`src-tauri/src/backends/mock.rs`, `src-tauri/src/runtime/mock.rs`, `src-tauri/src/sync/mock.rs`, `src-tauri/src/machine/mock.rs`, `src-tauri/src/network/mock.rs`), their `default_*()` constructors (listed in `src-tauri/AGENTS.md`), the command inventory in `src-tauri/src/lib.rs`, and the light-tier wiring described in `e2e/AGENTS.md`.

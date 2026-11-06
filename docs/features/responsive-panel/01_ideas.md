@@ -1,3 +1,8 @@
+---
+type: ideas
+title: "Responsive Panel Ideas"
+feature: responsive-panel
+---
 # Responsive Panel Ideas
 
 This document is the ideation for two related global-panel problems in the embedded multi-webview workspace built by `docs/features/embedded-windows/` (01/02/03; Phases A-E implemented, Phase F deferred): first, the panel's content — the projects list and each project's action row — is authored assuming the panel fills the whole window and looks wrong once Rust shrinks it to `GLOBAL_EXPANDED_W` (380 logical px) or `GLOBAL_RAIL_W` (48 logical px); second, Terminal, Packages, and Agents are three separately-triggered surfaces stacked inside every project's row rather than organised as the "hub" a workspace is meant to be once a sandbox is open. Nothing described here is built yet. The relevant files are `src-tauri/src/workspace/mod.rs` and `src-tauri/src/workspace/types.rs` (the Rust-owned registry and geometry), `src/routes/+layout.svelte` (the global-panel chrome mirroring `workspace://state`), `src/routes/projects/+page.svelte` and `src/routes/projects/SandboxItem.svelte` (the projects list and per-project action row), `src/routes/projects/PackageManager.svelte` and `src/routes/projects/AgentManager.svelte` (the package/agent management UI currently embedded inline in each row), and `src/routes/workspace/switcher/+page.svelte` (the tab bar for the sandbox's embedded panes).

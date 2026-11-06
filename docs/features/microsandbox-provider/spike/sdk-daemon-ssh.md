@@ -1,3 +1,8 @@
+---
+type: spike
+title: "Spike: Rust SDK, the daemon question, SSH serve, and snapshots"
+feature: microsandbox-provider
+---
 # Spike: Rust SDK, the daemon question, SSH serve, and snapshots
 
 Desk spike run 2026-08-09 against microsandbox `0.6.8` (published to crates.io 2026-07-29) and `superradcompany/microsandbox` at `main` (last push 2026-08-09). No `msb` binary was installed and nothing was compiled; every finding below is either a documentation quote or a read of upstream source fetched through the GitHub raw/contents API. The `gh` CLI is not installed on this host, so repository reads used `https://api.github.com/repos/superradcompany/microsandbox/...` and `https://raw.githubusercontent.com/superradcompany/microsandbox/main/...` directly.

@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "Navigation Column Responsive Layout — Build Plan"
+feature: nav-responsive
+---
 # Navigation Column Responsive Layout — Build Plan
 
 ## Overview

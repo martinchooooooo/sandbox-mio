@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "Parallel worktree e2e runs — build plan"
+feature: parallel-worktree-e2e
+---
 # Parallel worktree e2e runs — build plan
 
 This document is the build plan for running e2e tiers from several git worktrees of this repository

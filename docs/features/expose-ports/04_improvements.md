@@ -1,3 +1,8 @@
+---
+type: improvements
+title: "Expose Ports — Deferred Improvements"
+feature: expose-ports
+---
 # Expose Ports — Deferred Improvements
 
 Port exposure (`expose_port`/`unexpose_port`/`watch_ports_file`, `src-tauri/src/network/mod.rs`) predates the `docs/features/` pipeline, so this directory carries no `01_ideas.md`–`03_e2e.md`. This file exists to hand off work found while fixing `e2e/test/specs/standard/expose-port.spec.ts` on 2026-07-26. Each section states the problem, the evidence for it, and the shape of a fix.

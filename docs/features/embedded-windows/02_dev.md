@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "Embedded Windows (Multi-Webview Workspace) Build Plan"
+feature: embedded-windows
+---
 # Embedded Windows (Multi-Webview Workspace) Build Plan
 
 This document is the build plan for hosting a sandbox's tool surfaces — the Zellij terminal today, and separate apps such as OpenCode later — inside an in-app *workspace* rather than in separate top-level operating-system windows. It continues `01_ideas.md` and supersedes its option space: the ideation weighed alternatives and left seven open questions; this plan fixes the concrete model and answers every one of those questions in the "Resolved Decisions" section. **Status: Phases A–E are implemented (2026-07-02); Phase F remains deferred.** The `unstable` feature is enabled, `src-tauri/src/workspace/` holds the registry, layout, and window plumbing, the `open_workspace`/`set_panel_collapsed`/`close_workspace` commands are registered, and the `workspace_state` read command was pulled forward from Phase F into Phase B per the e2e plan (`03_e2e.md`, "The read-back seam"). Implementation deviations from the letter of this plan: teardown also hooks `WindowEvent::Destroyed`, so closing the container with the OS X button reclaims the registry entry and forwards (the plan only named the close button and undeploy/destroy paths); and the pre-existing `openWorkspace()` folder-reveal helper in `SandboxItem.svelte` was renamed `openFolder()` to free the name for the workspace action. The e2e spec of `03_e2e.md` is not yet written (its de-risking spike is a prerequisite).

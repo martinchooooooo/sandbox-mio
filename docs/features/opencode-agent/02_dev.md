@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "OpenCode Agent Build Plan"
+feature: opencode-agent
+---
 # OpenCode Agent Build Plan
 
 Build plan for adding **OpenCode** as a second installable coding agent (`docs/features/opencode-agent/01_ideas.md`), pre-wired on install to the local-LLM host inference server. It continues the ideas document's two halves — an OpenCode catalogue entry that installs via mise, and the realization of local-llm's Phase G in-sandbox endpoint wiring — and supersedes one ideas-stage assumption: the reverse forward is **app-wide**, not per-sandbox, because the inference server is a single app-wide process and the Mutagen listener lives on the shared Podman-machine VM (so every local container reaches it through `host.containers.internal`). It also supersedes the ideas document's hedge between a `127.0.0.1` and a `host.containers.internal` container address: the 2026-06-29 spike settled on `host.containers.internal:<FIXED_VM_PORT>` with the listener on the VM's `0.0.0.0`. **Status: nothing in this plan is implemented yet — no OpenCode code exists in the codebase.** Every phase below is `Remaining`. The local-llm host inference server (its Phases A–F) is already implemented and is a dependency, not part of this plan.

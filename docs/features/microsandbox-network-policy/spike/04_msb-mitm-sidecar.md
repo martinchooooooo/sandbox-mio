@@ -1,3 +1,8 @@
+---
+type: spike
+title: "Spike 04: mitmproxy as a Microsandbox Sidecar on msb 0.7.12"
+feature: microsandbox-network-policy
+---
 # Spike 04: mitmproxy as a Microsandbox Sidecar on msb 0.7.12
 
 Hands-on spike run 2026-11-02 on the Windows 11 development host against `msb 0.7.12`, using `docker.io/mitmproxy/mitmproxy:11.1.3` (the `MITMPROXY_IMAGE_DEFAULT` in `src-tauri/src/proxy/mod.rs`) and the agent image `sandbox-mio/base:6`. It validates the user decision that mitmproxy for a microsandbox sandbox runs in its own microsandbox VM (not Windows-native), chained from the agent sandbox through a SOCKS5 port published to host loopback. It supersedes the "Windows-native `mitmdump`" recommendation of `spike/03_chained-proxy.md`. Podman was down; nothing here touched it. All commands ran from Git Bash with `MSYS_NO_PATHCONV=1`, host paths passed through `cygpath -m`. All `spike-netpol-side-*` sandboxes and the volume `spike-netpol-side-vol` were removed; no image tag was created. The pulled `docker.io/mitmproxy/mitmproxy:11.1.3` image was kept. Temp files lived under `C:\Users\krist\.claude\jobs\c32fd5a9\tmp\s4`.

@@ -1,3 +1,8 @@
+---
+type: ideas
+title: "Podman Startup Recovery"
+feature: podman-startup-recovery
+---
 # Podman Startup Recovery
 
 This document covers graceful handling of the scenario where the Podman machine (`podman-machine-default`) is stopped or its user-level socket is missing after a host system restart. Currently the app propagates a raw Podman error message to the UI and leaves the user with no recovery path. None of this feature is implemented; all relevant seams live in `src-tauri/src/backends/mod.rs` and `src/routes/projects/+page.svelte`.

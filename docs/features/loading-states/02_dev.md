@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "Loading States for User Actions — Build Plan"
+feature: loading-states
+---
 # Loading States for User Actions — Build Plan
 
 This document is the build plan for the loading-states feature whose design is in `docs/features/loading-states/01_ideas.md`. The feature gives every user-triggered action in the Projects UI in-flight feedback and a per-project **status row** that surfaces both a pending message ("Deploying…") and an error message, replacing the current page-level `error` string for row-scoped actions. The feature is **frontend-only** — no Rust, no Tauri command, and no `messages` key removal; only additions. It supersedes one assumption from `01_ideas.md`: the ideas doc said loading must not change the `onError` contract, but this plan **removes the `onError` prop from `SandboxItem`** and routes each row's errors into that row's own status row instead. The work is organised into five phases (A–E); **all phases are Remaining — nothing is implemented yet.** The seams are `src/lib/components/ui/button/button.svelte` (the `loading` prop), a new `src/lib/actions.svelte.ts` (the action runner), a new `src/routes/projects/StatusRow.svelte` (the reusable status row), `src/routes/projects/SandboxItem.svelte` (per-row actions), and `src/routes/projects/+page.svelte` (the create-project action and list-load errors).

@@ -1,3 +1,8 @@
+---
+type: improvements
+title: "Proxy Traffic Viewer: Deferred Improvements"
+feature: proxy-traffic-viewer
+---
 # Proxy Traffic Viewer: Deferred Improvements
 
 Ideas noticed while scoping `01_ideas.md` and `02_dev.md` that are worthwhile but out of scope for

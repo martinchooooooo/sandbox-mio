@@ -1,3 +1,8 @@
+---
+type: improvements
+title: "Network Proxy: Deferred Improvements"
+feature: network-proxy
+---
 # Network Proxy: Deferred Improvements
 
 Ideas scoped out of `01_ideas.md` as worthwhile but out of scope for the initial inspection-plus-secret-injection feature.

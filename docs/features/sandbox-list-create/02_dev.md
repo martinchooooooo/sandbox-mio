@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "Sandbox List Create-Item Dev Plan"
+feature: sandbox-list-create
+---
 # Sandbox List Create-Item Dev Plan
 
 This is the build plan for the feature ideated in `docs/features/sandbox-list-create/01_ideas.md`: extracting the "create project" form into a `CreateSandboxItem.svelte` list item that always renders as the last row of the sandbox `<ul>`, and adding a discreet click-to-reveal control on that row for picking an existing directory as the workspace instead of always auto-creating one. This document continues all of `01_ideas.md`'s Proposed Model and Technology Choices sections unchanged and resolves every one of its Open Questions below. Status: **all four phases implemented** (Phase A backend `existing_path` support, Phase B directory-picker plugin plumbing, Phase C `CreateSandboxItem.svelte` + `+page.svelte` list restructuring, Phase D name-collision and already-tracked-path guards — D ended up folded into A/C's own commits rather than landing separately, see those sections). `cargo check` and `pnpm run check` both pass clean on the changed files. i18n is still deferred: all new user-facing strings are hardcoded English literals marked `TODO(i18n)`, not yet added to `messages/*.json`, pending user sign-off on behavior and wording per the project's `feature-implement` convention. Two manual verification steps remain outstanding — see Phase B and Phase C's notes — and are not yet done: clicking the real native folder picker once from the running `/projects` route, and a general manual click-through of the new UI.

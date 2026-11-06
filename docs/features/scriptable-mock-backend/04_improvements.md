@@ -1,3 +1,8 @@
+---
+type: improvements
+title: "Scriptable Mock Backend — Deferred Improvements"
+feature: scriptable-mock-backend
+---
 # Scriptable Mock Backend — Deferred Improvements
 
 Improvements noticed while planning `docs/features/scriptable-mock-backend/02_dev.md` that are out of the feature's v1 scope. Each section states what the improvement is and why it was deferred.

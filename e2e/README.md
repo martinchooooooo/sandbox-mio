@@ -12,7 +12,7 @@ the taxonomy, decision rules, and the mock-backend design.
 - `test/specs/light/**` — mocked specs (`light` suite, `pnpm run test:light`), no podman. Reserved
   for edge cases that are awkward to provoke for real, and fast debug loops.
 - `test/specs/heavy/**` — large-asset specs (`heavy` suite, `pnpm run test:heavy`).
-- `test/pageobjects/` — the page-object model the specs use. One module per screen plus component objects; all selectors, waits, and clicks live here so specs read as high-level actions. See `test/pageobjects/AGENTS.md`.
+- `test/pageobjects/` — the page-object model the specs use. One module per screen plus component objects; all selectors, waits, and clicks live here so specs read as high-level actions.
 
 ## Test machines
 
@@ -30,11 +30,11 @@ so specs read as high-level actions and a UI change touches one place.
 
 ### Layout
 
-- `app.page.js` — base class the concrete pages extend.
-- `*.page.js` — one module per screen (e.g. `projects.page.js`, `settings.page.js`). Each exports a
+- `app.page.ts` — base class the concrete pages extend.
+- `*.page.ts` — one module per screen (e.g. `projects.page.ts`, `settings.page.ts`). Each exports a
   singleton instance.
-- `*.component.js` — a component object wrapping one repeated UI fragment rather than a whole
-  screen (e.g. `project-row.component.js`, one project's `<li>` in the list). Constructed per
+- `*.component.ts` — a component object wrapping one repeated UI fragment rather than a whole
+  screen (e.g. `project-row.component.ts`, one project's `<li>` in the list). Constructed per
   instance, not a singleton.
 
 ### Conventions

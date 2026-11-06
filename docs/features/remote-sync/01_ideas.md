@@ -1,3 +1,8 @@
+---
+type: ideas
+title: "Remote Workspace and File Sync Plan"
+feature: remote-sync
+---
 # Remote Workspace and File Sync Plan
 
 This document is the implementation plan for running a sandbox container on a remote host while keeping its workspace files mirrored to the user's laptop. Phase 1 (local-only workspaces) is already implemented in `src-tauri/src/backends/mod.rs`; Phase 2 (remote workspaces with sync) is unimplemented and described here so a future agent can continue the work. Background on the design decisions is recorded in the auto-memory `workspace-sync-design`.

@@ -1,3 +1,8 @@
+---
+type: improvements
+title: "Deferred improvements"
+feature: parallel-worktree-e2e
+---
 # Deferred improvements
 
 Work that is worthwhile but deliberately outside the parallel-worktree scope defined in

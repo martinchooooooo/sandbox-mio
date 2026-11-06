@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "Consolidate AppContainer Webview — Build Plan"
+feature: consolidate-app-container
+---
 # Consolidate AppContainer Webview — Build Plan
 
 This document is the build plan for collapsing the AppContainer's three chrome/internal-route

@@ -1,3 +1,8 @@
+---
+type: spike
+title: "Sandbox Runtime Management — Spike Artifacts"
+feature: sandbox-runtime-management
+---
 # Sandbox Runtime Management — Spike Artifacts
 
 Reference artifacts for the spikes behind `docs/features/sandbox-runtime-management/`. These files are kept so a future agent can re-run the validation without re-deriving the commands. The findings they produced are written up in `01_ideas.md` (Validation), `02_dev.md` (The flox/Nix Substrate), and `03_e2e.md` (De-Risking Spike Results).

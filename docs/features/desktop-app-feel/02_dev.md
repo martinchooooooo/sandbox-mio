@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "Desktop App Feel — Build Plan"
+feature: desktop-app-feel
+---
 # Desktop App Feel — Build Plan
 
 ## Overview

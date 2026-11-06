@@ -1,3 +1,8 @@
+---
+type: spike
+title: "mise Runtime-Manager Spike Artifacts"
+feature: sandbox-runtime-management
+---
 # mise Runtime-Manager Spike Artifacts
 
 Reference artifacts for the 2026-06-27 spike that replaced flox with [mise](https://mise.jdx.dev) to shrink the sandbox base image. The findings are written up in `docs/features/sandbox-runtime-management/02_dev.md` (Spike Validation and Resolved Decisions). The flox spike artifacts in the parent directory are kept for history; this directory is the mise replacement.

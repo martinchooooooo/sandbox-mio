@@ -1,3 +1,8 @@
+---
+type: ideas
+title: "Sandbox Runtime Management Plan"
+feature: sandbox-runtime-management
+---
 # Sandbox Runtime Management Plan
 
 This document is the ideation for managing the software a user installs inside a sandbox: recording what is installed, and reproducing that software on a remote host when the sandbox is deployed. The sandbox container itself (an `alpine:latest` Podman container) and the local→remote workload migration already exist; the migration today ships an opaque committed image, and there is no record of what software a sandbox contains. The proposed model replaces the image transfer of software with a declarative runtime manifest driven by flox (built on Nix), validated by a spike on 2026-06-22. Relevant files: the backend container lifecycle in `src-tauri/src/backends/mod.rs`, the backend contracts in `src-tauri/src/backends/types.rs`, and the command wiring in `src-tauri/src/lib.rs`. The companion remote-sync feature (`docs/features/remote-sync/01_ideas.md`) covers workspace file sync and is the lifecycle this feature plugs into.

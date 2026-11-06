@@ -1,3 +1,8 @@
+---
+type: ideas
+title: "Remote Sandbox Terminal (Zellij via Mutagen Forward)"
+feature: remote-terminal
+---
 # Remote Sandbox Terminal (Zellij via Mutagen Forward)
 
 This document is the ideation for extending the in-app Zellij web terminal — already working for local sandboxes — to sandboxes deployed on a remote host. The terminal is provided by `zellij web` running inside the remote container; a Mutagen forwarding session carries traffic from a Windows-host loopback port to the remote container's web port, so the same `WebviewWindow` mechanism used locally loads the terminal without any new authentication or process-management infrastructure. Nothing for this case exists today: the remote container `create` call deliberately omits the port-publish and pasta-network flags (`src-tauri/src/backends/mod.rs`, deploy-time `create` near line 398), and no forwarding session is created at deploy time. The feature builds on four existing seams: the Mutagen sidecar already bundled and running for file sync (`src-tauri/src/sync/mod.rs`), the SSH alias written at deploy time (`src-tauri/src/ssh/mod.rs`), the `open_terminal` runtime operation and Tauri command already working for local sandboxes (`src-tauri/src/runtime/mod.rs:206`, `src-tauri/src/lib.rs:63`), and the `WebviewWindow` open path in the frontend (`src/routes/projects/SandboxItem.svelte:172`).

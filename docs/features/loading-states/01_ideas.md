@@ -1,3 +1,8 @@
+---
+type: ideas
+title: "Loading States for User Actions"
+feature: loading-states
+---
 # Loading States for User Actions
 
 This document is the ideation for adding in-flight feedback (loading states) to every user-triggered action in the Projects UI, and for establishing a reusable pattern so future features get loading feedback for free. The Projects UI is a SvelteKit + Svelte 5 (runes) frontend that drives a Tauri/Rust backend over `invoke()`. Today exactly one action has any feedback — package install/uninstall, via a single `packageBusy` boolean in `src/routes/projects/SandboxItem.svelte` — and every other action (`start`, `stop`, `deploy`, `undeploy`, `destroy`, `toggleSync`, `openTerminal`, and `createProject` in `src/routes/projects/+page.svelte`) fires its `invoke()` and awaits silently, leaving the button visually unchanged for the entire round trip. Nothing else in this feature exists yet. The feature builds on three existing seams: the async action handlers in `src/routes/projects/SandboxItem.svelte` and `src/routes/projects/+page.svelte`, the shared `Button` component in `src/lib/components/ui/button/button.svelte`, and the Hugeicons icon dependency (`@hugeicons/svelte` + `@hugeicons/core-free-icons`) already in `package.json`.

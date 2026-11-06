@@ -1,3 +1,8 @@
+---
+type: ideas
+title: "Welcome / Onboarding Screen"
+feature: welcome-onboarding
+---
 # Welcome / Onboarding Screen
 
 This document covers replacing the app's current landing content — a leftover Tauri-scaffold "enter a name and greet" form — with a hero-and-onboarding flow modeled on the Dribbble reference [Onboarding flow and loader](https://dribbble.com/shots/25383666-Onboarding-flow-and-loader): a big animated "Sandbox mio" hero (the word "mio" cycling through translations — "Mine", "Meins", "Мой" — per the CSS technique in [this CodePen](https://codepen.io/orchard/pen/LoNdQZ)), followed by a welcome step that tells the user a short setup is coming, then a step with two bare-bones actions — "Create virtual machine" and "Download necessities" — framed as the start of a guided tour. Nothing in this pipeline is implemented yet: the landing route (`src/routes/+page.svelte`) is still the scaffold form, and `src/routes/intro/+page.svelte` is a stub that renders only the existing `Robot.svelte` mascot animation with no onboarding copy, steps, or actions. The relevant frontend files are `src/routes/+page.svelte` (current landing content), `src/routes/intro/+page.svelte` and `src/lib/Robot.svelte` (existing but unused-for-onboarding stub and mascot), `src/lib/components/GlobalNav.svelte` (already has a `/intro` nav entry), and `src/routes/projects/+page.svelte` (the existing, unrelated-but-adjacent Podman machine first-run gate this feature must not collide with). The relevant backend files are `src-tauri/src/lib.rs` (`create_sandbox`, `provision_podman`, `machine_needs_init`, `ensure_base_image` access) and `src-tauri/src/settings/mod.rs` (`AppSettings` persistence, the natural home for any new "onboarding seen" flag).

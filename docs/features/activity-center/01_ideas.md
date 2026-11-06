@@ -1,3 +1,8 @@
+---
+type: ideas
+title: "Activity Center Ideas"
+feature: activity-center
+---
 # Activity Center Ideas
 
 This document covers the ideation for a global activity-and-notification subsystem in sandbox-mio: a single app-wide place that tracks the progress of long-running background work (local-LLM model downloads, inference-server setup, host provisioning, agent installs, and future jobs), surfaces that progress no matter which route the user is on, and raises a notification when a job finishes or fails. The feature is unimplemented as a unified subsystem today, but the codebase already contains three uncoordinated precursors that it will absorb: the per-invoke `Channel` progress streams used by `download_model` / `start_inference` / `install_agent` / `provision_sandbox_host`, the route-scoped container-event viewer `EventLog.svelte`, and the one app-wide-event pattern proven by agent auth (`agent-auth-output-<session_id>`). The relevant seams live in `src-tauri/src/lib.rs` (command registration and Tauri-state registries), the per-feature Rust modules under `src-tauri/src/{inference,agents,backends}/`, and the frontend stores/components under `src/lib/` and `src/routes/`. This document argues where the source of truth for in-flight work should live and how progress should reach a UI that survives navigation; the build plan and tests are out of scope here.

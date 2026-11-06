@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "Remote Sandbox Terminal — Build Plan"
+feature: remote-terminal
+---
 # Remote Sandbox Terminal — Build Plan
 
 This document is the build plan for the remote-sandbox terminal feature whose design is in `docs/features/remote-terminal/01_ideas.md`. The feature extends the in-app Zellij web terminal to both local and deployed sandboxes via a **single code path**: a Mutagen forwarding session bridges a Windows-host loopback port to the Zellij web server inside the sandbox container, regardless of whether that container is local or remote. All five phases (A–E) are Remaining; nothing in this feature is implemented yet.

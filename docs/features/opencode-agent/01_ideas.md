@@ -1,3 +1,8 @@
+---
+type: ideas
+title: "OpenCode Agent Ideas"
+feature: opencode-agent
+---
 # OpenCode Agent Ideas
 
 This document covers the ideation for adding **OpenCode** as a second installable coding agent in sandbox-mio, alongside the existing Claude Code agent, and — the distinguishing requirement — for **pre-configuring OpenCode on install** so that a local-LLM provider is already wired up out of the box, pointing at the host inference server delivered by the `local-llm` feature (`docs/features/local-llm/`). The agent-installation half builds on an existing, working seam: the static agent catalogue (`src/lib/agents/catalogue.ts`), the per-sandbox install flow (`install_agent` / `agents::install_packages` in `src-tauri/src/lib.rs` and `src-tauri/src/agents/mod.rs`), and the `AgentManager.svelte` UI. The pre-configuration half is, in effect, the concrete realization of the local-llm feature's **unimplemented Phase G** (in-sandbox endpoint wiring; `docs/features/local-llm/02_dev.md` lines 333–339), which already names OpenCode as its first intended consumer. Nothing for OpenCode exists in the codebase today; the local-llm host inference server (Phases A–F) is implemented but its sandbox-facing wiring is not. The focus is Windows, matching the local-llm feature's current scope.

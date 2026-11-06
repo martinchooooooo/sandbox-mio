@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "E2E Test Tiering Strategy"
+feature: e2e-tiering
+---
 # E2E Test Tiering Strategy
 
 ## Context

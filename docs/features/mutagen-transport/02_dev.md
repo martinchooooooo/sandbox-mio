@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "Mutagen-Based Transport: Build Plan"
+feature: mutagen-transport
+---
 # Mutagen-Based Transport: Build Plan
 
 This is the build plan for `docs/features/mutagen-transport/01_ideas.md`, extracting a provider-neutral `PortTransport` seam and widening `SshAlias`/`SyncStrategy` so Podman's port-forwarding and workspace-sync mechanics stop being hard-wired into `NetworkManager`/`RuntimeManager` call sites, ahead of `docs/features/microsandbox-provider/01_ideas.md` needing a second provider to slot into the same seams. **Status: Phases A–C are implemented; Phase D (regression pass and doc handoff) is complete below.** The plan is scoped, per `01_ideas.md`'s Technology Choices, to be exercisable and verifiable against Podman alone with zero observable behaviour change; no `msb`/microsandbox code is touched here.

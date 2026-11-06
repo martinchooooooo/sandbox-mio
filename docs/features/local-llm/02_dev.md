@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "Local LLM Models Build Plan"
+feature: local-llm
+---
 # Local LLM Models Build Plan
 
 Build plan for the local-LLM feature described in `docs/features/local-llm/01_ideas.md`. It continues the ideas document's host-sidecar architecture and supersedes its single-engine framing: both inference engines (bundled llama.cpp+Vulkan and Foundry Local) are built and selected at runtime via a new advanced-settings surface, per the explicit product decision to A/B them. The feature is **informative by design**: each engine exposes its own ordered, human-readable setup checklist (`InferenceEngine::setup_steps`) that the UI renders both as a static explainer in `/settings` and as a live, ticking checklist during start in `/models`, so users see the "magic" each runtime performs under the hood (see Phase F2). The build adds one new Rust module (`src-tauri/src/inference/`), one new settings module (`src-tauri/src/settings/`), new dependencies (`sysinfo`, `reqwest`, `sha2`, `futures-util`), a frontend model catalogue (`src/lib/models/`), a top-level `/models` route, and a `/settings` route with an advanced section.

@@ -1,3 +1,8 @@
+---
+type: spike
+title: "Spike: Windows host viability, state directories, networking policy"
+feature: microsandbox-provider
+---
 # Spike: Windows host viability, state directories, networking policy
 
 Desk research performed 2026-08-09 against microsandbox's published documentation, the `superradcompany/microsandbox` GitHub repository (issues, pull requests, releases, and raw source on `main`), and Microsoft's Windows Hypervisor Platform documentation. No `msb` binary was installed, no Windows optional feature was enabled, and no command was run against a live microsandbox host. The `gh` CLI is not installed on this development machine, so every GitHub lookup went through the public REST API with `curl` — the equivalent `gh` invocation is given alongside each result so the query can be reproduced.

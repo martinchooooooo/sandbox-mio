@@ -1,3 +1,8 @@
+---
+type: improvements
+title: "Microsandbox Provider — Deferred Improvements"
+feature: microsandbox-provider
+---
 # Microsandbox Provider — Deferred Improvements
 
 ## Retire `MockRuntime` and `MockNetworkManager` onto the scripted-runner seam

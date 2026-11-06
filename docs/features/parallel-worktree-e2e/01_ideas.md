@@ -1,3 +1,8 @@
+---
+type: ideas
+title: "Parallel worktree e2e runs — ideation"
+feature: parallel-worktree-e2e
+---
 # Parallel worktree e2e runs — ideation
 
 This document scopes running the e2e `light` tier concurrently from several git worktrees of this

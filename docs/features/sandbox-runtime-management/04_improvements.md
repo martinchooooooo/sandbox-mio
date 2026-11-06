@@ -1,3 +1,8 @@
+---
+type: improvements
+title: "Lessons Learned: flox → mise"
+feature: sandbox-runtime-management
+---
 # Lessons Learned: flox → mise
 
 A short retrospective on the runtime-management engine. The build details are in `02_dev.md` and the test plan in `03_e2e.md`; this file records *why the engine changed* so a future agent does not relitigate it.

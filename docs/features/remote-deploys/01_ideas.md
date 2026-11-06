@@ -1,3 +1,8 @@
+---
+type: ideas
+title: "Remote Deploys"
+feature: remote-deploys
+---
 # Remote Deploys
 
 This document covers the design for deploying a sandbox from the local Podman machine to a remote Podman host. The deploy flow itself — stopping the local container, provisioning the remote workspace and container, and handing off to the sync engine — is already implemented in `deploy` in `src-tauri/src/backends/mod.rs`. The gap this document captures is base-image provisioning on the remote: the mise base image (`sandbox-mio/base:mise`) is never published to a registry, so when the remote connection lacks it `podman create` falls back to a registry pull that fails. The fix (`ensure_image_on` in `src-tauri/src/backends/mod.rs`, called from `deploy` before `podman create`) closes that gap. The companion sandbox-runtime-management document (`docs/features/sandbox-runtime-management/01_ideas.md`) covers the mise engine and software reproduction; the remote-sync document (`docs/features/remote-sync/01_ideas.md`) covers workspace file sync via Mutagen.

@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "Workspace App Tabs Build Plan"
+feature: workspace-app-tabs
+---
 # Workspace App Tabs Build Plan
 
 This document is the build plan for reshaping the embedded workspace's tab model, continuing and superseding `01_ideas.md`. It commits the ideas document's proposed model to concrete seams: opening a sandbox embeds and activates **only** the Manage pane (Terminal stops being embedded eagerly and becomes a launcher-triggered lazy pane like Agents), the Manage route gains an app launcher, the switcher becomes a two-level per-sandbox block (name row over app-tab row with a home-icon Manage tab), and a new `close_pane` command closes exactly one app tab while its siblings and the Manage tab stay open. It also adopts the ideas document's spike outcome: the terminal webview URL must pin a stable per-sandbox session name so a closed-and-reopened Terminal tab reattaches to the same Zellij session. **Status: nothing in this plan is implemented yet** — all phases below are Remaining. The plan calls out three refactors that shrink the final code: one app catalogue driving both the switcher and the launcher (subsuming the duplicated `paneTitle` and the standalone "Open Agents UI" button), a shared `embed_external`-style activate-on-create path reused by the Manage pane, and a `close_app`/`close_pane` split over shared teardown helpers.

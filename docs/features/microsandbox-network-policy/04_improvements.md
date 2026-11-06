@@ -1,3 +1,8 @@
+---
+type: improvements
+title: "Microsandbox Network Policy: Deferred Improvements"
+feature: microsandbox-network-policy
+---
 # Microsandbox Network Policy: Deferred Improvements
 
 Ideas scoped out of `docs/features/microsandbox-network-policy/01_ideas.md` as worthwhile but outside the native-policy-plus-chained-proxy feature.

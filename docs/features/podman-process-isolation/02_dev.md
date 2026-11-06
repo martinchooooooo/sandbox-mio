@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "Podman Process Isolation — Build Plan"
+feature: podman-process-isolation
+---
 # Podman Process Isolation — Build Plan
 
 Build plan continuing `docs/features/podman-process-isolation/01_ideas.md`, which diagnosed why every

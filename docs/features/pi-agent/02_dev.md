@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "Pi Agent Build Plan"
+feature: pi-agent
+---
 # Pi Agent Build Plan
 
 Build plan for adding **pi** (`pi.dev`, mise tool `pi`, GitHub `earendil-works/pi`) as a third installable coding agent (`docs/features/pi-agent/01_ideas.md`), pre-wired on install to the local-LLM host inference server. It continues the ideas document unchanged in its core decisions — a pi catalogue entry installed via mise, a provider block generated from the model catalogue, and reuse of the already-built app-wide `inference-reverse` Mutagen forward and fixed VM port `51199` — and settles the ideas document's open questions with the resolutions below. The one mechanism new to pi (absent from the OpenCode feature it mirrors) is redirecting pi's config directory into the bind-mounted workspace via `PI_CODING_AGENT_DIR`, set in the workspace `mise.toml [env]`, so provisioning stays host-side and container-state-independent. Both pi-specific risks were cleared by the 2026-07-01 spike (`01_ideas.md` Validation): mise installs `pi@0.80.2` as a self-contained binary, and pi honours `PI_CODING_AGENT_DIR` from a mise `[env]` export and loads the redirected `models.json`. **Status: nothing in this plan is implemented yet — no pi code exists in the codebase. Every phase below is `Remaining`.** The OpenCode agent feature (`docs/features/opencode-agent/`) is implemented and is the direct template.

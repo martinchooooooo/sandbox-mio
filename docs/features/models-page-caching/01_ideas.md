@@ -1,3 +1,8 @@
+---
+type: ideas
+title: "Models Page Caching Ideas"
+feature: models-page-caching
+---
 # Models Page Caching Ideas
 
 This document covers the ideation for making the `/models` route (`src/routes/models/+page.svelte`) feel instant on repeat visits instead of re-probing the host from scratch on every mount. The feature is entirely unimplemented today: no cache, memoization, or persisted host-spec store exists anywhere in the `inference` module or the frontend. It builds on the existing local-llm feature (`docs/features/local-llm/`), which is implemented (host inference server, model catalogue, download flow) but never addressed mount-time latency. The relevant files are `src/routes/models/+page.svelte` (the page and its `onMount`), `src-tauri/src/inference/mod.rs` (the `detect_specs` probe), `src-tauri/src/lib.rs` (the `detect_machine_specs` command and the app's `.manage()`-based state registration), and `src-tauri/AGENTS.md` (the `.manage()`-based Tauri state convention this feature follows). Caching is in-memory only, scoped to the running app process — no on-disk persistence is introduced, by explicit product decision; see Technology Choices.

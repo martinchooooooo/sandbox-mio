@@ -1,3 +1,8 @@
+---
+type: spike
+title: "Spike Artefacts — Podman Process Isolation"
+feature: podman-process-isolation
+---
 # Spike Artefacts — Podman Process Isolation
 
 Throwaway Windows probes written on 2026-08-16/17 to locate why every `podman` process spawned by

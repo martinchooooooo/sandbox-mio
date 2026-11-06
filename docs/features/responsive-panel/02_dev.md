@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "Responsive Panel Build Plan"
+feature: responsive-panel
+---
 # Responsive Panel Build Plan
 
 This document is the build plan for `docs/features/responsive-panel/01_ideas.md`: making the global panel's content react correctly to its real 380px/full-window widths, and moving Terminal/Packages/Agents management out of each project row into a per-sandbox workspace dashboard pane. It continues `01_ideas.md` and resolves every one of its six Open Questions below. **Status: no code has landed yet; every phase in this document is Remaining.** It builds on the already-implemented embedded-windows system (`docs/features/embedded-windows/02_dev.md`, Phases A-E) without modifying that system's core geometry/lifecycle primitives (`workspace_layout`, `run_on_main`, `apply_layout`), only extending the registry and switcher with a second pane kind.

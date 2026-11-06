@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "Microsandbox Provider — Build Plan"
+feature: microsandbox-provider
+---
 # Microsandbox Provider — Build Plan
 
 This document is the build plan continuing `01_ideas.md`. It covers **only the first, Podman-only

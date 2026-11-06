@@ -1,3 +1,8 @@
+---
+type: research
+title: "lib.rs Decomposition — Research Notes"
+feature: lib-decomposition
+---
 I've read lib.rs end-to-end plus the subsystem seams it composes. Here's what's in there and how I'd break it apart.
 
 What the file holds today (1,805 lines)

@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "lib.rs Decomposition — Build Plan"
+feature: lib-decomposition
+---
 # lib.rs Decomposition — Build Plan
 
 Build plan for the decomposition of `src-tauri/src/lib.rs` proposed in `docs/features/lib-decomposition/01_ideas.md`. The plan splits the 1,805-line file into a `commands/` layer of thirteen domain files, a `services/` layer owning cross-subsystem orchestration, and a `bootstrap.rs` holding startup wiring, then narrows which Tauri state each command can reach and covers six repeated patterns. Status: complete — Phases A through H are all implemented.

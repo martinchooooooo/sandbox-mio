@@ -1,3 +1,8 @@
+---
+type: ideas
+title: "Podman Process Isolation — Ideas"
+feature: podman-process-isolation
+---
 # Podman Process Isolation — Ideas
 
 Every external process the app spawns on Windows inherits the console handles of whatever terminal

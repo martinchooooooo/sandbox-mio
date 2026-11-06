@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "Scriptable Mock Backend Build Plan"
+feature: scriptable-mock-backend
+---
 # Scriptable Mock Backend Build Plan
 
 This document is the build plan for the scriptable-mock-backend feature, continuing `docs/features/scriptable-mock-backend/01_ideas.md`. **This revision supersedes the previous one.** The previous revision scripted behaviour at the subsystem-trait level (`MockDirector` overrides consulted inside hand-written `MockBackend`/`MockSync`/`MockMachineManager` structs that never ran the real `PodmanCliBackend`/`MutagenCli`/`PodmanMachineManager` orchestration code). That design was partially implemented (its Phase B) and is now judged the wrong seam: it structurally cannot exercise the real Rust logic — workspace resolution, image-exists-then-build branching, deploy's stop/create/start sequencing, JSON parsing — because the mock is a parallel reimplementation, not the real code under test. See "Superseded: the trait-level design" below for exactly what that entails discarding.

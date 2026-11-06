@@ -1,3 +1,8 @@
+---
+type: ideas
+title: "Agent Setup Ideas"
+feature: agent-setup
+---
 # Agent Setup Ideas
 
 This document covers the ideation for a higher-level "agent setup" feature that sits above the existing mise package install flow. The feature presents a curated catalogue of coding-agent tools (starting with Claude Code), installs the required tooling into the sandbox environment via `mise.toml`, and — critically — guides the user through authentication for each agent *inside the Tauri app* before the sandbox is opened. The install and auth flows are entirely new; they build on the existing `install_package` / `RuntimeManager` pipeline and the Tauri `WebviewWindow` primitive already used for the in-app terminal.

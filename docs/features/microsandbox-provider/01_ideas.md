@@ -1,3 +1,8 @@
+---
+type: ideas
+title: "Microsandbox Provider"
+feature: microsandbox-provider
+---
 # Microsandbox Provider
 
 This document covers adding [microsandbox](https://github.com/superradcompany/microsandbox) — a libkrun-backed microVM runtime driven by an `msb` CLI — as a second machine provider alongside Podman, which today is the only way a sandbox process runs. The end state is coexistence: Podman remains the default and the only provider supporting remote deploys, while microsandbox becomes a user-selectable local provider needing no Podman machine and no WSL distribution. Reaching coexistence requires a refactor first, because "Podman" is not confined to one trait: `SandboxBackend` (`src-tauri/src/backends/types.rs`) is the only documented seam, but `PodmanMiseRuntime` (`src-tauri/src/runtime/mod.rs`), `MutagenNetworkManager` (`src-tauri/src/network/mod.rs`), `src-tauri/src/credentials/mod.rs`, and `src-tauri/src/agents/mod.rs` each shell out to `podman` directly, and `MachineManager` (`src-tauri/src/machine/types.rs`) is shaped entirely around `podman machine` and WSL.

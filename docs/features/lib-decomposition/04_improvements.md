@@ -1,3 +1,8 @@
+---
+type: improvements
+title: "lib.rs Decomposition — Deferred Improvements"
+feature: lib-decomposition
+---
 # lib.rs Decomposition — Deferred Improvements
 
 Work deliberately left out of `docs/features/lib-decomposition/02_dev.md`, recorded so a future agent does not treat any entry as an oversight.

@@ -1,3 +1,8 @@
+---
+type: ideas
+title: "Desktop App Feel"
+feature: desktop-app-feel
+---
 # Desktop App Feel
 
 ## Overview

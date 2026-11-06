@@ -1,3 +1,8 @@
+---
+type: spike
+title: "Hands-On Spike: `msb` 0.6.6 on the Windows Development Host"
+feature: microsandbox-provider
+---
 # Hands-On Spike: `msb` 0.6.6 on the Windows Development Host
 
 Empirical spike run 2026-08-09 against `msb 0.6.6` already installed at `C:\Users\krist\.microsandbox\bin\msb.exe` on the Windows 11 development host, which also runs the Podman/WSL2 stack this project depends on today. Every result below is observed command output, not documentation. Findings marked BLOCKER contradict an assumption recorded in `docs/features/microsandbox-provider/01_ideas.md`. All spike sandboxes, volumes, and images were removed at the end of the run; the residual host changes are listed under Host Side Effects.

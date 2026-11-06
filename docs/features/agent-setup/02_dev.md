@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "Agent Setup Build Plan"
+feature: agent-setup
+---
 # Agent Setup Build Plan
 
 Build plan for the agent setup feature described in `01_ideas.md`. All spike open questions resolved below. No phases are implemented yet — this document is the starting point for implementation.

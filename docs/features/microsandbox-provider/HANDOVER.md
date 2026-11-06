@@ -1,3 +1,8 @@
+---
+type: handover
+title: "Microsandbox Provider — Handover"
+feature: microsandbox-provider
+---
 # Microsandbox Provider — Handover
 
 Written 2026-08-11 at the end of an implementation session, for whoever picks this up next (a new

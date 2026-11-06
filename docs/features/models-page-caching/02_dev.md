@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "Models Page Caching Dev Plan"
+feature: models-page-caching
+---
 # Models Page Caching Dev Plan
 
 This document is the build plan for `docs/features/models-page-caching/01_ideas.md`. It continues that document's core diagnosis (`detect_machine_specs` re-runs four PowerShell/winget subprocess spawns on every `/models` mount) and its in-memory-only caching approach, and it supersedes the ideas document's two-tier (in-memory + on-disk) proposal: the user explicitly rejected the on-disk tier during ideation, so this plan builds a single in-memory cache plus a loading indicator for the one wait that remains (the first probe per app launch). **Status: nothing in this feature is implemented yet.** All phases below are remaining work.

@@ -1,3 +1,8 @@
+---
+type: ideas
+title: "Workspace App Tabs Ideas"
+feature: workspace-app-tabs
+---
 # Workspace App Tabs Ideas
 
 This document is the ideation for reshaping the embedded workspace's tab model once a sandbox is open: instead of `open_workspace` eagerly landing the user on a Terminal pane with Terminal / Manage / Agents all pre-shown, opening a sandbox should land on the **Manage** tab (a home/launcher surface listing the apps installed in that sandbox), and each app — Terminal, Agents, and any future app — is opened on demand as its own tab and can be individually closed while the others stay open. The switcher chrome is also restyled into a two-level grouping per sandbox (sandbox name on top, one tab per app below), with the Manage tab shown as a home icon (to be renamed `SandboxHome` later). Nothing described here is built yet. The feature builds directly on the panes/switcher machinery from `docs/features/responsive-panel/` (Phases A-D implemented) and `docs/features/agent-web-ui/` (the `AgentWeb`/Paseo pane). The relevant files are `src-tauri/src/workspace/mod.rs` and `src-tauri/src/workspace/types.rs` (Rust-owned registry, pane lifecycle, geometry), `src-tauri/src/lib.rs` (the `open_workspace`, `open_agent_web`, `switch_pane`, `close_workspace` commands), `src/routes/workspace/switcher/+page.svelte` (the tab bar), `src/routes/workspace/dashboard/+page.svelte` (the Manage pane's content), `src/lib/workspace/state.svelte.ts` (the shared `workspace://state` store), and `src/routes/projects/AgentManager.svelte` (today's "Open Agents UI" entry point).

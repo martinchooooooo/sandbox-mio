@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "Network Proxy: Build Plan"
+feature: network-proxy
+---
 # Network Proxy: Build Plan
 
 This document is the build plan for the per-sandbox mitmproxy sidecar scoped in

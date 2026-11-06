@@ -10,6 +10,12 @@ Write to `docs/features/<feature>/03_e2e.md`. Read the feature's `02_dev.md`
 first; the test plan covers only how to test the build it describes. Written for
 future AI agents; follow the `write-docs` skill conventions.
 
+## Bookkeeping
+
+Start `03_e2e.md` with frontmatter (`type: e2e-plan`, `title`, `feature: <slug>`). A markdown
+spike record under `spike/` gets the same keys with `type: spike`; scripts need no frontmatter. Run `./build docs --fix` to regenerate the indexes,
+then `./build docs` must pass. Formats: `docs/features/README.md`.
+
 ## Purpose
 
 Be the plan for proving the feature works through the **real application**, not

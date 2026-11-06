@@ -1,3 +1,8 @@
+---
+type: improvements
+title: "Podman Process Isolation — Deferred Improvements"
+feature: podman-process-isolation
+---
 # Podman Process Isolation — Deferred Improvements
 
 Work deferred out of the scope defined by `docs/features/podman-process-isolation/02_dev.md`. Neither

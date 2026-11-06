@@ -1,3 +1,8 @@
+---
+type: ideas
+title: "Pi Agent Ideas"
+feature: pi-agent
+---
 # Pi Agent Ideas
 
 This document covers the ideation for adding **pi** (the coding agent from <https://pi.dev/>, npm package `@earendil-works/pi-coding-agent`, GitHub `earendil-works/pi`) as a **third** installable coding agent in sandbox-mio, alongside Claude Code and OpenCode, and — mirroring the OpenCode feature — for **pre-configuring pi on install** so a local-LLM provider is already wired to the host inference server (`docs/features/local-llm/`). Pi is structurally the same shape of problem as OpenCode: a config-only agent (no login for a local provider) installed through mise, provisioned once at install with a provider block generated from the model catalogue. The one material difference is *where* the config file lives — pi reads `models.json` from `$HOME/.pi/agent/` by default, which is **not** bind-mounted, whereas OpenCode reads `opencode.json` from the project root, which is. This feature resolves that difference by redirecting pi's config directory into the bind-mounted workspace via the `PI_CODING_AGENT_DIR` environment variable, set in the workspace `mise.toml [env]` table, so the config write stays host-side and container-state-independent exactly like OpenCode's. **Status: nothing for pi exists in the codebase today.** The OpenCode agent feature (`docs/features/opencode-agent/`) is implemented and is the direct template; the local-llm host inference server and the app-wide reverse Mutagen forward it introduced are dependencies, already built.

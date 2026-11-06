@@ -1,3 +1,8 @@
+---
+type: ideas
+title: "Agent Web UI Ideas"
+feature: agent-web-ui
+---
 # Agent Web UI Ideas
 
 This document covers the ideation for offering a browser-based UI for **OpenCode** and **Pi** (and, as a side effect of the chosen tool, **Claude Code** too) as an alternative to their terminal TUI, aimed at non-technical users who find a Zellij-hosted CLI agent intimidating. The chosen approach is **[Paseo](https://paseo.sh)** (`github.com/getpaseo/paseo`), a single self-hosted, open-source multi-provider agent orchestrator that launches each provider's native CLI as a subprocess and exposes one web UI for all of them — this **supersedes** the document's earlier per-agent plan (a bespoke `opencode web` pane plus a separately-wrapped `jmfederico/pi-web` pane), which is kept below as rejected/fallback material because Paseo was spiked and found to subsume both with one tool, one published port, and one pane, rather than two. **Nothing described here is built yet.** It builds on three already-implemented seams: the static agent catalogue (`src/lib/agents/catalogue.ts`), the on-demand web-server-in-container pattern (`prepare_terminal_webview`, `src-tauri/src/lib.rs:109-194`, and `RuntimeManager::prepare_terminal`, `src-tauri/src/runtime/mod.rs:203-230`), and the `AppKind`-driven pane/switcher machinery (`src-tauri/src/workspace/`).

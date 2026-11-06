@@ -12,6 +12,21 @@ first; the build plan continues and supersedes it. The step after this is
 `03_e2e.md` (the test plan). Written for future AI agents; follow the
 `write-docs` skill conventions.
 
+## Bookkeeping
+
+`docs/features/README.md` defines the frontmatter keys, statuses and log format.
+
+- Start `02_dev.md` with frontmatter: `type: dev-plan`, `title` (the H1), `feature: <slug>`.
+- If the feature has no `feature.md` yet (planning started without `01_ideas.md`), create it and
+  its `**Create**` log entry as the `feature-ideas` skill's Bookkeeping section describes.
+- In `feature.md`, set `status: planned` (unless a phase is already implemented) and make
+  `architecture` list the `docs/architecture/` documents for every subsystem the plan changes.
+- Run `./build docs --fix` to regenerate the indexes, then `./build docs` must pass. No log entry:
+  the log records only creation, implementation, supersession and abandonment.
+
+Cite seams against the code as it is now: `docs/architecture/` describes current behaviour, and
+an implemented feature's `02_dev.md` may describe a design that has since changed.
+
 ## Purpose
 
 Be the build plan a future agent can execute or continue: the concrete model
@@ -25,6 +40,7 @@ settled, every seam named by file path, and what is built versus what remains.
 3. **Resolved Decisions** — restate every Open Question from `01_ideas.md` and give its resolution in one sentence: the decision made and the concrete mechanism. Decisions still open stay open — say so explicitly rather than omitting them.
 4. **Implementation phases** — phases A, B, C…, each a `## Implemented: Phase X` or `## Remaining: Phase X` section naming every function, struct, trait, command, and file touched, with paths.
 5. **Lifecycle / cross-cutting concerns** — cleanup, state derivation, and similar concerns that span phases.
+6. **Common Gotchas** — final section, table format defined in the `write-docs` skill.
 
 State build status precisely and per-phase via the section headings. When a
 refactor supersedes an earlier approach, record the old approach and why it was

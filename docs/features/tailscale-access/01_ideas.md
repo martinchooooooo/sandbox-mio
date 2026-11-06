@@ -1,3 +1,8 @@
+---
+type: ideas
+title: "Tailscale Access to Deployed Sandboxes"
+feature: tailscale-access
+---
 # Tailscale Access to Deployed Sandboxes
 
 This document covers the ideation for reaching remotely deployed sandboxes from devices other than the laptop running the app, using [Tailscale](https://tailscale.com). Each deployed sandbox joins the user's tailnet as its own node, so the sandbox's in-container web services (the zellij web terminal on port 8082 and the paseo agents UI on port 4780) become reachable from a phone or second laptop under a stable MagicDNS name, without the Mutagen forwarding chain that ties access to the app's host machine today. The end goal is a "Connect Tailscale" surface in the Tauri app where the user provides tailnet credentials once, after which the app provisions the Tailscale tooling and node identity into any deployed sandbox automatically. Nothing of the feature is implemented; this document records the design, the technology decisions, and the desk-research that validated the container-side approach. The seams it builds on live in `src-tauri/src/runtime/mod.rs` (tool install and daemon start), `src-tauri/src/backends/mod.rs` (deploy flow), and `src-tauri/src/credentials/` (host-side credential store).

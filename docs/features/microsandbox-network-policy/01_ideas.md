@@ -1,3 +1,8 @@
+---
+type: ideas
+title: "Microsandbox Network Policy: Native Egress Policy, Host-Held Secrets, and a Chained Traffic Proxy"
+feature: microsandbox-network-policy
+---
 # Microsandbox Network Policy: Native Egress Policy, Host-Held Secrets, and a Chained Traffic Proxy
 
 This document covers securing a microsandbox-provider sandbox's outbound traffic with microsandbox's own host-side network stack (default-deny egress rules, strict hostname matching, host-held secrets) and chaining a mitmproxy sidecar microsandbox VM behind microsandbox's outbound SOCKS5 proxy option so `TrafficPanel` works for microsandbox sandboxes. Nothing of this feature is implemented. Today `MsbProvider::create_instance` (`src-tauri/src/provider/msb.rs`) passes no network or secret flags at all, and every proxy operation is refused for microsandbox (`docs/features/network-proxy/02_dev.md`, Resolved Decision 9). The design depends on microsandbox 0.7.12, which the development host now has installed (upgraded from 0.6.6 on 2026-11-01); four spikes ran against it (Validation). The remaining 0.6 → 0.7 code upgrade is this feature's first phase. The former open questions were resolved by the user on 2026-11-02 (Resolved Decisions). NVIDIA OpenShell was evaluated as an alternative and as a complement and is deferred (`docs/features/microsandbox-network-policy/04_improvements.md`). Relevant files: `src-tauri/src/provider/msb.rs`, `src-tauri/src/provider/types.rs`, `src-tauri/src/proxy/mod.rs`, `src-tauri/src/proxy/flowlog.rs`, `src-tauri/src/proxy/rules.rs`, `src-tauri/src/services/sandbox.rs`, `src/routes/projects/CreateSandboxItem.svelte`, `src/routes/projects/ProxyPanel.svelte`.

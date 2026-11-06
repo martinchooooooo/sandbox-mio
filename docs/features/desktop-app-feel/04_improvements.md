@@ -1,3 +1,8 @@
+---
+type: improvements
+title: "Deferred Improvements"
+feature: desktop-app-feel
+---
 # Deferred Improvements
 
 ## `GlobalNav` toolbar/sidebar restyle

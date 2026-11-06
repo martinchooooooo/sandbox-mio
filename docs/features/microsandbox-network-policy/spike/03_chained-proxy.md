@@ -1,3 +1,8 @@
+---
+type: spike
+title: "Spike 03: Chained mitmproxy (`--proxy`) on msb 0.7.12"
+feature: microsandbox-network-policy
+---
 # Spike 03: Chained mitmproxy (`--proxy`) on msb 0.7.12
 
 Hands-on spike run 2026-11-01 on the Windows 11 development host against `msb 0.7.12`, image `sandbox-mio/base:6`. It clears Validation item 3 of `docs/features/microsandbox-network-policy/01_ideas.md` (SOCKS5 listener with authentication, `flows.ndjson` under the proposed TLS layering) and records the evidence for the Open Question "Mitmproxy host placement". All commands ran from Git Bash with `MSYS_NO_PATHCONV=1`; paths passed to `msb` and `mitmdump` went through `cygpath -m`. Podman was down. Every sandbox (`spike-netpol-proxy-a` to `-f`) was removed, no volume was created, and every `mitmdump` process was stopped at the end. Temp files live under `C:\Users\krist\.claude\jobs\c32fd5a9\tmp`.

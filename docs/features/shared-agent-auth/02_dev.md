@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "Shared Agent Auth — Dev Plan"
+feature: shared-agent-auth
+---
 # Shared Agent Auth — Dev Plan
 
 This document is the build plan for the host-side credential store described in

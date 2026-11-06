@@ -1,3 +1,8 @@
+---
+type: ideas
+title: "In-App Web Terminal (Zellij) Plan"
+feature: web-terminal
+---
 # In-App Web Terminal (Zellij) Plan
 
 This document is the ideation for giving each sandbox an interactive terminal that opens inside the Tauri app. The terminal is provided by the Zellij web client (`zellij web`, see https://zellij.dev/tutorials/web-client/) running inside the sandbox container and surfaced to the user as a webview window in the desktop app. None of this exists yet: there is no terminal UI, the container publishes no ports, and Zellij is not part of the base image. The feature builds on three existing seams — the flox/Nix runtime substrate already baked into the base image (`src-tauri/resources/Containerfile`), the `podman create` container lifecycle (`create` in `src-tauri/src/backends/mod.rs` line 286), and the `podman exec` command path (`flox_exec` and `podman` in `src-tauri/src/runtime/mod.rs`). The per-sandbox action buttons that a "Terminal" button joins live in `src/routes/projects/+page.svelte` (lines 342–357).

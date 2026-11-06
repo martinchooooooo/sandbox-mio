@@ -1,3 +1,8 @@
+---
+type: ideas
+title: "Shared Agent Auth Ideas"
+feature: shared-agent-auth
+---
 # Shared Agent Auth Ideas
 
 This document covers the ideation for a host-side credential store that decouples agent authentication from individual sandboxes. Today a user must run the full OAuth login (`claude auth login`) inside every sandbox that has Claude Code installed, and the credentials die with the container on destroy. The proposed feature lets the user authenticate against a service (e.g. Anthropic) once, stores the resulting credential files on the host under the Tauri app data directory, and injects (or re-injects) those files into any sandbox that needs them. Nothing of the feature is implemented; the per-sandbox auth flow it generalises is fully implemented in `src-tauri/src/agents/mod.rs` and `src/routes/projects/AgentManager.svelte` (see `docs/features/agent-setup/`).

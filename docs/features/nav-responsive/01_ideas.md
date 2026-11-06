@@ -1,3 +1,8 @@
+---
+type: ideas
+title: "Navigation Column Responsive Layout"
+feature: nav-responsive
+---
 # Navigation Column Responsive Layout
 
 ## Overview

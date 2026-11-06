@@ -28,6 +28,15 @@ out to be wrong during implementation, stop and say so — do not silently devia
    registration, UI component, and code commenting conventions live there —
    `AGENTS.md` is the source of truth, not this skill.
 
+3. Read the `docs/architecture/` documents for the subsystems you will touch
+   (`docs/architecture/index.md` maps subsystems to documents), then the code
+   under each document's `code` frontmatter. Where the code has moved on since
+   `02_dev.md` was written, the code describes reality; stop and say so before
+   building on a stale plan.
+4. In the feature's `feature.md`, set `status: in-progress`, then run
+   `./build docs --fix` to regenerate the indexes (formats:
+   `docs/features/README.md`).
+
 ## Phase discipline
 
 Implement in the phase order `02_dev.md` gives. Complete and compile/typecheck
@@ -76,9 +85,33 @@ gotchas tables in the feature docs are the usual source of the rare justified
 comment (a hidden constraint or confirmed-bug workaround); `TODO(i18n)` is the
 one sanctioned temporary comment and must be gone by the end of the i18n pass.
 
+## Closing out: architecture docs and status
+
+Once every non-deferred phase is implemented, the plan becomes history.
+Architecture documents are a brief, high-level picture, not a record of every
+feature, so they change only when the picture does:
+
+1. Update a `docs/architecture/` document only if the feature changes the overall
+   picture: a new subsystem, seam, capability, cross-cutting invariant, or a row
+   of a capability table. Follow the `write-docs` skill's architecture rules
+   (concepts, not symbols; no gotchas table; word budget), refresh
+   `generated.at`, and add the feature's `02_dev.md` to `sources` and any new
+   top-level code location to `code`. If no document covers a new subsystem,
+   create one. A feature that only adds behaviour inside an existing picture
+   changes no architecture document.
+2. Put implementation-level knowledge where an implementer will meet it: a
+   hidden constraint as a comment at the code site, an area-wide trap in that
+   area's `AGENTS.md` Common Gotchas.
+3. In `feature.md`, set `status: implemented`, make `architecture` list the
+   documents for the subsystems the feature changed, and record any deferred
+   phases in the status note. Add an `**Implement**` entry to the top of
+   `docs/features/log.md`, then run `./build docs --fix`.
+
 ## Done means
 
 Every phase section in `02_dev.md` says Implemented (or explicitly says what
 remains and why), the app compiles and relevant tests pass, secrets/credential
-content never appears in logs or IPC payloads if the feature handles any, and —
-only after user approval — the i18n pass has run to zero `TODO(i18n)` markers.
+content never appears in logs or IPC payloads if the feature handles any,
+`feature.md` is set to `implemented` with any architecture change made per the
+section above, `./build docs` passes, and — only after user approval — the i18n
+pass has run to zero `TODO(i18n)` markers.

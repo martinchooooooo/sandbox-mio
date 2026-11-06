@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "Tailscale Access — Build Plan"
+feature: tailscale-access
+---
 # Tailscale Access — Build Plan
 
 This document is the build plan for the tailscale-access feature ideated in `docs/features/tailscale-access/01_ideas.md`: joining each remotely deployed sandbox to the user's tailnet as its own ephemeral node so other devices reach the zellij web terminal (port 8082) and the paseo agents UI (port 4780) under a MagicDNS name. The plan continues every assumption of the ideas document (mise install via `aqua:tailscale/tailscale`, userspace networking, per-sandbox nodes, OAuth-client credential pasted once) and resolves all eight of its open questions below. Three product-level resolutions (raw ports, automatic join, share dialog with QR) follow the recommended defaults because the user was not available to confirm; each is marked revisitable. Status: no phase is implemented — Phases A through D are all remaining work.

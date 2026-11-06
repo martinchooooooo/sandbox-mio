@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "Microsandbox Network Policy: Build Plan"
+feature: microsandbox-network-policy
+---
 # Microsandbox Network Policy: Build Plan
 
 This document is the build plan for securing microsandbox-provider sandboxes' outbound traffic with microsandbox's own host-side network stack, and for chaining a mitmproxy sidecar microsandbox VM behind it so the traffic viewer works for microsandbox sandboxes. It continues `docs/features/microsandbox-network-policy/01_ideas.md` and supersedes it wherever the two disagree. The six user decisions of 2026-11-02 (`01_ideas.md`, Resolved Decisions) are carried forward unchanged; the open items `01_ideas.md` left for this document are resolved below. Status: every phase (A–H) is implemented; the light spec `e2e/test/specs/light/microsandbox-network-policy-ui.spec.ts` passes (2026-11-02, all four cases), and the i18n pass awaits approval. The four spike records in `docs/features/microsandbox-network-policy/spike/` (01 egress baseline, 02 secrets, 03 chained proxy, 04 msb mitm sidecar) are the evidence base; every `msb` flag named here was exercised there unless a phase marks it "verify". Relevant code: `src-tauri/src/provider/msb.rs`, `src-tauri/src/provider/types.rs`, `src-tauri/src/provider/mod.rs`, `src-tauri/src/proxy/`, `src-tauri/resources/mitm_flowlog_addon.py`, `src-tauri/src/services/sandbox.rs`, `src-tauri/src/backends/mod.rs`, `src-tauri/src/machine/msb.rs`, `src-tauri/src/mockctl/`, `src/routes/projects/CreateSandboxItem.svelte`, `src/routes/projects/ProxyPanel.svelte`, `src/routes/projects/TrafficPanel.svelte`, `src/lib/agents/`.

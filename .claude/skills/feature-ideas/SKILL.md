@@ -13,6 +13,23 @@ First of a few feature documents (dev and test plans come later — don't cover
 them here). Written for future AI agents; follow the `write-docs` skill
 conventions.
 
+## Bookkeeping
+
+`docs/features/README.md` defines the frontmatter keys, statuses and log format. When creating a
+feature directory:
+
+- Start `01_ideas.md` with frontmatter: `type: ideas`, `title` (the H1), `feature: <slug>`.
+- Create `feature.md` with `type: feature`, `title: <slug>`, a one-line `description`,
+  `status: idea`, `depends_on` if the feature builds on another, and `architecture` listing the
+  `docs/architecture/` documents for the subsystems the feature will change.
+- Add a `**Create**` entry under today's date at the top of `docs/features/log.md`.
+- Run `./build docs --fix` to generate the feature's `index.md` and update the feature indexes,
+  then `./build docs` must pass. Never write an `index.md` by hand.
+
+Before designing, read `docs/architecture/overview.md` and the documents for the affected
+subsystems; `docs/architecture/index.md` also lists other in-flight plans touching the same
+subsystems. Plans of implemented features are history and may be out of date.
+
 ## Purpose
 
 Capture the thinking *before* the build so a future agent can continue the
@@ -40,7 +57,8 @@ If unsure about a decision, offer the user a spike and keep them informed of the
 tradeoffs. Record a spike as evidence: the date, each risk that cleared, and any
 blocker with its verbatim error. Spike artefacts (throwaway scripts, probe code,
 captured output) live in `docs/features/<feature>/spike/` — keep them after the
-spike concludes.
+spike concludes. A markdown spike record there starts with frontmatter (`type: spike`, `title`,
+`feature: <slug>`); run `./build docs --fix` afterwards so `spike/index.md` lists it.
 
 ## Out-of-scope improvements
 

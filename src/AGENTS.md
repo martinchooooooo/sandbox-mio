@@ -5,7 +5,7 @@ The `src/` tree is a SvelteKit app (Svelte 5 runes, static adapter, Tailwind 4) 
 ## Route Map
 
 - `src/routes/projects/` — main screen: sandbox list (`SandboxItem.svelte`, `StatusRow.svelte`), per-sandbox package (`PackageManager.svelte`) and agent (`AgentManager.svelte`) management.
-- `src/routes/workspace/` — pages loaded inside embedded panes (dashboard, switcher), not navigated to directly; pane state comes from the Rust `WorkspaceRegistry` via `src/lib/workspace/state.svelte.ts`.
+- `src/lib/workspace/` — not a route: the workspace chrome rendered by the root layout (navigation column, sandbox switcher, Manage dashboard, launchable-app catalogue in `apps.ts`); pane state comes from the Rust `WorkspaceRegistry` via `state.svelte.ts`. See `docs/architecture/workspace-ui.md`.
 - `src/routes/models/` — local LLM catalogue, download, and inference control.
 - `src/routes/agent-auth/`, `src/routes/credentials/` — agent login flow and shared credential bundles.
 - `src/routes/settings/`, `src/routes/intro/` — settings page and first-run intro.

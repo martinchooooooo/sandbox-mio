@@ -1,3 +1,8 @@
+---
+type: ideas
+title: "Local LLM Models Ideas"
+feature: local-llm
+---
 # Local LLM Models Ideas
 
 This document covers the ideation for running local LLM inference inside the sandbox-mio app: a guided flow that detects the user's machine specs, recommends a lightweight model appropriate to that hardware (e.g. Phi-3 on a modest Windows laptop), downloads the model weights to the user's machine, and configures an inference server the app and its sandboxed agents can call. The feature is entirely unimplemented today; no inference runtime, model catalogue, hardware probe, or download flow exists in the codebase. It builds on three existing seams: the Tauri sidecar pattern used for Mutagen (`src-tauri/src/sync/mod.rs`), the streamed-progress command pattern used for host provisioning and agent install (`provision_sandbox_host` / `install_agent` in `src-tauri/src/lib.rs`), and the static frontend catalogue pattern proposed for agents (`src/lib/agents/`). The focus of this first document is Windows; macOS is flagged where its choices would diverge but is deferred to a later iteration.

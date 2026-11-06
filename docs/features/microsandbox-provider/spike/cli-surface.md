@@ -1,3 +1,8 @@
+---
+type: spike
+title: "Spike: the `msb` CLI command and flag surface"
+feature: microsandbox-provider
+---
 # Spike: the `msb` CLI command and flag surface
 
 This document records what microsandbox's `msb` CLI does and does not offer, measured against the primitives `MachineProvider` needs in `docs/features/microsandbox-provider/01_ideas.md`. Every answer is labelled **CONFIRMED** (documented at docs.microsandbox.dev), **CONTRADICTED** (the documentation or the upstream source states the opposite of what `01_ideas.md` assumes), or **UNKNOWN** (absent from the documentation).

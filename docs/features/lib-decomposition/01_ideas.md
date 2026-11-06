@@ -1,3 +1,8 @@
+---
+type: ideas
+title: "lib.rs Decomposition — Ideas"
+feature: lib-decomposition
+---
 # lib.rs Decomposition — Ideas
 
 `src-tauri/src/lib.rs` has grown to 1,805 lines holding four unrelated concerns: the full inventory of 77 `#[tauri::command]` functions, the cross-subsystem orchestration those commands call, process-wide startup wiring, and file logging setup. The intended shape — stated in `src-tauri/AGENTS.md` — is that `src-tauri/src/lib.rs` is a thin command surface over trait-injected subsystems, with orchestration living in command handlers because subsystems never depend on each other. The orchestration half of that arrangement has no home of its own, so every cross-subsystem flow accumulates in `src-tauri/src/lib.rs`. This document proposes a three-layer split (`commands/`, `services/`, existing subsystem modules), a routing seam that collapses the repeated sandbox-addressing triple, and a narrowing of which Tauri state each command can reach.

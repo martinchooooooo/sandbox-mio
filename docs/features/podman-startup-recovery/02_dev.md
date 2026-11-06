@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "Podman Startup Recovery Build Plan"
+feature: podman-startup-recovery
+---
 # Podman Startup Recovery Build Plan
 
 Build plan for graceful handling of a stopped or socket-missing Podman machine after a host restart, as described in `docs/features/podman-startup-recovery/01_ideas.md`. The ideas document's proposed model is carried forward unchanged. All design decisions from that document are resolved below. **Status: nothing in this plan is implemented; all phases A–F are Remaining.**

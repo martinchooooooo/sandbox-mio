@@ -1,3 +1,8 @@
+---
+type: dev-plan
+title: "Credentials Inline Auth Dev Plan"
+feature: credentials-inline-auth
+---
 # Credentials Inline Auth Dev Plan
 
 This document is the build plan for moving the Claude Code login UI on the Credentials page (`src/routes/credentials/+page.svelte`) from a separate `WebviewWindow` into an inline expandable card, continuing `docs/features/credentials-inline-auth/01_ideas.md`. It supersedes one ideas-document choice (see Resolved Decisions: "Fallback window removal timing") after discovering during planning that `src/routes/agent-auth/+page.svelte` is shared infrastructure, also used by `src/routes/projects/AgentManager.svelte` for per-sandbox logins — it is not deleted by this feature. Status: nothing in this plan is implemented yet; all phases (A–E) are remaining work.

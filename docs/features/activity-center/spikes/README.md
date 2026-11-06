@@ -1,3 +1,8 @@
+---
+type: spike
+title: "Activity Center spikes"
+feature: activity-center
+---
 # Activity Center spikes
 
 Throwaway scripts kept as evidence for the decisions recorded in `../01_ideas.md` (Validation
