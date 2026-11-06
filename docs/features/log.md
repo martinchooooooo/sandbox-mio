@@ -17,6 +17,11 @@ approximate. New entries go on top.
 
 * **Implement** [desktop-app-feel](desktop-app-feel/index.md): feat(desktop-app-feel): translate onboarding, auth, and settings copy (`b74cd21`)
 * **Implement** [network-proxy](network-proxy/index.md): feat(proxy): add network proxy for sandboxed agent traffic (`5c81599`)
+* **Create** [proxy-credential-secrets](proxy-credential-secrets/index.md): plan drafted
+* **Create** [proxy-network-policy](proxy-network-policy/index.md): plan drafted
+* **Create** [proxy-non-http-capture](proxy-non-http-capture/index.md): plan drafted
+* **Create** [proxy-remote-deploy](proxy-remote-deploy/index.md): plan drafted
+* **Create** [proxy-toggle-management](proxy-toggle-management/index.md): plan drafted
 
 ## 2026-08-17
 
@@ -24,6 +29,11 @@ approximate. New entries go on top.
 * **Implement** [lib-decomposition](lib-decomposition/index.md): Refactor: Split up lib.rs (`47e02b3`)
 * **Create** [expose-ports](expose-ports/index.md): docs(expose-ports): mark deferred improvements resolved, add upgrade regression test (`8a9e8a9`)
 * **Create** [mutagen-transport](mutagen-transport/index.md): docs(feature): mutagen-transport already implemented (`d147250`)
+* **Create** [host-tool-ssh-access](host-tool-ssh-access/index.md): plan drafted
+
+## 2026-08-16
+
+* **Create** [cloud-sandboxes](cloud-sandboxes/index.md): plan drafted
 
 ## 2026-08-14
 

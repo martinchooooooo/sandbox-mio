@@ -11,4 +11,11 @@
 ## In-flight plans
 
 * [sandbox-runtime-management](../features/sandbox-runtime-management/index.md) - in-progress, changes providers.md, remote.md: Record installed software with mise and reproduce it on a remote host at deploy.
+* [host-tool-ssh-access](../features/host-tool-ssh-access/index.md) - planned, changes transport.md: Let host SSH clients (e.g. the Claude Code desktop app) attach to a sandbox over the existing exec transport.
+* [proxy-credential-secrets](../features/proxy-credential-secrets/index.md) - planned, changes network.md, agents.md: Source proxy secret-injection values from the credential store instead of hand-entered values.
+* [proxy-network-policy](../features/proxy-network-policy/index.md) - planned, changes network.md: Domain allow/deny and interactive approval for Podman sandboxes through the mitmproxy sidecar.
+* [proxy-non-http-capture](../features/proxy-non-http-capture/index.md) - planned, changes network.md: Surface connections that bypass the proxy (non-HTTP(S) traffic) in the proxy panel.
+* [proxy-remote-deploy](../features/proxy-remote-deploy/index.md) - planned, changes network.md, remote.md: Let a proxy-enabled sandbox be deployed to a remote host instead of being refused.
+* [proxy-toggle-management](../features/proxy-toggle-management/index.md) - planned, changes network.md, providers.md: App-global proxy default and turning the proxy on or off for an existing sandbox by recreating it.
 * [tailscale-access](../features/tailscale-access/index.md) - planned, changes remote.md: Join deployed sandboxes to the user's tailnet so their web services are reachable from other devices.
+* [cloud-sandboxes](../features/cloud-sandboxes/index.md) - idea, changes remote.md: Top-level Cloud Sandboxes nav panel for administering remote Podman hosts, including Oracle Cloud and Google Cloud provisioning.
