@@ -6,3 +6,4 @@ pub mod panes;
 pub mod routing;
 pub mod sandbox;
 pub mod start_env;
+pub mod toolchain_secrets;

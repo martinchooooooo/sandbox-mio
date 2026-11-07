@@ -523,6 +523,16 @@ async fn run_capturing_via_files(
 #[async_trait::async_trait]
 impl ProcessRunner for SystemPodmanRunner {
     async fn run(&self, args: &[&str]) -> std::io::Result<Output> {
+        self.run_with_env(args, &[]).await
+    }
+
+    /// `env` lands in the child's environment only, never in `args`, so the argv logged below
+    /// stays free of secret values (`docs/features/techdebt-sweep/02_dev.md`, Resolved Decision 4).
+    async fn run_with_env(
+        &self,
+        args: &[&str],
+        env: &[(String, String)],
+    ) -> std::io::Result<Output> {
         // Every connection-scoped call (`image exists`, `create`, `exec`, `info`, ...) passes
         // through here — the one seam behind `PodmanProvider::run` and `PodmanMachineManager`'s
         // `podman`/`verify_host` alike — so a guard installed here covers every current and future
@@ -574,7 +584,8 @@ impl ProcessRunner for SystemPodmanRunner {
             // Blocking-thread + file-captured, not `tokio::process`: see `run_via_blocking_process`'s
             // doc comment — `tokio::process`'s async spawn/wait has been observed to hang the full
             // timeout even on a bare `podman machine list` under `cargo tauri dev`.
-            let cmd = crate::backends::podman_command_std();
+            let mut cmd = crate::backends::podman_command_std();
+            cmd.envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
             run_via_blocking_process(cmd, args, "podman", timeout_dur).await
         };
         let result = result.map_err(|e| {

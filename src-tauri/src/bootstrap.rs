@@ -84,7 +84,11 @@ impl Bootstrap {
             Arc::new(crate::services::start_env::AppStartEnv::new(app.handle().clone())),
         );
         app.manage(registry.clone());
-        app.manage(runtime::default_runtime(registry.clone(), self.port_transport.clone()));
+        app.manage(runtime::default_runtime(
+            registry.clone(),
+            self.port_transport.clone(),
+            Arc::new(crate::services::toolchain_secrets::AppToolchainSecrets::new(app.handle().clone())),
+        ));
         // Needs `app.handle()` to resolve `crate::paths::app_data_root` for per-sandbox SSH
         // identities, so `default_backend` is constructed here rather than in `build`, unlike the
         // other subsystems above (none of which need an `AppHandle`).

@@ -102,7 +102,7 @@ Problem: `ssh::remove_alias` (`src-tauri/src/ssh/mod.rs`) has no caller, so `des
 - Call the helper from both branches of `destroy()` after the container is removed, and from the failed-create rollbacks in `create()`.
 - Assert in one existing `standard` spec that destroys a sandbox that the alias block and key directory are gone afterwards.
 
-## Remaining: Phase H — Secret exec environment and the GitHub token
+## Implemented: Phase H — Secret exec environment and the GitHub token
 
 - Add a secret-environment field to `ExecOpts` (`src-tauri/src/provider/types.rs`). `PodmanProvider::exec` (`src-tauri/src/provider/mod.rs`) and `MsbProvider::exec` (`src-tauri/src/provider/msb.rs`) render each entry as a name-only `--env NAME` flag and pass the values through `ProcessRunner::run_with_env`. Verify that `msb exec` accepts a name-only `--env`; if not, use whichever msb mechanism keeps the value off the command line.
 - Implement `run_with_env` on `SystemPodmanRunner` (`src-tauri/src/process/mod.rs`) and on the scripted runners (`src-tauri/src/mockctl/mod.rs`), recording names but never values.

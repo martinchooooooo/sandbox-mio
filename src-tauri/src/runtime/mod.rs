@@ -38,6 +38,7 @@ const PASEO_CLI_TOOL: &str = "npm:@getpaseo/cli@0.4.0";
 pub fn default_runtime(
     providers: Arc<crate::provider::ProviderRegistry>,
     published_port_transport: Arc<dyn crate::transport::types::PortTransport>,
+    secrets: Arc<dyn types::ToolchainSecrets>,
 ) -> Arc<dyn RuntimeManager> {
     if crate::backends::mock_backend_enabled() {
         return Arc::new(MockRuntime::new());
@@ -47,6 +48,7 @@ pub fn default_runtime(
         registry_cache: tokio::sync::OnceCell::new(),
         published_port_transport,
         exec_port_transport: crate::transport::default_exec_port_transport(),
+        secrets,
     })
 }
 
@@ -115,13 +117,28 @@ impl MiseRuntime {
         }
     }
 
+    /// [`workdir_opts`] plus the toolchain secret environment, for calls that resolve or download
+    /// tools.
+    fn network_opts(&self) -> ExecOpts {
+        ExecOpts { secret_env: self.secrets.env(), ..workdir_opts() }
+    }
+
     // Runs mise in container workspace; data dir and lockfile from image ENV.
     async fn mise_exec(&self, name: &str, mise_args: &[&str]) -> Result<String, RuntimeError> {
+        self.mise_exec_with(name, mise_args, workdir_opts()).await
+    }
+
+    async fn mise_exec_with(
+        &self,
+        name: &str,
+        mise_args: &[&str],
+        opts: ExecOpts,
+    ) -> Result<String, RuntimeError> {
         let provider = self.provider_of(name).await;
         provider.start(name).await?;
         let mut argv = vec!["mise"];
         argv.extend_from_slice(mise_args);
-        check(provider.exec(name, &argv, workdir_opts()).await?)
+        check(provider.exec(name, &argv, opts).await?)
     }
 
     async fn seed_paseo_projects(
@@ -208,7 +225,7 @@ impl RuntimeManager for MiseRuntime {
 
     async fn install(&self, name: &str, package: &str) -> Result<(), RuntimeError> {
         validate_package(package)?;
-        self.mise_exec(name, &["use", package]).await.map(|_| ())
+        self.mise_exec_with(name, &["use", package], self.network_opts()).await.map(|_| ())
     }
 
     async fn uninstall(&self, name: &str, package: &str) -> Result<(), RuntimeError> {
@@ -248,7 +265,7 @@ impl RuntimeManager for MiseRuntime {
         provider.copy_in(name, &lockfile_src, &format!("{WORKSPACE_MOUNT}/{LOCKFILE_REL}")).await?;
         // Install the lock-pinned tools from the upstream release hosts. Resolving from `mise.lock`
         // (not tool names) is what makes the remote reproduce the identical builds the laptop locked.
-        check(provider.exec(name, &["mise", "install"], workdir_opts()).await?).map(|_| ())
+        check(provider.exec(name, &["mise", "install"], self.network_opts()).await?).map(|_| ())
     }
 
     async fn prepare_terminal(
@@ -311,7 +328,7 @@ impl RuntimeManager for MiseRuntime {
 
         check(
             provider
-                .exec(name, &["mise", "use", PASEO_NODE_TOOL, PASEO_CLI_TOOL], workdir_opts())
+                .exec(name, &["mise", "use", PASEO_NODE_TOOL, PASEO_CLI_TOOL], self.network_opts())
                 .await?,
         )?;
 
@@ -326,8 +343,9 @@ impl RuntimeManager for MiseRuntime {
         let listen = format!("0.0.0.0:{PASEO_WEB_PORT}");
         let start_opts = ExecOpts {
             workdir: Some(WORKSPACE_MOUNT.to_string()),
-            env: vec![("PASEO_PASSWORD".to_string(), password.to_string())],
+            secret_env: vec![("PASEO_PASSWORD".to_string(), password.to_string())],
             detached: true,
+            ..Default::default()
         };
         check(
             provider
@@ -390,6 +408,6 @@ impl RuntimeManager for MiseRuntime {
     async fn exec_in_container(&self, name: &str, args: &[&str]) -> Result<String, types::RuntimeError> {
         let provider = self.provider_of(name).await;
         provider.start(name).await?;
-        check(provider.exec(name, args, workdir_opts()).await?)
+        check(provider.exec(name, args, self.network_opts()).await?)
     }
 }

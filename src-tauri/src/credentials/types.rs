@@ -12,6 +12,8 @@ pub enum CredentialError {
     ExecFailed(String),
     #[error("no credential bundle for service {0:?}")]
     NotFound(String),
+    #[error("invalid credential value: {0}")]
+    InvalidValue(String),
 }
 
 impl From<RuntimeError> for CredentialError {

@@ -3,7 +3,7 @@
 
 pub mod types;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tauri::AppHandle;
@@ -64,6 +64,77 @@ pub fn save_manifest(
     let path = manifest_path(app, service_id)?;
     let json = serde_json::to_string_pretty(manifest).map_err(|e| CredentialError::Parse(e.to_string()))?;
     std::fs::write(&path, json).map_err(|e| CredentialError::Io(e.to_string()))
+}
+
+/// Service id of the GitHub token: a single-value credential, not a directory snapshot.
+pub const GITHUB_SERVICE: &str = "github";
+
+/// Variables a GitHub token is exported as inside a sandbox: `mise`'s GitHub backends read both.
+const GITHUB_TOKEN_ENV: [&str; 2] = ["GITHUB_TOKEN", "MISE_GITHUB_TOKEN"];
+
+/// File holding a single-value credential inside its bundle directory.
+const SECRET_FILE: &str = "secret";
+
+/// Writes a single-value credential into `dir` beside its manifest. The value never leaves the
+/// host store through IPC; only the returned manifest does.
+fn write_secret(dir: &Path, value: &str) -> Result<CredentialManifest, CredentialError> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(CredentialError::InvalidValue("the value is empty".to_string()));
+    }
+    if value.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err(CredentialError::InvalidValue(
+            "the value contains whitespace or control characters".to_string(),
+        ));
+    }
+    std::fs::write(dir.join(SECRET_FILE), value).map_err(|e| CredentialError::Io(e.to_string()))?;
+    let manifest = CredentialManifest { captured_at_ms: now_ms(), account_email: None, expires_at_ms: None };
+    let json = serde_json::to_string_pretty(&manifest).map_err(|e| CredentialError::Parse(e.to_string()))?;
+    std::fs::write(dir.join("manifest.json"), json).map_err(|e| CredentialError::Io(e.to_string()))?;
+    Ok(manifest)
+}
+
+fn read_secret(dir: &Path, service_id: &str) -> Result<String, CredentialError> {
+    match std::fs::read_to_string(dir.join(SECRET_FILE)) {
+        Ok(v) => Ok(v.trim().to_string()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Err(CredentialError::NotFound(service_id.to_string()))
+        }
+        Err(e) => Err(CredentialError::Io(e.to_string())),
+    }
+}
+
+/// Stores `value` as the single-value credential `service_id`, replacing any previous one.
+pub fn save_secret(
+    app: &AppHandle,
+    service_id: &str,
+    value: &str,
+) -> Result<CredentialManifest, CredentialError> {
+    write_secret(&bundle_dir(app, service_id)?, value)
+}
+
+/// Reads back the single-value credential `service_id` for host-side use only.
+pub fn load_secret(app: &AppHandle, service_id: &str) -> Result<String, CredentialError> {
+    read_secret(&store_dir(app)?.join(service_id), service_id)
+}
+
+fn github_env(token: &str) -> Vec<(String, String)> {
+    GITHUB_TOKEN_ENV.iter().map(|name| (name.to_string(), token.to_string())).collect()
+}
+
+/// The secret environment a sandbox-side `mise` call carries to lift GitHub's unauthenticated rate
+/// limit: empty when no token is saved, so behaviour is unchanged (`docs/features/techdebt-sweep/
+/// 02_dev.md`, Resolved Decision 3). A store that cannot be read is logged and treated as empty,
+/// because a missing token must never fail a package install.
+pub fn github_secret_env(app: &AppHandle) -> Vec<(String, String)> {
+    match load_secret(app, GITHUB_SERVICE) {
+        Ok(token) if !token.is_empty() => github_env(&token),
+        Ok(_) | Err(CredentialError::NotFound(_)) => Vec::new(),
+        Err(e) => {
+            tracing::warn!(target: "credentials", error = %e, "GitHub token unreadable");
+            Vec::new()
+        }
+    }
 }
 
 pub fn list(app: &AppHandle) -> Result<Vec<(String, CredentialManifest)>, CredentialError> {
@@ -300,4 +371,52 @@ async fn tar_inject(
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("mio-cred-test-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        dir
+    }
+
+    #[test]
+    fn a_saved_secret_reads_back_trimmed_beside_a_manifest() {
+        let dir = scratch_dir("roundtrip");
+        let manifest = write_secret(&dir, "  ghp_example  ").expect("saves");
+        assert!(manifest.account_email.is_none());
+        assert_eq!(read_secret(&dir, GITHUB_SERVICE).expect("reads"), "ghp_example");
+        let on_disk: CredentialManifest =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("manifest.json")).expect("manifest"))
+                .expect("parses");
+        assert_eq!(on_disk.captured_at_ms, manifest.captured_at_ms);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_empty_or_multiline_secret_is_refused() {
+        let dir = scratch_dir("invalid");
+        assert!(matches!(write_secret(&dir, "   "), Err(CredentialError::InvalidValue(_))));
+        assert!(matches!(write_secret(&dir, "a\nb"), Err(CredentialError::InvalidValue(_))));
+        assert!(!dir.join(SECRET_FILE).exists(), "nothing written for a refused value");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_missing_secret_is_not_found() {
+        let dir = scratch_dir("missing");
+        assert!(matches!(read_secret(&dir, GITHUB_SERVICE), Err(CredentialError::NotFound(_))));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_token_is_exported_under_both_names_mise_reads() {
+        let env = github_env("tok");
+        let names: Vec<&str> = env.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(names, ["GITHUB_TOKEN", "MISE_GITHUB_TOKEN"]);
+        assert!(env.iter().all(|(_, v)| v == "tok"));
+    }
 }

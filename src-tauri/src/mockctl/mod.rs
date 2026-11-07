@@ -325,8 +325,18 @@ impl ProcessRunner for ScriptedMutagenRunner {
 #[async_trait::async_trait]
 impl ProcessRunner for ScriptedPodmanRunner {
     async fn run(&self, args: &[&str]) -> std::io::Result<Output> {
+        self.run_with_env(args, &[]).await
+    }
+
+    /// Journals the variable names only; a value never leaves the caller.
+    async fn run_with_env(
+        &self,
+        args: &[&str],
+        env: &[(String, String)],
+    ) -> std::io::Result<Output> {
         let stripped = strip_connection(args);
         let key = derive_podman_key(stripped);
+        self.director.record(&key, stripped, env);
         if let Some(scripted) = self.director.consult(&key) {
             return Ok(to_output(scripted));
         }

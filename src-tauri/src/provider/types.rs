@@ -245,10 +245,15 @@ pub struct SidecarSpec {
 
 /// Options for a one-shot exec: working directory, environment pairs, and a detached flag
 /// (Podman's `-d`).
+///
+/// `env` values appear in argv and therefore in `mio.log`; anything secret goes in `secret_env`,
+/// whose values reach the guest without ever entering a command line
+/// (`docs/features/techdebt-sweep/02_dev.md`, Resolved Decision 4).
 #[derive(Default)]
 pub struct ExecOpts {
     pub workdir: Option<String>,
     pub env: Vec<(String, String)>,
+    pub secret_env: Vec<(String, String)>,
     pub detached: bool,
 }
 
@@ -440,7 +445,8 @@ pub trait MachineProvider: Send + Sync {
     async fn stop(&self, name: &str) -> Result<(), ProviderError>;
     /// Remove an instance (its workspace directory is left intact).
     async fn remove(&self, name: &str) -> Result<(), ProviderError>;
-    /// One-shot exec inside `name`, awaited to completion.
+    /// One-shot exec inside `name`, awaited to completion. The only exec that honours
+    /// `ExecOpts.secret_env`.
     async fn exec(
         &self,
         name: &str,
@@ -456,7 +462,8 @@ pub trait MachineProvider: Send + Sync {
         stdin: &[u8],
     ) -> Result<Output, ProviderError>;
     /// A configured, unspawned exec command for callers needing live bidirectional streaming. The
-    /// caller attaches its own piped stdio and spawns. Bypasses the process-runner seam.
+    /// caller attaches its own piped stdio and spawns. Bypasses the process-runner seam, so it never
+    /// carries `ExecOpts.secret_env`.
     fn exec_command(&self, name: &str, argv: &[&str], opts: ExecOpts) -> tokio::process::Command;
     /// Copy `host_path` into `name` at the in-instance path `dest` (`podman cp`).
     async fn copy_in(&self, name: &str, host_path: &str, dest: &str) -> Result<(), ProviderError>;

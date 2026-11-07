@@ -1,5 +1,6 @@
 <script lang="ts">
     import Button from "$lib/components/ui/button/button.svelte";
+    import { Input } from "$lib/components/ui/input";
     import * as Collapsible from "$lib/components/ui/collapsible";
     import { invoke, Channel } from "@tauri-apps/api/core";
     import { onMount } from "svelte";
@@ -139,6 +140,27 @@
         if (!ok) dismiss(serviceId);
     }
 
+    // Service id of the single-value GitHub token bundle (`GITHUB_SERVICE` in src-tauri/src/credentials/mod.rs).
+    const GITHUB_SERVICE = "github";
+    let githubToken = $state("");
+    const githubBundle = $derived(bundles[GITHUB_SERVICE]);
+
+    async function saveGithubToken() {
+        const ok = await action.run("github-save", async () => {
+            await invoke("set_github_token", { token: githubToken });
+            await loadBundles();
+        });
+        // The value stays in the backend; clearing the field leaves nothing readable in the webview.
+        if (ok) githubToken = "";
+    }
+
+    async function removeGithubToken() {
+        await action.run("github-remove", async () => {
+            await invoke("delete_credential_bundle", { serviceId: GITHUB_SERVICE });
+            await loadBundles();
+        });
+    }
+
     async function logOut(serviceId: string) {
         await action.run(`logout-${serviceId}`, async () => {
             await invoke("delete_credential_bundle", { serviceId });
@@ -233,6 +255,64 @@
                 {/if}
             </Collapsible.Root>
         {/each}
+
+        <div class="rounded-lg border p-3 flex flex-col gap-2" data-service={GITHUB_SERVICE}>
+            <div class="flex items-center justify-between gap-2">
+                <div class="min-w-0">
+                    <!-- TODO(i18n) -->
+                    <div class="text-sm font-medium truncate">GitHub token</div>
+                    <div class="text-xs text-muted-foreground truncate" data-status>
+                        <!-- TODO(i18n) -->
+                        {#if githubBundle}
+                            Saved {new Date(githubBundle.capturedAtMs).toLocaleDateString()}
+                        {:else}
+                            Not saved
+                        {/if}
+                    </div>
+                </div>
+                {#if githubBundle}
+                    <Button
+                        size="sm"
+                        variant="outline"
+                        onclick={removeGithubToken}
+                        disabled={action.busy !== null}
+                        data-github-remove
+                    >
+                        <!-- TODO(i18n) -->
+                        Remove
+                    </Button>
+                {/if}
+            </div>
+            <p class="text-xs text-muted-foreground">
+                <!-- TODO(i18n) -->
+                Sent to package installs inside sandboxes to avoid GitHub's unauthenticated rate limit. Use a token with no scopes: install scripts inside the sandbox can read it. It is stored on this device and never shown again.
+            </p>
+            <form
+                class="flex gap-2"
+                onsubmit={(e) => {
+                    e.preventDefault();
+                    void saveGithubToken();
+                }}
+            >
+                <!-- TODO(i18n) -->
+                <Input
+                    type="password"
+                    autocomplete="off"
+                    placeholder={githubBundle ? "Paste a new token to replace it" : "Paste a token"}
+                    bind:value={githubToken}
+                    data-github-token
+                />
+                <Button
+                    size="sm"
+                    type="submit"
+                    disabled={action.busy !== null || githubToken.trim() === ""}
+                    data-github-save
+                >
+                    <!-- TODO(i18n) -->
+                    Save
+                </Button>
+            </form>
+        </div>
     </div>
 
     {#if action.error}<p class="text-destructive mt-3 text-sm">{action.error}</p>{/if}

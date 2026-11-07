@@ -114,7 +114,17 @@ pub trait RuntimeManager: Send + Sync {
     async fn tool_dir(&self, name: &str, tool: &str) -> Result<String, RuntimeError>;
 
     /// Execute a command in sandbox's workspace and return stdout (starts container if needed).
+    /// Carries the toolchain secret environment, since the agent postinstall `mise exec` can
+    /// download tools.
     async fn exec_in_container(&self, name: &str, args: &[&str]) -> Result<String, RuntimeError>;
+}
+
+/// Secret environment for in-sandbox toolchain calls that resolve or download tools (the GitHub
+/// token of `docs/features/techdebt-sweep/02_dev.md`, Resolved Decision 3). Implemented over the
+/// credential store by `services::toolchain_secrets`, so this module never reads app state itself.
+/// Empty when nothing is saved; values are never logged.
+pub trait ToolchainSecrets: Send + Sync {
+    fn env(&self) -> Vec<(String, String)>;
 }
 
 /// Drives `mise` through whichever [`crate::provider::types::MachineProvider`] owns the sandbox.
@@ -130,4 +140,6 @@ pub struct MiseRuntime {
     pub published_port_transport: std::sync::Arc<dyn crate::transport::types::PortTransport>,
     /// Trivial passthrough, used for a sandbox on the podman-exec-transport reachability model.
     pub exec_port_transport: std::sync::Arc<dyn crate::transport::types::PortTransport>,
+    /// Carried by every call that resolves or downloads tools.
+    pub secrets: std::sync::Arc<dyn ToolchainSecrets>,
 }

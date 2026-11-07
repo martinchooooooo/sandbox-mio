@@ -134,6 +134,39 @@ fn detached_wrapper(argv: &[&str]) -> String {
     format!("{joined} >/tmp/out.log 2>&1 & disown")
 }
 
+/// Rewrites an exec so `opts.secret_env` reaches the guest through stdin instead of a flag: `msb
+/// exec --env` only takes `KEY=value` (verified against `msb` 0.7.12), which would put the value in
+/// argv and in `mio.log`. Returns the full guest command and the stdin payload carrying one value
+/// per line, in the order the guest script reads them.
+fn secret_exec_command(
+    argv: &[&str],
+    opts: &ExecOpts,
+) -> Result<(Vec<String>, Vec<u8>), ProviderError> {
+    let mut script = String::new();
+    let mut stdin = Vec::new();
+    for (name, value) in &opts.secret_env {
+        let valid_name = !name.is_empty()
+            && !name.starts_with(|c: char| c.is_ascii_digit())
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if !valid_name || value.contains(['\n', '\r', '\0']) {
+            return Err(ProviderError::CommandFailed(format!(
+                "secret variable {name:?} cannot be passed to the guest"
+            )));
+        }
+        script.push_str(&format!("IFS= read -r v; export {name}=\"$v\"; "));
+        stdin.extend_from_slice(value.as_bytes());
+        stdin.push(b'\n');
+    }
+    script.push_str("exec \"$@\"");
+    let mut command = vec!["sh".to_string(), "-c".to_string(), script, "sh".to_string()];
+    if opts.detached {
+        command.extend(["bash".to_string(), "-c".to_string(), detached_wrapper(argv)]);
+    } else {
+        command.extend(argv.iter().map(|a| a.to_string()));
+    }
+    Ok((command, stdin))
+}
+
 /// Construct the microsandbox-backed [`MachineProvider`]. Holds `podman` (the app's already-pinned
 /// local `PodmanProvider`) only to build the base image — microsandbox has no build command of its
 /// own (`docs/features/microsandbox-provider/01_ideas.md`, "Base image via an imported archive").
@@ -272,6 +305,76 @@ impl MsbProvider {
         Ok(v["active_config"]["labels"][WORKSPACE_LABEL].as_str().unwrap_or_default().to_string())
     }
 
+    /// One-shot `msb exec --stream` with `stdin` written to completion. Spawns `msb_command()`
+    /// directly, so it bypasses the runner seam; callers gate on `mock_backend_enabled()`.
+    async fn exec_streamed(
+        &self,
+        name: &str,
+        argv: &[&str],
+        opts: &ExecOpts,
+        stdin: &[u8],
+    ) -> Result<Output, ProviderError> {
+        // Fails before spawning, unlike `exec_command`, because this path can return an error.
+        self.start_env.env_for(name)?;
+        let mut child = self
+            .exec_command_inner(name, argv, opts)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| ProviderError::CommandFailed(e.to_string()))?;
+        let mut sink = child
+            .stdin
+            .take()
+            .ok_or_else(|| ProviderError::CommandFailed("no stdin".to_string()))?;
+        sink.write_all(stdin)
+            .await
+            .map_err(|e| ProviderError::CommandFailed(e.to_string()))?;
+        drop(sink);
+        let out = child
+            .wait_with_output()
+            .await
+            .map_err(|e| ProviderError::CommandFailed(e.to_string()))?;
+        // Logged separately from `run`: this path spawns `msb_command()` itself, so none of `run`'s
+        // instrumentation sees it, and it is the one carrying the SSH key into the guest.
+        tracing::info!(
+            target: "msb",
+            argv = %format!("exec --stream {name} -- {}", argv.join(" ")),
+            stdin_bytes = stdin.len(),
+            code = out.status.code().unwrap_or(-1),
+            stderr = %for_log(&out.stderr),
+            "msb exec (piped)"
+        );
+        Ok(out)
+    }
+
+    /// An exec carrying `opts.secret_env`. The values travel on stdin (see
+    /// [`secret_exec_command`]); under `MIO_MOCK_BACKEND=1` the scripted runner instead journals
+    /// the names, since it cannot take stdin.
+    async fn exec_with_secrets(
+        &self,
+        name: &str,
+        argv: &[&str],
+        opts: &ExecOpts,
+    ) -> Result<Output, ProviderError> {
+        if crate::backends::mock_backend_enabled() {
+            let mut env = self.start_env.env_for(name)?;
+            env.extend(opts.secret_env.iter().cloned());
+            let mut full = vec!["exec", name, "--"];
+            full.extend_from_slice(argv);
+            return self.run_env(&full, &env).await;
+        }
+        let (command, stdin) = secret_exec_command(argv, opts)?;
+        let command: Vec<&str> = command.iter().map(String::as_str).collect();
+        let plain = ExecOpts {
+            workdir: opts.workdir.clone(),
+            env: opts.env.clone(),
+            secret_env: Vec::new(),
+            detached: false,
+        };
+        self.exec_streamed(name, &command, &plain, &stdin).await
+    }
+
     /// Configured, unspawned `msb exec --stream` command shared by the streamed paths. `--stream`
     /// is byte-faithful piped stdin/stdout with no PTY (spike finding 7), the microsandbox
     /// counterpart of Podman's `exec -i`.
@@ -294,6 +397,7 @@ impl MsbProvider {
         for (k, v) in &opts.env {
             cmd.arg("--env").arg(format!("{k}={v}"));
         }
+        debug_assert!(opts.secret_env.is_empty(), "streamed exec does not carry secret_env");
         cmd.arg(name).arg("--");
         for a in argv {
             cmd.arg(a);
@@ -528,6 +632,9 @@ impl MachineProvider for MsbProvider {
         argv: &[&str],
         opts: ExecOpts,
     ) -> Result<Output, ProviderError> {
+        if !opts.secret_env.is_empty() {
+            return self.exec_with_secrets(name, argv, &opts).await;
+        }
         let mut full: Vec<String> = vec!["exec".to_string()];
         if let Some(workdir) = &opts.workdir {
             full.push("--workdir".to_string());
@@ -566,38 +673,7 @@ impl MachineProvider for MsbProvider {
             full.extend_from_slice(argv);
             return self.run_starting(name, &full).await;
         }
-        // Fails before spawning, unlike `exec_command`, because this path can return an error.
-        self.start_env.env_for(name)?;
-        let mut child = self
-            .exec_command_inner(name, argv, &ExecOpts::default())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| ProviderError::CommandFailed(e.to_string()))?;
-        let mut sink = child
-            .stdin
-            .take()
-            .ok_or_else(|| ProviderError::CommandFailed("no stdin".to_string()))?;
-        sink.write_all(stdin)
-            .await
-            .map_err(|e| ProviderError::CommandFailed(e.to_string()))?;
-        drop(sink);
-        let out = child
-            .wait_with_output()
-            .await
-            .map_err(|e| ProviderError::CommandFailed(e.to_string()))?;
-        // Logged separately from `run`: this path spawns `msb_command()` itself, so none of `run`'s
-        // instrumentation sees it, and it is the one carrying the SSH key into the guest.
-        tracing::info!(
-            target: "msb",
-            argv = %format!("exec --stream {name} -- {}", argv.join(" ")),
-            stdin_bytes = stdin.len(),
-            code = out.status.code().unwrap_or(-1),
-            stderr = %for_log(&out.stderr),
-            "msb exec (piped)"
-        );
-        Ok(out)
+        self.exec_streamed(name, argv, &ExecOpts::default(), stdin).await
     }
 
     fn exec_command(&self, name: &str, argv: &[&str], opts: ExecOpts) -> Command {
@@ -848,6 +924,47 @@ mod tests {
             assert!(calls[0].argv.iter().all(|a| !a.contains("s3cret-value")), "{key} argv clean");
         }
         assert!(director.calls("msb.stop")[0].env_names.is_empty(), "stop never starts");
+    }
+
+    /// `msb exec --env` is `KEY=value` only, so a secret becomes a stdin line read by a guest
+    /// wrapper; argv carries the variable name, never the value.
+    #[test]
+    fn secret_exec_command_keeps_the_value_off_argv() {
+        let opts = ExecOpts {
+            secret_env: vec![("PASEO_PASSWORD".to_string(), "s3cret-value".to_string())],
+            ..Default::default()
+        };
+        let (command, stdin) = secret_exec_command(&["paseo", "daemon"], &opts).expect("renders");
+        assert!(command[2].contains("export PASEO_PASSWORD="), "name is in the guest script");
+        assert_eq!(&command[3..], ["sh", "paseo", "daemon"]);
+        assert!(command.iter().all(|a| !a.contains("s3cret-value")), "value absent from argv");
+        assert_eq!(stdin, b"s3cret-value\n");
+    }
+
+    #[test]
+    fn secret_exec_command_wraps_a_detached_command() {
+        let opts = ExecOpts {
+            detached: true,
+            secret_env: vec![("A".to_string(), "x".to_string())],
+            ..Default::default()
+        };
+        let (command, _) = secret_exec_command(&["serve"], &opts).expect("renders");
+        assert_eq!(&command[4..6], ["bash", "-c"]);
+        assert!(command[6].contains("disown"));
+    }
+
+    #[test]
+    fn secret_exec_command_refuses_what_a_line_cannot_carry() {
+        let multiline = ExecOpts {
+            secret_env: vec![("A".to_string(), "two\nlines".to_string())],
+            ..Default::default()
+        };
+        assert!(secret_exec_command(&["true"], &multiline).is_err());
+        let bad_name = ExecOpts {
+            secret_env: vec![("A; rm".to_string(), "x".to_string())],
+            ..Default::default()
+        };
+        assert!(secret_exec_command(&["true"], &bad_name).is_err());
     }
 
     #[tokio::test]

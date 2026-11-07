@@ -88,3 +88,13 @@ pub fn list_credential_bundles(
 pub fn delete_credential_bundle(service_id: String, app: tauri::AppHandle) -> Result<(), AppError> {
     Ok(credentials::delete(&app, &service_id)?)
 }
+
+/// Save the GitHub token used by in-sandbox `mise` calls. The value is write-only over IPC: only
+/// the manifest comes back, and `delete_credential_bundle("github")` removes it.
+#[tauri::command]
+pub fn set_github_token(
+    token: String,
+    app: tauri::AppHandle,
+) -> Result<credentials::types::CredentialManifest, AppError> {
+    Ok(credentials::save_secret(&app, credentials::GITHUB_SERVICE, &token)?)
+}

@@ -66,3 +66,4 @@ A sandbox runs on one of two engines, Podman or microsandbox, behind one provide
 - Which provider runs a sandbox is derived from the engines on every lookup.
 - Machine lifecycle never follows the container connection setting.
 - No external binary is spawned outside the process layer.
+- A secret value never appears in a command line or `mio.log`: exec secrets reach Podman through the client's environment, and microsandbox, whose exec flag takes only a literal value, through the guest's stdin.

@@ -167,9 +167,19 @@ impl PodmanProvider {
     /// every real Podman invocation passes through, `verify_host`'s included — rather than here,
     /// so it can't end up covering some callers and not others.
     async fn run(&self, argv: &[&str]) -> Result<Output, ProviderError> {
+        self.run_with_env(argv, &[]).await
+    }
+
+    /// [`Self::run`] with `env` set in the child process only, for values that must stay out of
+    /// argv and therefore out of `mio.log`.
+    async fn run_with_env(
+        &self,
+        argv: &[&str],
+        env: &[(String, String)],
+    ) -> Result<Output, ProviderError> {
         let mut full = vec!["--connection", &self.connection];
         full.extend_from_slice(argv);
-        self.runner.run(&full).await.map_err(|e| match e.kind() {
+        self.runner.run_with_env(&full, env).await.map_err(|e| match e.kind() {
             std::io::ErrorKind::TimedOut => ProviderError::Unresponsive(e.to_string()),
             _ => ProviderError::CommandFailed(e.to_string()),
         })
@@ -226,12 +236,38 @@ impl PodmanProvider {
         for (k, v) in &opts.env {
             cmd.arg("--env").arg(format!("{k}={v}"));
         }
+        debug_assert!(opts.secret_env.is_empty(), "streamed exec does not carry secret_env");
         cmd.arg(name);
         for a in argv {
             cmd.arg(a);
         }
         cmd
     }
+}
+
+/// The `podman exec` arguments (after `--connection`) for one one-shot exec. Each secret is a
+/// name-only `--env NAME`, which podman resolves from its own client environment, so no secret
+/// value ever appears here.
+fn exec_args(name: &str, argv: &[&str], opts: &ExecOpts) -> Vec<String> {
+    let mut full: Vec<String> = vec!["exec".to_string()];
+    if opts.detached {
+        full.push("-d".to_string());
+    }
+    if let Some(workdir) = &opts.workdir {
+        full.push("--workdir".to_string());
+        full.push(workdir.clone());
+    }
+    for (k, v) in &opts.env {
+        full.push("--env".to_string());
+        full.push(format!("{k}={v}"));
+    }
+    for (k, _) in &opts.secret_env {
+        full.push("--env".to_string());
+        full.push(k.clone());
+    }
+    full.push(name.to_string());
+    full.extend(argv.iter().map(|s| s.to_string()));
+    full
 }
 
 #[async_trait::async_trait]
@@ -441,21 +477,9 @@ impl MachineProvider for PodmanProvider {
         argv: &[&str],
         opts: ExecOpts,
     ) -> Result<Output, ProviderError> {
-        let mut full: Vec<String> = vec!["exec".to_string()];
-        if opts.detached {
-            full.push("-d".to_string());
-        }
-        if let Some(workdir) = &opts.workdir {
-            full.push("--workdir".to_string());
-            full.push(workdir.clone());
-        }
-        for (k, v) in &opts.env {
-            full.push("--env".to_string());
-            full.push(format!("{k}={v}"));
-        }
-        full.push(name.to_string());
-        full.extend(argv.iter().map(|s| s.to_string()));
-        self.run(&full.iter().map(String::as_str).collect::<Vec<_>>()).await
+        let full = exec_args(name, argv, &opts);
+        self.run_with_env(&full.iter().map(String::as_str).collect::<Vec<_>>(), &opts.secret_env)
+            .await
     }
 
     async fn exec_piped(
@@ -514,5 +538,41 @@ impl MachineProvider for PodmanProvider {
             return Ok(());
         }
         check(self.run(&["pull", image]).await?).map(|_| ())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mockctl::types::{MockDirector, ScriptedPodmanRunner};
+
+    fn secret_opts() -> ExecOpts {
+        ExecOpts {
+            workdir: Some("/root/work".to_string()),
+            env: vec![("PLAIN".to_string(), "visible".to_string())],
+            secret_env: vec![("PASEO_PASSWORD".to_string(), "s3cret-value".to_string())],
+            detached: true,
+        }
+    }
+
+    #[test]
+    fn exec_args_render_a_secret_by_name_only() {
+        let args = exec_args("box", &["paseo", "daemon"], &secret_opts());
+        assert!(args.windows(2).any(|w| w == ["--env", "PASEO_PASSWORD"]), "name-only flag present");
+        assert!(args.iter().any(|a| a == "PLAIN=visible"), "plain env keeps its value");
+        assert!(args.iter().all(|a| !a.contains("s3cret-value")), "value absent from argv");
+    }
+
+    #[tokio::test]
+    async fn exec_hands_the_value_to_the_runner_environment_only() {
+        let director = Arc::new(MockDirector::new());
+        let runner: Arc<dyn ProcessRunner> = Arc::new(ScriptedPodmanRunner::new(director.clone()));
+        let provider = default_provider(runner, "conn".to_string());
+        provider.exec("box", &["true"], secret_opts()).await.expect("exec succeeds");
+
+        let calls = director.calls("podman.exec");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].env_names, ["PASEO_PASSWORD"]);
+        assert!(calls[0].argv.iter().all(|a| !a.contains("s3cret-value")));
     }
 }

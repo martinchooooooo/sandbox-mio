@@ -44,6 +44,12 @@ The app installs coding agents (Claude Code, OpenCode, pi) into a sandbox, lets 
 - After login, the app captures the agent's whole config directory, which carries onboarding state as well as the token, into a credential store in the app-data root.
 - Any sandbox can then receive that bundle; injection also marks the agent's first-run onboarding complete. Auth status is read from the agent's credential file and its expiry.
 
+## The GitHub Token
+
+- The credential store also holds one single-value credential: a GitHub token the user pastes on the Credentials page. It is write-only over IPC; the page only learns whether a token is saved and when.
+- Every in-sandbox mise call that resolves or downloads tools carries the token as `GITHUB_TOKEN` and `MISE_GITHUB_TOKEN`, which lifts GitHub's unauthenticated rate limit. With no token saved, nothing changes. The base-image build does not receive it.
+- The token travels as a secret exec environment ([Providers](providers.md)), never in a command line.
+
 ## Local-Model Agents: OpenCode and pi
 
 - OpenCode and pi are provisioned to use the host inference server as a model provider ([Local Inference](inference.md)). Provisioning writes their configuration into the workspace from the host, so it works whether or not the sandbox is running. OpenCode's configuration is merged into any existing user settings; pi's lives in its own file under `.mio/`.
@@ -57,6 +63,6 @@ The app installs coding agents (Claude Code, OpenCode, pi) into a sandbox, lets 
 
 ## Invariants
 
-- Credential bundle contents never cross IPC or reach logs; only bundle metadata does.
+- Credential bundle contents and the GitHub token never cross IPC or reach logs; only metadata does.
 - Provisioning merges into a user's agent configuration rather than replacing it.
 - An agent's behaviour is declared in the catalogue.

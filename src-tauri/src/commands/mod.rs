@@ -86,6 +86,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         credentials::seed_agent_onboarding,
         credentials::list_credential_bundles,
         credentials::delete_credential_bundle,
+        credentials::set_github_token,
         inference::detect_machine_specs,
         inference::redetect_machine_specs,
         inference::download_model,
