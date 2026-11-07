@@ -74,6 +74,55 @@ impl MachineSetupEvent {
     }
 }
 
+/// Step ids of the Podman bring-up, shared with `src/lib/machine/MachineSteps.svelte`.
+pub const STEP_WSL_INSTALL: &str = "wsl-install";
+pub const STEP_MACHINE_INIT: &str = "machine-init";
+pub const STEP_MACHINE_START: &str = "machine-start";
+pub const STEP_SOCKET_ACTIVATE: &str = "socket-activate";
+
+/// Where [`super::bring_up`] enters the sequence. `FromStart` skips the WSL and machine-init steps
+/// for a machine already known to exist (the projects-page recovery gate).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BringUpEntry {
+    Full,
+    FromStart,
+}
+
+/// A mid-step status line with no checklist row of its own; the welcome flow ignores these.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BringUpNote {
+    InstallingWsl,
+    CreatingMachine,
+    RetryingStart,
+    RetryingAfterWslReset,
+    WaitingForSocket,
+}
+
+/// What [`super::bring_up`] reports to its callback. A failing step is not an event: it is the
+/// returned [`BringUpFailure`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BringUpEvent {
+    StepStart(&'static str),
+    StepDone(&'static str),
+    StepSkipped { id: &'static str, reason: &'static str },
+    Note(BringUpNote),
+}
+
+/// Why a [`BringUpFailure`] occurred.
+#[derive(Debug)]
+pub enum BringUpCause {
+    /// A fresh WSL2 install needs a Windows restart before the sequence can continue.
+    RebootRequired(String),
+    Failed(BackendError),
+}
+
+/// The step that stopped [`super::bring_up`], and why.
+#[derive(Debug)]
+pub struct BringUpFailure {
+    pub step: &'static str,
+    pub cause: BringUpCause,
+}
+
 /// Provider-neutral snapshot of whether a machine is usable right now, and whether bringing it
 /// online means first-run setup or just a restart.
 #[derive(serde::Serialize, Clone, Default)]

@@ -58,7 +58,7 @@ Problem: `msb create` leaves a detached VM supervisor running from the bundled r
 - Replace the "Unbounded by design" doc comment on `run_capturing_via_files()`, and mark the "Bound the `msb` and Mutagen process path" section of `docs/features/podman-process-isolation/04_improvements.md` done.
 - Unit-test the timeout selector in `src-tauri/src/process/mod.rs`.
 
-## Remaining: Phase C — One Podman machine bring-up sequence
+## Implemented: Phase C — One Podman machine bring-up sequence
 
 Problem: `PodmanMachineManager::prepare` (`src-tauri/src/machine/mod.rs`, welcome flow) and `provision_podman` / `start_podman_machine` (`src-tauri/src/commands/machine.rs`, projects-page recovery) implement the same sequence twice, and `prepare` lacks both guards of `start_machine()`. A machine that is running with a dead socket reads as not ready, the welcome flow calls `podman machine start`, the start fails with "already running", and `prepare` then runs `wsl --shutdown`, which stops every WSL distribution on the host.
 

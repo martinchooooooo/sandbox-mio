@@ -121,6 +121,18 @@ ends; the risk is a future consumer that greps sessions by sandbox name without 
 
 ## Merge `PodmanMachineManager`'s `prepare()` with `provision_podman`/`start_podman_machine`
 
+**Done.** `bring_up()` (`src-tauri/src/machine/mod.rs`) is now the only WSL-install, machine-init,
+start, socket-activate, readiness-poll sequence. `PodmanMachineManager::prepare` translates its
+callback events into `MachineSetupEvent`s; `provision_podman` and `start_podman_machine`
+(`src-tauri/src/commands/machine.rs`) translate them into activity task progress, and
+`start_podman_machine` enters at the start step. The sequence keeps both guards of the former
+recovery-gate implementation: no `podman machine start` on a running machine, and no
+`wsl --shutdown` while another machine runs. The welcome flow therefore can no longer stop every WSL
+distribution on the host after a running machine's socket dies. Unit tests in
+`src-tauri/src/machine/mod.rs` cover the guards against a fake `MachineManager`; the real-machine
+check is `e2e/test/specs/standard/podman-startup-recovery.spec.ts`. The original problem statement
+follows.
+
 Phase I added `MachineReadinessProvider::prepare` (`src-tauri/src/machine/mod.rs`) as an independent
 reimplementation of the WSL-install → machine-init → machine-start → socket-activate sequence that
 `provision_podman`/`start_podman_machine` (`src-tauri/src/lib.rs`) already drive for the projects-page

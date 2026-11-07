@@ -8,7 +8,10 @@ use crate::activity;
 use crate::activity::types::TaskKind;
 use crate::error::AppError;
 use crate::machine;
-use crate::machine::types::MachineManager;
+use crate::machine::types::{
+    BringUpCause, BringUpEntry, BringUpEvent, BringUpFailure, BringUpNote, MachineManager,
+    STEP_MACHINE_INIT, STEP_MACHINE_START, STEP_SOCKET_ACTIVATE, STEP_WSL_INSTALL,
+};
 use crate::machine::MachineRunners;
 use crate::provider::types::ProviderId;
 
@@ -34,50 +37,70 @@ pub async fn machine_needs_init(
     Ok(!machine.machine_exists().await.map_err(|e| AppError::PodmanUnavailable(e.to_string()))?)
 }
 
-/// Brings the default Podman machine up, reporting each step on an already-open activity task.
+/// Progress line for a bring-up event on the activity task; `None` for events that only matter to
+/// the welcome flow's checklist.
+fn progress_detail(event: BringUpEvent) -> Option<&'static str> {
+    match event {
+        BringUpEvent::StepStart(STEP_WSL_INSTALL) => Some("Checking WSL2…"),
+        BringUpEvent::StepStart(STEP_MACHINE_INIT) => Some("Checking Podman machine…"),
+        BringUpEvent::StepStart(STEP_MACHINE_START) => Some("Starting machine…"),
+        BringUpEvent::StepStart(STEP_SOCKET_ACTIVATE) => Some("Activating Podman socket…"),
+        BringUpEvent::StepStart(_) | BringUpEvent::StepDone(_) | BringUpEvent::StepSkipped { .. } => {
+            None
+        }
+        BringUpEvent::Note(BringUpNote::InstallingWsl) => Some("Installing WSL2…"),
+        BringUpEvent::Note(BringUpNote::CreatingMachine) => Some("Creating Podman machine…"),
+        BringUpEvent::Note(BringUpNote::RetryingStart) => Some("Retrying…"),
+        BringUpEvent::Note(BringUpNote::RetryingAfterWslReset) => Some("Retrying after WSL reset…"),
+        BringUpEvent::Note(BringUpNote::WaitingForSocket) => Some("Waiting for socket…"),
+    }
+}
+
+/// Failure text and IPC error for a stopped bring-up. A reboot requirement keeps its own
+/// [`AppError`] kind so the frontend can tell the user to restart rather than retry.
+fn bring_up_failure(failure: BringUpFailure) -> activity::TaskFailure<AppError> {
+    let (message, error): (String, fn(String) -> AppError) = match failure.cause {
+        BringUpCause::RebootRequired(message) => (message, AppError::PodmanRebootRequired),
+        BringUpCause::Failed(e) => {
+            let prefix = match failure.step {
+                STEP_WSL_INSTALL => "Failed to install WSL2",
+                STEP_MACHINE_INIT => "Failed to set up Podman machine",
+                STEP_MACHINE_START => "Failed to start Podman machine",
+                _ => "Podman socket did not become ready",
+            };
+            (format!("{prefix}: {e}"), AppError::PodmanUnavailable)
+        }
+    };
+    activity::TaskFailure::new(message.clone(), error(message))
+}
+
+/// Runs the shared bring-up sequence, reporting each step on an already-open activity task.
 /// Shared by [`start_podman_machine`] and [`provision_podman`] so the task is opened and resolved
 /// exactly once per command — the caller of a failing `start_podman_machine` must not record a
 /// second failure (`docs/features/podman-startup-recovery/02_dev.md`, Concrete Model).
-async fn start_machine(
+async fn run_bring_up(
     task: &activity::TaskScope,
     machine: &Arc<dyn MachineManager>,
+    entry: BringUpEntry,
 ) -> Result<(), activity::TaskFailure<AppError>> {
-    task.progress(None, "Starting machine…");
-    // `podman machine start` on an already-running machine exits non-zero ("already running"),
-    // indistinguishable from a real failure below — checking first avoids a needless
-    // `wsl --shutdown` of a machine a stale frontend gate or double click re-triggered against.
-    if !matches!(machine.machine_is_running().await, Ok(true)) && machine.run_machine_start().await.is_err() {
-        if machine.check_other_machines_running().await {
-            task.progress(None, "Retrying…");
-        } else {
-            task.progress(None, "Retrying after WSL reset…");
-            machine.run_wsl_shutdown().await.ok();
+    machine::bring_up(machine.as_ref(), entry, |event| {
+        if let Some(detail) = progress_detail(event) {
+            task.progress(None, detail);
         }
-        if let Err(e) = machine.run_machine_start().await {
-            let err = format!("Failed to start Podman machine: {e}");
-            return Err(activity::TaskFailure::new(err.clone(), AppError::PodmanUnavailable(err)));
-        }
-    }
-
-    task.progress(None, "Activating Podman socket…");
-    machine.activate_podman_socket().await.ok();
-
-    task.progress(None, "Waiting for socket…");
-    if let Err(e) = machine.poll_ready(4).await {
-        let err = format!("Podman socket did not become ready: {e}");
-        return Err(activity::TaskFailure::new(err.clone(), AppError::PodmanUnavailable(err)));
-    }
-    Ok(())
+    })
+    .await
+    .map_err(bring_up_failure)
 }
 
-/// Full startup sequence for default Podman machine. Every error path fails the activity task.
+/// Startup sequence for the default Podman machine from the start step on. Every error path fails
+/// the activity task.
 #[tauri::command]
 pub async fn start_podman_machine(
     app: tauri::AppHandle,
     machine: State<'_, Arc<dyn MachineManager>>,
 ) -> Result<(), AppError> {
     activity::scope(&app, "podman-startup", TaskKind::PodmanStartup, None, |task| async move {
-        start_machine(&task, &machine).await
+        run_bring_up(&task, &machine, BringUpEntry::FromStart).await
     })
     .await
 }
@@ -89,52 +112,7 @@ pub async fn provision_podman(
     machine: State<'_, Arc<dyn MachineManager>>,
 ) -> Result<(), AppError> {
     activity::scope(&app, "podman-startup", TaskKind::PodmanStartup, None, |task| async move {
-        task.progress(None, "Checking WSL2…");
-        if !machine.wsl_is_ready().await {
-            task.progress(None, "Installing WSL2…");
-            match machine.install_wsl().await {
-                Ok(true) => {
-                    let msg = "WSL2 was installed and needs a restart to finish. Restart Windows,                                then try again."
-                        .to_string();
-                    return Err(activity::TaskFailure::new(
-                        msg.clone(),
-                        AppError::PodmanRebootRequired(msg),
-                    ));
-                }
-                Ok(false) => {}
-                Err(e) => {
-                    let err = format!("Failed to install WSL2: {e}");
-                    return Err(activity::TaskFailure::new(
-                        err.clone(),
-                        AppError::PodmanUnavailable(err),
-                    ));
-                }
-            }
-        }
-
-        task.progress(None, "Checking Podman machine…");
-        match machine.machine_exists().await {
-            Ok(true) => {}
-            Ok(false) => {
-                task.progress(None, "Creating Podman machine…");
-                if let Err(e) = machine.init_machine().await {
-                    let err = format!("Failed to create Podman machine: {e}");
-                    return Err(activity::TaskFailure::new(
-                        err.clone(),
-                        AppError::PodmanUnavailable(err),
-                    ));
-                }
-            }
-            Err(e) => {
-                let err = format!("Failed to inspect Podman machines: {e}");
-                return Err(activity::TaskFailure::new(
-                    err.clone(),
-                    AppError::PodmanUnavailable(err),
-                ));
-            }
-        }
-
-        start_machine(&task, &machine).await
+        run_bring_up(&task, &machine, BringUpEntry::Full).await
     })
     .await
 }
