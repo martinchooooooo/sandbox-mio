@@ -9,7 +9,7 @@ use crate::process::types::ProcessRunner;
 
 use super::types::{
     ExecOpts, InstanceSpec, MachineProvider, ProviderCapabilities, ProviderError, ProviderId,
-    PublishModel, SidecarSpec, StartEnvSource,
+    SidecarSpec, StartEnvSource,
 };
 use super::{check, parse_image_version, WORKSPACE_LABEL, WORKSPACE_MOUNT};
 
@@ -463,13 +463,6 @@ impl MachineProvider for MsbProvider {
     }
 
     async fn create_instance(&self, spec: &InstanceSpec) -> Result<String, ProviderError> {
-        if !matches!(spec.publish_model, PublishModel::ExecTunnelled) {
-            // A microsandbox instance is always exec-capable by construction; `MsbProvider` never
-            // builds publish+relay argv (docs/features/microsandbox-provider/02_dev.md, gotcha table).
-            return Err(ProviderError::CommandFailed(
-                "microsandbox only supports exec-tunnelled publishing".to_string(),
-            ));
-        }
         if spec.network.is_some() || !spec.env.is_empty() {
             // Network-proxy sidecars are Podman-only for v1
             // (`docs/features/network-proxy/02_dev.md`, Resolved Decision 9).
@@ -764,7 +757,6 @@ mod tests {
             image: "python".to_string(),
             workspace_source: "C:/work".to_string(),
             labels: vec![(WORKSPACE_LABEL.to_string(), "C:/work".to_string())],
-            publish_model: PublishModel::ExecTunnelled,
             env: Vec::new(),
             network: None,
             egress: None,
@@ -1079,12 +1071,5 @@ mod tests {
         assert!(director.calls("msb.volume-rm").is_empty(), "the volume must survive");
         assert_eq!(msb_runner.tracked_instance_names(), ["test-sbx"]);
         assert_eq!(msb_runner.tracked_volumes(), ["test-sbx-ws"]);
-    }
-
-    #[tokio::test]
-    async fn create_instance_rejects_publish_relay() {
-        let provider = provider();
-        let spec = InstanceSpec { publish_model: PublishModel::PublishRelay, ..spec("test-sbx") };
-        assert!(provider.create_instance(&spec).await.is_err());
     }
 }

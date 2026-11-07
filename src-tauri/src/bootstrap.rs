@@ -23,8 +23,6 @@ use crate::runtime;
 use crate::services::routing::SandboxRouter;
 use crate::sync;
 use crate::sync::types::SyncEngine;
-use crate::transport;
-use crate::transport::types::PortTransport;
 use crate::workspace;
 use crate::workspace::types::WorkspaceRegistry;
 
@@ -34,7 +32,6 @@ pub struct Bootstrap {
     mock_director: Arc<mockctl::types::MockDirector>,
     podman_runner: Arc<dyn ProcessRunner>,
     msb_runner: Arc<dyn ProcessRunner>,
-    port_transport: Arc<dyn PortTransport>,
     machine: Arc<dyn machine::types::MachineManager>,
 }
 
@@ -54,9 +51,8 @@ pub fn build() -> Bootstrap {
     } else {
         Arc::new(process::types::SystemMsbRunner)
     };
-    let port_transport = transport::default_port_transport();
     let machine = machine::default_machine_manager(podman_runner.clone());
-    Bootstrap { mock_director, podman_runner, msb_runner, port_transport, machine }
+    Bootstrap { mock_director, podman_runner, msb_runner, machine }
 }
 
 impl Bootstrap {
@@ -86,7 +82,6 @@ impl Bootstrap {
         app.manage(registry.clone());
         app.manage(runtime::default_runtime(
             registry.clone(),
-            self.port_transport.clone(),
             Arc::new(crate::services::toolchain_secrets::AppToolchainSecrets::new(app.handle().clone())),
         ));
         // Needs `app.handle()` to resolve `crate::paths::app_data_root` for per-sandbox SSH
@@ -111,7 +106,6 @@ impl Bootstrap {
         app.manage(sync::default_sync_engine(mutagen_runner));
         app.manage(network::default_network_manager(
             app.handle().clone(),
-            self.port_transport.clone(),
             registry.clone(),
         ));
         // After the three registrations it borrows from.

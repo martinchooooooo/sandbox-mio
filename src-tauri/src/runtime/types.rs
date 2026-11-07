@@ -20,7 +20,7 @@ pub enum RuntimeError {
     ManifestRead { path: String, error: String },
     #[error("failed to parse mise manifest: {0}")]
     ManifestParse(String),
-    /// The web terminal could not be reached: token or published-port parsing failed, or the
+    /// The web terminal could not be reached: token parsing failed, or the
     /// server did not come online. Distinct from [`RuntimeError::CommandFailed`] so the message
     /// names the terminal-specific cause.
     #[error("terminal unavailable: {0}")]
@@ -86,25 +86,20 @@ pub trait RuntimeManager: Send + Sync {
     ) -> Result<(), RuntimeError>;
 
     /// Start zellij web server in sandbox, mint login token, return `(token, container_port)`.
-    /// Caller bridges container_port to Windows loopback via Mutagen forward. `exec_capable`
-    /// selects which `PortTransport` resolves the returned port — see
-    /// `docs/features/podman-exec-transport/02_dev.md`.
+    /// Caller bridges container_port to Windows loopback via Mutagen forward.
     async fn prepare_terminal(
         &self,
         name: &str,
         machine: &crate::provider::types::MachineRef,
         workspace_host_path: &str,
-        exec_capable: bool,
     ) -> Result<(String, u16), RuntimeError>;
 
-    /// Start paseo agent-web daemon in sandbox, return published container port. `exec_capable`
-    /// selects which `PortTransport` resolves the returned port.
+    /// Start paseo agent-web daemon in sandbox, return its container port.
     async fn prepare_agent_web(
         &self,
         name: &str,
         machine: &crate::provider::types::MachineRef,
         password: &str,
-        exec_capable: bool,
     ) -> Result<u16, RuntimeError>;
 
     /// List available tools from the mise registry (process-wide cached).
@@ -136,10 +131,6 @@ pub struct MiseRuntime {
     /// (`docs/features/microsandbox-provider/02_dev.md`, Phase J).
     pub providers: std::sync::Arc<crate::provider::ProviderRegistry>,
     pub registry_cache: tokio::sync::OnceCell<Vec<RegistryEntry>>,
-    /// `podman port`-based lookup, used for a sandbox on the publish+relay reachability model.
-    pub published_port_transport: std::sync::Arc<dyn crate::transport::types::PortTransport>,
-    /// Trivial passthrough, used for a sandbox on the podman-exec-transport reachability model.
-    pub exec_port_transport: std::sync::Arc<dyn crate::transport::types::PortTransport>,
     /// Carried by every call that resolves or downloads tools.
     pub secrets: std::sync::Arc<dyn ToolchainSecrets>,
 }

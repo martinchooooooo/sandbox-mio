@@ -6,15 +6,15 @@ FROM docker.io/library/debian:12-slim
 # workarounds compile from source. See docs/features/sandbox-runtime-management/02_dev.md.
 # procps provides the `ps` binary paseo's own `daemon status`/`stop` shell out to
 # (they crash with `spawn ps ENOENT` without it — docs/features/agent-web-ui/02_dev.md).
-# socat relays a pre-published pool slot to a user-exposed port on the sandbox's own loopback,
-# so the app can expose an arbitrary port (e.g. a dev server the user started) over Mutagen
-# without recreating the container — see src-tauri/src/network/mod.rs.
+# socat is a general-purpose TCP tool; e2e/test/specs/standard/expose-port.spec.ts runs it as the
+# throwaway in-sandbox server it exposes.
 # openssh-server backs the podman-exec-transport reachability model: the host's outer ssh/Mutagen
 # client tunnels through `podman exec -i <sandbox> sshd -i`, so no port is ever published — see
 # docs/features/podman-exec-transport/02_dev.md.
-# socat above stays for sandboxes created from an older image, which keep the publish+relay model.
+# tini is the container's PID 1 (see ENTRYPOINT below): it reaps the `sshd -i` processes that
+# `podman exec` leaves reparented to PID 1 once their sessions close.
 RUN apt-get update -qq \
- && apt-get install -y -qq --no-install-recommends curl git ca-certificates xz-utils procps socat openssh-server \
+ && apt-get install -y -qq --no-install-recommends curl git ca-certificates xz-utils procps socat tini openssh-server \
  && rm -rf /var/lib/apt/lists/*
 
 # Static sshd config for the podman-exec-transport model: `sshd -i` reads it via `-f` and needs no
@@ -26,12 +26,17 @@ RUN apt-get update -qq \
 # tmpfs at container start, so the directory cannot be baked in. ensure_sandbox_alias execs it.
 # The sftp subsystem is not optional here: Mutagen installs its remote agent with `scp`, which
 # speaks the SFTP protocol, and this config replaces Debian's default rather than extending it.
+# ClientAlive* is what ends a forwarding `sshd -i` whose client died without a disconnect: `podman
+# exec` does not propagate the client's death, so the keepalive probe is the only signal (about
+# 45 seconds of silence).
 RUN ssh-keygen -A \
  && printf '%s\n' \
     'AuthorizedKeysFile /etc/ssh/authorized_keys.container' \
     'PasswordAuthentication no' \
     'PubkeyAuthentication yes' \
     'StrictModes no' \
+    'ClientAliveInterval 15' \
+    'ClientAliveCountMax 3' \
     'UsePAM no' \
     'Subsystem sftp /usr/lib/openssh/sftp-server' \
     > /etc/ssh/sshd_config.container \
@@ -79,4 +84,8 @@ RUN echo 'eval "$(mise activate bash)"' > /root/.bashrc
 # mise.toml lives, letting mise resolve the right tool versions without an explicit `cd`.
 WORKDIR /root/work
 
+# PID 1 must reap: without tini, exited `sshd -i` sessions linger as zombies for the container's
+# lifetime. Podman-only — microsandbox boots its own guest init and does not run the image's
+# ENTRYPOINT or CMD (docs/features/microsandbox-network-policy/spike/04_msb-mitm-sidecar.md).
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["/bin/bash"]

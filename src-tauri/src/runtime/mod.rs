@@ -37,7 +37,6 @@ const PASEO_CLI_TOOL: &str = "npm:@getpaseo/cli@0.4.0";
 
 pub fn default_runtime(
     providers: Arc<crate::provider::ProviderRegistry>,
-    published_port_transport: Arc<dyn crate::transport::types::PortTransport>,
     secrets: Arc<dyn types::ToolchainSecrets>,
 ) -> Arc<dyn RuntimeManager> {
     if crate::backends::mock_backend_enabled() {
@@ -46,8 +45,6 @@ pub fn default_runtime(
     Arc::new(MiseRuntime {
         providers,
         registry_cache: tokio::sync::OnceCell::new(),
-        published_port_transport,
-        exec_port_transport: crate::transport::default_exec_port_transport(),
         secrets,
     })
 }
@@ -107,14 +104,6 @@ impl MiseRuntime {
     /// [`MachineRef`] of their own.
     async fn provider_of(&self, name: &str) -> Arc<dyn MachineProvider> {
         self.providers.provider_of(name).await.1
-    }
-
-    fn port_transport(&self, exec_capable: bool) -> &Arc<dyn crate::transport::types::PortTransport> {
-        if exec_capable {
-            &self.exec_port_transport
-        } else {
-            &self.published_port_transport
-        }
     }
 
     /// [`workdir_opts`] plus the toolchain secret environment, for calls that resolve or download
@@ -273,7 +262,6 @@ impl RuntimeManager for MiseRuntime {
         name: &str,
         machine: &MachineRef,
         _workspace_host_path: &str,
-        exec_capable: bool,
     ) -> Result<(String, u16), RuntimeError> {
         let provider = self.provider_on(machine);
         // The container must be running before any `podman exec`.
@@ -300,17 +288,9 @@ impl RuntimeManager for MiseRuntime {
             ))
         })?;
 
-        // Read the ephemeral port Podman published for the container's web port on the connection's
-        // host loopback (or, for an exec-capable sandbox, the unchanged container port — see
-        // `PassthroughPortTransport`). The returned port is the destination for the Mutagen
-        // forwarding session.
-        let transport = self.port_transport(exec_capable);
-        let host_port = transport
-            .resolve_remote_port(name, &machine.id, ZELLIJ_WEB_PORT)
-            .await
-            .map_err(|e| RuntimeError::TerminalUnavailable(e.to_string()))?;
-
-        Ok((token, host_port))
+        // Nothing is published: the Mutagen forward dials the container's own port through the
+        // exec transport (docs/architecture/transport.md).
+        Ok((token, ZELLIJ_WEB_PORT))
     }
 
     async fn prepare_agent_web(
@@ -318,7 +298,6 @@ impl RuntimeManager for MiseRuntime {
         name: &str,
         machine: &MachineRef,
         password: &str,
-        exec_capable: bool,
     ) -> Result<u16, RuntimeError> {
         let provider = self.provider_on(machine);
         // The container must be running before any `podman exec`.
@@ -383,10 +362,7 @@ impl RuntimeManager for MiseRuntime {
             ))
         })?;
 
-        self.port_transport(exec_capable)
-            .resolve_remote_port(name, &machine.id, PASEO_WEB_PORT)
-            .await
-            .map_err(|e| RuntimeError::AgentWebUnavailable(e.to_string()))
+        Ok(PASEO_WEB_PORT)
     }
 
     async fn registry(&self, name: &str) -> Result<Vec<types::RegistryEntry>, types::RuntimeError> {

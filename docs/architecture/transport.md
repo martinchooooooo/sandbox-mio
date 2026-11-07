@@ -3,14 +3,13 @@ type: architecture
 title: "Transport: SSH Aliases, Mutagen and Ports"
 description: "How the app reaches services inside a sandbox: per-sandbox SSH aliases tunnelled through the engine's exec, Mutagen sync sessions and forwards, and port exposure."
 generated:
-  by: claude-code/opus-5-5
-  at: 2026-11-05T23:55:00+11:00
+  by: claude-code/sonnet-5-5
+  at: 2026-11-07T12:00:00+11:00
 stale_after: 2027-02-05T00:00:00+11:00
 code:
   - src-tauri/src/ssh/
   - src-tauri/src/sync/
   - src-tauri/src/network/
-  - src-tauri/src/transport/
   - src-tauri/src/services/routing.rs
 sources:
   - resource: docs/features/podman-exec-transport/02_dev.md
@@ -29,10 +28,6 @@ Sandboxes publish no ports. The app reaches every in-sandbox service (the web te
 - The alias pins the user, the sandbox's key and a per-sandbox known-hosts file. The host key is baked into the base image and changes when the image is rebuilt, so it is kept out of the user's own known hosts.
 - A routing service resolves a sandbox to its provider, machine and alias for every caller, and rewrites the alias on every pane or port open, because the alias file may not survive between app runs the way the sandbox does.
 
-## Legacy: Publish and Relay
-
-Podman sandboxes on base images older than the exec transport still publish their terminal and agent ports, and expose user ports through a small in-container relay pool. They are kept working rather than migrated, because the "image outdated" banner can be dismissed. One predicate on the sandbox decides which model applies, and every call site branches on that predicate.
-
 ## Mutagen
 
 - Mutagen is bundled with the app and runs with an app-private data directory, so it never shares state with a user-installed Mutagen. Its daemon outlives the app.
@@ -50,6 +45,7 @@ Podman sandboxes on base images older than the exec transport still publish thei
 ## Invariants
 
 - The managed SSH config is written only under a cross-process lock, because two app instances can race.
+- Every sandbox, Podman or microsandbox, is reached through its own SSH alias; no port is published and no relay runs inside a sandbox.
 - Callers reach a sandbox only through the routing service, which refreshes the alias.
 - The in-sandbox SSH server is named in `ProxyCommand` by bare name, never by absolute path, so Git Bash path conversion cannot rewrite it.
 - Creating a forward is serialised and idempotent: it replaces any same-named forward.

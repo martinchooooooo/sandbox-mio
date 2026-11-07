@@ -18,8 +18,6 @@ pub enum ServiceKind {
 pub enum NetworkError {
     #[error("failed to allocate a Windows-host port: {0}")]
     PortAllocation(String),
-    #[error("no free relay slot for sandbox {sandbox:?} (limit {limit})")]
-    NoFreeSlot { sandbox: String, limit: usize },
     #[error(transparent)]
     Sync(#[from] crate::sync::types::SyncError),
     #[error("{0}")]
@@ -41,14 +39,10 @@ pub struct ForwardInfo {
     pub kind: ServiceKind,
     /// Windows-host loopback port for frontend/webview connection.
     pub host_port: u16,
-    /// For Terminal/AgentWeb, the SSH alias the forward tunnels over. For an `Exposed` port, the
-    /// `MachineRef` string of the machine the sandbox runs on — that branch is the only one that
-    /// later has to reach the instance again (to kill its `socat` relay), and an alias cannot be
-    /// resolved back to a provider.
+    /// The SSH alias the forward tunnels over.
     pub connection: String,
-    /// The port the forward's far end dials. On the publish+relay model that is the connection's
-    /// published host port (Terminal/AgentWeb) or a relay-pool slot (Exposed); on the exec
-    /// transport it is the container-side port itself, since the alias lands inside the container.
+    /// The sandbox-side port the forward's far end dials: the alias lands inside the sandbox, so
+    /// no host-side mapping is involved.
     pub remote_port: u16,
     /// Mutagen session name (e.g., `terminal-<sandbox>`, `expose-<sandbox>-<port>`).
     pub forward_name: String,
@@ -85,12 +79,9 @@ pub trait NetworkManager: Send + Sync {
     /// Clean up Mutagen sessions orphaned by a crashed previous run (not in `live_sandboxes`).
     async fn sweep(&self, live_sandboxes: &[String]);
 
-    /// Expose `target_port` from sandbox to a fresh host loopback port. For a sandbox on the
-    /// publish+relay model, bridges via a relay-pool slot; for an exec-capable sandbox
-    /// (`exec_capable: true`), forwards straight to `target_port` with no slot/socat — see
-    /// `docs/features/podman-exec-transport/02_dev.md`. Does not recreate the container.
-    /// `workspace_path` initializes `.mio/ports.json` if absent.
-    #[allow(clippy::too_many_arguments)]
+    /// Expose `target_port` from sandbox to a fresh host loopback port by forwarding straight to
+    /// it over the sandbox's alias. Does not recreate the container. `workspace_path` initializes
+    /// `.mio/ports.json` if absent.
     async fn expose_port(
         &self,
         sandbox: &str,
@@ -99,10 +90,9 @@ pub trait NetworkManager: Send + Sync {
         target_port: u16,
         label: Option<String>,
         auto_detected: bool,
-        exec_capable: bool,
     ) -> Result<u16, NetworkError>;
 
-    /// Remove the relay and forward for `target_port`, freeing its pool slot. Best-effort.
+    /// Remove the forward for `target_port`. Best-effort.
     async fn unexpose_port(&self, sandbox: &str, target_port: u16);
 
     /// Poll sandbox for port changes (`.mio/ports.json` and listening sockets). Idempotent.
@@ -112,6 +102,5 @@ pub trait NetworkManager: Send + Sync {
         sandbox: &str,
         workspace_path: &str,
         machine: &crate::provider::types::MachineRef,
-        exec_capable: bool,
     );
 }

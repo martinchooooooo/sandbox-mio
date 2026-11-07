@@ -8,7 +8,7 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Emitter};
 
 use super::types::{ForwardInfo, NetworkError, NetworkManager, ServiceKind, EVENT_NAME};
-use super::{allocate_ephemeral_port, ensure_ports_file, RELAY_POOL_SIZE, RELAY_PORT_POOL_START};
+use super::{allocate_ephemeral_port, ensure_ports_file};
 
 /// Fabricates plausible host ports and records them in-memory; never touches podman or Mutagen.
 /// The light tier never opens a terminal/agent-web pane or exposes a port today, but this keeps
@@ -84,30 +84,12 @@ impl NetworkManager for MockNetworkManager {
     async fn expose_port(
         &self,
         sandbox: &str,
-        machine: &crate::provider::types::MachineRef,
+        _machine: &crate::provider::types::MachineRef,
         workspace_path: &str,
         target_port: u16,
         label: Option<String>,
         auto_detected: bool,
-        _exec_capable: bool,
     ) -> Result<u16, NetworkError> {
-        let used: std::collections::HashSet<u16> = self
-            .forwards
-            .lock()
-            .unwrap()
-            .values()
-            .filter(|f| f.sandbox == sandbox)
-            .filter_map(|f| match f.kind {
-                ServiceKind::Exposed(_) => Some(f.remote_port),
-                _ => None,
-            })
-            .collect();
-        let slot = (RELAY_PORT_POOL_START..RELAY_PORT_POOL_START + RELAY_POOL_SIZE)
-            .find(|s| !used.contains(s))
-            .ok_or_else(|| NetworkError::NoFreeSlot {
-                sandbox: sandbox.to_string(),
-                limit: RELAY_POOL_SIZE as usize,
-            })?;
         let kind = ServiceKind::Exposed(target_port);
         let host_port = allocate_ephemeral_port()?;
         self.forwards.lock().unwrap().insert(
@@ -116,8 +98,8 @@ impl NetworkManager for MockNetworkManager {
                 sandbox: sandbox.to_string(),
                 kind,
                 host_port,
-                connection: machine.to_string(),
-                remote_port: slot,
+                connection: sandbox.to_string(),
+                remote_port: target_port,
                 forward_name: format!("mock-expose-{sandbox}-{target_port}"),
                 label: label.clone(),
                 auto_detected,
@@ -141,7 +123,6 @@ impl NetworkManager for MockNetworkManager {
         sandbox: &str,
         workspace_path: &str,
         machine: &crate::provider::types::MachineRef,
-        exec_capable: bool,
     ) {
         let mut watches = self.ports_watch.lock().unwrap();
         if watches.contains_key(sandbox) {
@@ -193,7 +174,7 @@ impl NetworkManager for MockNetworkManager {
 
                 for (port, label) in declared.into_iter().filter(|(p, _)| !already_exposed.contains(p)) {
                     let _ = manager
-                        .expose_port(&task_sandbox, &machine, &workspace_path, port, Some(label), false, exec_capable)
+                        .expose_port(&task_sandbox, &machine, &workspace_path, port, Some(label), false)
                         .await;
                 }
             }

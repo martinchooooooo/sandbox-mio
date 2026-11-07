@@ -47,8 +47,7 @@ fn remove_dir_best_effort(name: &str, what: &str, dir: Result<std::path::PathBuf
 }
 
 /// Creates a sandbox on `provider` and brings its workspace up. `proxy` opts the sandbox into a
-/// per-sandbox mitmproxy sidecar (`docs/features/network-proxy/02_dev.md`); refused by `store.create`
-/// for a provider/image that isn't exec-capable.
+/// per-sandbox mitmproxy sidecar (`docs/features/network-proxy/02_dev.md`).
 pub async fn create(
     name: &str,
     existing_path: Option<&str>,

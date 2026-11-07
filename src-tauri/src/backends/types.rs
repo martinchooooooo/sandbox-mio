@@ -87,26 +87,12 @@ pub struct Sandbox {
     pub status: String,
     /// Laptop workspace directory (the bind-mount source for local, sync alpha for deployed).
     pub workspace_path: String,
-    /// Image version for updates (None for legacy/non-mio containers).
+    /// Image version for updates (None for non-mio containers).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image_version: Option<u32>,
     /// Which engine runs this sandbox. Every command addresses a sandbox by name alone, so this is
     /// what lets the command layer resolve the name back to a provider without asking both.
     pub provider: crate::provider::types::ProviderId,
-}
-
-impl Sandbox {
-    /// Whether this sandbox uses the exec-transport reachability model (`SshAlias::Proxied` +
-    /// `PassthroughPortTransport`) instead of publish+relay. A microsandbox sandbox is exec-tunnelled
-    /// by construction, independent of image version — `MsbProvider` has no publish+relay argv to
-    /// build (`docs/features/microsandbox-provider/02_dev.md`, Phase E onward). For Podman it means
-    /// an image new enough to have `sshd`/`sshd_config.container` baked in.
-    pub fn supports_exec_transport(&self) -> bool {
-        self.provider == crate::provider::types::ProviderId::Microsandbox
-            || self
-                .image_version
-                .is_some_and(|v| v >= crate::backends::EXEC_TRANSPORT_MIN_IMAGE_VERSION)
-    }
 }
 
 /// Mutagen endpoints for a freshly deployed sandbox (returned by `deploy`).
@@ -174,8 +160,7 @@ pub trait SandboxBackend: Send + Sync {
     /// host bind mount for Podman, a synced disk volume for microsandbox. With `existing_path:
     /// None`, uses `<Documents>/sandbox-mio/<name>`; with Some, validates and uses it. `proxy`,
     /// when `Some`, attaches the sandbox to its proxy sidecar's network and environment in place of
-    /// the provider's default network mode — refused when the provider/image is not exec-capable
-    /// (`docs/features/network-proxy/02_dev.md`).
+    /// the provider's default network mode (`docs/features/network-proxy/02_dev.md`).
     /// `egress` is the create dialog's network choice; only a provider that enforces
     /// `.mio/net-policy.json` itself accepts it (`docs/features/microsandbox-network-policy/02_dev.md`).
     async fn create(

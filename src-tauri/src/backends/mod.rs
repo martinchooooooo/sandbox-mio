@@ -10,35 +10,19 @@ use tokio::process::Command;
 use crate::env_ext::env_dir;
 use crate::process::types::ProcessRunner;
 use crate::process::{detached_command, detached_command_std};
-use crate::provider::types::{InstanceSpec, ProviderId, PublishModel};
+use crate::provider::types::{InstanceSpec, ProviderId};
 use crate::provider::ProviderRegistry;
 use types::{
     BackendError, CliBackend, ConnectionInfo, RemoteDeployment, Sandbox, SandboxBackend,
     SyncStrategy, WorkspacePlan,
 };
 
-/// Maps the exec-transport capability flag to the provider-neutral publish model both `create` and
-/// `deploy` build their [`InstanceSpec`] from.
-fn publish_model(exec_capable: bool) -> PublishModel {
-    if exec_capable {
-        PublishModel::ExecTunnelled
-    } else {
-        PublishModel::PublishRelay
-    }
-}
-
 // `e2e/lib/podman-machine.ts` regex-parses the two declarations below and `DEFAULT_MACHINE_NAME`,
 // so their literal form (name, type, `const`) is load-bearing beyond Rust.
 const BASE_IMAGE: &str = "sandbox-mio/base";
 /// Bump whenever the Containerfile changes: `ensure_base_image` short-circuits on an existing
 /// tag, so an unchanged version silently keeps stale images.
-pub(crate) const BASE_IMAGE_VERSION: u32 = 6;
-
-/// The `image_version` a sandbox needs to have `sshd`/`sshd_config.container` baked in and use the
-/// podman-exec-transport reachability model (`Sandbox::supports_exec_transport`). Fixed at the value
-/// this feature shipped with — kept separate from `BASE_IMAGE_VERSION`, which will keep bumping for
-/// unrelated Containerfile changes.
-pub(crate) const EXEC_TRANSPORT_MIN_IMAGE_VERSION: u32 = 6;
+pub(crate) const BASE_IMAGE_VERSION: u32 = 7;
 
 /// The connection `podman machine init` creates for the local machine. Renaming this const (not its
 /// value) breaks the regex parse in `e2e/lib/podman-machine.ts`, which mirrors it as `DEFAULT_MACHINE`.
@@ -579,19 +563,6 @@ impl SandboxBackend for CliBackend {
         // is always a laptop directory — bind-mounted for Podman, Mutagen-synced into the disk
         // volume `MsbProvider::create_instance` attaches for microsandbox.
         let workspace = self.resolve_create_workspace(name, existing_path).await?;
-        // Provider first, image version second: a microsandbox instance is exec-tunnelled by
-        // construction and `MsbProvider` has no publish+relay argv to build at all
-        // (`docs/features/microsandbox-provider/02_dev.md`, gotcha table).
-        let exec_capable = provider_id == ProviderId::Microsandbox
-            || BASE_IMAGE_VERSION >= EXEC_TRANSPORT_MIN_IMAGE_VERSION;
-        if proxy.is_some() && !exec_capable {
-            // A `PublishRelay` sandbox's zellij reachability depends on pasta's
-            // `--host-lo-to-ns-lo`, which a proxy attachment replaces
-            // (`docs/features/network-proxy/02_dev.md`, Resolved Decision 1).
-            return Err(BackendError::CommandFailed(format!(
-                "{name:?} cannot enable traffic inspection: requires the podman-exec-transport reachability model"
-            )));
-        }
         let (bridge, chain) = split_attachment(name, provider_id, proxy)?;
         let egress_policy = if provider_id == ProviderId::Microsandbox {
             Some(self.prepare_egress(name, &workspace, egress, provider.capabilities(), chain)?)
@@ -603,7 +574,6 @@ impl SandboxBackend for CliBackend {
             image,
             workspace_source: workspace.clone(),
             labels: vec![(crate::provider::WORKSPACE_LABEL.to_string(), workspace.clone())],
-            publish_model: publish_model(exec_capable),
             env: bridge.as_ref().map(|(_, env)| env.clone()).unwrap_or_default(),
             network: bridge.map(|(network, _)| crate::provider::types::InstanceNetwork {
                 name: network,
@@ -618,9 +588,7 @@ impl SandboxBackend for CliBackend {
                 return Err(e.into());
             }
         };
-        if exec_capable {
-            self.provision_exec_transport(&provider, name, provider_id).await?;
-        }
+        self.provision_exec_transport(&provider, name, provider_id).await?;
         Ok(Sandbox {
             id,
             name: name.to_string(),
@@ -661,7 +629,6 @@ impl SandboxBackend for CliBackend {
             image: Self::image(),
             workspace_source: workspace.clone(),
             labels: vec![(crate::provider::WORKSPACE_LABEL.to_string(), workspace.clone())],
-            publish_model: publish_model(true),
             env: Vec::new(),
             network: None,
             egress: Some(egress_policy),
@@ -769,25 +736,21 @@ impl SandboxBackend for CliBackend {
 
         // Create and start the remote container on the target connection, not self.connection.
         // No workspace label on remote containers, matching prior behaviour.
-        let exec_capable = BASE_IMAGE_VERSION >= EXEC_TRANSPORT_MIN_IMAGE_VERSION;
         let spec = InstanceSpec {
             name: name.to_string(),
             image: image.clone(),
             workspace_source: plan.bind_mount_source.clone(),
             labels: Vec::new(),
-            publish_model: publish_model(exec_capable),
             env: Vec::new(),
             network: None,
             egress: None,
         };
         target_provider.create_instance(&spec).await?;
         target_provider.start(name).await?;
-        if exec_capable {
-            let identity_path = ensure_sandbox_identity(&self.app, name)?;
-            forget_sandbox_host_key(&identity_path);
-            self.install_sandbox_key(&target_provider, name, &identity_path).await?;
-            ensure_sandbox_alias(name, target_connection, &identity_path).await?;
-        }
+        let identity_path = ensure_sandbox_identity(&self.app, name)?;
+        forget_sandbox_host_key(&identity_path);
+        self.install_sandbox_key(&target_provider, name, &identity_path).await?;
+        ensure_sandbox_alias(name, target_connection, &identity_path).await?;
 
         Ok(RemoteDeployment {
             alpha: plan.laptop_dir,
@@ -978,7 +941,7 @@ pub fn ensure_sandbox_identity(
     Ok(identity_path)
 }
 
-/// Ensure the SSH alias for an exec-capable sandbox is written to `~/.ssh/sandbox-mio/config`.
+/// Ensure the SSH alias for a Podman sandbox is written to `~/.ssh/sandbox-mio/config`.
 /// Unlike [`ensure_connection_alias`], the identity and authorized-keys installation are stable
 /// for the sandbox's lifetime — no per-call refresh needed — but `write_alias` is called anyway on
 /// every terminal/agent-web/expose-port open, since the alias file itself is not guaranteed to

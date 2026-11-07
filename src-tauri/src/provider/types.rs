@@ -39,18 +39,8 @@ impl From<ProviderError> for BackendError {
     }
 }
 
-/// How an instance's ports become reachable — the provider-neutral discriminant that selects the
-/// engine's create argv. Deliberately free of engine-specific flags
-/// (`docs/features/microsandbox-provider/02_dev.md`).
-pub enum PublishModel {
-    /// Reachability tunnels through the engine's `exec` transport; no ports are published.
-    ExecTunnelled,
-    /// Ports are published to host loopback and later bridged by an in-instance relay.
-    PublishRelay,
-}
-
 /// Provider-neutral inputs for creating one instance. Every engine-specific create flag lives inside
-/// the provider's `create_instance`, keyed off `publish_model`, never on this shape.
+/// the provider's `create_instance`, never on this shape.
 pub struct InstanceSpec {
     pub name: String,
     pub image: String,
@@ -58,7 +48,6 @@ pub struct InstanceSpec {
     pub workspace_source: String,
     /// `key=value` label pairs stamped on the instance.
     pub labels: Vec<(String, String)>,
-    pub publish_model: PublishModel,
     /// `key=value` environment pairs stamped on the instance (`--env` at create time), visible to
     /// every process tree including non-interactive `exec` sessions.
     pub env: Vec<(String, String)>,
@@ -259,9 +248,7 @@ pub struct ExecOpts {
 
 /// Feature differences between provider engines, returned once by `capabilities()` rather than
 /// probed per-operation (only `host_bind_mount` is genuinely runtime-dependent, and no provider
-/// probes it yet — see `docs/features/microsandbox-provider/02_dev.md`). Deliberately omits
-/// `publish_after_create`/`loopback_publish` from that document's earlier draft: `PublishModel::
-/// ExecTunnelled` already makes both moot for every provider that constructs against it.
+/// probes it yet — see `docs/features/microsandbox-provider/02_dev.md`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderCapabilities {
@@ -411,8 +398,7 @@ impl StartEnvSource for NoStartEnv {
 
 /// The container-or-VM primitive seam shared by every subsystem that drives one instance engine.
 /// Declares only operations that generalise across a container engine and a microVM engine; all
-/// engine-specific argv lives in the implementation. The `PortTransport` seam
-/// (`src-tauri/src/transport/`) covers published-port lookup, so this trait deliberately omits it.
+/// engine-specific argv lives in the implementation.
 #[async_trait::async_trait]
 pub trait MachineProvider: Send + Sync {
     /// Feature differences from the other provider implementation (remote targets, event

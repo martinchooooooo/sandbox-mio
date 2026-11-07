@@ -23,6 +23,11 @@ cycle, so the accumulation Phase A described is milder on the shipped teardown p
 worst-case reading of Phase A suggests. The reaping-PID-1 fix stays a nice-to-have, not a
 correctness fix.
 
+**Done.** Base image version 7 installs `tini` and runs it as the Containerfile's `ENTRYPOINT` ahead
+of `CMD` (`src-tauri/resources/Containerfile`, `docs/features/techdebt-sweep/02_dev.md`, Phase E),
+so exited `sshd -i` sessions are reaped. The image's `ENTRYPOINT` applies to Podman only: microsandbox
+boots its own guest init.
+
 ## An abrupt (non-graceful) client death orphans a bare `-N` forwarding `sshd` indefinitely
 
 Phase F's spike (2026-08-10) found that the exec-transport in-container `sshd -i` tears down cleanly
@@ -41,6 +46,10 @@ orphaned session self-terminates within ~45s of its transport going silent; defe
 affects abnormal-exit cleanup, not correctness of the running feature, and touches the image
 (a `BASE_IMAGE_VERSION` bump) rather than app code.
 
+**Done.** Base image version 7 sets `ClientAliveInterval 15` and `ClientAliveCountMax 3` in
+`sshd_config.container` (`src-tauri/resources/Containerfile`, `docs/features/techdebt-sweep/02_dev.md`,
+Phase E).
+
 ## No fixture for a pre-`EXEC_TRANSPORT_MIN_IMAGE_VERSION` sandbox in the `standard` e2e tier
 
 `expose-port.spec.ts`'s coverage for the `!exec_capable` (publish+relay) path currently relies on
@@ -49,6 +58,10 @@ pinned base-image tag — there is no automated fixture that pins an old image v
 both reachability models side by side in one `standard` run. Worth adding if the publish+relay path
 regresses silently in the future; skipped here since nothing today forces a version mismatch to
 exist during normal development.
+
+**Obsolete (2026-11-07):** the publish+relay path, `EXEC_TRANSPORT_MIN_IMAGE_VERSION` and the
+`exec_capable` predicate were deleted (`docs/features/techdebt-sweep/02_dev.md`, Phase D), so no
+second reachability model exists to cover.
 
 ## Per-sandbox SSH keys and `Proxied` aliases are never cleaned up
 

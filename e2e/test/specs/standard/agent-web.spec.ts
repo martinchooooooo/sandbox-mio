@@ -51,7 +51,7 @@ describe("Agent web UI (paseo)", function () {
     await ProjectsPage.open();
     await ProjectsPage.createProject(projectName, { timeout: 600000 });
 
-    // An exec-capable sandbox publishes no ports at all — paseo is reached through the
+    // A sandbox publishes no ports at all — paseo is reached through the
     // `podman exec`-tunneled sshd instead (docs/features/podman-exec-transport/02_dev.md).
     const bindings = podman(LOCAL_CONNECTION, [
       "inspect",
@@ -62,14 +62,14 @@ describe("Agent web UI (paseo)", function () {
     assert(
       bindings === "null" || bindings === "{}",
       `Container "${projectName}" published ports: ${bindings}\n` +
-        "create must pass no --publish for a sandbox on the exec transport."
+        "create must pass no --publish: every sandbox is reached over the exec transport."
     );
 
     const block = sshAliasBlock(projectName);
     assert(
       block !== undefined,
       `No "Host ${projectName}" block in ${MANAGED_SSH_CONFIG}. ` +
-        "create must call ensure_sandbox_alias for an exec-capable sandbox."
+        "create must call ensure_sandbox_alias."
     );
     for (const keyword of ["ProxyCommand", "User root", "IdentityFile", "UserKnownHostsFile"]) {
       assert(
@@ -106,9 +106,16 @@ describe("Agent web UI (paseo)", function () {
     assert(
       sshdConfig.includes("AuthorizedKeysFile /etc/ssh/authorized_keys.container"),
       `/etc/ssh/sshd_config.container is missing or wrong. Contents:\n${sshdConfig}\n` +
-        "This can happen when the sandbox was built from a base image older than " +
-        "EXEC_TRANSPORT_MIN_IMAGE_VERSION."
+        "This can happen when the sandbox was built from an outdated base image."
     );
+    // The keepalive is what ends a forwarding sshd whose client was killed without a disconnect.
+    assert(
+      sshdConfig.includes("ClientAliveInterval 15") && sshdConfig.includes("ClientAliveCountMax 3"),
+      `/etc/ssh/sshd_config.container has no ClientAlive keepalive. Contents:\n${sshdConfig}`
+    );
+    // PID 1 must be a reaper, or exited `sshd -i` sessions stay behind as zombies.
+    const pid1 = podman(LOCAL_CONNECTION, ["exec", projectName, "cat", "/proc/1/comm"]).trim();
+    assert.strictEqual(pid1, "tini", `PID 1 of the sandbox is "${pid1}", expected the tini reaper.`);
   });
 
   it("opens the workspace showing only the Dashboard — no pane registered yet, no Terminal pane yet", async () => {

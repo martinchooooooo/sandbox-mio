@@ -74,7 +74,6 @@ impl RuntimeManager for MockRuntime {
         _name: &str,
         _machine: &crate::provider::types::MachineRef,
         _workspace_host_path: &str,
-        _exec_capable: bool,
     ) -> Result<(String, u16), RuntimeError> {
         Ok(("mock-host".to_string(), 0))
     }
@@ -84,7 +83,6 @@ impl RuntimeManager for MockRuntime {
         _name: &str,
         _machine: &crate::provider::types::MachineRef,
         _password: &str,
-        _exec_capable: bool,
     ) -> Result<u16, RuntimeError> {
         Ok(0)
     }

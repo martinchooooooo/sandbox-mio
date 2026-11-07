@@ -20,9 +20,8 @@ const MANUAL_TOKEN = "manual-echo";
 const FILE_TOKEN = "file-echo";
 const UPGRADE_TOKEN = "upgrade-echo";
 
-// Starts a throwaway TCP "service" inside the sandbox with socat (already apt-installed for the
-// relay itself, see src-tauri/resources/Containerfile): on every connection it writes `token` and
-// closes. This stands in for a user's own dev server bound to `target_port` inside the container.
+// Starts a throwaway TCP "service" inside the sandbox with socat (apt-installed in
+// src-tauri/resources/Containerfile): on every connection it writes `token` and closes. This stands in for a user's own dev server bound to `target_port` inside the container.
 function startFakeService(sandbox: string, targetPort: number, token: string): void {
   podman(LOCAL_CONNECTION, [
     "exec",
@@ -36,7 +35,7 @@ function startFakeService(sandbox: string, targetPort: number, token: string): v
 
 // Dials 127.0.0.1:hostPort (the Windows-host loopback port Mutagen forwards) and returns whatever
 // bytes the fake service wrote before closing. This is the real path a browser would take to reach
-// an exposed port — through the relay-pool socat inside the container and back over the forward.
+// an exposed port — through the Mutagen forward into the container's own loopback.
 function readOnce(hostPort: number, timeoutMs = 10000): Promise<string> {
   return new Promise((resolve, reject) => {
     const socket = net.createConnection({ host: "127.0.0.1", port: hostPort });
@@ -106,7 +105,7 @@ describe("Exposing sandbox ports (network::expose_port / unexpose_port / watch_p
       received,
       MANUAL_TOKEN,
       `Dialing the exposed host port ${hostPort} did not reach the fake service on container port ${MANUAL_PORT}. ` +
-        `Got: "${received}". This can happen when the relay-pool socat bridged the wrong slot or the forward ` +
+        `Got: "${received}". This can happen when the forward ` +
         "pointed at the wrong remote port."
     );
 
@@ -156,7 +155,7 @@ describe("Exposing sandbox ports (network::expose_port / unexpose_port / watch_p
     fs.writeFileSync(portsJsonPath, JSON.stringify(existing));
 
     // Beyond poll_ports_file's 2s tick (PORTS_FILE_POLL_INTERVAL, src-tauri/src/network/mod.rs),
-    // the noticing tick still has to take a relay-pool slot and stand up a Mutagen forward.
+    // the noticing tick still has to stand up a Mutagen forward.
     await workspaceDashboard.waitForPortRow("webapp", SUBPROCESS);
 
     assert(

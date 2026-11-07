@@ -13,15 +13,11 @@ use crate::backends::{base_image, podman_command};
 use crate::process::types::ProcessRunner;
 use types::{
     ExecOpts, InstanceSpec, MachineProvider, MachineRef, ProviderCapabilities, ProviderError,
-    ProviderId, PublishModel, SidecarSpec,
+    ProviderId, SidecarSpec,
 };
 
 /// Spelled literally because `podman -v` rejects a bare `~` and does not expand `$HOME`.
 const WORKSPACE_MOUNT: &str = "/root/work";
-
-const ZELLIJ_WEB_PORT: u16 = 8082;
-
-const PASEO_WEB_PORT: u16 = 6767;
 
 const CONTAINERFILE: &str = include_str!("../../resources/Containerfile");
 
@@ -307,48 +303,22 @@ impl MachineProvider for PodmanProvider {
             "--pull=missing".to_string(),
             "--tty".to_string(),
         ];
-        match (&spec.network, &spec.publish_model) {
-            (Some(net), _) => {
-                // Replaces the publish_model's own `--network` entirely: Podman rejects combining
-                // `pasta` with a second network (`docs/features/network-proxy/02_dev.md`, Spike
-                // Results), so a proxy-enabled sandbox drops `pasta` rather than adding to it.
+        match &spec.network {
+            Some(net) => {
+                // Replaces the default `pasta` network entirely: Podman rejects combining `pasta`
+                // with a second network (`docs/features/network-proxy/02_dev.md`, Spike Results),
+                // so a proxy-enabled sandbox drops `pasta` rather than adding to it.
                 args.push("--network".to_string());
                 args.push(match &net.ip {
                     Some(ip) => format!("{}:ip={ip}", net.name),
                     None => net.name.clone(),
                 });
             }
-            (None, PublishModel::ExecTunnelled) => {
-                // No `--network pasta:--host-lo-to-ns-lo`, no `--publish` at all: reachability goes
-                // through `podman exec`-tunneled `sshd`, not a published loopback port — see
-                // docs/features/podman-exec-transport/02_dev.md.
+            None => {
+                // No `--publish`: reachability goes through the exec-tunnelled `sshd`, not a
+                // published loopback port (`docs/architecture/transport.md`).
                 args.push("--network".to_string());
                 args.push("pasta".to_string());
-            }
-            (None, PublishModel::PublishRelay) => {
-                // Publish zellij's web port to an ephemeral host-loopback port. `--host-lo-to-ns-lo`
-                // is the decisive pasta flag: it forwards the host-loopback-published port to the
-                // container's loopback, where zellij binds; without it pasta forwards to the
-                // container's eth0 and the loopback-bound server is unreachable. The host side is
-                // pinned to 127.0.0.1 so nothing is exposed on the local network.
-                //
-                // Podman only forwards ports it is explicitly told about (confirmed: with no
-                // `--publish` it invokes pasta with `-t none -u none`, forwarding nothing) — there is
-                // no way to reach a container's port from outside its netns without publishing it
-                // first. The relay pool pre-publishes a small pool of container-side ports
-                // (crate::network::RELAY_POOL_SIZE) that `NetworkManager::expose_port` can later
-                // bridge to an arbitrary user-chosen port via an in-container `socat` relay, without
-                // ever recreating the container.
-                args.push("--network".to_string());
-                args.push("pasta:--host-lo-to-ns-lo".to_string());
-                args.push("--publish".to_string());
-                args.push(format!("127.0.0.1::{ZELLIJ_WEB_PORT}"));
-                args.push("--publish".to_string());
-                args.push(format!("127.0.0.1::{PASEO_WEB_PORT}"));
-                for p in crate::network::relay_pool_publish_args() {
-                    args.push("--publish".to_string());
-                    args.push(p);
-                }
             }
         }
         args.push("--volume".to_string());

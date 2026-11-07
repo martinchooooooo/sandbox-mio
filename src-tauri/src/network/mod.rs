@@ -5,7 +5,6 @@ pub mod types;
 mod mock;
 
 use std::collections::HashMap;
-use std::process::Output;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -19,29 +18,12 @@ use crate::provider::ProviderRegistry;
 
 pub use types::EVENT_NAME;
 
-pub const RELAY_PORT_POOL_START: u16 = 40000;
-
-pub const RELAY_POOL_SIZE: u16 = 8;
-
-pub fn relay_pool_publish_args() -> Vec<String> {
-    (RELAY_PORT_POOL_START..RELAY_PORT_POOL_START + RELAY_POOL_SIZE)
-        .map(|p| format!("127.0.0.1::{p}"))
-        .collect()
-}
-
 fn forward_name(sandbox: &str, kind: ServiceKind) -> String {
     match kind {
         ServiceKind::Terminal => format!("terminal-{sandbox}"),
         ServiceKind::AgentWeb => format!("agentweb-{sandbox}"),
         ServiceKind::Exposed(port) => format!("expose-{sandbox}-{port}"),
     }
-}
-
-/// Whether an `Exposed` forward went through a relay-pool slot and so has a `socat` to kill.
-/// Derived rather than stored: only the relay branch of `expose_port` records a `remote_port`
-/// different from the target port (an exec-capable forward reaches `target_port` directly).
-fn is_relayed(entry: &ForwardInfo, target_port: u16) -> bool {
-    entry.remote_port != target_port
 }
 
 fn allocate_ephemeral_port() -> Result<u16, NetworkError> {
@@ -51,16 +33,6 @@ fn allocate_ephemeral_port() -> Result<u16, NetworkError> {
         .local_addr()
         .map(|a| a.port())
         .map_err(|e| NetworkError::PortAllocation(e.to_string()))
-}
-
-fn check(out: Output) -> Result<String, NetworkError> {
-    if out.status.success() {
-        Ok(String::from_utf8_lossy(&out.stdout).to_string())
-    } else {
-        Err(NetworkError::CommandFailed(
-            String::from_utf8_lossy(&out.stderr).trim().to_string(),
-        ))
-    }
 }
 
 /// If `workspace_path`'s `.mio/ports.json` doesn't exist yet, create it as an empty registry
@@ -81,25 +53,20 @@ fn ensure_ports_file(workspace_path: &str) {
     let _ = std::fs::create_dir_all(&mio_dir).and_then(|_| std::fs::write(&path, "{}"));
 }
 
-/// Drives the bundled Mutagen sidecar (via `crate::sync`) plus direct `podman exec`/`podman port`
-/// calls for the relay-pool machinery. Holds the [`AppHandle`] the sidecar is resolved through.
+/// Drives the bundled Mutagen sidecar (via `crate::sync`) and reads each sandbox's listening
+/// sockets through its provider. Holds the [`AppHandle`] the sidecar is resolved through.
 pub struct MutagenNetworkManager {
     app: AppHandle,
     forwards: Mutex<HashMap<(String, ServiceKind), ForwardInfo>>,
-    /// Serializes `expose_port` end-to-end (slot selection through registry insert) so two
-    /// concurrent calls for the same sandbox cannot race onto the same relay-pool slot.
+    /// Serializes `expose_port` end-to-end (forward creation through registry insert), so
+    /// `close_sandbox` can wait out an in-flight expose.
     expose_lock: tokio::sync::Mutex<()>,
     /// One poll-loop task per sandbox currently being watched by `watch_ports_file`, so a second
     /// call for the same sandbox is a no-op and `close_sandbox` can cancel it.
     ports_watch: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
-    /// `podman port`-based lookup, used for a sandbox on the publish+relay reachability model. An
-    /// exec-capable sandbox's `expose_port` branch needs no lookup at all (the container's own
-    /// loopback is reached directly), so unlike `PodmanMiseRuntime` there is no second
-    /// `exec_port_transport` field here — see `docs/features/podman-exec-transport/02_dev.md`.
-    published_port_transport: std::sync::Arc<dyn crate::transport::types::PortTransport>,
-    /// Resolves each method's explicit `machine`/`entry.connection` to its provider. Held as a
-    /// registry rather than one pinned provider because each call names its own machine — mirroring
-    /// `MiseRuntime`'s `providers`.
+    /// Resolves each method's explicit `machine` to its provider. Held as a registry rather than
+    /// one pinned provider because each call names its own machine — mirroring `MiseRuntime`'s
+    /// `providers`.
     providers: Arc<ProviderRegistry>,
 }
 
@@ -109,34 +76,11 @@ impl MutagenNetworkManager {
         self.providers.provider_for(machine)
     }
 
-    /// The provider for a `ForwardInfo.connection` recorded by `expose_port`. An unparseable value
-    /// means the entry came from `open_forward`, whose `connection` is an SSH alias — those are
-    /// never relayed, so no caller reaches this with one.
-    fn provider_for_entry(&self, entry: &ForwardInfo) -> Option<Arc<dyn MachineProvider>> {
-        entry.connection.parse::<MachineRef>().ok().map(|m| self.provider_on(&m))
-    }
-
     /// Push the full current snapshot to `EVENT_NAME` so `state.svelte.ts` stays live. Called after
     /// every mutation below instead of making the frontend refetch via `list_open_forwards`.
     fn emit_forwards(&self) {
         let snapshot: Vec<ForwardInfo> = self.forwards.lock().unwrap().values().cloned().collect();
         let _ = self.app.emit(EVENT_NAME, &snapshot);
-    }
-
-    fn free_slot(&self, sandbox: &str) -> Option<u16> {
-        let used: std::collections::HashSet<u16> = self
-            .forwards
-            .lock()
-            .unwrap()
-            .values()
-            .filter(|f| f.sandbox == sandbox)
-            .filter_map(|f| match f.kind {
-                ServiceKind::Exposed(_) => Some(f.remote_port),
-                _ => None,
-            })
-            .collect();
-        (RELAY_PORT_POOL_START..RELAY_PORT_POOL_START + RELAY_POOL_SIZE)
-            .find(|slot| !used.contains(slot))
     }
 }
 
@@ -201,18 +145,6 @@ impl NetworkManager for MutagenNetworkManager {
         }
         for entry in &entries {
             crate::sync::forward_terminate(&self.app, &entry.forward_name).await;
-            if let ServiceKind::Exposed(port) = entry.kind {
-                if is_relayed(entry, port) {
-                    // Best-effort: the container may already be gone (destroy) or stopped
-                    // (undeploy), either of which already kills the relay process for free.
-                    let pattern = format!("TCP-LISTEN:{}", entry.remote_port);
-                    if let Some(provider) = self.provider_for_entry(entry) {
-                        let _ = provider
-                            .exec(sandbox, &["pkill", "-f", &pattern], ExecOpts::default())
-                            .await;
-                    }
-                }
-            }
         }
         self.emit_forwards();
     }
@@ -233,7 +165,6 @@ impl NetworkManager for MutagenNetworkManager {
         target_port: u16,
         label: Option<String>,
         auto_detected: bool,
-        exec_capable: bool,
     ) -> Result<u16, NetworkError> {
         let _guard = self.expose_lock.lock().await;
         let kind = ServiceKind::Exposed(target_port);
@@ -250,47 +181,10 @@ impl NetworkManager for MutagenNetworkManager {
 
         let name = forward_name(sandbox, kind);
         let host_port = allocate_ephemeral_port()?;
-        let provider = self.provider_on(machine);
-
-        let remote_port = if exec_capable {
-            // No relay-pool slot, no socat: the container's own loopback is reachable directly
-            // over the exec-transport `Proxied` alias once `sandbox` is running.
-            provider.start(sandbox).await?;
-            crate::sync::forward_create(&self.app, &name, host_port, sandbox, target_port).await?;
-            target_port
-        } else {
-            let slot = self.free_slot(sandbox).ok_or_else(|| NetworkError::NoFreeSlot {
-                sandbox: sandbox.to_string(),
-                limit: RELAY_POOL_SIZE as usize,
-            })?;
-
-            provider.start(sandbox).await?;
-
-            // `fork` handles one client per accepted connection; `reuseaddr` lets a restarted relay
-            // rebind immediately after a prior one was killed. The relay runs inside the same netns
-            // as the user's server, so dialing its own loopback reaches it regardless of whether
-            // that server bound `127.0.0.1` or `0.0.0.0`.
-            let listen_spec = format!("TCP-LISTEN:{slot},fork,reuseaddr");
-            let dial_spec = format!("TCP:127.0.0.1:{target_port}");
-            check(
-                provider
-                    .exec(
-                        sandbox,
-                        &["socat", &listen_spec, &dial_spec],
-                        ExecOpts { detached: true, ..Default::default() },
-                    )
-                    .await?,
-            )?;
-
-            let slot_host_port = self
-                .published_port_transport
-                .resolve_remote_port(sandbox, &machine.id, slot)
-                .await
-                .map_err(|e| NetworkError::CommandFailed(e.to_string()))?;
-
-            crate::sync::forward_create(&self.app, &name, host_port, &machine.id, slot_host_port).await?;
-            slot
-        };
+        // The forward dials the container's own loopback through the sandbox's alias, which
+        // only resolves once the sandbox is running.
+        self.provider_on(machine).start(sandbox).await?;
+        crate::sync::forward_create(&self.app, &name, host_port, sandbox, target_port).await?;
 
         self.forwards.lock().unwrap().insert(
             (sandbox.to_string(), kind),
@@ -298,8 +192,8 @@ impl NetworkManager for MutagenNetworkManager {
                 sandbox: sandbox.to_string(),
                 kind,
                 host_port,
-                connection: machine.to_string(),
-                remote_port,
+                connection: sandbox.to_string(),
+                remote_port: target_port,
                 forward_name: name,
                 label: label.clone(),
                 auto_detected,
@@ -315,14 +209,6 @@ impl NetworkManager for MutagenNetworkManager {
         let entry = self.forwards.lock().unwrap().remove(&(sandbox.to_string(), kind));
         let Some(entry) = entry else { return };
         crate::sync::forward_terminate(&self.app, &entry.forward_name).await;
-        if is_relayed(&entry, target_port) {
-            let pattern = format!("TCP-LISTEN:{}", entry.remote_port);
-            if let Some(provider) = self.provider_for_entry(&entry) {
-                let _ = provider
-                    .exec(sandbox, &["pkill", "-f", &pattern], ExecOpts::default())
-                    .await;
-            }
-        }
         self.emit_forwards();
     }
 
@@ -331,7 +217,6 @@ impl NetworkManager for MutagenNetworkManager {
         sandbox: &str,
         workspace_path: &str,
         machine: &MachineRef,
-        exec_capable: bool,
     ) {
         let mut watches = self.ports_watch.lock().unwrap();
         if watches.contains_key(sandbox) {
@@ -343,7 +228,7 @@ impl NetworkManager for MutagenNetworkManager {
         let manager = self.clone();
         let task_sandbox = sandbox.clone();
         let handle = tokio::spawn(async move {
-            poll_ports_file(manager, task_sandbox, workspace_path, machine, exec_capable).await;
+            poll_ports_file(manager, task_sandbox, workspace_path, machine).await;
         });
         watches.insert(sandbox, handle);
     }
@@ -356,8 +241,8 @@ const PORTS_FILE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_
 /// Parses `/proc/net/tcp`/`/proc/net/tcp6` content (as read from inside the sandbox) into the set
 /// of local ports currently in `LISTEN` state. Column 1 is `local_address` (`<hex addr>:<hex
 /// port>`), column 3 is `st` (`0A` = `TCP_LISTEN`); the header row and any malformed line fail one
-/// of the parses and are skipped for free. Bound address is ignored — the relay dials the
-/// sandbox's own loopback either way (see `expose_port`'s `dial_spec` comment).
+/// of the parses and are skipped for free. Bound address is ignored — a forward dials the
+/// sandbox's own loopback, which reaches a server bound to `127.0.0.1` or `0.0.0.0` alike.
 fn parse_listening_ports(output: &str) -> std::collections::HashSet<u16> {
     output
         .lines()
@@ -395,14 +280,14 @@ async fn scan_listening_ports(
 /// The `watch_ports_file` poll loop body, run as its own detached task. Each tick does two
 /// independent things against the *live* `forwards` map (not a locally-remembered snapshot), so a
 /// port that got exposed some other way between ticks — e.g. a manual "Expose a port" click — is
-/// recognized as already-exposed instead of triggering a second relay for it:
+/// recognized as already-exposed instead of triggering a second forward for it:
 ///
 /// 1. Reads `workspace_path`'s `.mio/ports.json` and diffs its `{"<port>": "<short name>"}`
 ///    entries against the live map. Only ports this loop itself exposed this way (`label.is_some()`)
 ///    are eligible to be auto-unexposed when their entry disappears from the file; a
 ///    manually-exposed port stays up even if it isn't (or is no longer) declared in the file.
 /// 2. Scans the sandbox's own listening TCP sockets and exposes whichever aren't already tracked
-///    under some other kind/relay-pool slot, so e.g. a dev server started from an open Terminal
+///    under some other kind, so e.g. a dev server started from an open Terminal
 ///    pane shows up with no `.mio/ports.json` entry needed. Mirrors (1): only ports this loop
 ///    exposed this way (`auto_detected`) are auto-unexposed, once they stop listening.
 ///
@@ -412,7 +297,6 @@ async fn poll_ports_file(
     sandbox: String,
     workspace_path: String,
     machine: MachineRef,
-    exec_capable: bool,
 ) {
     let path = std::path::Path::new(&workspace_path).join(".mio").join("ports.json");
     let provider = manager.provider_on(&machine);
@@ -454,7 +338,7 @@ async fn poll_ports_file(
 
                 for (port, label) in declared.into_iter().filter(|(p, _)| !already_exposed.contains(p)) {
                     let _ = manager
-                        .expose_port(&sandbox, &machine, &workspace_path, port, Some(label), false, exec_capable)
+                        .expose_port(&sandbox, &machine, &workspace_path, port, Some(label), false)
                         .await;
                 }
             }
@@ -474,17 +358,15 @@ async fn poll_ports_file(
                     _ => None,
                 })
                 .collect();
-            // The pool slots are `socat` relays this loop opened, not user servers — but only a
-            // publish+relay sandbox has any, so an exec-capable one may legitimately serve there.
-            let mut exclude: std::collections::HashSet<u16> = if exec_capable {
-                std::collections::HashSet::new()
-            } else {
-                (RELAY_PORT_POOL_START..RELAY_PORT_POOL_START + RELAY_POOL_SIZE).collect()
-            };
-            exclude.extend(exposed_for_sandbox.iter().map(|f| match f.kind {
-                ServiceKind::Exposed(p) => p,
-                ServiceKind::Terminal | ServiceKind::AgentWeb => f.remote_port,
-            }));
+            // A pane's own server (zellij, paseo) listens in the sandbox too and must not be
+            // auto-exposed as a user port.
+            let exclude = exposed_for_sandbox
+                .iter()
+                .map(|f| match f.kind {
+                    ServiceKind::Exposed(p) => p,
+                    ServiceKind::Terminal | ServiceKind::AgentWeb => f.remote_port,
+                })
+                .collect();
             (auto_tracked, exclude)
         };
 
@@ -494,7 +376,7 @@ async fn poll_ports_file(
 
         for port in scanned.into_iter().filter(|p| !exclude.contains(p)) {
             let _ = manager
-                .expose_port(&sandbox, &machine, &workspace_path, port, None, true, exec_capable)
+                .expose_port(&sandbox, &machine, &workspace_path, port, None, true)
                 .await;
         }
     }
@@ -504,7 +386,6 @@ async fn poll_ports_file(
 /// `sync/mod.rs`.
 pub fn default_network_manager(
     app: AppHandle,
-    published_port_transport: std::sync::Arc<dyn crate::transport::types::PortTransport>,
     providers: Arc<ProviderRegistry>,
 ) -> std::sync::Arc<dyn NetworkManager> {
     if crate::backends::mock_backend_enabled() {
@@ -515,7 +396,6 @@ pub fn default_network_manager(
         forwards: Mutex::new(HashMap::new()),
         expose_lock: tokio::sync::Mutex::new(()),
         ports_watch: Mutex::new(HashMap::new()),
-        published_port_transport,
         providers,
     })
 }

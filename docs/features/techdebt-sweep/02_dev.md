@@ -67,7 +67,7 @@ Problem: `PodmanMachineManager::prepare` (`src-tauri/src/machine/mod.rs`, welcom
 - Fix the reboot message in `provision_podman` (`src-tauri/src/commands/machine.rs`), which carries a run of spaces from a lost line continuation.
 - Delete the "Independent of `provision_podman`/`start_podman_machine` by design" doc comment on `prepare()`, and mark the "Merge `PodmanMachineManager`'s `prepare()`" section of `docs/features/microsandbox-provider/04_improvements.md` done.
 
-## Remaining: Phase D — Remove the publish+relay reachability model
+## Implemented: Phase D — Remove the publish+relay reachability model
 
 Delete every branch that exists only for pre-version-6 sandboxes:
 
@@ -79,7 +79,7 @@ Delete every branch that exists only for pre-version-6 sandboxes:
 - Relay-only assertions in `e2e/test/specs/standard/expose-port.spec.ts` and `e2e/test/specs/standard/agent-web.spec.ts`, and any `KNOWN_CALLS` entry in `src-tauri/src/mockctl/mod.rs` only the relay path used.
 - Docs: replace the legacy-model paragraph of `docs/architecture/transport.md` with the invariant that every Podman sandbox uses the exec transport; note in `docs/features/expose-ports/04_improvements.md` and `docs/features/podman-exec-transport/04_improvements.md` that the relay-path items are obsolete; remove `NOTES.md` item 2.
 
-## Remaining: Phase E — sshd keepalive and a reaping PID 1
+## Implemented: Phase E — sshd keepalive and a reaping PID 1
 
 - In `src-tauri/resources/Containerfile`, add `ClientAliveInterval 15` and `ClientAliveCountMax 3` to the generated `sshd_config.container`, so a forwarding `sshd -i` orphaned by an abruptly killed client exits within about 45 seconds.
 - Install `tini` and run it as the entrypoint ahead of the existing command, so exited `sshd` sessions are reaped instead of left as zombies.

@@ -51,11 +51,11 @@ pub async fn watch_workspace_ports(
 ) -> Result<(), AppError> {
     // The poll loop auto-exposes ports over this alias without going through `expose_port`'s
     // command handler, so it has to exist before the loop's first tick.
-    let route = router.resolve_for_ports(&name, &app).await?;
+    let route = router.resolve(&name, &app).await?;
     network
         .inner()
         .clone()
-        .watch_ports_file(&name, &workspace_path, &route.machine, route.exec_capable)
+        .watch_ports_file(&name, &workspace_path, &route.machine)
         .await;
     Ok(())
 }

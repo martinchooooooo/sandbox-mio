@@ -26,17 +26,9 @@ pub async fn expose_port(
     network: State<'_, Arc<dyn NetworkManager>>,
     app: tauri::AppHandle,
 ) -> Result<u16, AppError> {
-    let route = router.resolve_for_ports(&name, &app).await?;
+    let route = router.resolve(&name, &app).await?;
     Ok(network
-        .expose_port(
-            &name,
-            &route.machine,
-            &workspace_path,
-            target_port,
-            None,
-            false,
-            route.exec_capable,
-        )
+        .expose_port(&name, &route.machine, &workspace_path, target_port, None, false)
         .await?)
 }
 

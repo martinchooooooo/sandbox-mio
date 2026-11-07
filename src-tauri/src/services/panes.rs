@@ -22,7 +22,7 @@ pub async fn prepare_terminal_webview(
     let route = router.resolve(name, app).await?;
 
     let (token, container_port) = runtime
-        .prepare_terminal(name, &route.machine, workspace_path, route.exec_capable)
+        .prepare_terminal(name, &route.machine, workspace_path)
         .await?;
 
     let forward_name = format!("terminal-{name}");
@@ -147,7 +147,7 @@ pub async fn prepare_agent_web_pane(
         .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
 
     let container_port = runtime
-        .prepare_agent_web(name, &route.machine, &password, route.exec_capable)
+        .prepare_agent_web(name, &route.machine, &password)
         .await?;
 
     let forward_name = format!("agentweb-{name}");
