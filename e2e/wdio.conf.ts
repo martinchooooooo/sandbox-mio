@@ -402,13 +402,21 @@ export const config: WebdriverIO.Config = {
   // One merged chrome webview hosts the whole app UI (docs/features/consolidate-app-container/02_dev.md);
   // each Terminal/AgentWeb pane opens its own overlay webview. Pin the session to the app UI
   // handle so it doesn't land on a pane's window instead.
+  // A webview still on `about:blank` has not loaded the app yet; pinning it made every later
+  // `execute` fail with "Origin header is not a valid URL", so wait for a loaded app page instead.
+  // `getUrl` is a WebDriver command, so it also answers on a page no script can run in yet.
   before: async () => {
-    for (const handle of await browser.getWindowHandles()) {
-      await browser.switchToWindow(handle);
-      const pagePath = await browser.execute(() => window.location.pathname);
-      if (!pagePath.startsWith("/workspace")) return;
-    }
-    throw new Error("[e2e] no app webview found among the window handles");
+    await browser.waitUntil(
+      async () => {
+        for (const handle of await browser.getWindowHandles()) {
+          await browser.switchToWindow(handle);
+          const url = new URL(await browser.getUrl());
+          if (url.protocol !== "about:" && !url.pathname.startsWith("/workspace")) return true;
+        }
+        return false;
+      },
+      { timeout: 30000, interval: 250, timeoutMsg: "[e2e] no loaded app webview found among the window handles" },
+    );
   },
   afterTest(_test, _context, result) {
     logFailure(_test.fullTitle || `${_test.parent} > ${_test.title}`, result);

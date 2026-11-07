@@ -23,6 +23,7 @@ tools/mutagen-agents.tar.gz
 
 e2e/.diag
 e2e/failures-*.log
+e2e/.tmp
 
 # Stray Windows NUL device-files created by accidental `> NUL` redirects
 NUL

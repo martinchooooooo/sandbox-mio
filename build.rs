@@ -86,7 +86,17 @@ fn main() {
                 suite = args.get(2).map(String::as_str).unwrap();
             }
 
-            run(e2e_dir(), "pnpm", &["run", &format!("test:{}", suite)]);
+            // tsx caches transforms by file content under the OS temp dir but bakes each file's own
+            // path in (`import.meta.url`), so worktrees sharing one temp dir run each other's
+            // wdio.conf.ts and run-identity.ts paths. A per-worktree temp dir keeps the caches apart.
+            let tmp = e2e_dir().join(".tmp");
+            fs::create_dir_all(&tmp).unwrap();
+            run_env(
+                e2e_dir(),
+                "pnpm",
+                &["run", &format!("test:{}", suite)],
+                &[("TEMP", tmp.as_path()), ("TMP", tmp.as_path())],
+            );
         }
         Some("docs") if matches!(args.get(2).map(String::as_str), None | Some("check")) => {
             std::process::exit(docs_check::run(&root_dir(), false));
@@ -1016,6 +1026,11 @@ fn try_run(dir: PathBuf, cmd: &str, args: &[&str]) -> bool {
 }
 
 fn run(dir: PathBuf, cmd: &str, args: &[&str]) {
+    run_env(dir, cmd, args, &[]);
+}
+
+/// [`run`] with extra environment variables set on the child.
+fn run_env(dir: PathBuf, cmd: &str, args: &[&str], envs: &[(&str, &Path)]) {
     let mut command = if cfg!(windows) {
         let mut c = Command::new("cmd");
         c.arg("/C").arg(cmd).args(args);
@@ -1027,6 +1042,7 @@ fn run(dir: PathBuf, cmd: &str, args: &[&str]) {
     };
     let mut child = command
         .current_dir(dir)
+        .envs(envs.iter().copied())
         .spawn()
         .unwrap_or_else(|e| panic!("failed to run `{}`: {}", cmd, e));
     #[cfg(windows)]
