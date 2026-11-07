@@ -18,4 +18,5 @@
 * [proxy-remote-deploy](../features/proxy-remote-deploy/index.md) - planned, changes network.md, remote.md: Let a proxy-enabled sandbox be deployed to a remote host instead of being refused.
 * [proxy-toggle-management](../features/proxy-toggle-management/index.md) - planned, changes network.md, providers.md: App-global proxy default and turning the proxy on or off for an existing sandbox by recreating it.
 * [tailscale-access](../features/tailscale-access/index.md) - planned, changes remote.md: Join deployed sandboxes to the user's tailnet so their web services are reachable from other devices.
+* [techdebt-sweep](../features/techdebt-sweep/index.md) - planned, changes providers.md, transport.md, agents.md, workspace-ui.md: Resolve the open tech debt found by the 2026-11-07 audit: msb build locks, duplicated Podman bring-up, the legacy relay path, secrets on disk and in logs, unbounded calls.
 * [cloud-sandboxes](../features/cloud-sandboxes/index.md) - idea, changes remote.md: Top-level Cloud Sandboxes nav panel for administering remote Podman hosts, including Oracle Cloud and Google Cloud provisioning.

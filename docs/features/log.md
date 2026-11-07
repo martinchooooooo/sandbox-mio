@@ -5,6 +5,10 @@ Records feature status changes only: creation (`Create`), reaching `implemented`
 history with at most one `Create` and one `Implement` entry per feature, so seeded dates are
 approximate. New entries go on top.
 
+## 2026-11-07
+
+* **Create** [techdebt-sweep](techdebt-sweep/index.md): plan recorded from the 2026-11-07 tech-debt audit
+
 ## 2026-11-02
 
 * **Implement** [microsandbox-network-policy](microsandbox-network-policy/index.md): feat(msb): enforce network policy and chain a traffic proxy for microsandbox (`1e3d5df`)

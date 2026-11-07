@@ -15,6 +15,7 @@
 * [proxy-remote-deploy](proxy-remote-deploy/index.md) - Let a proxy-enabled sandbox be deployed to a remote host instead of being refused.
 * [proxy-toggle-management](proxy-toggle-management/index.md) - App-global proxy default and turning the proxy on or off for an existing sandbox by recreating it.
 * [tailscale-access](tailscale-access/index.md) - Join deployed sandboxes to the user's tailnet so their web services are reachable from other devices.
+* [techdebt-sweep](techdebt-sweep/index.md) - Resolve the open tech debt found by the 2026-11-07 audit: msb build locks, duplicated Podman bring-up, the legacy relay path, secrets on disk and in logs, unbounded calls.
 
 ## idea
 
