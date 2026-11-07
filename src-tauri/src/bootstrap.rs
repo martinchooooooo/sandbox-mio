@@ -100,7 +100,7 @@ impl Bootstrap {
         if !backends::mock_backend_enabled() {
             if let Ok(resource_dir) = app.path().resource_dir() {
                 backends::set_podman_resource_dir(resource_dir.join("podman"));
-                process::set_msb_resource_dir(resource_dir.join("msb"));
+                process::set_msb_resource_dir(staged_msb_dir(app.handle(), resource_dir.join("msb")));
             }
         }
         let mutagen_runner: Arc<dyn ProcessRunner> = if backends::mock_backend_enabled() {
@@ -141,6 +141,19 @@ impl Bootstrap {
         }
         Ok(())
     }
+}
+
+/// The directory `msb` runs from: the bundle staged under app data, so a running VM supervisor
+/// never locks the build output. Falls back to the bundled directory itself, which is still the
+/// bundled `msb`, when staging fails.
+fn staged_msb_dir(app: &tauri::AppHandle, bundled: std::path::PathBuf) -> std::path::PathBuf {
+    let staged = crate::paths::app_data_root(app)
+        .map_err(std::io::Error::other)
+        .and_then(|root| process::stage_msb(&bundled, &root.join("msb")));
+    staged.unwrap_or_else(|e| {
+        tracing::warn!(target: "process", error = %e, "staging the msb bundle failed; running it in place");
+        bundled
+    })
 }
 
 /// Stops the active inference server and shuts the sync engine down on exit.

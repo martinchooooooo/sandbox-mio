@@ -12,4 +12,4 @@ Resolve the open tech debt found by the 2026-11-07 audit: msb build locks, dupli
 
 ## Status note
 
-Implemented: Phases C, F, G, H, I, J. Phases A, B, D, E are built in parallel worktrees; Phase K runs after they merge.
+Implemented: Phases A, B, C, F, G, H, I, J. Phases D, E are built in parallel worktrees; Phase K runs after they merge.

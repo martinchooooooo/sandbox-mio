@@ -38,7 +38,7 @@ Items found by the audit to be already fixed, and therefore not in any phase: th
 10. **Model checksums come from Hugging Face's LFS metadata** for each pinned repository and file. An upstream re-upload then fails the download loudly, which is the intended behaviour.
 11. **New user-facing strings follow the `feature-implement` skill.** A phase adding UI writes `TODO(i18n)` markers; Phase K translates whatever markers remain after the merge.
 
-## Remaining: Phase A — Stage the bundled msb outside the build output
+## Implemented: Phase A — Stage the bundled msb outside the build output
 
 Problem: `msb create` leaves a detached VM supervisor running from the bundled resource directory, which under a debug build is `src-tauri/target/debug/msb/`. The supervisor holds `libkrunfw.dll` open, so tauri-build cannot recopy the resource and `cargo check` fails with `os error 32` for as long as any microsandbox sandbox runs. `move_aside_locked_dev_files()` in the root `build.rs` works around the lock for `./build dev` only, not for `cargo check` or the e2e build.
 
@@ -48,7 +48,7 @@ Problem: `msb create` leaves a detached VM supervisor running from the bundled r
 - Update the doc comments of `msb_executable()` and `msb_command()` to name the staged copy.
 - Leave `move_aside_locked_dev_files()` unchanged: sandboxes started before Phase A still run from `target/debug/msb/`.
 
-## Remaining: Phase B — Bound msb and Mutagen one-shot calls
+## Implemented: Phase B — Bound msb and Mutagen one-shot calls
 
 - Give `run_capturing_via_files()` (`src-tauri/src/process/mod.rs`) a timeout argument, applied the way `run_via_blocking_process()` applies `call_timeout()`. On expiry, kill the direct child (never the detached VM supervisor) and return `std::io::ErrorKind::TimedOut` with a message naming the call and the bound.
 - Add an msb timeout selector beside `call_timeout()`: 60 seconds for `create`, 30 seconds otherwise; use it in `SystemMsbRunner::run` and `SystemMsbRunner::run_with_env`.

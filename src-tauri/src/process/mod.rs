@@ -486,12 +486,14 @@ extern "system" {
 /// the pipe handles on every call, not just `machine`/`create`-shaped ones. `label` namespaces the
 /// temp-file stem per caller (`"msb"`, `"podman"`) so concurrent calls from both never collide.
 ///
-/// Unbounded by design for now: see `docs/features/podman-process-isolation/02_dev.md`, Resolved
-/// Decision 4.
+/// Bounded by `timeout`: on expiry only the direct child is killed — never the detached VM
+/// supervisor it may have spawned — and the call returns `TimedOut` naming `label`, `args` and the
+/// bound (`docs/features/techdebt-sweep/02_dev.md`, Resolved Decision 2).
 async fn run_capturing_via_files(
     mut cmd: tokio::process::Command,
     args: &[&str],
     label: &str,
+    timeout: Duration,
 ) -> std::io::Result<Output> {
     let id = CAPTURE_CALL_COUNTER.fetch_add(1, Ordering::Relaxed);
     let stem = format!("sandbox-mio-{label}-{}-{id}", std::process::id());
@@ -501,17 +503,27 @@ async fn run_capturing_via_files(
     let result = async {
         let stdout_file = std::fs::File::create(&stdout_path)?;
         let stderr_file = std::fs::File::create(&stderr_path)?;
-        let status = cmd
+        let mut child = cmd
             .args(args)
             .stdout(std::process::Stdio::from(stdout_file))
             .stderr(std::process::Stdio::from(stderr_file))
-            .status()
-            .await?;
-        Ok(Output {
-            status,
-            stdout: std::fs::read(&stdout_path).unwrap_or_default(),
-            stderr: std::fs::read(&stderr_path).unwrap_or_default(),
-        })
+            .spawn()?;
+        match tokio::time::timeout(timeout, child.wait()).await {
+            Ok(status) => Ok(Output {
+                status: status?,
+                stdout: std::fs::read(&stdout_path).unwrap_or_default(),
+                stderr: std::fs::read(&stderr_path).unwrap_or_default(),
+            }),
+            Err(_) => {
+                let _ = child.start_kill();
+                // Reaps the killed child so its handle is released before the temp files go.
+                let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!("{label} {} timed out after {timeout:?}", args.join(" ")),
+                ))
+            }
+        }
     }
     .await;
 
@@ -627,15 +639,142 @@ impl ProcessRunner for SystemPodmanRunner {
 
 static MSB_RESOURCE_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
 
-/// Record the bundled microsandbox resource directory (`msb` plus its adjacent `libkrunfw`) for
-/// [`msb_executable`]. Called once at startup, before any `msb` call, mirroring
+/// Record the directory holding the bundled microsandbox files (`msb` plus its adjacent
+/// `libkrunfw`) for [`msb_executable`]: the staged copy from [`stage_msb`], not the resource
+/// directory itself. Called once at startup, before any `msb` call, mirroring
 /// `backends::set_podman_resource_dir`.
 pub fn set_msb_resource_dir(dir: std::path::PathBuf) {
     let _ = MSB_RESOURCE_DIR.set(dir);
 }
 
-/// The bundled `msb` executable — the only one this app ever runs. There is deliberately no
-/// `MSB_PATH` override and no `PATH` fallback: a missing bundle fails the spawn with `NotFound`.
+/// Prefix of the sibling directory [`stage_msb`] copies into before renaming it into place.
+const MSB_STAGING_PREFIX: &str = ".staging-";
+
+/// A leftover staging directory older than this belongs to a crashed run, not a racing instance.
+const MSB_STAGING_STALE: Duration = Duration::from_secs(3600);
+
+/// Copies the bundled `msb/` resource directory into `<root>/<content hash>/` and returns that
+/// directory, so the detached VM supervisor and its loaded `libkrunfw` never pin a file under the
+/// build output (`docs/features/techdebt-sweep/02_dev.md`, Resolved Decision 5).
+///
+/// An existing target is reused untouched. The copy lands in a temporary sibling that is renamed
+/// into place, so a second app instance staging at once never observes a half-written directory.
+pub(crate) fn stage_msb(
+    bundled: &std::path::Path,
+    root: &std::path::Path,
+) -> std::io::Result<std::path::PathBuf> {
+    let target = root.join(msb_bundle_hash(bundled)?);
+    if target.is_dir() {
+        prune_staged_msb(root, &target);
+        return Ok(target);
+    }
+    std::fs::create_dir_all(root)?;
+    let id = CAPTURE_CALL_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let staging = root.join(format!("{MSB_STAGING_PREFIX}{}-{id}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&staging);
+    let published =
+        copy_dir_all(bundled, &staging).and_then(|()| rename_with_retry(&staging, &target));
+    if let Err(e) = published {
+        let _ = std::fs::remove_dir_all(&staging);
+        // Losing the rename race to another instance is success: a renamed target is complete.
+        if !target.is_dir() {
+            return Err(e);
+        }
+    }
+    prune_staged_msb(root, &target);
+    Ok(target)
+}
+
+/// Identifies one bundle: the sha256 of `msb[.exe]` plus the name and size of every other file,
+/// which tells two releases apart without reading the large `libkrunfw` on every startup.
+fn msb_bundle_hash(bundled: &std::path::Path) -> std::io::Result<String> {
+    use sha2::{Digest, Sha256};
+    let exe = bundled.join(if cfg!(windows) { "msb.exe" } else { "msb" });
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut std::fs::File::open(&exe)?, &mut hasher)?;
+    let mut others = Vec::new();
+    for entry in std::fs::read_dir(bundled)? {
+        let entry = entry?;
+        if entry.path() != exe {
+            others.push((entry.file_name(), entry.metadata()?.len()));
+        }
+    }
+    others.sort();
+    for (name, len) in others {
+        hasher.update(name.to_string_lossy().as_bytes());
+        hasher.update(len.to_le_bytes());
+    }
+    Ok(hasher.finalize().iter().take(8).map(|b| format!("{b:02x}")).collect())
+}
+
+fn copy_dir_all(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let dest = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir_all(&entry.path(), &dest)?;
+        } else {
+            std::fs::copy(entry.path(), dest)?;
+        }
+    }
+    Ok(())
+}
+
+/// Windows can deny a rename of a just-written directory while an antivirus scan still holds one
+/// of its files; the hold is brief, so a few retries absorb it.
+fn rename_with_retry(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    let mut last = Ok(());
+    for _ in 0..5 {
+        last = std::fs::rename(from, to);
+        if last.is_ok() || to.is_dir() {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    last
+}
+
+/// Best-effort removal of every staged directory except `keep`. A directory with any file that
+/// cannot be opened for writing is still the image of a running VM supervisor and stays.
+fn prune_staged_msb(root: &std::path::Path, keep: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(root) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path == keep || !path.is_dir() {
+            continue;
+        }
+        let removable = if entry.file_name().to_string_lossy().starts_with(MSB_STAGING_PREFIX) {
+            entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age > MSB_STAGING_STALE)
+        } else {
+            all_files_writable(&path)
+        };
+        if removable {
+            let _ = std::fs::remove_dir_all(&path);
+        }
+    }
+}
+
+fn all_files_writable(dir: &std::path::Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else { return false };
+    entries.flatten().all(|entry| {
+        let path = entry.path();
+        if path.is_dir() {
+            all_files_writable(&path)
+        } else {
+            std::fs::OpenOptions::new().write(true).open(path).is_ok()
+        }
+    })
+}
+
+/// The `msb` executable inside the staged copy of the bundle — the only one this app ever runs.
+/// There is deliberately no `MSB_PATH` override and no `PATH` fallback: a missing bundle fails the
+/// spawn with `NotFound`.
 ///
 /// Before [`set_msb_resource_dir`] runs (unit tests only) this is the relative `msb/msb[.exe]`;
 /// containing a separator, it is never searched for on `PATH` either.
@@ -647,10 +786,11 @@ pub(crate) fn msb_executable() -> std::path::PathBuf {
     }
 }
 
-/// Builds an `msb` invocation against [`msb_executable`], pinning its runtime to the bundle
-/// whatever the app inherited. `MSB_PATH` is the *executable* path (a directory fails every
-/// `msb create` with `Access is denied`); `msb` spawns its VM supervisor from it and resolves the
-/// adjacent `libkrunfw`, so the library and agentd overrides are cleared to keep the pair intact.
+/// Builds an `msb` invocation against [`msb_executable`] (the staged bundle copy), pinning its
+/// runtime to that copy whatever the app inherited. `MSB_PATH` is the *executable* path (a
+/// directory fails every `msb create` with `Access is denied`); `msb` spawns its VM supervisor from
+/// it and resolves the adjacent `libkrunfw`, so the library and agentd overrides are cleared to
+/// keep the pair intact.
 ///
 /// `msb create` also fails with `Access is denied` when any Windows Job Object above this app denies
 /// breakaway, since `msb` starts its VM supervisor with `CREATE_BREAKAWAY_FROM_JOB`. That cannot be
@@ -665,10 +805,63 @@ pub(crate) fn msb_command() -> tokio::process::Command {
     cmd
 }
 
+/// Bound on every one-shot `msb` call except `create`.
+const MSB_CALL_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// `msb create`: also covers a cold image pull on a fresh host.
+const MSB_CREATE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Bound on every Mutagen one-shot call through [`SystemMutagenRunner`].
+const MUTAGEN_CALL_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Picks the timeout for an `msb` call by shape, as [`call_timeout`] does for `podman`: only
+/// `create` gets the longer allowance (`docs/features/techdebt-sweep/02_dev.md`, Resolved
+/// Decision 2).
+fn msb_call_timeout(args: &[&str]) -> Duration {
+    match args {
+        ["create", ..] => MSB_CREATE_TIMEOUT,
+        _ => MSB_CALL_TIMEOUT,
+    }
+}
+
+/// Logs one finished `msb`/Mutagen call in the shape of the podman seam's lines. Only argv is
+/// logged; `msb` secrets travel in the child environment, which must never reach the log.
+macro_rules! log_call_outcome {
+    ($tool:literal, $args:expr, $started:expr, $result:expr) => {{
+        let argv = $args.join(" ");
+        let ms = $started.elapsed().as_millis();
+        match $result {
+            Ok(out) if out.status.success() => {
+                tracing::info!(target: $tool, argv = %argv, ms, concat!($tool, " call ok"))
+            }
+            Ok(out) => tracing::warn!(
+                target: $tool,
+                argv = %argv,
+                ms,
+                code = out.status.code().unwrap_or(-1),
+                stderr = %String::from_utf8_lossy(&out.stderr).trim(),
+                concat!($tool, " call exited non-zero")
+            ),
+            Err(e) => {
+                tracing::error!(target: $tool, argv = %argv, ms, error = %e, concat!($tool, " call failed"))
+            }
+        }
+    }};
+}
+
+/// Runs one `msb` call under [`msb_call_timeout`], logging its start and outcome.
+async fn run_msb_logged(cmd: tokio::process::Command, args: &[&str]) -> std::io::Result<Output> {
+    let started = std::time::Instant::now();
+    tracing::info!(target: "msb", argv = %args.join(" "), "msb call starting");
+    let result = run_capturing_via_files(cmd, args, "msb", msb_call_timeout(args)).await;
+    log_call_outcome!("msb", args, started, &result);
+    result
+}
+
 #[async_trait::async_trait]
 impl ProcessRunner for SystemMsbRunner {
     async fn run(&self, args: &[&str]) -> std::io::Result<Output> {
-        run_capturing_via_files(msb_command(), args, "msb").await
+        run_msb_logged(msb_command(), args).await
     }
 
     async fn run_with_env(
@@ -678,7 +871,7 @@ impl ProcessRunner for SystemMsbRunner {
     ) -> std::io::Result<Output> {
         let mut cmd = msb_command();
         cmd.envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
-        run_capturing_via_files(cmd, args, "msb").await
+        run_msb_logged(cmd, args).await
     }
 }
 
@@ -694,7 +887,20 @@ impl ProcessRunner for SystemMutagenRunner {
         // Sidecar-resolution and data-dir errors collapse into one io::Error here; the caller
         // (`sync::run_via`) re-wraps it as `SyncError::Sidecar`, losing the `DataDir` distinction.
         let mut command = crate::sync::command(&self.app).map_err(std::io::Error::other)?;
-        command.args(args).output().await.map_err(std::io::Error::other)
+        let started = std::time::Instant::now();
+        tracing::info!(target: "mutagen", argv = %args.join(" "), "mutagen call starting");
+        // `kill_on_drop` makes the timeout drop terminate the direct child; the Mutagen daemon a
+        // call may have auto-started is a separate process and keeps running.
+        let call = command.args(args).kill_on_drop(true).output();
+        let result = match tokio::time::timeout(MUTAGEN_CALL_TIMEOUT, call).await {
+            Ok(output) => output.map_err(std::io::Error::other),
+            Err(_) => Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("mutagen {} timed out after {MUTAGEN_CALL_TIMEOUT:?}", args.join(" ")),
+            )),
+        };
+        log_call_outcome!("mutagen", args, started, &result);
+        result
     }
 }
 
@@ -740,5 +946,127 @@ mod tests {
 
         drop(file);
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn only_msb_create_gets_the_long_bound() {
+        assert_eq!(super::msb_call_timeout(&["create", "img", "--name", "x"]), super::MSB_CREATE_TIMEOUT);
+        for args in [&["exec", "x"][..], &["rm", "--force", "x"], &["image", "ls"], &["start", "x"]] {
+            assert_eq!(super::msb_call_timeout(args), super::MSB_CALL_TIMEOUT, "{args:?}");
+        }
+        assert!(super::MSB_CREATE_TIMEOUT > super::MSB_CALL_TIMEOUT);
+    }
+
+    /// A unique scratch directory per test, removed on drop.
+    struct Scratch(std::path::PathBuf);
+
+    impl Scratch {
+        fn new(tag: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!("mio-{tag}-{}-{:?}", std::process::id(), std::thread::current().id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).expect("scratch dir");
+            Self(dir)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn write_bundle(dir: &std::path::Path, exe: &str) {
+        std::fs::create_dir_all(dir).expect("bundle dir");
+        std::fs::write(dir.join("msb.exe"), exe).expect("msb.exe");
+        std::fs::write(dir.join("libkrunfw.dll"), "lib").expect("libkrunfw");
+    }
+
+    #[test]
+    fn staging_copies_the_bundle_once_and_reuses_it() {
+        let scratch = Scratch::new("stage-once");
+        let bundled = scratch.0.join("bundled");
+        let root = scratch.0.join("app-data").join("msb");
+        write_bundle(&bundled, "v1");
+
+        let first = super::stage_msb(&bundled, &root).expect("stage");
+        assert_eq!(std::fs::read_to_string(first.join("msb.exe")).unwrap(), "v1");
+        assert_eq!(std::fs::read_to_string(first.join("libkrunfw.dll")).unwrap(), "lib");
+
+        std::fs::write(first.join("marker"), "kept").unwrap();
+        let second = super::stage_msb(&bundled, &root).expect("restage");
+        assert_eq!(second, first);
+        assert!(second.join("marker").exists(), "an existing staged directory must not be recopied");
+
+        let leftovers: Vec<_> = std::fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with(super::MSB_STAGING_PREFIX))
+            .collect();
+        assert!(leftovers.is_empty(), "staging directory left behind");
+    }
+
+    #[test]
+    fn staging_prunes_an_unlocked_old_bundle_and_keeps_a_locked_one() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let scratch = Scratch::new("stage-prune");
+        let bundled = scratch.0.join("bundled");
+        let root = scratch.0.join("msb");
+        write_bundle(&bundled, "v1");
+        let old_free = super::stage_msb(&bundled, &root).expect("stage v1");
+        write_bundle(&bundled, "v2");
+        let old_locked = super::stage_msb(&bundled, &root).expect("stage v2");
+        assert_ne!(old_free, old_locked);
+        // Share mode 0 refuses every other open, like a running image does.
+        let _held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(old_locked.join("libkrunfw.dll"))
+            .expect("lock file");
+
+        write_bundle(&bundled, "v3");
+        let current = super::stage_msb(&bundled, &root).expect("stage v3");
+        assert!(current.is_dir());
+        assert!(!old_free.exists(), "an unlocked old bundle should be pruned");
+        assert!(old_locked.exists(), "a locked old bundle must stay");
+    }
+
+    #[test]
+    fn staging_fails_when_the_bundle_has_no_executable() {
+        let scratch = Scratch::new("stage-missing");
+        let bundled = scratch.0.join("bundled");
+        std::fs::create_dir_all(&bundled).unwrap();
+        assert!(super::stage_msb(&bundled, &scratch.0.join("msb")).is_err());
+    }
+
+    #[tokio::test]
+    async fn a_call_past_its_bound_is_killed_and_reported_as_timed_out() {
+        let started = std::time::Instant::now();
+        let err = super::run_capturing_via_files(
+            super::detached_command("ping"),
+            &["-n", "30", "127.0.0.1"],
+            "msb",
+            std::time::Duration::from_millis(500),
+        )
+        .await
+        .expect_err("ping should outlive the bound");
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+        let message = err.to_string();
+        assert!(message.contains("msb -n 30") && message.contains("500ms"), "{message}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(10), "child was not killed");
+    }
+
+    #[tokio::test]
+    async fn a_call_within_its_bound_returns_its_output() {
+        let out = super::run_capturing_via_files(
+            super::detached_command("cmd"),
+            &["/C", "echo", "hello"],
+            "msb",
+            std::time::Duration::from_secs(20),
+        )
+        .await
+        .expect("cmd runs");
+        assert!(out.status.success());
+        assert!(String::from_utf8_lossy(&out.stdout).contains("hello"));
     }
 }

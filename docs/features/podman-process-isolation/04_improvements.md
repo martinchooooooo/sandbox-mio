@@ -10,6 +10,13 @@ item below blocks any phase of the build plan.
 
 ## Bound the `msb` and Mutagen process path
 
+**Done.** `run_capturing_via_files()` (`src-tauri/src/process/mod.rs`) now takes a timeout and, on
+expiry, kills only the direct child and returns `ErrorKind::TimedOut`. `msb create` is bounded at 60
+seconds and every other `msb` call at 30 seconds (`msb_call_timeout()`); `SystemMutagenRunner::run`
+is bounded at 30 seconds. Each call logs `msb call` / `mutagen call` lines with its duration in
+`mio.log`. Spawned and streamed children stay unbounded, and no circuit breaker was added. See
+`docs/features/techdebt-sweep/02_dev.md`, Resolved Decision 2. The original description follows.
+
 `run_capturing_via_files()` (`src-tauri/src/process/mod.rs`) captures stdout and stderr through temp
 files but applies no timeout at all, unlike its podman counterpart `run_via_blocking_process()`, which
 is bounded by `call_timeout()`. `SystemMsbRunner::run()` and `SystemMutagenRunner::run()`
@@ -61,6 +68,6 @@ condition, so the user-visible text is correct even where the discriminant is no
 
 | Gotcha | Cause | Fix |
 |---|---|---|
-| An `msb create` or Mutagen call hangs forever with no error and no log entry | `run_capturing_via_files()` (`src-tauri/src/process/mod.rs`) applies no timeout, unlike `run_via_blocking_process()` which is bounded by `call_timeout()` | Terminate the stuck `msb` or `mutagen` process manually; implement the bound described in the "Bound the `msb` and Mutagen process path" section above |
+| An `msb` or Mutagen call fails with "timed out after 30s" (60s for `msb create`) | `msb_call_timeout()` and `MUTAGEN_CALL_TIMEOUT` (`src-tauri/src/process/mod.rs`) bound every one-shot call, including legitimately slow ones such as a cold image pull | Retry once the work is cached; if a call shape regularly exceeds the bound, add an allowance for it to `msb_call_timeout()` |
 | A handle created after app startup is inherited by a spawned child | The Phase A sanitiser in `src-tauri/src/process/mod.rs` clears inherit flags once, at the start of `run()` (`src-tauri/src/lib.rs`), and does not govern handles created later | Accept the gap while `CommandExt::raw_attribute` is unstable; re-run `std-handle-list-check.rs` (`docs/features/podman-process-isolation/spike/`) after a toolchain upgrade |
 | A runtime-path failure caused by an unresponsive podman arrives as `kind: "Backend"` | `From<ProviderError> for RuntimeError` (`src-tauri/src/runtime/types.rs`) collapses `ProviderError::Unresponsive` into `RuntimeError::CommandFailed` | Read the message text, which still names the condition; add a `RuntimeError` variant when a runtime-side surface needs to branch on it |

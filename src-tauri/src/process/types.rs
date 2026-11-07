@@ -41,7 +41,8 @@ pub struct SystemMutagenRunner {
     pub(super) app: tauri::AppHandle,
 }
 
-/// Real `msb` invocations, always against the bundled `msb` + `libkrunfw` resource dir
-/// (`msb_command()` in `src-tauri/src/process/mod.rs`); never a host install. The binary is bundled; the Windows Hypervisor Platform feature it needs is not, so that stays
+/// Real `msb` invocations, always against the staged copy of the bundled `msb` + `libkrunfw`
+/// (`msb_command()` in `src-tauri/src/process/mod.rs`); never a host install. Each call is bounded
+/// (`msb_call_timeout()`). The binary is bundled; the Windows Hypervisor Platform feature it needs is not, so that stays
 /// a host prerequisite reported by `msb doctor`. See `docs/features/microsandbox-provider/02_dev.md`.
 pub struct SystemMsbRunner;
