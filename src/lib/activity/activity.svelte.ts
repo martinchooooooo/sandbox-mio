@@ -44,9 +44,8 @@ const kindLabels: Record<TaskKind, () => string> = {
     "host-provision": m.task_host_provision_label,
     "agent-install": m.task_agent_install_label,
     "podman-startup": m.task_podman_startup_label,
-    // TODO(i18n)
-    "proxy-image-pull": () => "Pulling proxy image",
-    "network-reapply": () => "Applying network settings", // TODO(i18n)
+    "proxy-image-pull": m.task_proxy_image_pull_label,
+    "network-reapply": m.task_network_reapply_label,
 };
 
 export function taskLabel(kind: TaskKind): string {

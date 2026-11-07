@@ -5,6 +5,7 @@
     import type { createActionRunner } from "$lib/actions.svelte";
     import type { ProviderId } from "$lib/providers";
     import NetPolicyEditor from "./NetPolicyEditor.svelte";
+    import { m } from "$lib/paraglide/messages.js";
 
     // Mirrors Rust `proxy::types::ProxyStatus` (camelCase per its own `serde(rename_all)`).
     interface ProxyStatus {
@@ -118,27 +119,23 @@
 </script>
 
 <div class="flex flex-col gap-1.5 border-t pt-2" data-proxy-panel>
-    <!-- TODO(i18n) -->
-    <span class="text-muted-foreground text-xs shrink-0">Traffic inspection</span>
+    <span class="text-muted-foreground text-xs shrink-0">{m.proxy_title()}</span>
 
     {#if status && !status.running}
         <span class="text-muted-foreground text-xs" data-proxy-disabled>
-            <!-- TODO(i18n) -->
             {#if msb}
-                Off. Turn it on below and re-apply the network settings.
+                {m.proxy_off_msb()}
             {:else}
-                Off. Recreate this sandbox with inspection enabled to turn it on.
+                {m.proxy_off_podman()}
             {/if}
         </span>
     {:else if status?.running && msb}
         <span class="text-muted-foreground text-xs" data-proxy-msb-chain>
-            <!-- TODO(i18n) -->
-            Traffic is chained through this sandbox's mitmproxy VM.
+            {m.proxy_chained()}
         </span>
     {:else if status?.running}
         <span class="text-muted-foreground text-xs" data-proxy-network>
-            <!-- TODO(i18n) -->
-            Proxy network: {status.network}
+            {m.proxy_network({ network: status.network })}
         </span>
 
         {#if rules.length > 0}
@@ -154,40 +151,35 @@
                 {/each}
             </div>
         {:else}
-            <!-- TODO(i18n) -->
-            <span class="text-muted-foreground text-xs">No rules configured.</span>
+            <span class="text-muted-foreground text-xs">{m.proxy_no_rules()}</span>
         {/if}
 
         <div class="flex flex-wrap items-center gap-2">
             <input class="w-28 rounded border bg-background px-2 py-1 text-xs disabled:opacity-50"
-                placeholder="host" bind:value={newHost} disabled={busy} />
+                placeholder={m.proxy_host_placeholder()} bind:value={newHost} disabled={busy} />
             <input class="w-24 rounded border bg-background px-2 py-1 text-xs disabled:opacity-50"
-                placeholder="path prefix" bind:value={newPathPrefix} disabled={busy} />
+                placeholder={m.proxy_path_prefix_placeholder()} bind:value={newPathPrefix} disabled={busy} />
             <input class="w-28 rounded border bg-background px-2 py-1 text-xs disabled:opacity-50"
-                placeholder="header" bind:value={newHeader} disabled={busy} />
+                placeholder={m.proxy_header_placeholder()} bind:value={newHeader} disabled={busy} />
             <input class="w-28 rounded border bg-background px-2 py-1 text-xs disabled:opacity-50"
-                placeholder="secret id" bind:value={newSecretId} disabled={busy} />
+                placeholder={m.secret_id_placeholder()} bind:value={newSecretId} disabled={busy} />
             <Button size="sm" disabled={busy} onclick={addRule}>
-                <!-- TODO(i18n) -->
-                Add rule
+                {m.rule_add()}
             </Button>
         </div>
 
         <div class="flex items-center gap-2">
-            <!-- TODO(i18n) -->
-            <span class="text-muted-foreground text-xs shrink-0">Set secret value</span>
+            <span class="text-muted-foreground text-xs shrink-0">{m.secret_set_value()}</span>
             <input class="flex-1 rounded border bg-background px-2 py-1 text-xs disabled:opacity-50"
-                type="password" placeholder="value for the secret id above" bind:value={secretValue}
+                type="password" placeholder={m.secret_value_placeholder()} bind:value={secretValue}
                 disabled={busy} />
             <Button size="sm" disabled={busy || !newSecretId.trim() || !secretValue.trim()} onclick={saveSecret}>
-                <!-- TODO(i18n) -->
-                Save
+                {m.settings_save()}
             </Button>
         </div>
 
         <span class="text-muted-foreground text-xs">
-            <!-- TODO(i18n) -->
-            Traffic that ignores the proxy (raw sockets, git-over-SSH) is not inspected.
+            {m.proxy_unmonitored()}
         </span>
     {/if}
 

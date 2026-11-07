@@ -5,6 +5,7 @@
     import type { ProviderId } from "$lib/providers";
     import { Switch } from "$lib/components/ui/switch";
     import { workspaceApps } from "$lib/workspace/state.svelte";
+    import { m } from "$lib/paraglide/messages.js";
 
     // Mirrors Rust `net_policy::NetPolicy` (camelCase, `.mio/net-policy.json` on disk).
     type Port = number | string;
@@ -233,21 +234,18 @@
 </script>
 
 <div class="flex flex-col gap-1.5 border-t pt-2" data-net-policy-editor>
-    <!-- TODO(i18n) -->
-    <span class="text-muted-foreground text-xs shrink-0">Network policy</span>
+    <span class="text-muted-foreground text-xs shrink-0">{m.netpolicy_title()}</span>
 
     {#if drift}
         <span class="rounded bg-amber-100 px-2 py-1 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200" data-net-policy-drift>
-            <!-- TODO(i18n) -->
-            Changes pending — re-apply to recreate the sandbox with them.
+            {m.netpolicy_drift()}
         </span>
     {/if}
 
     {#if policy}
         <div class="flex items-center gap-2" data-net-policy-mode>
-            <!-- TODO(i18n) -->
-            <span class="text-muted-foreground text-xs">Mode</span>
-            {#each [["open", "Open"], ["allowlist", "Allowlist"]] as const as [value, label] (value)}
+            <span class="text-muted-foreground text-xs">{m.netpolicy_mode_label()}</span>
+            {#each [["open", m.egress_open()], ["allowlist", m.egress_allowlist()]] as const as [value, label] (value)}
                 <Button
                     data-net-policy-mode-option={value}
                     aria-pressed={policy.egress === value}
@@ -255,15 +253,15 @@
                     size="sm"
                     disabled={busy}
                     onclick={() => mutate((p) => (p.egress = value))}
-                >{label}</Button><!-- TODO(i18n) -->
+                >{label}</Button>
             {/each}
         </div>
 
         <span class="text-muted-foreground text-xs">
             {#if policy.egress === "allowlist"}
-                Only hosts allowed below are reachable; rules apply top to bottom, first match wins. <!-- TODO(i18n) -->
+                {m.netpolicy_mode_allowlist_hint()}
             {:else}
-                Every public host is reachable except what a deny rule below blocks. <!-- TODO(i18n) -->
+                {m.netpolicy_mode_open_hint()}
             {/if}
         </span>
 
@@ -282,25 +280,22 @@
                 {/each}
             </div>
         {:else}
-            <!-- TODO(i18n) -->
-            <span class="text-muted-foreground text-xs">No rules.</span>
+            <span class="text-muted-foreground text-xs">{m.netpolicy_no_rules()}</span>
         {/if}
 
         <div class="flex flex-wrap items-center gap-2">
             <Button size="sm" variant="outline" disabled={busy}
                 onclick={() => (newAction = newAction === "allow" ? "deny" : "allow")}>{newAction}</Button>
             <input class="w-40 rounded border bg-background px-2 py-1 text-xs disabled:opacity-50"
-                placeholder="host, *.suffix, CIDR or group" bind:value={newTarget} disabled={busy} /><!-- TODO(i18n) -->
+                placeholder={m.netpolicy_target_placeholder()} bind:value={newTarget} disabled={busy} />
             <input class="w-20 rounded border bg-background px-2 py-1 text-xs disabled:opacity-50"
-                placeholder="ports" bind:value={newPorts} disabled={busy} /><!-- TODO(i18n) -->
+                placeholder={m.netpolicy_ports_placeholder()} bind:value={newPorts} disabled={busy} />
             <Button size="sm" disabled={busy} onclick={addRule}>
-                <!-- TODO(i18n) -->
-                Add rule
+                {m.rule_add()}
             </Button>
         </div>
 
-        <!-- TODO(i18n) -->
-        <span class="text-muted-foreground text-xs mt-1">Secret bindings</span>
+        <span class="text-muted-foreground text-xs mt-1">{m.netpolicy_secret_bindings()}</span>
         {#each policy.secrets as binding, i (binding.envVar)}
             <div class="flex items-center gap-2 rounded bg-muted px-2 py-1 text-xs" data-net-policy-secret>
                 <span class="flex-1 truncate font-mono">
@@ -312,63 +307,55 @@
         {/each}
         <div class="flex flex-wrap items-center gap-2">
             <input class="w-24 rounded border bg-background px-2 py-1 text-xs disabled:opacity-50"
-                placeholder="secret id" bind:value={newSecretId} disabled={busy} /><!-- TODO(i18n) -->
+                placeholder={m.secret_id_placeholder()} bind:value={newSecretId} disabled={busy} />
             <input class="w-28 rounded border bg-background px-2 py-1 text-xs disabled:opacity-50"
-                placeholder="ENV_VAR" bind:value={newEnvVar} disabled={busy} /><!-- TODO(i18n) -->
+                placeholder={m.netpolicy_env_var_placeholder()} bind:value={newEnvVar} disabled={busy} />
             <input class="w-40 rounded border bg-background px-2 py-1 text-xs disabled:opacity-50"
-                placeholder="hosts, comma separated" bind:value={newSecretHosts} disabled={busy} /><!-- TODO(i18n) -->
+                placeholder={m.netpolicy_secret_hosts_placeholder()} bind:value={newSecretHosts} disabled={busy} />
             <Button size="sm" disabled={busy} onclick={addBinding}>
-                <!-- TODO(i18n) -->
-                Bind
+                {m.netpolicy_bind()}
             </Button>
         </div>
         <div class="flex items-center gap-2">
-            <!-- TODO(i18n) -->
-            <span class="text-muted-foreground text-xs shrink-0">Set secret value</span>
+            <span class="text-muted-foreground text-xs shrink-0">{m.secret_set_value()}</span>
             <input class="flex-1 rounded border bg-background px-2 py-1 text-xs disabled:opacity-50"
-                type="password" placeholder="value for the secret id above" bind:value={secretValue}
-                disabled={busy} /><!-- TODO(i18n) -->
+                type="password" placeholder={m.secret_value_placeholder()} bind:value={secretValue}
+                disabled={busy} />
             <Button size="sm" disabled={busy || !newSecretId.trim() || !secretValue.trim()} onclick={saveSecretValue}>
-                <!-- TODO(i18n) -->
-                Save
+                {m.settings_save()}
             </Button>
         </div>
         {#if echoWarning}
             <span class="text-xs text-amber-700 dark:text-amber-300" data-net-policy-echo-warning>
-                <!-- TODO(i18n) -->
-                {echoWarning} echoes requests back, so a bound secret's real value would reach the sandbox.
+                {m.netpolicy_echo_warning({ hosts: echoWarning })}
             </span>
         {/if}
 
         <div class="flex items-center gap-2">
-            <!-- TODO(i18n) -->
-            <span class="text-muted-foreground text-xs">On a misused secret</span>
-            {#each [["block", "Block"], ["block-and-log", "Block and log"], ["block-and-terminate", "Block and stop"]] as const as [value, label] (value)}
+            <span class="text-muted-foreground text-xs">{m.netpolicy_violation_action_label()}</span>
+            {#each [["block", m.netpolicy_violation_block()], ["block-and-log", m.netpolicy_violation_block_and_log()], ["block-and-terminate", m.netpolicy_violation_block_and_stop()]] as const as [value, label] (value)}
                 <Button
                     aria-pressed={policy.violationAction === value}
                     variant={policy.violationAction === value ? "default" : "outline"}
                     size="sm"
                     disabled={busy}
                     onclick={() => mutate((p) => (p.violationAction = value))}
-                >{label}</Button><!-- TODO(i18n) -->
+                >{label}</Button>
             {/each}
         </div>
 
         <div class="flex items-center gap-2">
             <Button size="sm" disabled={busy || !dirty} onclick={save} data-net-policy-save>
-                <!-- TODO(i18n) -->
-                Save policy
+                {m.netpolicy_save()}
             </Button>
             <span class="text-muted-foreground text-xs">
-                <!-- TODO(i18n) -->
-                Saving changes the workspace file only; the running sandbox keeps its policy until re-applied.
+                {m.netpolicy_save_hint()}
             </span>
         </div>
 
         {#if violations.length > 0}
             <div class="flex flex-col gap-1" data-net-policy-violations>
-                <!-- TODO(i18n) -->
-                <span class="text-xs text-destructive">Blocked secret uses</span>
+                <span class="text-xs text-destructive">{m.netpolicy_violations_title()}</span>
                 {#each violations as v, i (v.ts + i)}
                     <div class="flex items-center gap-2 rounded bg-muted px-2 py-1 text-xs font-mono" data-net-policy-violation>
                         <span class="text-muted-foreground">{v.ts.slice(11, 19)}</span>
@@ -382,34 +369,29 @@
 
         <div class="flex flex-col gap-1.5 border-t pt-2" data-net-policy-reapply>
             <div class="flex items-center gap-2">
-                <!-- TODO(i18n) -->
-                <span class="text-muted-foreground text-xs">Inspect traffic</span>
+                <span class="text-muted-foreground text-xs">{m.proxy_inspect_traffic()}</span>
                 <Switch data-net-policy-viewer checked={wantViewer} disabled={busy}
                     onCheckedChange={(v) => (wantViewer = v)} />
             </div>
             {#if !confirming}
                 <Button size="sm" variant="outline" disabled={busy || dirty || (!drift && !viewerChange)}
                     onclick={() => (confirming = true)} data-net-policy-reapply-button>
-                    <!-- TODO(i18n) -->
-                    Re-apply network settings
+                    {m.netpolicy_reapply()}
                 </Button>
             {:else}
                 <span class="text-xs" data-net-policy-reapply-confirm>
-                    <!-- TODO(i18n) -->
-                    This recreates the sandbox VM around its workspace; tools installed outside the workspace are reinstalled from the lock file.
+                    {m.netpolicy_reapply_confirm()}
                     {#if openPanes.length > 0}
-                        Open panes will close: {openPanes.join(", ")}. <!-- TODO(i18n) -->
+                        {m.netpolicy_reapply_open_panes({ panes: openPanes.join(", ") })}
                     {/if}
                 </span>
                 <div class="flex gap-2">
                     <Button size="sm" variant="destructive" loading={busy} disabled={busy} onclick={reapply}
                         data-net-policy-reapply-confirm-button>
-                        <!-- TODO(i18n) -->
-                        Recreate
+                        {m.netpolicy_recreate()}
                     </Button>
                     <Button size="sm" variant="ghost" disabled={busy} onclick={() => (confirming = false)}>
-                        <!-- TODO(i18n) -->
-                        Cancel
+                        {m.projects_cancel()}
                     </Button>
                 </div>
             {/if}

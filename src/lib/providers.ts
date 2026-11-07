@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { m } from "$lib/paraglide/messages.js";
 
 /** Which engine runs a sandbox (mirrors Rust `provider::types::ProviderId`). */
 export type ProviderId = "podman" | "microsandbox";
@@ -15,14 +16,13 @@ export interface ProviderCapabilities {
     egressPolicy: boolean;
 }
 
-// TODO(i18n)
-const LABELS: Record<ProviderId, string> = {
-    podman: "Podman container",
-    microsandbox: "Microsandbox VM",
+const LABELS: Record<ProviderId, () => string> = {
+    podman: m.provider_podman_label,
+    microsandbox: m.provider_microsandbox_label,
 };
 
 export function providerLabel(provider: ProviderId): string {
-    return LABELS[provider];
+    return LABELS[provider]();
 }
 
 export function providerCapabilities(provider: ProviderId): Promise<ProviderCapabilities> {

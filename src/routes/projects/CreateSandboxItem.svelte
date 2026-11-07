@@ -152,8 +152,7 @@
                 </Field.Field>
                 <Field.Field orientation="horizontal">
                     <Field.Label>
-                        <!-- TODO(i18n) -->
-                        Inspect traffic
+                        {m.proxy_inspect_traffic()}
                     </Field.Label>
                     <Switch
                         data-proxy-toggle
@@ -164,18 +163,16 @@
                 </Field.Field>
                 {#if proxy && provider === "microsandbox"}
                     <Field.Description data-proxy-msb-hint>
-                        <!-- TODO(i18n) -->
-                        Runs a second VM (about 115 MiB) that sees every request, including substituted secret values.
+                        {m.create_proxy_msb_hint()}
                     </Field.Description>
                 {/if}
                 {#if egressSupported}
                     <Field.Field>
                         <Field.Label>
-                            <!-- TODO(i18n) -->
-                            Network access
+                            {m.create_network_access_label()}
                         </Field.Label>
                         <div data-egress-picker class="flex gap-2">
-                            {#each [["open", "Open"], ["allowlist", "Allowlist"]] as const as [value, label] (value)}
+                            {#each [["open", m.egress_open()], ["allowlist", m.egress_allowlist()]] as const as [value, label] (value)}
                                 <Button
                                     data-egress-option={value}
                                     aria-pressed={egress === value}
@@ -183,14 +180,14 @@
                                     size="sm"
                                     disabled={action.busy !== null}
                                     onclick={() => (egress = value)}
-                                >{label}</Button><!-- TODO(i18n) -->
+                                >{label}</Button>
                             {/each}
                         </div>
                         <Field.Description>
                             {#if egress === "allowlist"}
-                                Only package registries, GitHub and the agents' APIs are reachable; edit the list after creating. <!-- TODO(i18n) -->
+                                {m.create_egress_allowlist_hint()}
                             {:else}
-                                Every public host is reachable. <!-- TODO(i18n) -->
+                                {m.create_egress_open_hint()}
                             {/if}
                         </Field.Description>
                     </Field.Field>

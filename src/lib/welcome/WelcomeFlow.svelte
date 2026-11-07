@@ -4,6 +4,7 @@
     import CreateVmStep from "./CreateVmStep.svelte";
     import DownloadNecessitiesStep from "./DownloadNecessitiesStep.svelte";
     import { completeOnboarding } from "$lib/settings/onboarding.svelte";
+    import { m } from "$lib/paraglide/messages.js";
 
     let { variant }: { variant: "onboarding" | "replay" } = $props();
 
@@ -31,44 +32,31 @@
         <div class="space-y-10">
             <MioHero />
             <div class="text-center">
-                <!-- TODO(i18n) -->
-                <Button onclick={() => (step = "welcome")}>Get started</Button>
+                <Button onclick={() => (step = "welcome")}>{m.welcome_get_started()}</Button>
             </div>
         </div>
     {:else if step === "welcome"}
         <div class="max-w-lg text-center space-y-5">
-            <!-- TODO(i18n) -->
-            <h1 class="text-3xl font-bold">Welcome to Sandbox mio</h1>
-            <!-- TODO(i18n) -->
-            <p class="text-muted-foreground">
-                Sandbox mio gives every project its own isolated container, with its own runtime,
-                terminal and AI coding agents.
-            </p>
-            <!-- TODO(i18n) -->
-            <p class="text-muted-foreground">
-                Let's walk through it together. There is a short setup first — two steps, and then
-                you can create your first sandbox.
-            </p>
-            <!-- TODO(i18n) -->
-            <Button onclick={() => (step = "actions")}>Continue</Button>
+            <h1 class="text-3xl font-bold">{m.welcome_heading()}</h1>
+            <p class="text-muted-foreground">{m.welcome_intro_isolated()}</p>
+            <p class="text-muted-foreground">{m.welcome_intro_walkthrough()}</p>
+            <Button onclick={() => (step = "actions")}>{m.welcome_continue()}</Button>
         </div>
     {:else}
         <div class="w-full max-w-3xl space-y-6">
-            <!-- TODO(i18n) -->
-            <h1 class="text-2xl font-bold text-center">First two stops</h1>
+            <h1 class="text-2xl font-bold text-center">{m.welcome_first_stops()}</h1>
             <div class="grid gap-4 @max-[720px]:grid-cols-1 grid-cols-2">
                 <CreateVmStep ondone={(done) => (vmDone = done)} />
                 <DownloadNecessitiesStep ondone={(done) => (imageDone = done)} />
             </div>
             {#if variant === "onboarding"}
                 <div class="text-center">
-                    <!-- TODO(i18n) -->
                     <Button
                         disabled={!vmDone || !imageDone || finishing}
                         loading={finishing}
                         onclick={finish}
                         data-welcome-finish
-                    >Finish</Button>
+                    >{m.welcome_finish()}</Button>
                 </div>
             {/if}
         </div>

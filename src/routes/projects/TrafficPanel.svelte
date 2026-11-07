@@ -4,6 +4,7 @@
     import { parseError } from "$lib/errors";
     import { ensureTrafficState, flowsFor, watchFlows, type FlowEntry } from "$lib/proxy/traffic.svelte";
     import type { createActionRunner } from "$lib/actions.svelte";
+    import { m } from "$lib/paraglide/messages.js";
 
     // Mirrors Rust `proxy::types::ProxyStatus` (camelCase per its own `serde(rename_all)`).
     interface ProxyStatus {
@@ -89,25 +90,22 @@
 
 {#if status?.running}
     <div class="flex flex-col gap-1.5 border-t pt-2" data-traffic-panel>
-        <!-- TODO(i18n) -->
-        <span class="text-muted-foreground text-xs shrink-0">Traffic</span>
+        <span class="text-muted-foreground text-xs shrink-0">{m.traffic_title()}</span>
         {#if status.healthy === false}
             <span class="text-xs text-destructive" data-traffic-unhealthy>
-                <!-- TODO(i18n) -->
-                Proxy unreachable — requests fail closed until it answers again.
+                {m.traffic_unhealthy()}
             </span>
         {/if}
         {#if status.provider === "microsandbox"}
             <span class="text-muted-foreground text-xs" data-traffic-scope>
-                <!-- TODO(i18n) -->
-                Shows TCP and HTTPS traffic only; DNS and UDP never reach the viewer.
+                {m.traffic_scope_msb()}
             </span>
         {/if}
 
         <div class="flex flex-wrap items-center gap-1">
             <input
                 class="w-40 rounded border bg-background px-2 py-1 text-xs"
-                placeholder="Filter host or path"
+                placeholder={m.traffic_filter_placeholder()}
                 bind:value={query}
             />
             {#each methods as method (method)}
@@ -127,7 +125,7 @@
                     data-status-filter={klass}
                     onclick={() => (statusFilter = toggle(statusFilter, klass))}
                 >
-                    {klass}
+                    {klass === "error" ? m.status_error() : klass}
                 </Button>
             {/each}
         </div>
@@ -147,14 +145,12 @@
                                 {flow.path}
                             </span>
                             {#if flow.secretInjected}
-                                <!-- TODO(i18n) -->
-                                <span class="shrink-0 rounded border px-1" title="A secret-injection rule matched this request">
-                                    secret
+                                <span class="shrink-0 rounded border px-1" title={m.traffic_secret_badge_title()}>
+                                    {m.traffic_secret_badge()}
                                 </span>
                             {/if}
                             <span class="w-10 shrink-0 text-right font-mono" data-flow-status>
-                                <!-- TODO(i18n) -->
-                                {flow.status ?? "error"}
+                                {flow.status ?? m.status_error()}
                             </span>
                             <span class="w-14 shrink-0 text-right font-mono text-muted-foreground">
                                 {flow.durationMs === null ? "" : `${Math.round(flow.durationMs)} ms`}
@@ -165,8 +161,7 @@
                                 <span>{flow.path}</span>
                                 <span class="text-muted-foreground">{timestamp(flow.ts)}</span>
                                 <span class="text-muted-foreground">
-                                    <!-- TODO(i18n) -->
-                                    {flow.reqBytes ?? 0} B sent · {flow.respBytes ?? 0} B received
+                                    {m.traffic_bytes({ sent: flow.reqBytes ?? 0, received: flow.respBytes ?? 0 })}
                                 </span>
                                 {#if flow.error}
                                     <span class="text-red-500">{flow.error}</span>
@@ -178,8 +173,7 @@
             </div>
         {:else}
             <span class="text-muted-foreground text-xs" data-traffic-empty>
-                <!-- TODO(i18n) -->
-                No traffic captured yet.
+                {m.traffic_empty()}
             </span>
         {/if}
 

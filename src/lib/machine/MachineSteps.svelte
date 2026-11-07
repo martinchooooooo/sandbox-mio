@@ -1,5 +1,6 @@
 <script lang="ts">
     import type { MachineSetupEvent, SetupStep } from "./types";
+    import { m } from "$lib/paraglide/messages.js";
 
     // `steps` is the provider's ordered checklist (from `machine_setup_steps`). `events` is the
     // running stream from `prepare_machine`, which ticks each row pending → running → done/skipped/
@@ -13,27 +14,26 @@
         events?: MachineSetupEvent[];
     } = $props();
 
-    // Step ids are Rust-owned; copy is hardcoded here until the feature's i18n pass
-    // (docs/features/microsandbox-provider/02_dev.md, Phase I) — an id with no entry renders blank.
-    const titles: Record<string, string> = {
-        "wsl-install": "Install WSL2", // TODO(i18n)
-        "machine-init": "Create Podman machine", // TODO(i18n)
-        "machine-start": "Start Podman machine", // TODO(i18n)
-        "socket-activate": "Activate Podman socket", // TODO(i18n)
-        "msb-binary": "Locate microsandbox", // TODO(i18n)
-        "msb-version": "Check microsandbox version", // TODO(i18n)
-        "hypervisor-platform": "Enable Windows Hypervisor Platform", // TODO(i18n)
-        "msb-doctor": "Verify microsandbox setup", // TODO(i18n)
+    // Step ids are Rust-owned; an id with no entry renders blank.
+    const titles: Record<string, () => string> = {
+        "wsl-install": m.machine_step_wsl_install_title,
+        "machine-init": m.machine_step_machine_init_title,
+        "machine-start": m.machine_step_machine_start_title,
+        "socket-activate": m.machine_step_socket_activate_title,
+        "msb-binary": m.machine_step_msb_binary_title,
+        "msb-version": m.machine_step_msb_version_title,
+        "hypervisor-platform": m.machine_step_hypervisor_platform_title,
+        "msb-doctor": m.machine_step_msb_doctor_title,
     };
-    const explains: Record<string, string> = {
-        "wsl-install": "Podman sandboxes run inside a WSL2 virtual machine.", // TODO(i18n)
-        "machine-init": "Downloads the machine image on first run.", // TODO(i18n)
-        "machine-start": "Boots the virtual machine.", // TODO(i18n)
-        "socket-activate": "Starts the API the app talks to.", // TODO(i18n)
-        "msb-binary": "Checks the bundled msb CLI starts.", // TODO(i18n)
-        "msb-version": "Needs msb 0.7.12 or newer; the app ships its own copy, so reinstall sandbox-mio if this fails.", // TODO(i18n)
-        "hypervisor-platform": "Required for microsandbox's microVMs; enabling needs no restart.", // TODO(i18n)
-        "msb-doctor": "Confirms the host is ready to create sandboxes.", // TODO(i18n)
+    const explains: Record<string, () => string> = {
+        "wsl-install": m.machine_step_wsl_install_explain,
+        "machine-init": m.machine_step_machine_init_explain,
+        "machine-start": m.machine_step_machine_start_explain,
+        "socket-activate": m.machine_step_socket_activate_explain,
+        "msb-binary": m.machine_step_msb_binary_explain,
+        "msb-version": m.machine_step_msb_version_explain,
+        "hypervisor-platform": m.machine_step_hypervisor_platform_explain,
+        "msb-doctor": m.machine_step_msb_doctor_explain,
     };
 
     type Status = "pending" | "running" | "done" | "skipped" | "failed";
@@ -97,8 +97,8 @@
                 <span class={iconClass(state?.status) + " shrink-0 w-4 text-center"}>{icon(state?.status)}</span>
             {/if}
             <div class="flex flex-col">
-                <span class="font-medium" data-step-title>{titles[step.id] ?? ""}</span>
-                <span class="text-muted-foreground text-xs">{explains[step.id] ?? ""}</span>
+                <span class="font-medium" data-step-title>{titles[step.id]?.() ?? ""}</span>
+                <span class="text-muted-foreground text-xs">{explains[step.id]?.() ?? ""}</span>
                 {#if state?.detail}
                     <span class="text-xs text-foreground/80 mt-0.5">{state.detail}</span>
                 {/if}

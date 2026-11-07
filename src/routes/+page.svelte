@@ -2,6 +2,7 @@
     import { onMount } from "svelte";
     import Button from "$lib/components/ui/button/button.svelte";
     import WelcomeFlow from "$lib/welcome/WelcomeFlow.svelte";
+    import { m } from "$lib/paraglide/messages.js";
     import {
         ensureOnboardingState,
         onboardingCompleted,
@@ -16,14 +17,9 @@
         <WelcomeFlow variant="onboarding" />
     {:else if onboardingCompleted()}
         <main class="min-h-full flex flex-col items-center justify-center gap-4 p-8 text-center">
-            <!-- TODO(i18n) -->
-            <h1 class="text-3xl font-bold">You're all set</h1>
-            <!-- TODO(i18n) -->
-            <p class="text-muted-foreground max-w-md">
-                Everything is ready. Create your first sandbox to start working in it.
-            </p>
-            <!-- TODO(i18n) -->
-            <Button href="/projects">Get started with your first sandbox</Button>
+            <h1 class="text-3xl font-bold">{m.home_all_set_title()}</h1>
+            <p class="text-muted-foreground max-w-md">{m.home_all_set_body()}</p>
+            <Button href="/projects">{m.home_all_set_cta()}</Button>
         </main>
     {/if}
 

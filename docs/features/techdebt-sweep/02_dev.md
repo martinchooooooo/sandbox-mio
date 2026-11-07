@@ -113,12 +113,12 @@ Problem: `ssh::remove_alias` (`src-tauri/src/ssh/mod.rs`) has no caller, so `des
 - Unit-test the exec argv rendering: the name appears, the value does not.
 - Record in `docs/features/sandbox-runtime-management/02_dev.md` that Phase D's remaining item (2) is implemented.
 
-## Remaining: Phase I — Model checksums
+## Implemented: Phase I — Model checksums
 
 - Fill every empty `sha256` in `src/lib/models/catalogue.ts` from Hugging Face's LFS metadata for the entry's `repo` and `file`, and delete the `TODO(bring-up)` comment. `download_gguf` (`src-tauri/src/inference/mod.rs`) already verifies any non-empty value.
 - Check the e2e test model (`MIO_TEST_MODEL`, `e2e/wdio.conf.ts`) for the same gap.
 
-## Remaining: Phase J — Translation pass
+## Implemented: Phase J — Translation pass
 
 - Replace every `TODO(i18n)` literal in `src/routes/projects/NetPolicyEditor.svelte`, `src/lib/machine/MachineSteps.svelte`, `src/routes/projects/ProxyPanel.svelte`, `src/routes/projects/TrafficPanel.svelte`, `src/lib/welcome/WelcomeFlow.svelte`, `src/routes/projects/CreateSandboxItem.svelte`, `src/routes/+page.svelte`, `src/lib/activity/activity.svelte.ts` and `src/lib/providers.ts` with Paraglide keys in `messages/en.json`, `messages/de.json` and `messages/ru.json`, per the root `AGENTS.md` Translations section.
 - No `TODO(i18n)` marker remains in those nine files.
