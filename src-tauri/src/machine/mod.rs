@@ -333,7 +333,7 @@ async fn socket_step<F: FnMut(BringUpEvent) + Send>(
 }
 
 /// The two process seams [`readiness_provider_for`] picks between, managed once as Tauri state
-/// (`src-tauri/src/lib.rs`). A plain `Arc<dyn ProcessRunner>` cannot be managed twice under two
+/// (`src-tauri/src/bootstrap.rs`). A plain `Arc<dyn ProcessRunner>` cannot be managed twice under two
 /// different meanings, since Tauri state is keyed by type.
 pub struct MachineRunners {
     pub podman: Arc<dyn ProcessRunner>,

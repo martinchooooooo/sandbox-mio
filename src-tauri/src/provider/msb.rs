@@ -857,7 +857,7 @@ mod tests {
         assert!(provider.base_image_ready().await.expect("store reads clean"));
     }
 
-    /// `create_sandbox` (`src-tauri/src/lib.rs`) starts the instance before creating its Mutagen
+    /// `create` (`src-tauri/src/services/sandbox.rs`) starts the instance before creating its Mutagen
     /// session, but `msb create` has already started it, so that start must succeed on a running
     /// instance rather than surface `msb start`'s exit 1.
     #[tokio::test]

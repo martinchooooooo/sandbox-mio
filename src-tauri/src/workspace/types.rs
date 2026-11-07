@@ -37,7 +37,7 @@ pub struct AppPane {
 }
 
 /// Inputs for embedding the terminal as a content child webview. Produced by
-/// `prepare_terminal_webview` in `lib.rs`, shared with the standalone `open_terminal` path so the
+/// `prepare_terminal_webview` in `src-tauri/src/services/panes.rs`, shared with the standalone `open_terminal` path so the
 /// auto-login init script is authored once.
 pub struct TerminalPane {
     pub url: tauri::Url,

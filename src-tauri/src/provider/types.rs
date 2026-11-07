@@ -266,7 +266,7 @@ pub struct ProviderCapabilities {
 }
 
 /// Which engine a [`MachineRef`] names. Also crosses IPC directly as a command parameter
-/// (`machine_setup_steps`/`machine_readiness`/`prepare_machine` in `src-tauri/src/lib.rs`), which is
+/// (`machine_setup_steps`/`machine_readiness`/`prepare_machine` in `src-tauri/src/commands/machine.rs`), which is
 /// why it derives `Serialize`/`Deserialize` on top of the `MachineRef` prefix-string form below —
 /// the two serializations are independent and allowed to diverge (`"microsandbox"` here vs. `"msb"`
 /// in `tag()`).

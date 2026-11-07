@@ -5,7 +5,7 @@ feature: techdebt-sweep
 ---
 # Tech Debt Sweep — Build Plan
 
-Build plan for resolving the tech debt found by a 2026-11-07 audit of `NOTES.md`, `docs/techdebt.md`, every `04_improvements.md`, and the code's `TODO` markers, each checked against the code at commit `f11be30`. There is no `01_ideas.md`: the audit findings and the maintainer's decisions are recorded here directly. Status: no phase implemented. Phases A–J are independent of each other and are built in parallel worktrees; Phase K integrates them and runs the real-infrastructure verification.
+Build plan for resolving the tech debt found by a 2026-11-07 audit of `NOTES.md`, `docs/techdebt.md`, every `04_improvements.md`, and the code's `TODO` markers, each checked against the code at commit `f11be30`. There is no `01_ideas.md`: the audit findings and the maintainer's decisions are recorded here directly. Status: Phases A–J implemented, each as its own commit on `feat/proxy-traffic-viewer`; Phase K (integration, harness fixes, real-infrastructure verification, close-out) remains.
 
 ## The Concrete Model
 
@@ -127,6 +127,9 @@ Problem: `ssh::remove_alias` (`src-tauri/src/ssh/mod.rs`) has no caller, so `des
 
 Runs after the six work units merge.
 
+- Fix the two e2e harness defects that made parallel `light` runs fail on unrelated specs (found while verifying the work units; both reproduce on the untouched `19f18b1`):
+  - tsx caches transformed files under the OS temp directory keyed by content, but bakes each file's own path in (`import.meta.url`), so worktrees sharing one temp directory ran each other's `e2e/wdio.conf.ts` and `e2e/lib/run-identity.ts` paths: one run slug, port window and app binary. The `e2e` arm of the root `build.rs` now gives the tier a per-worktree `TEMP`/`TMP` (`e2e/.tmp`, gitignored) through a new `run_env()`.
+  - The `before` hook in `e2e/wdio.conf.ts` pinned the session to the first window whose path did not start with `/workspace`, which an unloaded `about:blank` webview satisfies; every later `execute` then failed with "Origin header is not a valid URL". The hook now waits for a loaded, non-`about:` app page, read through WebDriver's `getUrl` rather than a script.
 - Repoint code comments that cite `src-tauri/src/lib.rs` for code that moved to `src-tauri/src/commands/` or `src-tauri/src/services/`: `src-tauri/src/backends/mod.rs`, `src-tauri/src/machine/mod.rs`, `src-tauri/src/provider/msb.rs`, `src-tauri/src/provider/types.rs`, `src-tauri/src/workspace/types.rs`, `src-tauri/src/mockctl/mod.rs`, `e2e/test/pageobjects/project-row.component.ts` and `e2e/test/specs/standard/agent-web.spec.ts`.
 - Translate any `TODO(i18n)` marker added by Phase H.
 - Correct the `docs/features/sandbox-runtime-management/feature.md` status note, which claims `runtime-management.spec.ts` still asserts flox.

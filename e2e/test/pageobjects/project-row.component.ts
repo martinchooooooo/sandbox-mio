@@ -165,7 +165,7 @@ export default class ProjectRow {
     await this.waitForSyncStatus("up-to-date", Math.max(remaining, SYNC_CONVERGE));
   }
 
-  // undeploy_sandbox (src-tauri/src/lib.rs) chains a flush, an SSH remove, Mutagen teardown and a
+  // undeploy_sandbox (src-tauri/src/services/sandbox.rs `undeploy`) chains a flush, an SSH remove, Mutagen teardown and a
   // container start — same budget as deployTo.
   async undeploy(timeout = DEPLOY): Promise<void> {
     await this.#openDashboard();

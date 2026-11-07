@@ -259,14 +259,12 @@
         <div class="rounded-lg border p-3 flex flex-col gap-2" data-service={GITHUB_SERVICE}>
             <div class="flex items-center justify-between gap-2">
                 <div class="min-w-0">
-                    <!-- TODO(i18n) -->
-                    <div class="text-sm font-medium truncate">GitHub token</div>
+                    <div class="text-sm font-medium truncate">{m.credentials_github_title()}</div>
                     <div class="text-xs text-muted-foreground truncate" data-status>
-                        <!-- TODO(i18n) -->
                         {#if githubBundle}
-                            Saved {new Date(githubBundle.capturedAtMs).toLocaleDateString()}
+                            {m.credentials_github_saved({ date: new Date(githubBundle.capturedAtMs).toLocaleDateString() })}
                         {:else}
-                            Not saved
+                            {m.credentials_github_not_saved()}
                         {/if}
                     </div>
                 </div>
@@ -278,14 +276,12 @@
                         disabled={action.busy !== null}
                         data-github-remove
                     >
-                        <!-- TODO(i18n) -->
-                        Remove
+                        {m.credentials_github_remove()}
                     </Button>
                 {/if}
             </div>
             <p class="text-xs text-muted-foreground">
-                <!-- TODO(i18n) -->
-                Sent to package installs inside sandboxes to avoid GitHub's unauthenticated rate limit. Use a token with no scopes: install scripts inside the sandbox can read it. It is stored on this device and never shown again.
+                {m.credentials_github_help()}
             </p>
             <form
                 class="flex gap-2"
@@ -294,11 +290,10 @@
                     void saveGithubToken();
                 }}
             >
-                <!-- TODO(i18n) -->
                 <Input
                     type="password"
                     autocomplete="off"
-                    placeholder={githubBundle ? "Paste a new token to replace it" : "Paste a token"}
+                    placeholder={githubBundle ? m.credentials_github_placeholder_replace() : m.credentials_github_placeholder()}
                     bind:value={githubToken}
                     data-github-token
                 />
@@ -308,8 +303,7 @@
                     disabled={action.busy !== null || githubToken.trim() === ""}
                     data-github-save
                 >
-                    <!-- TODO(i18n) -->
-                    Save
+                    {m.settings_save()}
                 </Button>
             </form>
         </div>

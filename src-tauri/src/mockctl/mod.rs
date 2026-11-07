@@ -2,7 +2,7 @@
 //! **process** each subsystem shells out to (`podman`, `msb`, the Mutagen sidecar) rather than a
 //! subsystem-level mock, so the real orchestration structs (`CliBackend`,
 //! `PodmanMachineManager`, ...) run unmodified against a scripted [`ProcessRunner`]. Exposed to
-//! running specs via the `mock_configure`/`mock_reset` Tauri commands in `src-tauri/src/lib.rs`.
+//! running specs via the `mock_configure`/`mock_reset` Tauri commands in `src-tauri/src/commands/mockctl.rs`.
 //! See `docs/features/scriptable-mock-backend/02_dev.md`.
 //!
 //! Scripted halves only. The real [`ProcessRunner`] implementations and the spawn machinery they

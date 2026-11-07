@@ -167,7 +167,7 @@ static PODMAN_RUNNER: std::sync::OnceLock<Arc<dyn ProcessRunner>> = std::sync::O
 
 /// Record the shared `podman` [`ProcessRunner`] for the free functions that shell out to `podman`
 /// with no `CliBackend` instance to borrow a `runner` field from — `ensure_connection_alias`,
-/// called directly from Tauri command handlers in `lib.rs`, is the only such call site. Every
+/// called directly from `src-tauri/src/commands/inference.rs`, is the only such call site. Every
 /// `&self` method uses `self.runner` instead. Set once at startup from the same `Arc` passed to
 /// `default_backend`/`default_machine_manager`, so all `podman` calls share one director.
 pub fn set_podman_runner(runner: Arc<dyn ProcessRunner>) {
@@ -925,8 +925,8 @@ pub async fn ensure_connection_alias(connection: &str) -> Result<(), BackendErro
 /// Per-sandbox ed25519 keypair for the exec-transport `Proxied` alias, generated once and reused
 /// for the sandbox's lifetime. Lives under app data (not `~/.ssh`), per-sandbox and
 /// per-worktree-isolatable via `MIO_APP_DATA_DIR`. Returns the private key path. Free function
-/// (not a `CliBackend` method) so `lib.rs`'s terminal/agent-web/expose-port command handlers
-/// can re-derive an already-created sandbox's identity path deterministically from its name,
+/// (not a `CliBackend` method) so `SandboxRouter` (`src-tauri/src/services/routing.rs`) can
+/// re-derive an already-created sandbox's identity path deterministically from its name,
 /// without persisting the path anywhere new.
 pub fn ensure_sandbox_identity(
     app: &tauri::AppHandle,

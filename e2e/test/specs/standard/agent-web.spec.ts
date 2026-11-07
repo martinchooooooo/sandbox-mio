@@ -19,7 +19,7 @@ import {
   hideActivePane,
 } from "../../../lib/workspace.js";
 
-// Mirrors the auth check fetch_paseo_server_info makes (src-tauri/src/lib.rs) before a pane exists.
+// Mirrors the auth check fetch_paseo_server_info makes (src-tauri/src/services/panes.rs) before a pane exists.
 // Returns the serverId on HTTP 200, undefined otherwise.
 async function fetchServerId(port: string, password: string): Promise<string | undefined> {
   try {

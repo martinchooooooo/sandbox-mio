@@ -1,5 +1,5 @@
 //! mise-based software management for sandboxes. Public surface is [`types::RuntimeManager`],
-//! held in Tauri state as `Arc<dyn RuntimeManager>` and registered in `src-tauri/src/lib.rs`.
+//! held in Tauri state as `Arc<dyn RuntimeManager>` and registered in `src-tauri/src/bootstrap.rs`.
 
 pub mod types;
 

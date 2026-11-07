@@ -103,7 +103,7 @@ impl ProviderRegistry {
     }
 }
 
-/// Construct the [`ProviderRegistry`] for Tauri state. Both runners come from `lib.rs::run()`, so
+/// Construct the [`ProviderRegistry`] for Tauri state. Both runners come from `src-tauri/src/bootstrap.rs`, so
 /// scripted and real calls stay on the one director the rest of the app shares.
 pub fn default_registry(
     podman_runner: Arc<dyn ProcessRunner>,

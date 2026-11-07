@@ -4,7 +4,7 @@ title: "Workspace UI: Window, Panes and Tabs"
 description: "The single app window, the Rust-owned registry of embedded terminal and agent panes, the Manage tab and launchable apps, and terminal auto-login."
 generated:
   by: claude-code/opus-5-5
-  at: 2026-11-05T23:55:00+11:00
+  at: 2026-11-08T01:00:00+11:00
 stale_after: 2027-02-05T00:00:00+11:00
 code:
   - src-tauri/src/workspace/
@@ -45,11 +45,12 @@ The app runs in one OS window. One webview renders the whole SvelteKit frontend 
 
 ## Terminal Login
 
-The terminal pane is `zellij web` inside the sandbox. Before the webview opens, the app mints a login token, writes the token into the workspace's `.mio/`, and injects a script that logs the webview in. Writing the token into the synced workspace is a known security workaround ([Technical Debt](../techdebt.md)).
+The terminal pane is `zellij web` inside the sandbox. Before the webview opens, the app mints a login token and injects a script that logs the webview in; the token is held only in that script, never written to disk. The agent web UI's password is kept in the app-data root, outside the synced workspace.
 
 ## Invariants
 
 - Panes are positioned only from the Rust layout computation.
+- No pane login secret is written into the workspace.
 - Dashboard visibility follows the active app Rust reports and is never set before a command resolves.
 - One frontend store owns the pane-state subscription; components read from that store.
 - A new launchable app is added to the catalogue, not special-cased in components.
