@@ -236,10 +236,8 @@ pub fn write_alias(alias: &SshAlias) -> Result<(), SshError> {
 }
 
 /// Strip the managed `Host` alias from the app-owned config. A no-op if the file or block is
-/// absent. The `Include` line in `~/.ssh/config` is left in place.
-// Counterpart to `write_alias`, called when a Podman host is removed; no host-removal flow is
-// wired yet, so it has no caller in this crate.
-#[allow(dead_code)]
+/// absent. The `Include` line in `~/.ssh/config` is left in place. Touches only `alias`'s own
+/// marker-delimited block, so concurrent sandboxes' blocks survive.
 pub fn remove_alias(alias: &str) -> Result<(), SshError> {
     with_config_lock(|| {
         let path = managed_config()?;

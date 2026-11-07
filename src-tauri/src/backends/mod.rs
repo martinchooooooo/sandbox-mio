@@ -87,7 +87,7 @@ fn workspace_root() -> Result<std::path::PathBuf, BackendError> {
 
 /// Rejects names Podman would refuse. Also the path-safety gate for `workspace_path`: the name
 /// becomes a path segment, so barring `/` and `..` keeps auto-created workspaces inside the root.
-fn validate_name(name: &str) -> Result<(), BackendError> {
+pub(crate) fn validate_name(name: &str) -> Result<(), BackendError> {
     let valid = name
         .chars()
         .enumerate()
@@ -969,9 +969,8 @@ pub fn ensure_sandbox_identity(
     app: &tauri::AppHandle,
     name: &str,
 ) -> Result<String, BackendError> {
-    let root =
-        crate::paths::app_data_root(app).map_err(|e| BackendError::CommandFailed(e.to_string()))?;
-    let dir = root.join("ssh-keys").join(name);
+    let dir = crate::paths::sandbox_key_dir(app, name)
+        .map_err(|e| BackendError::CommandFailed(e.to_string()))?;
     std::fs::create_dir_all(&dir)
         .map_err(|e| BackendError::CommandFailed(format!("failed to create {dir:?}: {e}")))?;
     let identity_path = dir.join("id_ed25519").to_string_lossy().replace('\\', "/");

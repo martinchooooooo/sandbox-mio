@@ -13,6 +13,39 @@ use crate::runtime::types::RuntimeManager;
 use crate::sync::types::{SyncEngine, SyncStatus};
 use crate::workspace;
 
+/// Removes the host-side state a sandbox leaves outside its container: the managed SSH alias, the
+/// identity directory (whose `known_hosts` is the pinned host key), and the pane state directory.
+/// Best-effort and warn-logged, so it can never fail a destroy
+/// (`docs/features/techdebt-sweep/02_dev.md`, Resolved Decision 8). The alias removal strips only
+/// `name`'s own block from the host-global config, which is what keeps concurrent worktrees safe.
+fn cleanup_host_state(name: &str, app: &tauri::AppHandle) {
+    // The name becomes a path component below; destroy takes it from IPC unvalidated.
+    if backends::validate_name(name).is_err() {
+        tracing::warn!(target: "destroy", %name, "skipping host state cleanup for an invalid sandbox name");
+        return;
+    }
+    if let Err(e) = crate::ssh::remove_alias(name) {
+        tracing::warn!(target: "destroy", %name, error = %e, "could not remove the sandbox ssh alias");
+    }
+    remove_dir_best_effort(name, "ssh identity", crate::paths::sandbox_key_dir(app, name));
+    remove_dir_best_effort(name, "pane state", crate::paths::sandbox_pane_dir(app, name));
+}
+
+fn remove_dir_best_effort(name: &str, what: &str, dir: Result<std::path::PathBuf, tauri::Error>) {
+    let dir = match dir {
+        Ok(dir) => dir,
+        Err(e) => {
+            tracing::warn!(target: "destroy", %name, error = %e, "could not resolve the {what} directory");
+            return;
+        }
+    };
+    match std::fs::remove_dir_all(&dir) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => tracing::warn!(target: "destroy", %name, dir = %dir.display(), error = %e, "could not remove the {what} directory"),
+    }
+}
+
 /// Creates a sandbox on `provider` and brings its workspace up. `proxy` opts the sandbox into a
 /// per-sandbox mitmproxy sidecar (`docs/features/network-proxy/02_dev.md`); refused by `store.create`
 /// for a provider/image that isn't exec-capable.
@@ -82,7 +115,9 @@ pub async fn create(
         // (`docs/features/microsandbox-network-policy/spike/01_egress-baseline.md`, Item 1).
         if let Err(e) = mark_secret_hosts(app, registry, name).await {
             tracing::error!(target: "create", %name, error = %e, "create_sandbox: secret-host marking failed, rolling back");
-            let _ = store.destroy(name).await;
+            if store.destroy(name).await.is_ok() {
+                cleanup_host_state(name, app);
+            }
             crate::net_policy::remove_applied(app, name);
             crate::proxy::remove_proxy(app, &sidecar, provider, name).await;
             return Err(e);
@@ -91,11 +126,12 @@ pub async fn create(
         tracing::info!(target: "create", %name, "create_sandbox: injecting proxy CA");
         if let Err(e) = inject_proxy_ca(app, &sidecar, name).await {
             tracing::error!(target: "create", %name, error = %e, "create_sandbox: CA injection failed, rolling back");
-            if let Err(destroy_err) = store.destroy(name).await {
-                tracing::error!(
+            match store.destroy(name).await {
+                Ok(()) => cleanup_host_state(name, app),
+                Err(destroy_err) => tracing::error!(
                     target: "create", %name, error = %destroy_err,
                     "create_sandbox: rollback after CA injection failure also failed"
-                );
+                ),
             }
             crate::proxy::remove_proxy(app, &sidecar, provider, name).await;
             return Err(e);
@@ -134,11 +170,12 @@ pub async fn create(
             crate::ssh::probe_alias(name).await;
             // Match the provider's own rollback discipline: leaving the instance behind means a
             // retry under the same name hits `NameTaken` instead of the sync error above.
-            if let Err(destroy_err) = store.destroy(name).await {
-                tracing::error!(
+            match store.destroy(name).await {
+                Ok(()) => cleanup_host_state(name, app),
+                Err(destroy_err) => tracing::error!(
                     target: "create", %name, error = %destroy_err,
                     "create_sandbox: rollback after sync failure also failed"
-                );
+                ),
             }
             return Err(e.into());
         }
@@ -320,6 +357,7 @@ pub async fn destroy(
         close_panes_and_forwards(name, network, app).await;
         store.destroy(name).await?;
         crate::net_policy::remove_applied(app, name);
+        cleanup_host_state(name, app);
         // Best-effort, and a no-op for a Podman sandbox, which has no workspace session: a
         // microsandbox sandbox's volume is gone with the instance, so its sync has nothing left to
         // reconcile and would otherwise keep retrying a dead ProxyCommand.
@@ -340,5 +378,7 @@ pub async fn destroy(
     // Decision 2) — do not unify them.
     engine.terminate(name).await?;
     store.remove_remote(name, &session.host).await?;
-    Ok(store.destroy(name).await?)
+    store.destroy(name).await?;
+    cleanup_host_state(name, app);
+    Ok(())
 }

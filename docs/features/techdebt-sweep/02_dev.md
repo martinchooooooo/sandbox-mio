@@ -87,14 +87,14 @@ Delete every branch that exists only for pre-version-6 sandboxes:
 - Bump `BASE_IMAGE_VERSION` to 7 (`src-tauri/src/backends/mod.rs`); update `e2e/test/specs/standard/base-image-recipe.spec.ts` if its static guard matches the changed lines.
 - Mark both sshd sections of `docs/features/podman-exec-transport/04_improvements.md` done.
 
-## Remaining: Phase F — Keep login secrets out of the workspace
+## Implemented: Phase F — Keep login secrets out of the workspace
 
 - Delete the `zellij.json` write in `prepare_terminal_webview()` (`src-tauri/src/services/panes.rs`).
 - In `e2e/test/specs/standard/embedded-workspace.spec.ts`, replace `waitForToken` and the "zellij.json absent before any Terminal pane" assertion with a probe that still proves the Zellij daemonize and token mint ran, without the file.
 - Move the Paseo password from the workspace's `.mio/paseo.json` to `app_data_dir()/panes/<sandbox>/paseo.json`: change `read_paseo_password()` and the write in `prepare_agent_web_pane()` (`src-tauri/src/services/panes.rs`). When only the workspace copy exists, read it once, write the app-data copy, and delete the workspace copy. Confirm first that nothing inside the container reads `.mio/paseo.json`. Update the password path in `e2e/test/specs/standard/agent-web.spec.ts`.
 - Delete the Zellij entry from `docs/techdebt.md`, keeping the backlog file and its introduction.
 
-## Remaining: Phase G — SSH identity and alias cleanup on destroy
+## Implemented: Phase G — SSH identity and alias cleanup on destroy
 
 Problem: `ssh::remove_alias` (`src-tauri/src/ssh/mod.rs`) has no caller, so `destroy()` (`src-tauri/src/services/sandbox.rs`) leaves the sandbox's `Host <name>` block in `~/.ssh/sandbox-mio/config` and its key directory under app data.
 

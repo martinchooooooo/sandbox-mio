@@ -1,5 +1,4 @@
 import assert from "node:assert";
-import fs from "fs";
 import path from "path";
 
 import ProjectsPage from "../../pageobjects/projects.page.js";
@@ -29,15 +28,28 @@ const SWITCHER_H = 64;
 
 const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
 
-// Poll for the host-side token file open_terminal_pane's shared prepare_terminal_webview helper
-// writes (docs/techdebt.md workaround), proving the real zellij daemonize + token mint ran.
-async function waitForToken(name: string): Promise<void> {
-  const tokenPath = path.join(WORKSPACE_ROOT!, name, ".mio", "zellij.json");
-  await browser.waitUntil(() => fs.existsSync(tokenPath), {
-    timeout: 60000,
-    interval: 1000,
-    timeoutMsg: `token file ${tokenPath} did not appear after open_terminal_pane`,
-  });
+// Zellij's own view of the sandbox: whether the web server runs and whether a login token exists.
+// `--status` exits non-zero when offline, hence `check: false`; "online" is not a substring of
+// "offline". Token lines read `token_<n>: ...`, unlike the "no tokens" notice.
+function zellijWebState(name: string): { online: boolean; tokens: boolean } {
+  const status = podman(LOCAL_CONNECTION, ["exec", name, "zellij", "web", "--status"], { check: false });
+  const list = podman(LOCAL_CONNECTION, ["exec", name, "zellij", "web", "--list-tokens"], { check: false });
+  return { online: status.includes("online"), tokens: /^token_\d+/m.test(list) };
+}
+
+// Proves prepare_terminal's daemonize + token mint ran, without any token file in the workspace.
+async function waitForZellijLogin(name: string): Promise<void> {
+  await browser.waitUntil(
+    () => {
+      const state = zellijWebState(name);
+      return state.online && state.tokens;
+    },
+    {
+      timeout: 60000,
+      interval: 1000,
+      timeoutMsg: `zellij web in "${name}" never reported online with a minted token after open_terminal_pane`,
+    },
+  );
 }
 
 // Dashboard is DOM-derived client state, not a Rust-tracked pane (docs/features/consolidate-app-
@@ -107,10 +119,12 @@ describe("Embedded workspace (merged NavigationPanel/Switcher/Dashboard webview)
       null,
       "active_app must stay null while the client-side view is Dashboard for any sandbox.",
     );
+    const zellij = zellijWebState(nameA);
     assert(
-      !fs.existsSync(path.join(workspaceDirA, ".mio", "zellij.json")),
-      "zellij.json exists before any Terminal pane was requested — prepare_terminal_webview ran " +
-        "eagerly during watch_workspace_ports, defeating the lazy-Terminal goal.",
+      !zellij.online && !zellij.tokens,
+      `zellij web in "${nameA}" is online or holds a token before any Terminal pane was requested ` +
+        `(${JSON.stringify(zellij)}) — prepare_terminal ran eagerly during watch_workspace_ports, ` +
+        "defeating the lazy-Terminal goal.",
     );
 
     // Structural layout proof (mirrors the Rust unit tests in workspace/mod.rs): the overlay rect is
@@ -122,7 +136,7 @@ describe("Embedded workspace (merged NavigationPanel/Switcher/Dashboard webview)
 
   it("open_terminal_pane lazily embeds the Terminal pane and makes it active", async () => {
     await openTerminalPane(nameA, workspaceDirA);
-    await waitForToken(nameA);
+    await waitForZellijLogin(nameA);
 
     const state = await workspaceState();
     const panes = panesFor(state, nameA);
@@ -197,7 +211,7 @@ describe("Embedded workspace (merged NavigationPanel/Switcher/Dashboard webview)
     // Leave nameA back on its Terminal pane so the pre-existing switch_app assertion below (which
     // predates the merged-webview model) keeps its original meaning unchanged.
     await workspaceSwitcher.clickTab(nameA, "terminal");
-    await waitForToken(nameA);
+    await waitForZellijLogin(nameA);
     assert.strictEqual((await workspaceState()).active_app, terminal.label);
   });
 

@@ -9,6 +9,7 @@ import { useSandboxWorkspace } from "../../../lib/sandbox-suite.js";
 import { podman, podmanOk, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
 import { forwardList } from "../../../lib/mutagen.js";
 import { MANAGED_SSH_CONFIG, sshAliasBlock } from "../../../lib/ssh.js";
+import { APP_DATA_ROOT } from "../../../lib/run-identity.js";
 import {
   workspaceState,
   panesFor,
@@ -37,8 +38,10 @@ describe("Agent web UI (paseo)", function () {
   this.timeout(900000);
 
   const { projectName, row, workspaceDir } = useSandboxWorkspace("e2e-agentweb");
-  // prepare_agent_web_pane persists the minted password host-side here (next to zellij.json).
-  const passwordPath = path.join(workspaceDir, ".mio", "paseo.json");
+  // prepare_agent_web_pane persists the minted password host-side in app data, never in the synced
+  // workspace (src-tauri/src/paths.rs `sandbox_pane_dir`).
+  const passwordPath = path.join(APP_DATA_ROOT, "panes", projectName, "paseo.json");
+  const keyDir = path.join(APP_DATA_ROOT, "ssh-keys", projectName);
   let serverId: string;
   let password: string;
 
@@ -158,6 +161,11 @@ describe("Agent web UI (paseo)", function () {
 
     // The minted password is persisted host-side (mint-once contract; step 6 asserts reuse).
     assert(fs.existsSync(passwordPath), `password file ${passwordPath} does not exist`);
+    assert(
+      !fs.existsSync(path.join(workspaceDir, ".mio", "paseo.json")),
+      "paseo.json was written into the synced workspace; the password belongs in app data only."
+    );
+    assert(fs.existsSync(keyDir), `ssh identity dir ${keyDir} does not exist before destroy`);
     const session = JSON.parse(fs.readFileSync(passwordPath, "utf8"));
     assert(
       typeof session.password === "string" && session.password.length > 0,
@@ -281,6 +289,20 @@ describe("Agent web UI (paseo)", function () {
     assert(
       !fwdOut.includes("Connected"),
       `Mutagen forward agentweb-${projectName} still Connected after destroy. Output:\n${fwdOut}`
+    );
+  });
+
+  it("destroy also removes the sandbox's ssh alias, identity directory and pane state", () => {
+    assert.strictEqual(
+      sshAliasBlock(projectName),
+      undefined,
+      `"Host ${projectName}" block still in ${MANAGED_SSH_CONFIG} after destroy. ` +
+        "destroy must call cleanup_host_state (src-tauri/src/services/sandbox.rs)."
+    );
+    assert(!fs.existsSync(keyDir), `ssh identity dir ${keyDir} still exists after destroy.`);
+    assert(
+      !fs.existsSync(path.dirname(passwordPath)),
+      `pane state dir ${path.dirname(passwordPath)} still exists after destroy.`
     );
   });
 });
