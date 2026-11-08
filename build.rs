@@ -1063,8 +1063,8 @@ fn run_env(dir: PathBuf, cmd: &str, args: &[&str], envs: &[(&str, &Path)]) {
 /// editing Rust source. Frontend (Svelte/Vite) hot-reload is untouched either way, since it never
 /// goes through this process tree.
 fn run_dev_directly() {
-    let vite = spawn_background(root_dir(), "pnpm", &["dev"]);
-    wait_for_dev_server();
+    let mut vite = spawn_background(root_dir(), "pnpm", &["dev"]);
+    wait_for_dev_server(&mut vite);
     run(root_dir().join("src-tauri"), "cargo", &["build"]);
 
     let exe = debug_dir().join("sandbox-mio.exe");
@@ -1083,22 +1083,30 @@ fn run_dev_directly() {
     // `vite` is a member of `win_job`'s job like every other `spawn_background`/`run` child, so it
     // would die with `build.exe` regardless — killed explicitly here so closing the app window ends
     // the dev server promptly instead of leaving it running until `build.exe` itself is interrupted.
-    let mut vite = vite;
     let _ = vite.kill();
 }
 
 /// Polls `DEV_SERVER_ADDR` until Vite accepts a connection, so `cargo build` (and the eventual app
-/// launch) never race the dev server's own startup. Panics past a generous timeout rather than
-/// hanging forever on a dev server that failed to start.
-fn wait_for_dev_server() {
-    let deadline = Instant::now() + Duration::from_secs(60);
-    while Instant::now() < deadline {
+/// launch) never race the dev server's own startup. Fails at once if Vite exits (e.g. port 1420
+/// taken); otherwise waits while Vite is alive, since Vite opens no port until Paraglide compiles.
+fn wait_for_dev_server(vite: &mut std::process::Child) {
+    let start = Instant::now();
+    let budget = Duration::from_secs(180);
+    let mut hinted = false;
+    while start.elapsed() < budget {
         if TcpStream::connect(DEV_SERVER_ADDR).is_ok() {
             return;
         }
+        if let Ok(Some(status)) = vite.try_wait() {
+            panic!("Vite dev server exited with {} before listening on {}", status, DEV_SERVER_ADDR);
+        }
+        if !hinted && start.elapsed() > Duration::from_secs(30) {
+            hinted = true;
+            eprintln!("Still waiting for Vite on {} (up to {}s)", DEV_SERVER_ADDR, budget.as_secs());
+        }
         std::thread::sleep(Duration::from_millis(200));
     }
-    panic!("Vite dev server never came up on {} after 60s", DEV_SERVER_ADDR);
+    panic!("Vite dev server never came up on {} after {}s", DEV_SERVER_ADDR, budget.as_secs());
 }
 
 /// `run`'s non-blocking counterpart: spawns `cmd`, joins it to `win_job`'s job the same way, but
