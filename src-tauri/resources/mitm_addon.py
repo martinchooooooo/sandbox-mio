@@ -22,7 +22,8 @@ class SecretInjector:
     def __init__(self):
         self.rules = _load_rules()
 
-    def request(self, flow):
+    # Not `request`: a streamed request's headers are already sent by the time that hook fires.
+    def requestheaders(self, flow):
         host = flow.request.pretty_host
         path = flow.request.path
         for rule in self.rules:

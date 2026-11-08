@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 import ProjectsPage from "../../pageobjects/projects.page.js";
-import { invokeCmd, mockCalls, useMockControl } from "../../../lib/mock.js";
+import { configureMock, invokeCmd, mockCalls, useMockControl } from "../../../lib/mock.js";
 
 // LIGHT spec for docs/features/microsandbox-network-policy (Phase D exit). The `msb create` argv is
 // read back from the mock call journal (`mockCalls`), which records variable names but never
@@ -102,6 +102,7 @@ describe("Microsandbox network policy — create flow (mock backend)", function 
     const sidecarArgv = sidecar.argv.join(" ");
     assert(sidecarArgv.includes("-p 127.0.0.1:"), sidecarArgv);
     assert(sidecarArgv.includes("--init /.msb/scripts/start"), sidecarArgv);
+    assert(sidecarArgv.includes("stream_large_bodies="), "the sidecar buffers whole bodies in memory");
 
     const agent = creates.find((c) => c.argv.includes(viewerName));
     assert(agent, "no agent msb create was journalled");
@@ -111,6 +112,21 @@ describe("Microsandbox network policy — create flow (mock backend)", function 
     const status = await invokeCmd<{ provider: string; running: boolean }>("proxy_status", { name: viewerName });
     assert.equal(status.provider, "microsandbox");
     assert(status.running, "the sidecar is not reported running");
+  });
+
+  it("keeps a crashed sidecar reported as existing and restarts it", async () => {
+    type Status = { exists: boolean; running: boolean };
+    // A failed start leaves the sidecar stopped, standing in for a VM crash.
+    await configureMock("msb.start", { kind: "fail-once", exit_code: 1, stderr: "error: boot failed" });
+    await assert.rejects(invokeCmd("restart_proxy", { name: viewerName }));
+    const crashed = await invokeCmd<Status>("proxy_status", { name: viewerName });
+    assert(crashed.exists && !crashed.running, `a stopped sidecar must still exist: ${JSON.stringify(crashed)}`);
+
+    // A crashed VM may refuse the stop; restart must still succeed.
+    await configureMock("msb.stop", { kind: "fail-once", exit_code: 1, stderr: "error: sandbox not running" });
+    await invokeCmd("restart_proxy", { name: viewerName });
+    const restarted = await invokeCmd<Status>("proxy_status", { name: viewerName });
+    assert(restarted.exists && restarted.running, `restart left the sidecar down: ${JSON.stringify(restarted)}`);
   });
 
   it("re-applies an edited policy by recreating around the volume (Phase G exit)", async () => {

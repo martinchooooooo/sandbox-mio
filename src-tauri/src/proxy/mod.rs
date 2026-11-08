@@ -47,6 +47,10 @@ const MSB_SOCKS_GUEST_PORT: u16 = 1080;
 /// (`docs/features/microsandbox-network-policy/02_dev.md`, Resolved Decision 8).
 const PORT_ATTEMPTS: usize = 3;
 
+/// Bodies above this size are streamed, not buffered: a buffered ~150 MB download OOM-killed a
+/// 512 MiB msb sidecar.
+const STREAM_LARGE_BODIES: &str = "stream_large_bodies=1m";
+
 pub fn mitmproxy_image() -> String {
     std::env::var("MIO_PROXY_IMAGE")
         .ok()
@@ -374,6 +378,8 @@ async fn create_podman_proxy(
             "0.0.0.0".to_string(),
             "--listen-port".to_string(),
             PROXY_PORT.to_string(),
+            "--set".to_string(),
+            STREAM_LARGE_BODIES.to_string(),
             "-s".to_string(),
             "/addons/addon.py".to_string(),
             "-s".to_string(),
@@ -494,6 +500,8 @@ async fn create_msb_proxy(
                 "mitmdump".to_string(),
                 "--set".to_string(),
                 "confdir=/home/mitmproxy/.mitmproxy".to_string(),
+                "--set".to_string(),
+                STREAM_LARGE_BODIES.to_string(),
                 "--mode".to_string(),
                 format!("socks5@0.0.0.0:{MSB_SOCKS_GUEST_PORT}"),
                 "--proxyauth".to_string(),
@@ -630,7 +638,8 @@ pub async fn restart_proxy_container(
 ) -> Result<(), ProxyError> {
     let (id, provider) = sidecar_provider(app, registry, sandbox);
     let name = proxy_container_name(sandbox);
-    provider.stop_sidecar(&name).await?;
+    // A crashed sidecar may refuse the stop, so only the start decides the outcome.
+    let stopped = provider.stop_sidecar(&name).await;
     match provider.start(&name).await {
         Ok(()) => {}
         Err(ProviderError::PortInUse(_)) => {
@@ -638,7 +647,7 @@ pub async fn restart_proxy_container(
                 "proxy port taken — re-apply the network settings to recreate".to_string(),
             ))
         }
-        Err(e) => return Err(e.into()),
+        Err(e) => return Err(stopped.err().unwrap_or(e).into()),
     }
     if id == ProviderId::Microsandbox {
         let port = read_meta_host_port(app, sandbox)
@@ -734,6 +743,7 @@ pub async fn status(
     let host_port = if id == ProviderId::Microsandbox { read_meta_host_port(app, sandbox) } else { None };
     let Some(instance) = instances.into_iter().find(|s| s.name == container_name && is_sidecar(s)) else {
         return Ok(ProxyStatus {
+            exists: false,
             running: false,
             proxy_ip: String::new(),
             network,
@@ -751,6 +761,7 @@ pub async fn status(
         _ => None,
     };
     Ok(ProxyStatus {
+        exists: true,
         running,
         proxy_ip: read_meta_proxy_ip(app, sandbox).unwrap_or_default(),
         network,

@@ -35,8 +35,11 @@ def _body_bytes(message):
             return int(length)
         except ValueError:
             pass
+    # A streamed body is never stored, so its size is unknown.
+    if message.raw_content is None:
+        return None
     try:
-        return len(message.content or b"")
+        return len(message.raw_content)
     except Exception:
         return None
 
@@ -54,15 +57,22 @@ class FlowLogger:
         # Rules are read once at load, the same contract SecretInjector has in mitm_addon.py: a
         # rules change restarts the container, reloading both copies together.
         self.rules = _load_rules()
-        self.counter = 0
-        self.lines = self._count_lines()
+        self.lines, self.counter = self._scan_existing()
 
-    def _count_lines(self):
+    # Ids continue across sidecar restarts, since the log outlives them and the viewer keys rows by id.
+    def _scan_existing(self):
+        lines, last_id = 0, 0
         try:
             with open(FLOWS_PATH, "r", encoding="utf-8") as f:
-                return sum(1 for _ in f)
+                for line in f:
+                    lines += 1
+                    try:
+                        last_id = max(last_id, int(json.loads(line).get("id", 0)))
+                    except (ValueError, TypeError, AttributeError):
+                        continue
         except OSError:
-            return 0
+            pass
+        return lines, last_id
 
     # Whether some rule would have injected a secret into this request — matched here rather than
     # asked of SecretInjector, so the two addon classes stay independent (Resolved Decision 7).

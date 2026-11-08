@@ -42,7 +42,10 @@ export async function ensureTrafficState(): Promise<void> {
     started = true;
     try {
         await listen<FlowsChanged>(EVENT_NAME, (e) => {
-            const next = [...(flows[e.payload.sandbox] ?? []), ...e.payload.flows];
+            // A re-spawned poller replays the whole log, and rows are keyed by id.
+            const current = flows[e.payload.sandbox] ?? [];
+            const seen = new Set(current.map((f) => f.id));
+            const next = [...current, ...e.payload.flows.filter((f) => !seen.has(f.id))];
             flows = { ...flows, [e.payload.sandbox]: next.slice(-FLOW_LOG_MAX_LINES) };
         });
     } catch {

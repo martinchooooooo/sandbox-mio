@@ -60,3 +60,5 @@ Podman and microsandbox implement each control differently.
 - A sidecar is recognised by its image, never by its `-proxy` name suffix.
 - The msb store is shared by every worktree on the host, so a microsandbox sidecar is swept only by the app-data root that created it.
 - The flow-record line cap is one value shared by the addon, the backend poller and the frontend store.
+- The sidecar streams large bodies through rather than buffering them, so a single large download cannot exhaust its memory.
+- A stopped sidecar still means the viewer is on: the sandbox fails closed, and the captured history stays readable until the sidecar is removed.

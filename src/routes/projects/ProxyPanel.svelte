@@ -9,6 +9,7 @@
 
     // Mirrors Rust `proxy::types::ProxyStatus` (camelCase per its own `serde(rename_all)`).
     interface ProxyStatus {
+        exists: boolean;
         running: boolean;
         proxyIp: string;
         network: string;
@@ -121,7 +122,7 @@
 <div class="flex flex-col gap-1.5 border-t pt-2" data-proxy-panel>
     <span class="text-muted-foreground text-xs shrink-0">{m.proxy_title()}</span>
 
-    {#if status && !status.running}
+    {#if status && !status.exists}
         <span class="text-muted-foreground text-xs" data-proxy-disabled>
             {#if msb}
                 {m.proxy_off_msb()}
@@ -129,6 +130,8 @@
                 {m.proxy_off_podman()}
             {/if}
         </span>
+    {:else if status && !status.running}
+        <span class="text-xs text-destructive" data-proxy-stopped>{m.proxy_stopped()}</span>
     {:else if status?.running && msb}
         <span class="text-muted-foreground text-xs" data-proxy-msb-chain>
             {m.proxy_chained()}
@@ -190,5 +193,5 @@
 
 {#if msb && provider}
     <NetPolicyEditor {sandboxName} {workspacePath} {provider}
-        viewerOn={status?.running ?? false} onReapplied={refresh} />
+        viewerOn={status?.exists ?? false} onReapplied={refresh} />
 {/if}

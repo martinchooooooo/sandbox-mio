@@ -8,6 +8,7 @@
 
     // Mirrors Rust `proxy::types::ProxyStatus` (camelCase per its own `serde(rename_all)`).
     interface ProxyStatus {
+        exists: boolean;
         running: boolean;
         proxyIp: string;
         network: string;
@@ -36,6 +37,7 @@
     let methodFilter = $state<string | null>(null);
     let statusFilter = $state<string | null>(null);
     let expandedId = $state<number | null>(null);
+    let restarting = $state(false);
     let watching = "";
 
     // Newest first: this is a live log, and the store appends.
@@ -70,8 +72,9 @@
             panelError = parseError(e).message;
             return;
         }
+        // Watched even when stopped, since the log still holds the history.
         // The backend call is idempotent; `watching` only avoids re-invoking on every effect run.
-        if (!status.running || watching === sandboxName) return;
+        if (!status.exists || watching === sandboxName) return;
         watching = sandboxName;
         try {
             await ensureTrafficState();
@@ -82,16 +85,36 @@
         }
     }
 
+    async function restart() {
+        restarting = true;
+        panelError = null;
+        try {
+            await invoke("restart_proxy", { name: sandboxName });
+        } catch (e) {
+            panelError = parseError(e).message;
+        } finally {
+            restarting = false;
+        }
+        await refresh();
+    }
+
     $effect(() => {
         void sandboxName;
         refresh();
     });
 </script>
 
-{#if status?.running}
+{#if status?.exists}
     <div class="flex flex-col gap-1.5 border-t pt-2" data-traffic-panel>
         <span class="text-muted-foreground text-xs shrink-0">{m.traffic_title()}</span>
-        {#if status.healthy === false}
+        {#if !status.running}
+            <div class="flex flex-wrap items-center gap-2" data-traffic-stopped>
+                <span class="text-xs text-destructive">{m.traffic_stopped()}</span>
+                <Button size="sm" loading={restarting} disabled={restarting} onclick={restart}>
+                    {m.traffic_restart()}
+                </Button>
+            </div>
+        {:else if status.healthy === false}
             <span class="text-xs text-destructive" data-traffic-unhealthy>
                 {m.traffic_unhealthy()}
             </span>

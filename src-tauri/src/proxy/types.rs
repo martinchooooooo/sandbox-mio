@@ -44,6 +44,8 @@ pub enum ProxyAttachment {
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProxyStatus {
+    /// Whether the sidecar exists, running or not. A stopped sidecar still means the viewer is on.
+    pub exists: bool,
     pub running: bool,
     pub proxy_ip: String,
     pub network: String,
