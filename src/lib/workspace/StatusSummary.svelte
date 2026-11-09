@@ -3,6 +3,7 @@
     import { openForwardsFor } from "$lib/network/state.svelte";
     import { deploymentFor } from "$lib/sandbox/state.svelte";
     import { translateStatus } from "$lib/sandbox";
+    import { m } from "$lib/paraglide/messages.js";
     import type { DashboardSectionId } from "./sections";
 
     let {
@@ -21,29 +22,31 @@
 
     const proxy = $derived(proxyStatusFor(sandboxName));
     const network = $derived.by(() => {
-        if (proxy.error !== null) return "unknown"; // TODO(i18n)
+        if (proxy.error !== null) return m.dashboard_summary_network_unknown();
         const status = proxy.value;
         if (!status) return "…";
-        if (!status.exists) return "not recorded"; // TODO(i18n)
-        if (!status.running) return "stopped"; // TODO(i18n)
-        return status.healthy === false ? "unhealthy" : "recorded"; // TODO(i18n)
+        if (!status.exists) return m.dashboard_summary_network_off();
+        if (!status.running) return m.dashboard_summary_network_stopped();
+        return status.healthy === false
+            ? m.dashboard_summary_network_unhealthy()
+            : m.dashboard_summary_network_recorded();
     });
     const portCount = $derived(
         openForwardsFor(sandboxName).filter((f) => f.kind.kind === "exposed").length,
     );
     const deployment = $derived(deploymentFor(sandboxName));
     const remote = $derived(
-        deployment ? `${deployment.host} (${translateStatus(deployment.status)})` : "Local", // TODO(i18n)
+        deployment ? `${deployment.host} (${translateStatus(deployment.status)})` : m.dashboard_summary_local(),
     );
 </script>
 
 <p class="text-muted-foreground flex flex-wrap items-center gap-x-2 text-xs" data-status-summary>
     <button type="button" class="hover:underline" data-summary-part="network" onclick={() => onOpen("network")}>
-        Network: {network}<!-- TODO(i18n) -->
+        {m.dashboard_summary_network({ status: network })}
     </button>
     <span aria-hidden="true">·</span>
     <button type="button" class="hover:underline" data-summary-part="ports" onclick={() => onOpen("ports")}>
-        {portCount} {portCount === 1 ? "port" : "ports"} open<!-- TODO(i18n) -->
+        {m.dashboard_summary_ports({ count: portCount })}
     </button>
     {#if showRemote}
         <span aria-hidden="true">·</span>

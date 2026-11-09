@@ -10,7 +10,6 @@
 
 ## In-flight plans
 
-* [manage-dashboard-redesign](../features/manage-dashboard-redesign/index.md) - in-progress, changes workspace-ui.md: Make a sandbox's Manage dashboard open instantly and read simply: an Overview for launching and agents, advanced controls in a section sidebar that loads on demand.
 * [sandbox-runtime-management](../features/sandbox-runtime-management/index.md) - in-progress, changes providers.md, remote.md: Record installed software with mise and reproduce it on a remote host at deploy.
 * [techdebt-sweep](../features/techdebt-sweep/index.md) - in-progress, changes providers.md, transport.md, agents.md, workspace-ui.md: Resolve the open tech debt found by the 2026-11-07 audit: msb build locks, duplicated Podman bring-up, the legacy relay path, secrets on disk and in logs, unbounded calls.
 * [host-tool-ssh-access](../features/host-tool-ssh-access/index.md) - planned, changes transport.md: Let host SSH clients (e.g. the Claude Code desktop app) attach to a sandbox over the existing exec transport.

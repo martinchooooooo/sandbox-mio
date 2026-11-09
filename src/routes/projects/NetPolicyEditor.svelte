@@ -296,7 +296,7 @@
         </div>
 
         <span class="text-muted-foreground mt-2 border-t pt-2 text-xs shrink-0" data-secrets-heading>
-            Secrets<!-- TODO(i18n) -->
+            {m.dashboard_secrets_title()}
         </span>
         <span class="text-muted-foreground text-xs">{m.netpolicy_secret_bindings()}</span>
         {#each policy.secrets as binding, i (binding.envVar)}

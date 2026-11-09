@@ -307,5 +307,22 @@
   "machine_step_msb_binary_explain": "Checks the bundled msb CLI starts.",
   "machine_step_msb_version_explain": "Needs msb 0.7.12 or newer; the app ships its own copy, so reinstall sandbox-mio if this fails.",
   "machine_step_hypervisor_platform_explain": "Required for microsandbox's microVMs; enabling needs no restart.",
-  "machine_step_msb_doctor_explain": "Confirms the host is ready to create sandboxes."
+  "machine_step_msb_doctor_explain": "Confirms the host is ready to create sandboxes.",
+  "dashboard_sections_label": "Sections",
+  "dashboard_section_overview": "Overview",
+  "dashboard_section_tools": "Tools",
+  "dashboard_section_ports": "Ports",
+  "dashboard_section_network": "Network",
+  "dashboard_section_remote": "Remote",
+  "dashboard_section_danger": "Danger zone",
+  "dashboard_loading": "Loading…",
+  "dashboard_secrets_title": "Secrets",
+  "dashboard_summary_network": "Network: {status}",
+  "dashboard_summary_network_unknown": "unknown",
+  "dashboard_summary_network_off": "not recorded",
+  "dashboard_summary_network_stopped": "stopped",
+  "dashboard_summary_network_unhealthy": "unhealthy",
+  "dashboard_summary_network_recorded": "recorded",
+  "dashboard_summary_ports": [{"declarations":["input count","local countPlural = count: plural"],"selectors":["countPlural"],"match":{"countPlural=one":"{count} port open","countPlural=other":"{count} ports open"}}],
+  "dashboard_summary_local": "Local"
 }

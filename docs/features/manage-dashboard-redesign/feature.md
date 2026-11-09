@@ -2,7 +2,7 @@
 type: feature
 title: "manage-dashboard-redesign"
 description: "Make a sandbox's Manage dashboard open instantly and read simply: an Overview for launching and agents, advanced controls in a section sidebar that loads on demand."
-status: in-progress
+status: implemented
 depends_on: [workspace-app-tabs, consolidate-app-container]
 architecture: [docs/architecture/workspace-ui.md]
 ---
@@ -13,4 +13,4 @@ Make a sandbox's Manage dashboard open instantly and read simply: an Overview fo
 
 ## Status note
 
-Phases B to D are implemented and verified with `pnpm check` and the light e2e tier; the dashboard awaits the user's review of behaviour and wording. Phase E (Paraglide i18n pass and architecture-document close-out) is held until the user approves the working feature, so every new user-facing string is a hard-coded English literal marked `TODO(i18n)`. Phase A (baseline timing against a real Podman sandbox) was not run; it does not block the feature (`02_dev.md`, Resolved Decision 13).
+Phases B to E are implemented: the user approved the working dashboard on 2026-11-09, every user-facing string is translated, and `docs/architecture/workspace-ui.md` describes the Overview plus lazily mounted sections. Phase A (baseline timing against a real Podman sandbox) was not run and is deferred; it does not block the feature (`02_dev.md`, Resolved Decision 13). No `03_e2e.md` exists yet, so the new behaviour (section memory, lazy mounting, summary links) has no dedicated specs beyond the adapted existing ones.

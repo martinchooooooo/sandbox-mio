@@ -307,5 +307,22 @@
   "machine_step_msb_binary_explain": "Prüft, ob die mitgelieferte msb-CLI startet.",
   "machine_step_msb_version_explain": "Erfordert msb 0.7.12 oder neuer; die App bringt eine eigene Kopie mit — installiere sandbox-mio neu, falls das fehlschlägt.",
   "machine_step_hypervisor_platform_explain": "Wird für die MicroVMs von microsandbox benötigt; das Aktivieren erfordert keinen Neustart.",
-  "machine_step_msb_doctor_explain": "Bestätigt, dass der Host bereit ist, Sandboxes zu erstellen."
+  "machine_step_msb_doctor_explain": "Bestätigt, dass der Host bereit ist, Sandboxes zu erstellen.",
+  "dashboard_sections_label": "Bereiche",
+  "dashboard_section_overview": "Übersicht",
+  "dashboard_section_tools": "Werkzeuge",
+  "dashboard_section_ports": "Ports",
+  "dashboard_section_network": "Netzwerk",
+  "dashboard_section_remote": "Remote",
+  "dashboard_section_danger": "Gefahrenbereich",
+  "dashboard_loading": "Wird geladen…",
+  "dashboard_secrets_title": "Secrets",
+  "dashboard_summary_network": "Netzwerk: {status}",
+  "dashboard_summary_network_unknown": "unbekannt",
+  "dashboard_summary_network_off": "nicht aufgezeichnet",
+  "dashboard_summary_network_stopped": "gestoppt",
+  "dashboard_summary_network_unhealthy": "fehlerhaft",
+  "dashboard_summary_network_recorded": "wird aufgezeichnet",
+  "dashboard_summary_ports": [{"declarations":["input count","local countPlural = count: plural"],"selectors":["countPlural"],"match":{"countPlural=one":"{count} Port offen","countPlural=other":"{count} Ports offen"}}],
+  "dashboard_summary_local": "Lokal"
 }

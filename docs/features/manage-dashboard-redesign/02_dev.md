@@ -5,7 +5,7 @@ feature: manage-dashboard-redesign
 ---
 # Manage Dashboard Redesign: Build Plan
 
-This document is the build plan for restructuring a sandbox's Manage dashboard (`src/lib/workspace/WorkspaceDashboard.svelte`) into an Overview plus a lazily mounted section sidebar, and for removing the dashboard's blocking and duplicate backend calls. It continues `docs/features/manage-dashboard-redesign/01_ideas.md` and supersedes it wherever the two differ; the user decisions of 2026-11-08 (Resolved Decisions 1 to 9) are carried forward unchanged. Status: Phases B to D are implemented; Phase A (baseline timing, not run) and Phase E (i18n and close-out, after user approval of the working feature) remain. Deferred work (a host-native `mitmdump` for microsandbox sidecars) lives in `docs/features/manage-dashboard-redesign/04_improvements.md`.
+This document is the build plan for restructuring a sandbox's Manage dashboard (`src/lib/workspace/WorkspaceDashboard.svelte`) into an Overview plus a lazily mounted section sidebar, and for removing the dashboard's blocking and duplicate backend calls. It continues `docs/features/manage-dashboard-redesign/01_ideas.md` and supersedes it wherever the two differ; the user decisions of 2026-11-08 (Resolved Decisions 1 to 9) are carried forward unchanged. Status: Phases B to E are implemented; Phase A (baseline timing) was not run and is deferred per Resolved Decision 13. Deferred work (a host-native `mitmdump` for microsandbox sidecars) lives in `docs/features/manage-dashboard-redesign/04_improvements.md`.
 
 ## Concrete Model
 
@@ -175,7 +175,9 @@ Exit: `pnpm check` passes. The component has no consumer yet; Phase D proves it 
 
 Exit: `pnpm check` passes; `./build.exe e2e light` is green; the user reviews the working dashboard (wording and look) before Phase E.
 
-## Remaining: Phase E — i18n and documentation close-out (after user approval)
+## Implemented: Phase E — i18n and documentation close-out (after user approval)
+
+The user approved the working feature on 2026-11-09. The new keys carry a `dashboard_` prefix; the Traffic section label reuses `traffic_title`, and the summary's open-port count is one Paraglide plural message (`dashboard_summary_ports`), since Russian needs more than two plural forms.
 
 - Run only after the user approves the working feature, per `.claude/skills/feature-implement/SKILL.md` (i18n section): replace every `TODO(i18n)` literal from Phases B to D (section labels, the section list's accessible label, summary parts, the Secrets heading, the loading placeholder) with Paraglide keys in `messages/en.json`, mirrored to `messages/de.json` and `messages/ru.json`, until no `TODO(i18n)` remains. Reuse existing keys where the wording matches (`proxy_title`, `traffic_title`, `netpolicy_title`, `projects_destroy`, `proxy_off_podman`, `proxy_off_msb`).
 - `docs/architecture/workspace-ui.md`, Tabs section: describe Manage as an Overview plus lazily mounted sections whose last selection is remembered per sandbox, and add the invariant that a dashboard section fetches only while shown.

@@ -3,7 +3,6 @@
 
 ## in-progress
 
-* [manage-dashboard-redesign](manage-dashboard-redesign/index.md) - Make a sandbox's Manage dashboard open instantly and read simply: an Overview for launching and agents, advanced controls in a section sidebar that loads on demand.
 * [retro-ui-migration](retro-ui-migration/index.md) - Re-skin the UI primitives with the retro-ui-svelte registry (Sunset Orange, rounded).
 * [sandbox-runtime-management](sandbox-runtime-management/index.md) - Record installed software with mise and reproduce it on a remote host at deploy.
 * [techdebt-sweep](techdebt-sweep/index.md) - Resolve the open tech debt found by the 2026-11-07 audit: msb build locks, duplicated Podman bring-up, the legacy relay path, secrets on disk and in logs, unbounded calls.
@@ -36,6 +35,7 @@
 * [lib-decomposition](lib-decomposition/index.md) - Split the 1,800-line src-tauri/src/lib.rs into command, service and startup modules.
 * [loading-states](loading-states/index.md) - Per-row in-flight feedback (loading buttons, StatusRow, action runner) for every sandbox action.
 * [local-llm](local-llm/index.md) - Detect host specs, recommend and download a local model, and run a host inference server.
+* [manage-dashboard-redesign](manage-dashboard-redesign/index.md) - Make a sandbox's Manage dashboard open instantly and read simply: an Overview for launching and agents, advanced controls in a section sidebar that loads on demand.
 * [microsandbox-network-policy](microsandbox-network-policy/index.md) - Native egress policy, host-held secrets and a chained traffic proxy for microsandbox sandboxes.
 * [microsandbox-provider](microsandbox-provider/index.md) - microsandbox (libkrun microVMs via the msb CLI) as a second machine provider alongside Podman.
 * [models-page-caching](models-page-caching/index.md) - Make the /models route instant on repeat visits by caching the host-spec probe.

@@ -9,6 +9,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import type { ProviderId } from "$lib/providers";
 import { capabilitiesFor } from "$lib/sandbox/state.svelte";
+import { m } from "$lib/paraglide/messages.js";
 
 export type DashboardSectionId =
     | "overview"
@@ -35,43 +36,43 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
     {
         id: "overview",
         icon: DashboardSquare01Icon,
-        label: () => "Overview", // TODO(i18n)
+        label: () => m.dashboard_section_overview(),
         visible: () => true,
     },
     {
         id: "tools",
         icon: Wrench01Icon,
-        label: () => "Tools", // TODO(i18n)
+        label: () => m.dashboard_section_tools(),
         visible: () => true,
     },
     {
         id: "ports",
         icon: PlugSocketIcon,
-        label: () => "Ports", // TODO(i18n)
+        label: () => m.dashboard_section_ports(),
         visible: () => true,
     },
     {
         id: "network",
         icon: Shield01Icon,
-        label: () => "Network", // TODO(i18n)
+        label: () => m.dashboard_section_network(),
         visible: () => true,
     },
     {
         id: "traffic",
         icon: Activity01Icon,
-        label: () => "Traffic", // TODO(i18n)
+        label: () => m.traffic_title(),
         visible: () => true,
     },
     {
         id: "remote",
         icon: CloudServerIcon,
-        label: () => "Remote", // TODO(i18n)
+        label: () => m.dashboard_section_remote(),
         visible: ({ provider }) => (provider ? (capabilitiesFor(provider)?.remoteTargets ?? false) : false),
     },
     {
         id: "danger",
         icon: Alert02Icon,
-        label: () => "Danger zone", // TODO(i18n)
+        label: () => m.dashboard_section_danger(),
         separated: true,
         visible: () => true,
     },

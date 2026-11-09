@@ -127,7 +127,7 @@
     {#if workspacePath}
         <SectionNav.Root value={activeId} onValueChange={(v) => openSection(v as DashboardSectionId)}
             class="flex-1">
-            <SectionNav.List aria-label="Sections"><!-- TODO(i18n) -->
+            <SectionNav.List aria-label={m.dashboard_sections_label()}>
                 {#each sections as section (section.id)}
                     {#if section.separated}
                         <SectionNav.Separator />
@@ -172,6 +172,6 @@
             {/each}
         </SectionNav.Root>
     {:else}
-        <p class="text-muted-foreground text-xs">Loading…<!-- TODO(i18n) --></p>
+        <p class="text-muted-foreground text-xs">{m.dashboard_loading()}</p>
     {/if}
 </main>

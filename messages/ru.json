@@ -307,5 +307,22 @@
   "machine_step_msb_binary_explain": "Проверяет, что встроенная утилита msb запускается.",
   "machine_step_msb_version_explain": "Нужен msb 0.7.12 или новее; приложение содержит собственную копию, поэтому при ошибке переустановите sandbox-mio.",
   "machine_step_hypervisor_platform_explain": "Нужна для микро-ВМ microsandbox; для включения перезагрузка не требуется.",
-  "machine_step_msb_doctor_explain": "Подтверждает, что хост готов к созданию песочниц."
+  "machine_step_msb_doctor_explain": "Подтверждает, что хост готов к созданию песочниц.",
+  "dashboard_sections_label": "Разделы",
+  "dashboard_section_overview": "Обзор",
+  "dashboard_section_tools": "Инструменты",
+  "dashboard_section_ports": "Порты",
+  "dashboard_section_network": "Сеть",
+  "dashboard_section_remote": "Удалённый хост",
+  "dashboard_section_danger": "Опасная зона",
+  "dashboard_loading": "Загрузка…",
+  "dashboard_secrets_title": "Секреты",
+  "dashboard_summary_network": "Сеть: {status}",
+  "dashboard_summary_network_unknown": "неизвестно",
+  "dashboard_summary_network_off": "запись не ведётся",
+  "dashboard_summary_network_stopped": "запись остановлена",
+  "dashboard_summary_network_unhealthy": "сбой",
+  "dashboard_summary_network_recorded": "запись идёт",
+  "dashboard_summary_ports": [{"declarations":["input count","local countPlural = count: plural"],"selectors":["countPlural"],"match":{"countPlural=one":"{count} порт открыт","countPlural=few":"{count} порта открыто","countPlural=many":"{count} портов открыто","countPlural=other":"{count} порта открыто"}}],
+  "dashboard_summary_local": "Локально"
 }
