@@ -2,7 +2,7 @@ import { MODELS } from "$lib/models/catalogue";
 import { LOCAL_LLM_BASE_URL, LOCAL_LLM_PROVIDER_ID } from "./local-llm";
 
 // Default model when no inference server is running (matches `recommendModels`'s pick).
-export const FALLBACK_MODEL_ID = "phi-4-mini-reasoning";
+export const FALLBACK_MODEL_ID = "qwen3.5-4b";
 
 // Generates the provider config to keep OpenCode's model map in sync with the inference server.
 export function buildLocalLlmProvider(defaultModelId: string): {

@@ -2,59 +2,63 @@ import type { ModelDescriptor } from "./types";
 
 const GB = 1024 * 1024 * 1024;
 
+// Every GGUF below declares an architecture (`qwen35`, `qwen35moe`, `gemma4`, `mistral3`,
+// `gpt-oss`) the bundled llama.cpp (`LLAMA_VERSION` in build.rs) can load. Check the GGUF's
+// `general.architecture` against that build before adding a model; bump llama.cpp if it is missing.
+// Foundry aliases were checked against `foundry model list` on 2026-11-09.
 export const MODELS: ModelDescriptor[] = [
   {
-    id: "qwen2.5-1.5b-instruct",
-    label: "Qwen2.5 1.5B Instruct",
-    paramsB: 1.5,
+    id: "qwen3.5-2b",
+    label: "Qwen3.5 2B",
+    paramsB: 2,
     ramFloorBytes: 4 * GB,
     llama: {
-      repo: "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
-      file: "qwen2.5-1.5b-instruct-q4_k_m.gguf",
-      sha256: "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e",
-      sizeBytes: 1_100_000_000,
+      repo: "unsloth/Qwen3.5-2B-GGUF",
+      file: "Qwen3.5-2B-Q4_K_M.gguf",
+      sha256: "aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223",
+      sizeBytes: 1_280_835_840,
     },
-    foundryAlias: "qwen2.5-1.5b",
+    // The text-only Foundry variant; GPU and CPU builds only, no NPU build.
+    foundryAlias: "qwen3.5-2b-text",
   },
   {
-    id: "phi-4-mini-reasoning",
-    label: "Phi-4 mini reasoning",
-    paramsB: 3.8,
-    ramFloorBytes: 8 * GB,
-    llama: {
-      repo: "bartowski/microsoft_Phi-4-mini-reasoning-GGUF",
-      file: "microsoft_Phi-4-mini-reasoning-Q4_K_M.gguf",
-      sha256: "ce8becd58f350d8ae0ec3bbb201ab36f750ffab17ab6238f39292d12ab68ea06",
-      sizeBytes: 2_500_000_000,
-    },
-    foundryAlias: "phi-4-mini-reasoning",
-  },
-  {
-    id: "qwen2.5-coder-7b-instruct",
-    label: "Qwen2.5 Coder 7B Instruct",
-    paramsB: 7,
-    ramFloorBytes: 16 * GB,
-    llama: {
-      repo: "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
-      file: "qwen2.5-coder-7b-instruct-q4_k_m.gguf",
-      sha256: "509287f78cb4d4cf6b3843734733b914b2c158e43e22a7f4bf5e963800894d3c",
-      sizeBytes: 4_680_000_000,
-    },
-    // No Foundry catalog entry as of the 2026-06-29 spike — llama engine only.
-    foundryAlias: null,
-  },
-  {
-    id: "qwen3-4b-instruct",
-    label: "Qwen3 4B Instruct",
+    id: "qwen3.5-4b",
+    label: "Qwen3.5 4B",
     paramsB: 4,
     ramFloorBytes: 8 * GB,
     llama: {
-      repo: "unsloth/Qwen3-4B-Instruct-2507-GGUF",
-      file: "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
-      sha256: "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
-      sizeBytes: 2_500_000_000,
+      repo: "unsloth/Qwen3.5-4B-GGUF",
+      file: "Qwen3.5-4B-Q4_K_M.gguf",
+      sha256: "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4",
+      sizeBytes: 2_740_937_888,
     },
-    // No Foundry catalog entry — llama engine only.
+    foundryAlias: "qwen3.5-4b",
+  },
+  {
+    id: "qwen3.5-9b",
+    label: "Qwen3.5 9B",
+    paramsB: 9,
+    ramFloorBytes: 16 * GB,
+    llama: {
+      repo: "unsloth/Qwen3.5-9B-GGUF",
+      file: "Qwen3.5-9B-Q4_K_M.gguf",
+      sha256: "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8",
+      sizeBytes: 5_680_522_464,
+    },
+    foundryAlias: null,
+  },
+  {
+    id: "gemma-4-12b-it",
+    label: "Gemma 4 12B",
+    paramsB: 12,
+    ramFloorBytes: 16 * GB,
+    llama: {
+      repo: "unsloth/gemma-4-12b-it-GGUF",
+      file: "gemma-4-12b-it-Q4_K_M.gguf",
+      sha256: "0a270ec9fe6b34f4a0d33992b6135117b484ebc4766ab76b51d4ae8c457e4c42",
+      sizeBytes: 7_121_861_440,
+    },
+    // Foundry ships only the smaller gemma-4-e2b-it.
     foundryAlias: null,
   },
   {
@@ -68,7 +72,7 @@ export const MODELS: ModelDescriptor[] = [
       sha256: "27cd6c432c7672cb812a92f611cf3ba7bbc35928262bb1e1253ff4ee6ae35901",
       sizeBytes: 12_100_000_000,
     },
-    // No Foundry catalog entry — llama engine only.
+    // Foundry lists gpt-oss-20b for chat only, without tool calling, which coding agents need.
     foundryAlias: null,
   },
   {
@@ -82,21 +86,34 @@ export const MODELS: ModelDescriptor[] = [
       sha256: "bfd11c8679c6b81eb43763505465d7dcfa72e460ab1c220ecc235a3efadd7f7f",
       sizeBytes: 14_330_000_000,
     },
-    // No Foundry catalog entry — llama engine only.
     foundryAlias: null,
   },
   {
-    id: "qwen3.6-27b",
-    label: "Qwen3.6 27B",
+    id: "qwen3.8-27b",
+    label: "Qwen3.8 27B",
     paramsB: 27,
     ramFloorBytes: 32 * GB,
     llama: {
-      repo: "unsloth/Qwen3.6-27B-GGUF",
-      file: "Qwen3.6-27B-Q4_K_M.gguf",
-      sha256: "5ed60d0af4650a854b1755bd392f9aef4872643dc25a254bc68043fa638392a0",
-      sizeBytes: 16_800_000_000,
+      repo: "unsloth/Qwen3.8-27B-GGUF",
+      file: "Qwen3.8-27B-UD-Q4_K_M.gguf",
+      sha256: "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482",
+      sizeBytes: 16_464_440_224,
     },
-    // No Foundry catalog entry — llama engine only.
+    foundryAlias: null,
+  },
+  {
+    id: "qwen3.6-35b-a3b",
+    label: "Qwen3.6 35B-A3B",
+    paramsB: 35,
+    ramFloorBytes: 32 * GB,
+    llama: {
+      repo: "unsloth/Qwen3.6-35B-A3B-GGUF",
+      file: "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+      sha256: "ac0e2c1189e055faa36eff361580e79c5bd6f8e76bffb4ce547f167d53e31a61",
+      sizeBytes: 22_134_528_992,
+    },
+    // Mixture of experts with ~3B active parameters: larger download, but faster per token than
+    // the dense 27B on CPU and integrated GPUs.
     foundryAlias: null,
   },
 ];

@@ -123,8 +123,8 @@ describe("OpenCode agent — install, provision, merge", function () {
     );
     assert.equal(
       config.model,
-      "local-llm/phi-4-mini-reasoning",
-      `default model is "${config.model}", expected "local-llm/phi-4-mini-reasoning".`,
+      "local-llm/qwen3.5-4b",
+      `default model is "${config.model}", expected "local-llm/qwen3.5-4b".`,
     );
   });
 
@@ -157,9 +157,9 @@ describe("OpenCode agent — install, provision, merge", function () {
         npm: "@ai-sdk/openai-compatible",
         name: "Local LLM",
         options: { baseURL: EXPECTED_BASE_URL, apiKey: "sk-local" },
-        models: { "phi-4-mini-reasoning": { name: "Phi-4 mini reasoning" } },
+        models: { "qwen3.5-4b": { name: "Qwen3.5 4B" } },
       },
-      defaultModel: "local-llm/phi-4-mini-reasoning",
+      defaultModel: "local-llm/qwen3.5-4b",
     });
 
     const merged = JSON.parse(fs.readFileSync(configPath, "utf8"));

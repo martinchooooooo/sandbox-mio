@@ -4,7 +4,7 @@ title: "Local Inference"
 description: "Running a language model on the host (hardware probe, recommendation, downloads, the llama.cpp and Foundry Local engines) and offering it to sandboxes."
 generated:
   by: claude-code/opus-5-5
-  at: 2026-11-05T23:55:00+11:00
+  at: 2026-11-09T12:00:00+11:00
 stale_after: 2027-02-05T00:00:00+11:00
 code:
   - src-tauri/src/inference/
@@ -45,3 +45,4 @@ The app can run a language model on the user's machine and offer it to sandboxes
 
 - The reverse forward listens on all interfaces of the Podman machine; a loopback-only listener is unreachable from containers.
 - The machine-side port is one value shared by the backend and the frontend's local-model wiring.
+- Every catalogue model's GGUF declares an architecture the pinned llama.cpp release can load; adding a model of a newer architecture means bumping that release too.
