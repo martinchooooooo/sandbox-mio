@@ -111,8 +111,6 @@ fn main() {
             fetch_llama();
             fetch_podman();
             fetch_msb();
-            // `--no-default-features` drops the `devtools` feature (see src-tauri/Cargo.toml) so
-            // the shipped binary carries no devtools code.
             run(root_dir(), "pnpm", &["tauri", "build"]);
         }
         _ => {
@@ -1065,7 +1063,9 @@ fn run_env(dir: PathBuf, cmd: &str, args: &[&str], envs: &[(&str, &Path)]) {
 fn run_dev_directly() {
     let mut vite = spawn_background(root_dir(), "pnpm", &["dev"]);
     wait_for_dev_server(&mut vite);
-    run(root_dir().join("src-tauri"), "cargo", &["build"]);
+    let devtools = std::env::var("MIO_DEVTOOLS").ok().as_deref() == Some("1");
+    let cargo_args: &[&str] = if devtools { &["build", "--features", "devtools"] } else { &["build"] };
+    run(root_dir().join("src-tauri"), "cargo", cargo_args);
 
     let exe = debug_dir().join("sandbox-mio.exe");
     // Not `run`/`try_run`: the app's own exit status must not panic `build.exe`.

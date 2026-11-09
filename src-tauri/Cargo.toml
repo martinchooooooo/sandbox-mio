@@ -56,7 +56,7 @@ sha1 = "0.10"
 base64 = "0.22"
 
 [features]
-default = ["devtools"]
-# Pulls in tauri-plugin-devtools. Drop it from a distributable build with
-# `cargo tauri build --no-default-features` so the shipped binary carries no devtools code.
+default = []
+# Pulls in tauri-plugin-devtools. Off by default: it enables tauri's `tracing` feature, which can
+# deadlock the app on concurrent emits. `./build dev` adds it when `MIO_DEVTOOLS=1`.
 devtools = ["dep:tauri-plugin-devtools"]
