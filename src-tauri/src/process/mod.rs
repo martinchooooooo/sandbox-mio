@@ -217,8 +217,25 @@ fn call_timeout(args: &[&str]) -> Duration {
     match strip_connection(args) {
         ["machine", "start", ..] => MACHINE_START_TIMEOUT,
         ["build", ..] => BUILD_TIMEOUT,
+        ["exec", ..] if is_package_install(args) => PACKAGE_INSTALL_TIMEOUT,
         _ => PODMAN_CALL_TIMEOUT,
     }
+}
+
+/// An `exec` that downloads toolchains: `mise use`/`mise install` (a first install of node, an npm
+/// CLI, or an agent pulls tens of MB, slower still through a sandbox's TLS-intercepting traffic
+/// proxy) or an npm postinstall `install.cjs` that fetches an agent's native binary. Legitimately
+/// slow rather than stuck, like `podman build`. Shared by the podman and msb selectors.
+const PACKAGE_INSTALL_TIMEOUT: Duration = Duration::from_secs(240);
+
+/// Whether an `exec` argv runs a package install. Matched as an adjacent pair anywhere in the argv
+/// because podman's `exec` has no `--` before the in-container command, while msb's does.
+fn is_package_install(args: &[&str]) -> bool {
+    args.windows(2).any(|w| match w {
+        ["mise", "use" | "install"] => true,
+        ["node", script] => script.ends_with("/install.cjs"),
+        _ => false,
+    })
 }
 
 /// Strips a leading `--connection <name>` pair (present on most `backends`/`runtime` calls,
@@ -814,12 +831,13 @@ const MSB_CREATE_TIMEOUT: Duration = Duration::from_secs(60);
 /// Bound on every Mutagen one-shot call through [`SystemMutagenRunner`].
 const MUTAGEN_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Picks the timeout for an `msb` call by shape, as [`call_timeout`] does for `podman`: only
-/// `create` gets the longer allowance (`docs/features/techdebt-sweep/02_dev.md`, Resolved
-/// Decision 2).
+/// Picks the timeout for an `msb` call by shape, as [`call_timeout`] does for `podman`: `create`
+/// and package-install `exec`s get longer allowances (`docs/features/techdebt-sweep/02_dev.md`,
+/// Resolved Decision 2 and its Common Gotchas row on package installs).
 fn msb_call_timeout(args: &[&str]) -> Duration {
     match args {
         ["create", ..] => MSB_CREATE_TIMEOUT,
+        ["exec", ..] if is_package_install(args) => PACKAGE_INSTALL_TIMEOUT,
         _ => MSB_CALL_TIMEOUT,
     }
 }
@@ -949,12 +967,36 @@ mod tests {
     }
 
     #[test]
-    fn only_msb_create_gets_the_long_bound() {
+    fn msb_create_and_package_installs_get_the_long_bounds() {
         assert_eq!(super::msb_call_timeout(&["create", "img", "--name", "x"]), super::MSB_CREATE_TIMEOUT);
-        for args in [&["exec", "x"][..], &["rm", "--force", "x"], &["image", "ls"], &["start", "x"]] {
+        for args in [
+            &["exec", "x"][..],
+            &["exec", "--workdir", "/root/work", "x", "--", "mise", "where", "node"],
+            &["exec", "--workdir", "/root/work", "x", "--", "mise", "exec", "--", "paseo", "daemon", "stop"],
+            &["rm", "--force", "x"],
+            &["image", "ls"],
+            &["start", "x"],
+        ] {
             assert_eq!(super::msb_call_timeout(args), super::MSB_CALL_TIMEOUT, "{args:?}");
         }
+        for args in [
+            &["exec", "--workdir", "/root/work", "x", "--", "mise", "use", "node@24.19.0", "npm:@getpaseo/cli@0.4.0"][..],
+            &["exec", "--workdir", "/root/work", "x", "--", "mise", "install"],
+            &["exec", "x", "--", "mise", "exec", "node@lts", "--", "node", "/t/lib/node_modules/p/install.cjs"],
+        ] {
+            assert_eq!(super::msb_call_timeout(args), super::PACKAGE_INSTALL_TIMEOUT, "{args:?}");
+        }
         assert!(super::MSB_CREATE_TIMEOUT > super::MSB_CALL_TIMEOUT);
+    }
+
+    #[test]
+    fn podman_package_install_execs_get_the_long_bound() {
+        let install = ["--connection", "c", "exec", "--workdir", "/root/work", "x", "mise", "use", "jq"];
+        assert_eq!(super::call_timeout(&install), super::PACKAGE_INSTALL_TIMEOUT);
+        let plain = ["--connection", "c", "exec", "--workdir", "/root/work", "x", "mise", "rm", "jq"];
+        assert_eq!(super::call_timeout(&plain), super::PODMAN_CALL_TIMEOUT);
+        // Only an exec qualifies: a container literally named `mise` in a `start` is still tight.
+        assert_eq!(super::call_timeout(&["start", "mise", "use"]), super::PODMAN_CALL_TIMEOUT);
     }
 
     /// A unique scratch directory per test, removed on drop.
