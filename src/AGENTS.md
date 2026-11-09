@@ -30,6 +30,17 @@ Event flow is one-directional: Rust emits (`activity://task-updated`, `workspace
 - `src/lib/errors.ts` — `parseError()` and `AppErrorKind`; mandatory in every `invoke()` catch block per the root `AGENTS.md`.
 - `src/lib/agents/` and `src/lib/models/` — static catalogues plus per-agent provisioning descriptors; extend the catalogue file rather than branching on names in components.
 - `src/lib/actions.svelte.ts`, `src/lib/utils.ts`, `src/lib/portal.ts` — Svelte actions, `cn()` class merging, portal helper.
+- `src/lib/motion.ts` — Svelte transition presets (`rise`, `pop`) for the motion system below.
+
+## Motion
+
+Motion is applied at the shell and primitive level, so most new UI animates without opting in. Tokens and utilities live in `src/app.css`; exit presets live in `src/lib/motion.ts`.
+
+- Already automatic: every routed page fades up on navigation (`data-route-outlet`), the workspace column slides in and out (`+layout.svelte`), the Manage dashboard and every `tabs`/`section-nav`/`collapsible` content fade in, and dialogs and tooltips animate via their primitives. Links, buttons and tabs ease their hover colours by default.
+- Something appearing: add a class, no JS. `animate-enter` for a surface arriving, `animate-fade-in` for content swapping in place, `animate-pop-in` for a floating element, `stagger` on a list or stack whose children should cascade.
+- Something that must animate out: use `in:rise out:rise` or `in:pop out:pop` from `src/lib/motion.ts`, never Svelte's raw `fade`/`fly` and never `transition:` (it loses the faster exit).
+- Do not nest movement: inside an element that already rises or slides, use `animate-fade-in`.
+- Reduced motion is handled centrally: the tokens drop movement and keep fades, so do not add per-component `prefers-reduced-motion` checks.
 
 ## Common Gotchas
 
@@ -40,4 +51,6 @@ Event flow is one-directional: Rust emits (`activity://task-updated`, `workspace
 | Dynamic key lookup on the Paraglide `m` object returns undefined | Paraglide generates one function per key; `m` cannot be indexed with a runtime string | Build an explicit key→function map, as in `kindLabels` in `src/lib/activity/activity.svelte.ts` and `translateStatus()` in `src/lib/sandbox.ts` |
 | Error dialog shows `[object Object]` or raw JSON | `invoke()` rejection stringified instead of parsed | Use `parseError(e).message` from `src/lib/errors.ts`; branch on `parseError(e).kind` for variant logic |
 | A translated string silently shows English text in non-English locales | A translation key was added to `messages/en.json` but not mirrored to the other locale files, so Paraglide falls back to the base locale | Mirror every new key across all files in `messages/`, starting from `messages/en.json` |
+| An e2e spec reports a freshly shown element as not displayed | WebDriver treats `opacity: 0` (on the element or any ancestor) as hidden, so a fade starting from 0 hides it mid-animation | Start fades at 0.01, as the keyframes in `src/app.css` and `MIN_OPACITY` in `src/lib/motion.ts` do; never write a custom fade from 0 |
+| A `position: fixed` child is offset or clipped inside an animated container | A transform left on an ancestor turns it into the containing block | Animate with the `translate`/`scale` properties and `backwards` fill, as the `src/app.css` keyframes do; never `forwards`/`both` |
 | New UI built with custom markup duplicates an existing primitive | shadcn-svelte component already exists in `src/lib/components/ui/` | Check `src/lib/components/ui/` first; add missing shadcn-svelte components per the root `AGENTS.md` |

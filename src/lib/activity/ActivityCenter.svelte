@@ -2,6 +2,7 @@
     import Button from "$lib/components/ui/button/button.svelte";
     import { m } from "$lib/paraglide/messages.js";
     import { tick } from "svelte";
+    import { pop } from "$lib/motion";
     import {
         tasks,
         activityEvents,
@@ -54,7 +55,9 @@
     {#if open}
         <div
             data-activity-panel
-            class="w-96 max-w-[calc(100vw-2rem)] rounded-lg border bg-background shadow-lg flex flex-col overflow-hidden"
+            in:pop
+            out:pop
+            class="origin-bottom-right w-96 max-w-[calc(100vw-2rem)] rounded-lg border bg-background shadow-lg flex flex-col overflow-hidden"
         >
             <div class="flex items-center justify-between px-4 py-2 border-b text-sm font-medium shrink-0">
                 <span>{m.activity_title()}</span>

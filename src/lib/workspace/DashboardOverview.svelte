@@ -49,7 +49,7 @@
     }
 </script>
 
-<div class="flex flex-col gap-4">
+<div class="stagger flex flex-col gap-4">
     <div class="flex flex-wrap items-center gap-2 text-xs">
         {#each launchableApps as app (app.kind)}
             {@const open = sandboxHasPane(sandboxName, app.kind)}

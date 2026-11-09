@@ -1,6 +1,14 @@
 <script lang="ts">
 	import { Collapsible as CollapsiblePrimitive } from "bits-ui";
-	let { ref = $bindable(null), ...restProps }: CollapsiblePrimitive.ContentProps = $props();
+	import { cn } from "$lib/utils.js";
+	let { ref = $bindable(null), class: className, ...restProps }: CollapsiblePrimitive.ContentProps = $props();
 </script>
 
-<CollapsiblePrimitive.Content bind:ref data-slot="collapsible-content" {...restProps} />
+<!-- Enter-only fade: a height animation would need overflow clipping, which cuts off the hard
+drop-shadows of controls inside. -->
+<CollapsiblePrimitive.Content
+	bind:ref
+	data-slot="collapsible-content"
+	class={cn("data-[state=open]:animate-fade-in", className)}
+	{...restProps}
+/>

@@ -125,7 +125,7 @@
                 {/if}
             </div>
         {:else}
-            <ul class="mt-6 space-y-2">
+            <ul class="stagger mt-6 space-y-2">
                 {#each projects as project (project.id)}
                     <SandboxItem
                         {project}

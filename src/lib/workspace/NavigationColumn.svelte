@@ -48,7 +48,7 @@
                 </Button>
             {/if}
         </div>
-        <div class="flex flex-1 flex-col overflow-y-auto [scrollbar-gutter:stable]">
+        <div data-route-outlet class="flex flex-1 flex-col overflow-y-auto [scrollbar-gutter:stable]">
             {@render children?.()}
             <ActivityCenter />
         </div>

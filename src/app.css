@@ -133,9 +133,82 @@
 	--radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/* Motion system: enter animations are CSS (they play on mount for free); exits need the Svelte
+   presets in src/lib/motion.ts, whose durations and easing mirror these tokens. */
+:root {
+	--motion-fast: 150ms;
+	--motion-base: 200ms;
+	--motion-slow: 280ms;
+	--motion-rise: 6px;
+	--motion-pop: 0.96;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	/* Keep the opacity fades, drop the movement. */
+	:root {
+		--motion-rise: 0px;
+		--motion-pop: 1;
+	}
+}
+
+/* `translate`/`scale` rather than `transform`, so these never fight transform utilities. Fill mode
+   is `backwards`, never `both`: a lingering animated transform would trap `position: fixed` children.
+   Fades start at 0.01, never 0: WebDriver reports an opacity-0 element as hidden, so e2e specs
+   would flake on anything caught mid-fade. `MIN_OPACITY` in src/lib/motion.ts must match. */
+@theme {
+	--ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+	--animate-enter: mio-enter var(--motion-slow) var(--ease-out-quint) backwards;
+	--animate-fade-in: mio-fade-in var(--motion-base) var(--ease-out-quint) backwards;
+	--animate-pop-in: mio-pop-in var(--motion-base) var(--ease-out-quint) backwards;
+
+	@keyframes mio-enter {
+		from {
+			opacity: 0.01;
+			translate: 0 var(--motion-rise);
+		}
+	}
+	@keyframes mio-fade-in {
+		from {
+			opacity: 0.01;
+		}
+	}
+	@keyframes mio-pop-in {
+		from {
+			opacity: 0.01;
+			scale: var(--motion-pop);
+		}
+	}
+}
+
+/* Children enter one after another; delays cap at the 8th child so long lists never lag. */
+@utility stagger {
+	& > * {
+		animation: var(--animate-enter);
+	}
+	& > :nth-child(2) { animation-delay: 35ms; }
+	& > :nth-child(3) { animation-delay: 70ms; }
+	& > :nth-child(4) { animation-delay: 105ms; }
+	& > :nth-child(5) { animation-delay: 140ms; }
+	& > :nth-child(6) { animation-delay: 175ms; }
+	& > :nth-child(7) { animation-delay: 210ms; }
+	& > :nth-child(n + 8) { animation-delay: 245ms; }
+}
+
 @layer base {
 	* {
 		@apply border-border outline-ring/50;
+	}
+	/* Zero-specificity default so hand-rolled controls ease their hover/active states too; any
+	   `transition-*` utility overrides it. */
+	:where(button, a, [role="tab"], summary) {
+		transition-property: color, background-color, border-color, box-shadow, opacity;
+		transition-duration: var(--motion-fast);
+		transition-timing-function: var(--ease-out-quint);
+	}
+	/* Every routed page's root is freshly mounted on navigation, so this plays once per route
+	   change. The attribute marks the element that renders the layout's `children`. */
+	[data-route-outlet] > :first-child {
+		animation: var(--animate-enter);
 	}
 	body {
 		@apply bg-background text-foreground;

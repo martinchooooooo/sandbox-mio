@@ -101,7 +101,8 @@
     });
 </script>
 
-<main data-dashboard={sandboxName} class="flex h-full flex-col gap-3 p-6">
+<!-- Fade only: on first open the workspace column already slides in (+layout.svelte). -->
+<main data-dashboard={sandboxName} class="animate-fade-in flex h-full flex-col gap-3 p-6">
     <div class="flex items-center justify-between gap-2">
         <h1 class="text-xl font-medium">{sandboxName}</h1>
         <span class="flex items-center gap-2">

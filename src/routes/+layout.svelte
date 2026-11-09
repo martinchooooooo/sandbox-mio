@@ -18,6 +18,7 @@
     import { ensureNetworkState } from "$lib/network/state.svelte";
     import { ensureOnboardingState, onboardingCompleted } from "$lib/settings/onboarding.svelte";
     import { m } from "$lib/paraglide/messages.js";
+    import { rise } from "$lib/motion";
     import type { Snippet } from "svelte";
 
     let { children }: { children?: Snippet } = $props();
@@ -45,6 +46,16 @@
     // is the whole window, same as before any workspace existed.
     const hasWorkspaceContent = $derived(hasTabs || dashboardSandbox !== null);
     const showWorkspaceChrome = $derived(isNavigationPanel && hasWorkspaceContent);
+    // The navigation column stays docked while the closing workspace fades out; snapping it to
+    // full width first would split the window with the outgoing content.
+    let workspaceLeaving = $state(false);
+    const dockNavigation = $derived(showWorkspaceChrome || workspaceLeaving);
+    // Held while the column fades out, so it leaves with its content rather than going blank first.
+    let lastWorkspace = { hasTabs: false, dashboardSandbox: null as string | null };
+    const workspace = $derived.by(() => {
+        if (showWorkspaceChrome) lastWorkspace = { hasTabs, dashboardSandbox };
+        return lastWorkspace;
+    });
 
     async function toggleCollapsed() {
         try {
@@ -110,14 +121,23 @@
      resolve their container queries against. -->
 <div class="flex h-screen overflow-hidden">
     {#if onboardingCompleted() !== false}
-        <NavigationColumn {collapsed} showControls={showWorkspaceChrome} onToggleCollapsed={toggleCollapsed}>
+        <NavigationColumn {collapsed} showControls={dockNavigation} onToggleCollapsed={toggleCollapsed}>
             {@render children?.()}
         </NavigationColumn>
         {#if showWorkspaceChrome}
-            <WorkspaceContent {hasTabs} {dashboardSandbox} />
+            <div
+                class="flex min-w-0 flex-1"
+                in:rise={{ x: 16, y: 0 }}
+                out:rise={{ x: 16, y: 0 }}
+                onintrostart={() => (workspaceLeaving = false)}
+                onoutrostart={() => (workspaceLeaving = true)}
+                onoutroend={() => (workspaceLeaving = false)}
+            >
+                <WorkspaceContent hasTabs={workspace.hasTabs} dashboardSandbox={workspace.dashboardSandbox} />
+            </div>
         {/if}
     {:else}
-        <div class="@container flex-1 overflow-y-auto">
+        <div data-route-outlet class="@container flex-1 overflow-y-auto">
             {@render children?.()}
         </div>
     {/if}

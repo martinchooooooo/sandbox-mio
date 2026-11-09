@@ -20,7 +20,7 @@
 	bind:ref
 	{value}
 	data-slot="section-nav-content"
-	class={cn("min-w-0 flex-1 overflow-y-auto outline-none", className)}
+	class={cn("data-[state=active]:animate-fade-in min-w-0 flex-1 overflow-y-auto outline-none", className)}
 	{...restProps}
 >
 	{#if nav.value === value}
