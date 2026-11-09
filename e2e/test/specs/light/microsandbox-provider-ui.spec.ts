@@ -27,10 +27,11 @@ describe("Microsandbox provider — create and capability gating (mock backend)"
 
     await row.openWorkspace();
     await workspaceDashboard.waitForRendered(msbName);
+    // Sections mount lazily, so an absent Deploy button would prove nothing: assert on the list item.
     assert(
-      !(await (await workspaceDashboard.deployButton).isExisting()),
-      "A microsandbox sandbox still offers Deploy — RemoteManager.svelte must hide it when the " +
-        "provider's ProviderCapabilities.remote_targets is false.",
+      !(await workspaceDashboard.sectionItem("remote").isExisting()),
+      "A microsandbox sandbox still lists the Remote section — DASHBOARD_SECTIONS must hide it when " +
+        "the provider's ProviderCapabilities.remote_targets is false.",
     );
   });
 
@@ -40,6 +41,7 @@ describe("Microsandbox provider — create and capability gating (mock backend)"
 
     await row.openWorkspace();
     await workspaceDashboard.waitForRendered(podmanName);
+    await workspaceDashboard.openSection("remote");
     assert(
       await (await workspaceDashboard.deployButton).isDisplayed(),
       "A Podman sandbox lost its Deploy action — the capability gate must be per sandbox, not " +

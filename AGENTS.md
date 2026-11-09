@@ -89,11 +89,13 @@ Currently available components:
 - `input`
 - `input-group` — retro-ui-svelte has no `input-group` registry item either; same hand-restyle situation as `field`
 - `label`
+- `section-nav` (Root, List, Item, Separator, Content) — vertical section list that collapses to icons with tooltips by container width and mounts only the active section; retro-ui-svelte has no `sidebar` item, so it is hand-built on bits-ui vertical `Tabs` and hand-restyled, like `field` and `input-group` (see `docs/features/manage-dashboard-redesign/02_dev.md`)
 - `separator`
 - `sonner` (toast notifications; mount a single `<Toaster />` in `src/routes/+layout.svelte`, call `toast.success`/`toast.error` from `svelte-sonner`)
 - `switch`
 - `tabs`
 - `textarea`
+- `tooltip`
 
 ## Adding new components
 

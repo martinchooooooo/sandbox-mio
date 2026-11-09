@@ -15,7 +15,7 @@ export async function refreshPackages(sandboxName: string, workspacePath: string
 }
 
 /** Fetch `sandboxName`'s packages if not already cached or loading; de-dupes concurrent callers
- * (WorkspaceDashboard, PackageManager and AgentManager all mount together for the same sandbox). */
+ * (WorkspaceDashboard, the Overview's AgentManager and the Tools section's PackageManager each call it). */
 export function ensurePackages(sandboxName: string, workspacePath: string): void {
     if (!workspacePath || sandboxName in packagesBySandbox || inFlight.has(sandboxName)) return;
     const promise = refreshPackages(sandboxName, workspacePath).finally(() => inFlight.delete(sandboxName));

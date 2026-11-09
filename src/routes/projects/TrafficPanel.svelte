@@ -3,35 +3,27 @@
     import Button from "$lib/components/ui/button/button.svelte";
     import { parseError } from "$lib/errors";
     import { ensureTrafficState, flowsFor, watchFlows, type FlowEntry } from "$lib/proxy/traffic.svelte";
+    import { ensureProxyStatus, proxyStatusFor, refreshProxyStatus } from "$lib/proxy/status.svelte";
     import type { createActionRunner } from "$lib/actions.svelte";
+    import type { ProviderId } from "$lib/providers";
     import { m } from "$lib/paraglide/messages.js";
-
-    // Mirrors Rust `proxy::types::ProxyStatus` (camelCase per its own `serde(rename_all)`).
-    interface ProxyStatus {
-        exists: boolean;
-        running: boolean;
-        proxyIp: string;
-        network: string;
-        provider: "podman" | "microsandbox";
-        /** The microsandbox sidecar's SOCKS5 port; null for Podman. */
-        hostPort: number | null;
-        /** Whether a running microsandbox sidecar answers; null for Podman or a stopped sidecar. */
-        healthy: boolean | null;
-    }
 
     // `workspacePath`/`action` are declared to match `ProxyPanel.svelte`'s prop shape (and the
     // dashboard's call site); this panel reads neither.
     let {
         sandboxName,
+        provider,
     }: {
         sandboxName: string;
         workspacePath: string;
+        provider?: ProviderId;
         action: ReturnType<typeof createActionRunner>;
     } = $props();
 
     const STATUS_CLASSES = ["2xx", "3xx", "4xx", "5xx", "error"];
 
-    let status = $state<ProxyStatus | null>(null);
+    const statusEntry = $derived(proxyStatusFor(sandboxName));
+    const status = $derived(statusEntry.value);
     let panelError = $state<string | null>(null);
     let query = $state("");
     let methodFilter = $state<string | null>(null);
@@ -65,16 +57,10 @@
         return new Date(ts * 1000).toISOString();
     }
 
-    async function refresh() {
-        try {
-            status = await invoke<ProxyStatus>("proxy_status", { name: sandboxName });
-        } catch (e) {
-            panelError = parseError(e).message;
-            return;
-        }
+    async function startWatching() {
         // Watched even when stopped, since the log still holds the history.
         // The backend call is idempotent; `watching` only avoids re-invoking on every effect run.
-        if (!status.exists || watching === sandboxName) return;
+        if (!status?.exists || watching === sandboxName) return;
         watching = sandboxName;
         try {
             await ensureTrafficState();
@@ -95,17 +81,21 @@
         } finally {
             restarting = false;
         }
-        await refresh();
+        await refreshProxyStatus(sandboxName);
     }
 
     $effect(() => {
         void sandboxName;
-        refresh();
+        ensureProxyStatus(sandboxName);
+    });
+
+    $effect(() => {
+        if (status?.exists) startWatching();
     });
 </script>
 
 {#if status?.exists}
-    <div class="flex flex-col gap-1.5 border-t pt-2" data-traffic-panel>
+    <div class="flex flex-col gap-1.5" data-traffic-panel>
         <span class="text-muted-foreground text-xs shrink-0">{m.traffic_title()}</span>
         {#if !status.running}
             <div class="flex flex-wrap items-center gap-2" data-traffic-stopped>
@@ -200,8 +190,18 @@
             </span>
         {/if}
 
-        {#if panelError}
-            <span class="text-xs text-red-500">{panelError}</span>
+        {#if panelError ?? statusEntry.error}
+            <span class="text-xs text-red-500">{panelError ?? statusEntry.error}</span>
         {/if}
     </div>
+{:else if status}
+    <span class="text-muted-foreground text-xs" data-traffic-disabled>
+        {#if provider === "microsandbox"}
+            {m.proxy_off_msb()}
+        {:else}
+            {m.proxy_off_podman()}
+        {/if}
+    </span>
+{:else if statusEntry.error}
+    <span class="text-xs text-red-500">{statusEntry.error}</span>
 {/if}

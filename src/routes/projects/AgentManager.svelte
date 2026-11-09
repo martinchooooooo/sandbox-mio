@@ -7,7 +7,8 @@
     import { AGENTS, miseKey, onboardingSeed } from "$lib/agents/catalogue";
     import { buildLocalLlmProvider, FALLBACK_MODEL_ID } from "$lib/agents/opencode";
     import { buildPiLocalLlmProvider, PI_CONFIG_ENV, PI_CONFIG_DIR_CONTAINER } from "$lib/agents/pi";
-    import type { AgentDescriptor, AgentInstallEvent, AgentAuthStatus } from "$lib/agents/types";
+    import type { AgentDescriptor, AgentInstallEvent } from "$lib/agents/types";
+    import { agentAuthFor, refreshAgentAuth } from "$lib/agents/authStatus.svelte";
     import type { InferenceStatus } from "$lib/models/types";
     import type { createActionRunner } from "$lib/actions.svelte";
     import { packagesFor, ensurePackages, refreshPackages } from "$lib/workspace/packages.svelte";
@@ -24,7 +25,7 @@
 
     const packages = $derived(packagesFor(sandboxName));
 
-    let agentStatuses = $state<Record<string, AgentAuthStatus>>({});
+    const agentStatuses = $derived(agentAuthFor(sandboxName));
     let credentialBundles = $state<Record<string, boolean>>({});
     let inferenceRunning = $state(false);
     let installingAgent = $state<string | null>(null);
@@ -52,30 +53,6 @@
             credentialBundles = Object.fromEntries(entries.map(([serviceId]) => [serviceId, true]));
         } catch {
             credentialBundles = {};
-        }
-    }
-
-    async function loadAgentStatuses() {
-        for (const agent of installedAgents) {
-            const auth = agent.auth;
-            if (!auth) continue;
-            try {
-                const result = await invoke<{ authenticated: boolean; expiresAtMs: number | null; accountEmail: string | null }>(
-                    "get_agent_auth_status",
-                    {
-                        name: sandboxName,
-                        credentialPath: auth.credentialFile,
-                        expiresAtJsonKey: auth.expiresAtJsonKey,
-                        accountSourcePath: auth.accountSourceFile ?? null,
-                        accountEmailJsonKey: auth.accountEmailJsonKey ?? null,
-                    }
-                );
-                const expiresAt = result.expiresAtMs;
-                const authenticated = result.authenticated && (expiresAt === null || expiresAt > Date.now());
-                agentStatuses[agent.id] = { authenticated, expiresAtMs: expiresAt, accountEmail: result.accountEmail };
-            } catch {
-                agentStatuses[agent.id] = { authenticated: false, expiresAtMs: null, accountEmail: null };
-            }
         }
     }
 
@@ -170,7 +147,7 @@
                 onboarding: onboardingSeed(descriptor),
             });
         });
-        await loadAgentStatuses();
+        await refreshAgentAuth(sandboxName, installedAgents);
     }
 
     async function loadInferenceStatus() {
@@ -182,9 +159,9 @@
         }
     }
 
-    onMount(async () => {
-        await loadCredentialBundles();
-        await loadInferenceStatus();
+    onMount(() => {
+        loadCredentialBundles();
+        loadInferenceStatus();
     });
 
     $effect(() => {
@@ -194,12 +171,11 @@
     // `installedAgents` derives from the shared `packages` store, so re-check auth status whenever
     // it changes (initial load, install/uninstall, or a sandbox switch) rather than only once at mount.
     $effect(() => {
-        installedAgents;
-        loadAgentStatuses();
+        refreshAgentAuth(sandboxName, installedAgents);
     });
 </script>
 
-<div class="flex flex-col gap-1.5 border-t pt-2">
+<div class="flex flex-col gap-1.5">
     <div class="flex items-center justify-between">
         <span class="text-muted-foreground text-xs shrink-0">{m.projects_agents()}</span>
         {#if availableAgents.length > 0}

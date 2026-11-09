@@ -57,6 +57,7 @@ async function waitForZellijLogin(name: string): Promise<void> {
 // — can catch a present-but-zero-height regression (WorkspaceSwitcher.svelte's h-screen/h-16 bug).
 async function assertDashboardVisible(sandbox: string): Promise<void> {
   await workspaceDashboard.waitForRendered(sandbox);
+  await workspaceDashboard.openSection("tools");
   const input = await workspaceDashboard.packageInput;
   assert(
     await input.isDisplayed(),

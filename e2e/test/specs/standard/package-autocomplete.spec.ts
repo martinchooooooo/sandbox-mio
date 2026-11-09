@@ -31,6 +31,7 @@ describe("Package autocomplete", function () {
     // docs/features/responsive-panel/02_dev.md) — there is no inline fallback in the row anymore.
     await row.openWorkspace();
     await workspaceDashboard.waitForRendered(projectName);
+    await workspaceDashboard.openSection("tools");
   });
 
   it("shows suggestions after typing a search prefix", async () => {

@@ -66,6 +66,7 @@ describe("Sandbox runtime management (mise)", function () {
     // docs/features/responsive-panel/02_dev.md) — there is no inline fallback in the row anymore.
     await row.openWorkspace();
     await workspaceDashboard.waitForRendered(projectName);
+    await workspaceDashboard.openSection("tools");
     await workspaceDashboard.installPackage(PKG);
 
     const manifest = fs.readFileSync(manifestPath, "utf8");

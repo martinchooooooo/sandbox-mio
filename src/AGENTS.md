@@ -17,6 +17,9 @@ State shared across routes lives in `.svelte.ts` files under `src/lib/` with mod
 
 - `src/lib/activity/activity.svelte.ts` — task ledger hydrated from `list_tasks`, kept live by `activity://task-updated`; also folds container status per sandbox from the `listen_events` stream.
 - `src/lib/workspace/state.svelte.ts` — the single `workspace://state` subscription; consumed by the layout (panel chrome) and the projects list (per-sandbox open state).
+- `src/lib/proxy/status.svelte.ts` — per-sandbox `proxy_status` cache (5 s freshness) shared by the Manage dashboard's Overview summary, Network and Traffic sections; call `refreshProxyStatus` after any sidecar-changing command.
+- `src/lib/agents/authStatus.svelte.ts` — per-sandbox coding-agent login status, checked concurrently and kept across dashboard remounts.
+- `src/lib/workspace/dashboard.svelte.ts` — the Manage dashboard section last opened per sandbox (frontend memory; survives the dashboard remount on sandbox switch).
 - `src/lib/registry.svelte.ts` — mise package registry cache (also the smallest reference example of the pattern).
 
 Event flow is one-directional: Rust emits (`activity://task-updated`, `workspace://state`, container events), one store subscribes, components read accessors. Components must not call `listen()` for a stream a store already owns.

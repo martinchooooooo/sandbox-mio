@@ -3,13 +3,37 @@ import { AGENT_INSTALL, COMMAND, PACKAGE_INSTALL, PANEL_RENDER, SUBPROCESS } fro
 
 // A DOM region of the single `main-navigation-panel` webview, not a separate one — no window
 // switching needed (docs/features/consolidate-app-container/02_dev.md Phase C).
+type DashboardSectionId = "overview" | "tools" | "ports" | "network" | "traffic" | "remote" | "danger";
+
 class WorkspaceDashboardPage {
-  // The package input is the first element gated behind WorkspaceDashboard.svelte's `workspacePath`,
-  // so waiting on it also covers the managers below it. `sandbox` only names the error.
+  // `[data-section-nav]` renders for every section once WorkspaceDashboard.svelte's `workspacePath`
+  // resolves; the package input exists only in the Tools section. `sandbox` only names the error.
   async waitForRendered(sandbox: string): Promise<void> {
-    await this.packageInput.waitForExist({
+    await this.sectionNav.waitForExist({
       timeout: PANEL_RENDER,
       timeoutMsg: `dashboard content for "${sandbox}" never rendered (workspacePath likely never resolved)`,
+    });
+  }
+
+  get sectionNav(): Element {
+    return $("[data-section-nav]");
+  }
+
+  sectionItem(id: DashboardSectionId): Element {
+    return $(`[data-section-nav-item="${id}"]`);
+  }
+
+  /** Switches to a section (a no-op when it is already active) and waits until it is active. */
+  async openSection(id: DashboardSectionId): Promise<void> {
+    const item = this.sectionItem(id);
+    await item.waitForExist({ timeout: PANEL_RENDER, timeoutMsg: `section "${id}" is not in the section list` });
+    if ((await item.getAttribute("data-state")) !== "active") {
+      await item.scrollIntoView();
+      await item.click();
+    }
+    await browser.waitUntil(async () => (await item.getAttribute("data-state")) === "active", {
+      timeout: COMMAND,
+      timeoutMsg: `section "${id}" did not become active`,
     });
   }
 
@@ -74,7 +98,8 @@ class WorkspaceDashboardPage {
   }
 
   async installedPackages(): Promise<string[]> {
-    const chips = await $$("span.font-mono");
+    // Scoped to the active section: other panels (proxy rules, flows) render monospace spans too.
+    const chips = await $$('[data-slot="section-nav-content"][data-state="active"] span.font-mono');
     const names: string[] = [];
     for (const chip of chips) names.push(await chip.getText());
     return names;

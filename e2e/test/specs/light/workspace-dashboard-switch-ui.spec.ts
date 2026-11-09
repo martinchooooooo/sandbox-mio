@@ -25,6 +25,7 @@ describe("Dashboard package list follows the active sandbox on direct switch (mo
     await rowA.waitForRunning();
     await rowA.openWorkspace();
     await workspaceDashboard.waitForRendered(nameA);
+    await workspaceDashboard.openSection("tools");
     await workspaceDashboard.installPackage(PKG, { timeout: 5000 });
   });
 
@@ -36,6 +37,7 @@ describe("Dashboard package list follows the active sandbox on direct switch (mo
     // this click — the exact transition that never remounted WorkspaceDashboard pre-fix.
     await rowB.openWorkspace();
     await workspaceDashboard.waitForRendered(nameB);
+    await workspaceDashboard.openSection("tools");
 
     const packages = await workspaceDashboard.installedPackages();
     assert(
@@ -49,6 +51,7 @@ describe("Dashboard package list follows the active sandbox on direct switch (mo
   it("switching back to sandbox A's Dashboard still shows its installed package", async () => {
     await rowA.openWorkspace();
     await workspaceDashboard.waitForRendered(nameA);
+    // No openSection: A's dashboard reopens on the Tools section it was left on.
     await workspaceDashboard.waitForPackage(PKG, 5000);
   });
 });

@@ -72,7 +72,7 @@
     }
 </script>
 
-<div class="flex flex-col gap-1.5 border-t pt-2">
+<div class="flex flex-col gap-1.5">
     <span class="text-muted-foreground text-xs shrink-0">Ports</span>
     {#if forwards.length > 0}
         <div class="flex flex-col gap-1">

@@ -5,20 +5,8 @@
     import type { createActionRunner } from "$lib/actions.svelte";
     import type { ProviderId } from "$lib/providers";
     import NetPolicyEditor from "./NetPolicyEditor.svelte";
+    import { ensureProxyStatus, proxyStatusFor, refreshProxyStatus } from "$lib/proxy/status.svelte";
     import { m } from "$lib/paraglide/messages.js";
-
-    // Mirrors Rust `proxy::types::ProxyStatus` (camelCase per its own `serde(rename_all)`).
-    interface ProxyStatus {
-        exists: boolean;
-        running: boolean;
-        proxyIp: string;
-        network: string;
-        provider: "podman" | "microsandbox";
-        /** The microsandbox sidecar's SOCKS5 port; null for Podman. */
-        hostPort: number | null;
-        /** Whether a running microsandbox sidecar answers; null for Podman or a stopped sidecar. */
-        healthy: boolean | null;
-    }
 
     // Mirrors Rust `proxy::rules::ProxyRule` — snake_case, unrenamed, matching `.mio/proxy-rules.json`
     // on disk and `Project.workspace_path`'s existing snake_case IPC convention.
@@ -45,7 +33,8 @@
     // `.mio/proxy-rules.json` editor is hidden for it (docs/features/microsandbox-network-policy/02_dev.md, Phase D).
     const msb = $derived(provider === "microsandbox");
 
-    let status = $state<ProxyStatus | null>(null);
+    const statusEntry = $derived(proxyStatusFor(sandboxName));
+    const status = $derived(statusEntry.value);
     let rules = $state<ProxyRule[]>([]);
     let panelError = $state<string | null>(null);
 
@@ -56,10 +45,10 @@
     let secretValue = $state("");
     let busy = $state(false);
 
-    async function refresh() {
+    async function loadRules() {
+        if (msb) return;
         try {
-            status = await invoke<ProxyStatus>("proxy_status", { name: sandboxName });
-            if (!msb) rules = await invoke<ProxyRule[]>("list_proxy_rules", { workspacePath });
+            rules = await invoke<ProxyRule[]>("list_proxy_rules", { workspacePath });
         } catch (e) {
             panelError = parseError(e).message;
         }
@@ -115,11 +104,12 @@
     $effect(() => {
         void sandboxName;
         void workspacePath;
-        refresh();
+        ensureProxyStatus(sandboxName);
+        loadRules();
     });
 </script>
 
-<div class="flex flex-col gap-1.5 border-t pt-2" data-proxy-panel>
+<div class="flex flex-col gap-1.5" data-proxy-panel>
     <span class="text-muted-foreground text-xs shrink-0">{m.proxy_title()}</span>
 
     {#if status && !status.exists}
@@ -139,6 +129,10 @@
     {:else if status?.running}
         <span class="text-muted-foreground text-xs" data-proxy-network>
             {m.proxy_network({ network: status.network })}
+        </span>
+
+        <span class="text-muted-foreground mt-2 border-t pt-2 text-xs shrink-0" data-secrets-heading>
+            Secrets<!-- TODO(i18n) -->
         </span>
 
         {#if rules.length > 0}
@@ -186,12 +180,12 @@
         </span>
     {/if}
 
-    {#if panelError}
-        <span class="text-xs text-red-500">{panelError}</span>
+    {#if panelError ?? statusEntry.error}
+        <span class="text-xs text-red-500">{panelError ?? statusEntry.error}</span>
     {/if}
 </div>
 
 {#if msb && provider}
     <NetPolicyEditor {sandboxName} {workspacePath} {provider}
-        viewerOn={status?.exists ?? false} onReapplied={refresh} />
+        viewerOn={status?.exists ?? false} onReapplied={() => refreshProxyStatus(sandboxName)} />
 {/if}

@@ -295,7 +295,10 @@
             </Button>
         </div>
 
-        <span class="text-muted-foreground text-xs mt-1">{m.netpolicy_secret_bindings()}</span>
+        <span class="text-muted-foreground mt-2 border-t pt-2 text-xs shrink-0" data-secrets-heading>
+            Secrets<!-- TODO(i18n) -->
+        </span>
+        <span class="text-muted-foreground text-xs">{m.netpolicy_secret_bindings()}</span>
         {#each policy.secrets as binding, i (binding.envVar)}
             <div class="flex items-center gap-2 rounded bg-muted px-2 py-1 text-xs" data-net-policy-secret>
                 <span class="flex-1 truncate font-mono">

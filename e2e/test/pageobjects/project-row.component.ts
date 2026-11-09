@@ -146,6 +146,7 @@ export default class ProjectRow {
   async deployTo(host: string, { timeout = DEPLOY }: { timeout?: number } = {}): Promise<void> {
     const start = Date.now();
     await this.#openDashboard();
+    await workspaceDashboard.openSection("remote");
     await this.#clickButton(workspaceDashboard.deployButton);
 
     const select = await workspaceDashboard.hostSelect;
@@ -169,6 +170,7 @@ export default class ProjectRow {
   // container start — same budget as deployTo.
   async undeploy(timeout = DEPLOY): Promise<void> {
     await this.#openDashboard();
+    await workspaceDashboard.openSection("remote");
     await this.#clickAction(workspaceDashboard.undeployButton, "undeploy", workspaceDashboard.errorRow);
     await this.#settle(
       async () => (await workspaceDashboard.deployButton).isDisplayed(),
@@ -207,12 +209,14 @@ export default class ProjectRow {
 
   async destroy(timeout = DESTROY_GRACE): Promise<void> {
     await this.#openDashboard();
+    await workspaceDashboard.openSection("danger");
     await this.#clickButton(workspaceDashboard.destroyButton);
     await this.waitForGone(timeout);
   }
 
   async toggleSyncOffOn(pauseMs = 500): Promise<void> {
     await this.#openDashboard();
+    await workspaceDashboard.openSection("remote");
     const sw = await workspaceDashboard.syncSwitch;
     await sw.scrollIntoView();
     await sw.click();

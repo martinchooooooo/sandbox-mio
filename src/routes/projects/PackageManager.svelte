@@ -67,7 +67,7 @@
     });
 </script>
 
-<div class="flex flex-col gap-1.5 border-t pt-2">
+<div class="flex flex-col gap-1.5">
     <div class="flex items-center gap-2">
         <span class="text-muted-foreground text-xs shrink-0">{m.projects_packages()}</span>
         <div class="flex-1">

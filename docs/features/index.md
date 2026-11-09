@@ -3,6 +3,7 @@
 
 ## in-progress
 
+* [manage-dashboard-redesign](manage-dashboard-redesign/index.md) - Make a sandbox's Manage dashboard open instantly and read simply: an Overview for launching and agents, advanced controls in a section sidebar that loads on demand.
 * [retro-ui-migration](retro-ui-migration/index.md) - Re-skin the UI primitives with the retro-ui-svelte registry (Sunset Orange, rounded).
 * [sandbox-runtime-management](sandbox-runtime-management/index.md) - Record installed software with mise and reproduce it on a remote host at deploy.
 * [techdebt-sweep](techdebt-sweep/index.md) - Resolve the open tech debt found by the 2026-11-07 audit: msb build locks, duplicated Podman bring-up, the legacy relay path, secrets on disk and in logs, unbounded calls.

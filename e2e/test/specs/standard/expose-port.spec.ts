@@ -78,6 +78,7 @@ describe("Exposing sandbox ports (network::expose_port / unexpose_port / watch_p
 
     await row.openWorkspace();
     await workspaceDashboard.waitForRendered(projectName);
+    await workspaceDashboard.openSection("ports");
     await (await workspaceDashboard.noPortsText).waitForDisplayed({ timeout: COMMAND });
   });
 
