@@ -130,7 +130,9 @@
 </script>
 
 <ModeWatcher />
-<Toaster />
+<!-- During first-run onboarding the bottom-right corner holds the book's Next button, and a failure
+     toast stays until dismissed, so toasts move out of its way. -->
+<Toaster position={onboardingCompleted() === false ? "top-left" : "bottom-right"} />
 
 <!-- Gated on `!== false` so the still-loading state matches the eventual `false` case rather than
      flashing chrome that then hides. NavigationColumn *wraps* the routed page, so the chromeless

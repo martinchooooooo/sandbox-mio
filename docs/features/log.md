@@ -5,6 +5,11 @@ Records feature status changes only: creation (`Create`), reaching `implemented`
 history with at most one `Create` and one `Implement` entry per feature, so seeded dates are
 approximate. New entries go on top.
 
+## 2026-11-11
+
+* **Create** [native-agent-ui](native-agent-ui/index.md): ideation drafted
+* **Create** [onboarding-story](onboarding-story/index.md): build plan recorded, Phases A–E built
+
 ## 2026-11-10
 
 * **Implement** [techdebt-sweep](techdebt-sweep/index.md): Phases A–K, closed out by the `standard` tier run

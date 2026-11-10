@@ -23,6 +23,10 @@ pub enum TaskKind {
     /// Recreating a microsandbox sandbox to apply its network policy or viewer change
     /// (`docs/features/microsandbox-network-policy/02_dev.md`, Phase G).
     NetworkReapply,
+    /// Bringing a provider's machine online from the welcome flow's checklist (`prepare_machine`).
+    MachineSetup,
+    /// Building the base image on its own, ahead of the first sandbox (`build_base_image`).
+    BaseImageBuild,
 }
 
 #[derive(serde::Serialize, Clone, Copy, PartialEq, Eq)]

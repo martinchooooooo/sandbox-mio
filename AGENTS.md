@@ -10,6 +10,7 @@ Sandbox-mio is a Tauri 2 desktop app (Windows-first) that manages per-project "s
 | `docs/architecture/` | A brief, high-level picture of how the system works today, one document per subsystem; read before planning or changing a subsystem | `docs/architecture/overview.md` |
 | `docs/features/<name>/` | Feature plans and their history: `feature.md` (status), core `01_ideas.md` → `02_dev.md` → `03_e2e.md`, optional `04_improvements.md` and `05_dev_review.md` | `docs/features/README.md` |
 | `messages/` | Paraglide locale files (`en.json`, `de.json`, `ru.json`) | Translations section below |
+| `onboarding-story/` | Standalone animated explainer (brain, arms, chat, sandbox) for non-technical users; plain HTML/JS, separate from the app. The copy that ships in the app lives in `src/lib/onboarding/` | `onboarding-story/AGENTS.md` |
 
 Read the orientation doc for an area before editing files in that area. `AGENTS.md` files in subdirectories override the root file for their subtree.
 
@@ -109,7 +110,7 @@ If retro-ui-svelte has no registry item for the component (check `https://retrou
 
 # Translations (i18n)
 
-The app uses [Paraglide JS](https://paraglidejs.com/sveltekit) for internationalisation. Translation strings live in `messages/` as JSON files named by locale (e.g. `messages/en.json`, `messages/de.json`, `messages/ru.json`). 
+The app uses [Paraglide JS](https://paraglidejs.com/sveltekit) for internationalisation. Translation strings live in `messages/` as JSON files named by locale (e.g. `messages/en.json`, `messages/de.json`, `messages/ru.json`). Onboarding strings live in their own files, `messages/onboarding/{locale}.json`, with keys prefixed `onboarding_`; both sets are merged into the one `m` object by the path patterns in `project.inlang/settings.json` (see `src/lib/onboarding/AGENTS.md`).
 
 ## Adding or editing a translation key
 

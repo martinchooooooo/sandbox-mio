@@ -4,9 +4,9 @@
     import AdvancedSection from "$lib/components/AdvancedSection.svelte";
     import { m } from "$lib/paraglide/messages.js";
     import MachineSteps from "$lib/machine/MachineSteps.svelte";
-    import { prepareMachine } from "$lib/machine/readiness";
     import { ensureMachineReadiness, machineReadiness } from "$lib/machine/readiness.svelte";
-    import type { MachineSetupEvent, ProviderId } from "$lib/machine/types";
+    import type { ProviderId } from "$lib/machine/types";
+    import { machineRun, runMachineSetup } from "$lib/onboarding/setup.svelte";
 
     // `provider` has no picker yet — Phase J (docs/features/microsandbox-provider/02_dev.md) adds
     // the frontend selector that will pass something other than the default here.
@@ -15,10 +15,9 @@
         ondone?: (done: boolean) => void;
     } = $props();
 
-    let events = $state<MachineSetupEvent[]>([]);
-    let busy = $state(false);
-    let error = $state("");
-    let rebootMessage = $state("");
+    // The run lives in the shared store: the background setup may have started it before this
+    // card mounted, and a second run from here would race it.
+    const run = $derived(machineRun());
 
     const status = $derived(machineReadiness(provider));
     // The probe runs in both variants, so a user who already has a machine sees the completed state
@@ -28,23 +27,6 @@
     $effect(() => ondone?.(done));
 
     onMount(() => ensureMachineReadiness(provider));
-
-    async function run() {
-        busy = true;
-        error = "";
-        rebootMessage = "";
-        events = [];
-        const result = await prepareMachine(provider, (e) => {
-            events = [...events, e];
-            if (e.kind === "rebootRequired") rebootMessage = e.message;
-        });
-        if (result.ok) {
-            await ensureMachineReadiness(provider, true);
-        } else if (!result.rebootRequired) {
-            error = result.message;
-        }
-        busy = false;
-    }
 
     function actionLabel(): string {
         if (provider === "microsandbox") return m.welcome_setup_microsandbox();
@@ -76,14 +58,14 @@
         <Button onclick={() => ensureMachineReadiness(provider, true)}>{m.welcome_try_again()}</Button>
     {:else if done}
         <p class="text-sm font-medium">{m.welcome_vm_already_set_up()}</p>
-    {:else if rebootMessage}
-        <p class="text-destructive text-sm">{rebootMessage}</p>
-        <Button onclick={run}>{m.welcome_try_again()}</Button>
+    {:else if run.rebootMessage}
+        <p class="text-destructive text-sm">{run.rebootMessage}</p>
+        <Button onclick={() => runMachineSetup(provider)}>{m.welcome_try_again()}</Button>
     {:else}
-        <MachineSteps steps={status.steps} {events} />
-        <Button loading={busy} disabled={busy} onclick={run}>{actionLabel()}</Button>
-        {#if error}
-            <p class="text-destructive text-sm">{error}</p>
+        <MachineSteps steps={status.steps} events={run.events} />
+        <Button loading={run.busy} disabled={run.busy} onclick={() => runMachineSetup(provider)}>{actionLabel()}</Button>
+        {#if run.error}
+            <p class="text-destructive text-sm">{run.error}</p>
         {/if}
     {/if}
 </div>

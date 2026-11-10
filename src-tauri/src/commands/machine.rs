@@ -150,11 +150,24 @@ pub async fn machine_readiness(
 }
 
 /// Bring `provider`'s machine online, streaming a `MachineSetupEvent` per setup-checklist row.
+/// Also an activity task, so a run started in the background stays visible outside its own card.
 #[tauri::command]
 pub async fn prepare_machine(
     provider: ProviderId,
     on_progress: Channel<serde_json::Value>,
     runners: State<'_, MachineRunners>,
+    app: tauri::AppHandle,
 ) -> Result<(), AppError> {
-    Ok(machine::readiness_provider_for(provider, &runners).prepare(&on_progress).await?)
+    const TASK: &str = "machine-setup";
+    let readiness = machine::readiness_provider_for(provider, &runners);
+    let total_steps = readiness.setup_steps().len();
+    let app_for_steps = app.clone();
+    activity::scope(&app, TASK, TaskKind::MachineSetup, None, |_task| async move {
+        let channel = activity::step_progress_channel(&app_for_steps, TASK, total_steps, on_progress);
+        readiness.prepare(&channel).await.map_err(|e| {
+            let message = e.to_string();
+            activity::TaskFailure::new(message, AppError::from(e))
+        })
+    })
+    .await
 }

@@ -10,13 +10,31 @@
         markSeen,
         taskLabel,
     } from "$lib/activity/activity.svelte";
-    import type { TaskStatus } from "$lib/activity/types";
+    import type { ActivityHeadline, TaskStatus } from "$lib/activity/types";
 
     // The global activity surface, mounted once in the root layout: a fixed bottom-right bell with a
     // badge (running + unseen failures) and an expandable panel listing active/recent tasks plus the
     // container/event scrollback. Selectors are data-attribute based (the e2e Selector Contract).
 
+    // `headline` widens the bell into a status pill that spells the background work out, for
+    // screens where the user would not think to look for a bell (onboarding).
+    // `placement="inline"` leaves positioning to the caller and opens the panel downward, for a
+    // toggle that sits in a top bar instead of the window's corner.
+    let {
+        headline = null,
+        placement = "corner",
+    }: {
+        headline?: ActivityHeadline | null;
+        placement?: "corner" | "inline";
+    } = $props();
+
+    const popupClass = $derived(
+        placement === "inline" ? "absolute right-0 top-full mt-2 origin-top-right" : "origin-bottom-right",
+    );
+
     let open = $state(false);
+    let hintDismissed = $state(false);
+    const showHint = $derived(!!headline?.hint && !hintDismissed && !open);
     let logEl = $state<HTMLDivElement>();
 
     const count = $derived(badgeCount());
@@ -25,6 +43,7 @@
 
     async function togglePanel() {
         open = !open;
+        hintDismissed = true;
         if (open) {
             markSeen();
             await tick();
@@ -51,18 +70,29 @@
     }
 </script>
 
-<div class="fixed bottom-4 right-4 z-50 flex flex-col items-end gap-2">
+<div class={placement === "inline" ? "relative z-50" : "fixed bottom-4 right-4 z-50 flex flex-col items-end gap-2"}>
     {#if open}
         <div
             data-activity-panel
             in:pop
             out:pop
-            class="origin-bottom-right w-96 max-w-[calc(100vw-2rem)] rounded-lg border bg-background shadow-lg flex flex-col overflow-hidden"
+            class={[popupClass, "w-96 max-w-[calc(100vw-2rem)] rounded-lg border bg-background shadow-lg flex flex-col overflow-hidden"]}
         >
             <div class="flex items-center justify-between px-4 py-2 border-b text-sm font-medium shrink-0">
                 <span>{m.activity_title()}</span>
                 <button onclick={() => (open = false)} class="text-muted-foreground hover:text-foreground leading-none">✕</button>
             </div>
+
+            {#if headline}
+                <div data-activity-headline-detail class="border-b px-4 py-3 text-sm space-y-2">
+                    <p class="font-medium">{headline.title}</p>
+                    {#if headline.detail}<p class="text-muted-foreground">{headline.detail}</p>{/if}
+                    {#if headline.action}
+                        {@const action = headline.action}
+                        <Button size="sm" onclick={() => { open = false; action.onclick(); }}>{action.label}</Button>
+                    {/if}
+                </div>
+            {/if}
 
             <!-- Active/recent tasks -->
             <div class="max-h-64 overflow-y-auto p-3 space-y-2 border-b">
@@ -109,16 +139,61 @@
         </div>
     {/if}
 
-    <Button
-        data-activity-toggle
-        variant="outline"
-        size="sm"
-        title={m.activity_badge_tooltip()}
-        onclick={togglePanel}
-    >
-        🔔
-        {#if count > 0}
-            <span data-activity-badge class="ml-1 inline-flex items-center justify-center rounded-full bg-destructive text-destructive-foreground text-xs min-w-5 h-5 px-1">{count}</span>
-        {/if}
-    </Button>
+    {#if showHint}
+        <div
+            data-activity-hint
+            in:pop
+            out:pop
+            class={[popupClass, "w-72 max-w-[calc(100vw-2rem)] rounded-md border-2 bg-accent text-accent-foreground shadow-md px-3 py-2 pr-7 text-sm", placement === "corner" && "relative"]}
+        >
+            {headline?.hint}
+            <!-- TODO(i18n) -->
+            <button
+                onclick={() => (hintDismissed = true)}
+                class="absolute right-2 top-1.5 leading-none opacity-70 hover:opacity-100"
+                aria-label="Dismiss"
+            >✕</button>
+        </div>
+    {/if}
+
+    {#if headline}
+        <button
+            data-activity-toggle
+            data-activity-headline={headline.state}
+            title={m.activity_badge_tooltip()}
+            onclick={togglePanel}
+            class="flex max-w-[calc(100vw-2rem)] cursor-pointer items-center gap-3 rounded-md border-2 bg-background px-3 py-2 text-left shadow-md transition-all hover:translate-y-1 hover:shadow-none"
+        >
+            <span class="relative flex size-6 shrink-0 items-center justify-center">
+                {#if headline.state === "running"}
+                    <span class="absolute inset-0 rounded-full border-2 border-muted"></span>
+                    <span class="absolute inset-0 animate-spin rounded-full border-2 border-transparent border-t-primary"></span>
+                {:else if headline.state === "done"}
+                    <span class="text-lg leading-none text-emerald-600 dark:text-emerald-400">✓</span>
+                {:else}
+                    <span class="font-head text-lg leading-none text-destructive">!</span>
+                {/if}
+            </span>
+            <span class="min-w-0">
+                <span class="block truncate text-sm font-medium">{headline.title}</span>
+                {#if headline.detail}
+                    <span class="block truncate text-xs text-muted-foreground">{headline.detail}</span>
+                {/if}
+            </span>
+            <span class="shrink-0">🔔</span>
+        </button>
+    {:else}
+        <Button
+            data-activity-toggle
+            variant="outline"
+            size="sm"
+            title={m.activity_badge_tooltip()}
+            onclick={togglePanel}
+        >
+            🔔
+            {#if count > 0}
+                <span data-activity-badge class="ml-1 inline-flex items-center justify-center rounded-full bg-destructive text-destructive-foreground text-xs min-w-5 h-5 px-1">{count}</span>
+            {/if}
+        </Button>
+    {/if}
 </div>

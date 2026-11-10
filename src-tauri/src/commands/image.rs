@@ -4,6 +4,8 @@ use std::sync::Arc;
 
 use tauri::State;
 
+use crate::activity;
+use crate::activity::types::TaskKind;
 use crate::backends;
 use crate::backends::types::SandboxBackend;
 use crate::error::AppError;
@@ -19,12 +21,21 @@ pub fn base_image_version() -> u32 {
 /// necessities" step. Deliberately skips `create_sandbox`'s `runtime.init` — no workspace exists yet.
 /// `provider` defaults to Podman, whose image every provider's base image is built from
 /// (`docs/features/microsandbox-provider/02_dev.md`, Resolved Decision 2).
+/// Reported as an activity task: the first build takes minutes and may run in the background.
 #[tauri::command]
 pub async fn build_base_image(
     provider: Option<ProviderId>,
     store: State<'_, Arc<dyn SandboxBackend>>,
+    app: tauri::AppHandle,
 ) -> Result<(), AppError> {
-    Ok(store.ensure_base_image(provider.unwrap_or(ProviderId::Podman)).await?)
+    let provider = provider.unwrap_or(ProviderId::Podman);
+    activity::scope(&app, "base-image-build", TaskKind::BaseImageBuild, None, |_task| async {
+        store.ensure_base_image(provider).await.map_err(|e| {
+            let message = e.to_string();
+            activity::TaskFailure::new(message, AppError::from(e))
+        })
+    })
+    .await
 }
 
 #[tauri::command]

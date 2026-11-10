@@ -1,0 +1,180 @@
+/* Whiteboard drawing styles for the scene engine. Everything is scoped under `.story-stage`
+   because the SVG is built imperatively, so Svelte's component-scoped styles cannot reach it.
+   The board keeps its light palette in dark mode too: it is a whiteboard. Values mirror the
+   light theme in src/app.css. */
+.story-stage {
+	--s-ink: #2f1b14;
+	--s-primary: #ff6b35;
+	--s-accent: #ffa726;
+	--s-muted: #ffcab0;
+	--s-paper: #fff8f1;
+	--s-ok: #bfe8cf;
+	--s-bad: #d32f2f;
+	--s-head: var(--font-head);
+	--s-sans: var(--font-sans);
+	--s-mono: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+
+	position: relative;
+	color: var(--s-ink);
+	background-color: var(--s-paper);
+	background-image: radial-gradient(rgba(47, 27, 20, 0.13) 1.2px, transparent 1.2px);
+	background-size: 22px 22px;
+}
+
+/* Height-capped so the page text and navigation stay in view on a short window; the drawing
+   letterboxes on the paper instead of pushing them off screen. */
+.story-stage svg { display: block; width: 100%; height: auto; max-height: 34vh; }
+
+/* ---------- drawing ---------- */
+
+.story-stage .actor { transition: transform 0.9s cubic-bezier(0.3, 0.9, 0.3, 1), opacity 0.5s; }
+.story-stage .inner { transform-box: fill-box; transform-origin: center; }
+.story-stage .inner.thinking { animation: story-pulse 0.6s ease-in-out infinite alternate; }
+.story-stage .inner.wobble { animation: story-wobble 0.25s 4 alternate; }
+.story-stage .inner.shake { animation: story-shake 0.12s 6 alternate; }
+
+.story-stage .ink { fill: #fff; stroke: var(--s-ink); stroke-width: 3; stroke-linejoin: round; stroke-linecap: round; }
+.story-stage .ink.thin { stroke-width: 1.5; }
+.story-stage .fill-ink { fill: var(--s-ink); }
+.story-stage .fill-accent { fill: var(--s-accent); }
+.story-stage .fill-muted { fill: var(--s-muted); }
+.story-stage .fold { fill: none; stroke: var(--s-ink); stroke-width: 2.5; stroke-linecap: round; }
+.story-stage .label { font: 700 15px var(--s-sans); fill: var(--s-ink); }
+.story-stage .tiny { font: 600 9px var(--s-sans); fill: var(--s-ink); }
+.story-stage .tiny.faint { opacity: 0.5; }
+
+.story-stage .dash { fill: rgba(255, 167, 38, 0.14); stroke: var(--s-ink); stroke-width: 3; stroke-dasharray: 10 8; }
+.story-stage .guide { fill: none; stroke: var(--s-ink); stroke-width: 2.5; stroke-dasharray: 6 8; opacity: 0.45; animation: story-march 0.8s linear infinite; }
+
+.story-stage .bubble { animation: story-rise 0.3s ease-out; }
+.story-stage .bubble text { font: 600 10.5px var(--s-sans); fill: var(--s-ink); }
+.story-stage .bubble.me rect { fill: var(--s-primary); }
+.story-stage .bubble.me text { fill: #fff; }
+.story-stage .bubble.ai rect { fill: var(--s-muted); }
+
+.story-stage .arms { transition: opacity 0.3s; }
+/* The halo keeps the label readable where it crosses a sandbox drawn on the host's screen. */
+.story-stage .arms .label { paint-order: stroke; stroke: var(--s-paper); stroke-width: 5px; stroke-linejoin: round; }
+.story-stage .arm-out { fill: none; stroke: var(--s-ink); stroke-width: 12; stroke-linecap: round; }
+.story-stage .arm-in { fill: none; stroke: var(--s-primary); stroke-width: 6.5; stroke-linecap: round; }
+.story-stage .hand { fill: var(--s-primary); stroke: var(--s-ink); stroke-width: 2.5; }
+.story-stage .hand.typing { animation: story-tap 0.16s infinite alternate; }
+.story-stage .hand.typing.b { animation-delay: 0.09s; }
+
+.story-stage .scr { fill: #fff; }
+.story-stage .scr.dark { fill: var(--s-ink); }
+.story-stage .scrbar { fill: var(--s-muted); }
+.story-stage .term { font: 10px var(--s-mono); fill: #ffe9dc; }
+.story-stage .term.ok { fill: #7be3a4; }
+.story-stage .msg { font: 700 13px var(--s-sans); fill: var(--s-ink); }
+
+.story-stage .sbtn { opacity: 0.45; }
+.story-stage .sbtn rect { fill: #fff; stroke: var(--s-ink); stroke-width: 1.5; }
+.story-stage .sbtn text { font: 600 10px var(--s-sans); fill: var(--s-ink); }
+.story-stage .sbtn.hot { opacity: 1; cursor: pointer; }
+.story-stage .sbtn.hot rect { fill: var(--s-accent); animation: story-glow 0.5s infinite alternate; }
+.story-stage .sbtn.done { opacity: 1; }
+.story-stage .sbtn.done rect { fill: var(--s-ok); }
+.story-stage .cursor { fill: var(--s-ink); stroke: #fff; stroke-width: 1; pointer-events: none; }
+
+.story-stage .file { transform-box: fill-box; transform-origin: center; }
+.story-stage .file path { fill: var(--s-accent); stroke: var(--s-ink); stroke-width: 1.5; stroke-linejoin: round; }
+.story-stage .file text { font: 600 9px var(--s-sans); fill: var(--s-ink); }
+.story-stage .file.fresh { animation: story-rise 0.4s ease-out; }
+.story-stage .file.gone { animation: story-zap 0.7s forwards; }
+.story-stage .file.gone path { fill: var(--s-bad); }
+.story-stage .flash { fill: var(--s-bad); opacity: 0; pointer-events: none; animation: story-flash 0.6s; }
+
+.story-stage .badge rect { fill: var(--s-ok); stroke: var(--s-ink); stroke-width: 2; }
+.story-stage .badge text { font: 700 13px var(--s-sans); fill: var(--s-ink); }
+
+.story-stage .packet rect { fill: #fff; stroke: var(--s-ink); stroke-width: 2; }
+.story-stage .packet text { font: 700 11px var(--s-sans); fill: var(--s-ink); }
+.story-stage .packet.reply rect { fill: var(--s-muted); }
+.story-stage .packet.cmd rect { fill: var(--s-ink); }
+.story-stage .packet.cmd text { fill: #fff; font-family: var(--s-mono); }
+
+.story-stage .word { font: 400 19px var(--s-head); fill: var(--s-ink); animation: story-rise 0.4s ease-out; }
+.story-stage .word.out { opacity: 0; transition: opacity 0.6s; }
+
+/* Replayable entrance (`pop`); never on an element with its own transform attribute. */
+.story-stage .rise { animation: story-rise 0.35s ease-out; }
+
+/* ---------- brains, harnesses, tools, combinations ---------- */
+
+.story-stage .group { fill: rgba(255, 167, 38, 0.1); stroke: var(--s-ink); stroke-width: 2; stroke-dasharray: 6 6; }
+.story-stage .maker { font: 700 12px var(--s-sans); fill: var(--s-ink); letter-spacing: 0.08em; text-transform: uppercase; }
+.story-stage .name { font: 700 12px var(--s-sans); fill: var(--s-ink); }
+.story-stage .ghost { opacity: 0.3; }
+.story-stage .qbig { font: 400 30px var(--s-head); fill: var(--s-ink); }
+
+.story-stage .pill rect { fill: #fff; stroke: var(--s-ink); stroke-width: 2; transition: fill 0.25s; }
+.story-stage .pill text { font: 700 14px var(--s-sans); fill: var(--s-ink); }
+.story-stage .pill.on rect { fill: var(--on, var(--s-primary)); stroke-width: 3; }
+.story-stage .pill.on.dark > text { fill: #fff; }
+
+.story-stage .nofit { font: 400 40px var(--s-head); fill: var(--s-bad); }
+
+/* Harness badge: brand-coloured roundel with a monogram (`harnessMark`). */
+.story-stage .mark circle { stroke: var(--s-ink); stroke-width: 2; }
+.story-stage .mark text { font-family: var(--s-sans); font-weight: 700; fill: var(--s-ink); }
+
+.story-stage .tile { transition: opacity 0.4s; }
+.story-stage .tile .frame { transition: fill 0.25s; }
+.story-stage .tile.hot .frame { fill: var(--s-accent); }
+.story-stage .tile.used .frame { fill: var(--s-ok); }
+.story-stage .tile.dim { opacity: 0.15; }
+.story-stage .tlabel { font: 600 10.5px var(--s-sans); fill: var(--s-ink); }
+.story-stage .ico { fill: #fff; stroke: var(--s-ink); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.story-stage .ico.line { fill: none; }
+.story-stage .ico.thick { stroke-width: 4; }
+.story-stage .ico.solid { fill: var(--s-ink); }
+.story-stage .ico.warm { fill: var(--s-accent); }
+.story-stage .pip { fill: var(--s-ink); }
+.story-stage .pencil { fill: none; stroke: var(--s-primary); stroke-width: 5; stroke-linecap: round; }
+.story-stage .qmark { font: 400 15px var(--s-head); fill: var(--s-ink); }
+
+.story-stage .card .frame { transition: fill 0.2s; }
+.story-stage .card.spin .frame { fill: var(--s-paper); }
+.story-stage .card .head { font: 700 12px var(--s-sans); fill: var(--s-ink); letter-spacing: 0.08em; text-transform: uppercase; }
+.story-stage .card .val { font: 700 17px var(--s-sans); fill: var(--s-ink); }
+.story-stage .card .val.wait { opacity: 0.35; }
+.story-stage .plus { font: 400 30px var(--s-head); fill: var(--s-ink); }
+.story-stage .result { font: 400 26px var(--s-head); fill: var(--s-ink); }
+.story-stage .result-sub { font: 600 14px var(--s-sans); fill: var(--s-ink); opacity: 0.7; }
+
+/* ---------- sandbox on your computer's screen, shared folder ---------- */
+
+/* --s-primary marks the shared folder: the same colour on both sides of the sandbox wall. */
+.story-stage .file.ping { animation: story-ping 0.25s 2 alternate ease-out; }
+.story-stage .file.shared path { fill: var(--s-primary); }
+.story-stage .file .lock path { fill: none; stroke: var(--s-ink); stroke-width: 2; }
+.story-stage .file .lock rect { fill: #fff; stroke: var(--s-ink); stroke-width: 1.5; }
+.story-stage .scrbar.shared { fill: var(--s-primary); }
+.story-stage .packet.shared rect { fill: var(--s-primary); }
+.story-stage .packet.shared text { fill: #fff; }
+.story-stage .file.doc .corner { fill: #fff; }
+.story-stage .file.hot path:first-child { animation: story-glow 0.4s infinite alternate; }
+.story-stage .link { fill: none; stroke: var(--s-primary); stroke-width: 3; stroke-dasharray: 6 8; stroke-linecap: round; animation: story-march 0.8s linear infinite, story-fade 0.4s ease-out; }
+
+/* ---------- layers of defence ---------- */
+
+.story-stage .tag rect { fill: #fff; stroke: var(--s-ink); stroke-width: 2; }
+.story-stage .tag text { font: 700 14px var(--s-sans); fill: var(--s-ink); }
+.story-stage .tag.threat rect { stroke: var(--s-bad); }
+.story-stage .tag.threat text { fill: var(--s-bad); }
+.story-stage .tag.guard rect { fill: var(--s-ok); }
+.story-stage .tag.todo rect { stroke-dasharray: 5 5; }
+.story-stage .arrow { fill: none; stroke: var(--s-ink); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+
+@keyframes story-rise { from { opacity: 0; transform: translateY(8px); } }
+@keyframes story-ping { to { transform: scale(1.2); } }
+@keyframes story-fade { from { opacity: 0; } }
+@keyframes story-pulse { to { transform: scale(1.07); } }
+@keyframes story-wobble { from { transform: rotate(-7deg); } to { transform: rotate(7deg); } }
+@keyframes story-shake { from { transform: translateX(-4px); } to { transform: translateX(4px); } }
+@keyframes story-glow { to { fill: var(--s-muted); } }
+@keyframes story-tap { to { transform: translateY(4px); } }
+@keyframes story-march { to { stroke-dashoffset: -14; } }
+@keyframes story-zap { 0%, 45% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes story-flash { 0% { opacity: 0.65; } 100% { opacity: 0; } }
