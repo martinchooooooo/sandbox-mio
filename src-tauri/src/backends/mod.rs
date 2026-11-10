@@ -110,6 +110,7 @@ pub fn default_backend(
         registry,
         runner,
         app,
+        events_stop: std::sync::Mutex::new(None),
     })
 }
 
@@ -755,8 +756,20 @@ impl SandboxBackend for CliBackend {
             .args(["events", "--format", "json"])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            // Ends `podman events` on every return path, including a superseded stream's.
+            .kill_on_drop(true)
             .spawn()
             .map_err(|e| BackendError::CommandFailed(e.to_string()))?;
+
+        // Dropping the previous sender wakes the earlier stream's `stop` branch. Only the main
+        // window subscribes, so a second call means that window reloaded.
+        let (stop_tx, mut stop) = tokio::sync::oneshot::channel::<()>();
+        drop(
+            self.events_stop
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .replace(stop_tx),
+        );
 
         let stdout = child
             .stdout
@@ -777,7 +790,12 @@ impl SandboxBackend for CliBackend {
         });
 
         let mut lines = BufReader::new(stdout).lines();
-        while let Some(line) = lines.next_line().await.map_err(|e| BackendError::CommandFailed(e.to_string()))? {
+        loop {
+            let line = tokio::select! {
+                line = lines.next_line() => line.map_err(|e| BackendError::CommandFailed(e.to_string()))?,
+                _ = &mut stop => return Ok(()),
+            };
+            let Some(line) = line else { break };
             if line.trim().is_empty() {
                 continue;
             }

@@ -58,6 +58,7 @@ A sandbox runs on one of two engines, Podman or microsandbox, behind one provide
 
 - Every external binary is spawned with a windowless console of its own, and the app clears handle inheritance at startup. Without both, packaged builds flash a console window per call and terminal-launched dev builds can hang on inherited handles.
 - One-shot calls go through a runner seam with real and scripted implementations; the scripted runners back the `light` test tier ([Testing](testing.md)). Streaming calls (interactive exec, event streams) bypass the seam and must check the mock switch themselves.
+- Only one container event stream runs at a time: a new subscription ends the previous one and its Podman process. A frontend reload subscribes again, and the old stream cannot tell on its own that its page is gone.
 - Podman calls carry per-call-shape timeouts. A timeout trips a process-wide breaker: while the breaker is open, one probe call at a time is let through and every other call fails fast, until any answer closes it.
 - msb and Mutagen one-shot calls are bounded too; a timeout kills only the called process, never a VM it started.
 - The bundled `msb` runs from a copy staged in the app-data root, so a running VM never locks the app's own files.

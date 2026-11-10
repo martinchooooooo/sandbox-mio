@@ -238,6 +238,10 @@ pub(super) struct CliBackend {
     /// Resolves `crate::paths::app_data_root` for per-sandbox exec-transport SSH identities
     /// (`ensure_sandbox_identity`). Not used by any pre-existing method.
     pub(super) app: tauri::AppHandle,
+    /// Stop signal for the live `listen_events` stream; the next call replaces it, ending the old
+    /// stream. Needed because `Channel::send` into a reloaded webview still succeeds, so a stream
+    /// never notices its subscriber is gone.
+    pub(super) events_stop: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
 }
 
 /// The create dialog's network choice for [`SandboxBackend::create`]. `mode: None` keeps whatever
