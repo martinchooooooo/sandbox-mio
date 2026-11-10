@@ -2,6 +2,7 @@
 //! subsystem modules stay independent of each other so each remains mockable on its own
 //! (`docs/features/lib-decomposition/02_dev.md`). A service never depends on `commands/`.
 
+pub mod inference_reach;
 pub mod panes;
 pub mod routing;
 pub mod sandbox;

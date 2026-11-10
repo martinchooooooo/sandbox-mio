@@ -61,13 +61,17 @@ pub async fn provision_opencode(
     )?)
 }
 
-/// Write pi's local-llm provider config and env redirect host-side (container-state independent).
+/// Write pi's local-llm provider config, default model and env redirect host-side
+/// (container-state independent).
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn provision_pi(
     workspace_path: String,
     relative_path: String,
     provider_id: String,
     provider_json: serde_json::Value,
+    default_provider: Option<String>,
+    default_model: Option<String>,
     config_env: String,
     config_dir_container: String,
 ) -> Result<(), AppError> {
@@ -76,6 +80,8 @@ pub async fn provision_pi(
         &relative_path,
         provider_id,
         provider_json,
+        default_provider,
+        default_model,
         config_env,
         config_dir_container,
     )?)

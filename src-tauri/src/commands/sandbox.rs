@@ -5,12 +5,10 @@ use std::sync::Arc;
 use tauri::{ipc::Channel, State};
 
 use crate::backends::types::{Sandbox, SandboxBackend};
-use crate::credentials;
 use crate::error::AppError;
 use crate::network::types::NetworkManager;
 use crate::provider::types::ProviderId;
 use crate::provider::ProviderRegistry;
-use crate::proxy;
 use crate::runtime::types::RuntimeManager;
 use crate::services;
 use crate::settings;
@@ -59,22 +57,29 @@ pub async fn create_sandbox(
 
 #[tauri::command]
 pub async fn list_sandboxes(store: State<'_, Arc<dyn SandboxBackend>>) -> Result<Vec<Sandbox>, AppError> {
-    Ok(store
-        .list()
-        .await?
-        .into_iter()
-        .filter(|s| !s.name.starts_with(credentials::types::AUTH_CONTAINER_PREFIX))
-        .filter(|s| !proxy::is_sidecar(s))
-        .collect())
+    services::sandbox::list_user(&store).await
 }
 
 #[tauri::command]
-pub async fn start_sandbox(name: String, store: State<'_, Arc<dyn SandboxBackend>>) -> Result<(), AppError> {
-    Ok(store.start(&name).await?)
+pub async fn start_sandbox(
+    name: String,
+    store: State<'_, Arc<dyn SandboxBackend>>,
+    app: tauri::AppHandle,
+) -> Result<(), AppError> {
+    store.start(&name).await?;
+    services::inference_reach::spawn_ensure_for_sandbox(&app, &name);
+    Ok(())
 }
 
 #[tauri::command]
-pub async fn stop_sandbox(name: String, store: State<'_, Arc<dyn SandboxBackend>>) -> Result<(), AppError> {
+pub async fn stop_sandbox(
+    name: String,
+    store: State<'_, Arc<dyn SandboxBackend>>,
+    network: State<'_, Arc<dyn NetworkManager>>,
+) -> Result<(), AppError> {
+    // Order is load-bearing: a live forward keeps dialling the stopped sandbox, booting a microsandbox
+    // VM (`docs/features/local-llm-reachability/02_dev.md`, Resolved Decision 1).
+    services::inference_reach::close_for_sandbox(&network, &name).await;
     Ok(store.stop(&name).await?)
 }
 

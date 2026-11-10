@@ -46,6 +46,18 @@ fn remove_dir_best_effort(name: &str, what: &str, dir: Result<std::path::PathBuf
     }
 }
 
+/// The sandboxes a user manages: everything the backend lists except auth containers and proxy
+/// sidecars.
+pub async fn list_user(store: &Arc<dyn SandboxBackend>) -> Result<Vec<Sandbox>, AppError> {
+    Ok(store
+        .list()
+        .await?
+        .into_iter()
+        .filter(|s| !s.name.starts_with(crate::credentials::types::AUTH_CONTAINER_PREFIX))
+        .filter(|s| !crate::proxy::is_sidecar(s))
+        .collect())
+}
+
 /// Creates a sandbox on `provider` and brings its workspace up. `proxy` opts the sandbox into a
 /// per-sandbox mitmproxy sidecar (`docs/features/network-proxy/02_dev.md`).
 pub async fn create(
@@ -181,6 +193,7 @@ pub async fn create(
         tracing::info!(target: "create", %name, "create_sandbox: sync session created");
         sandbox.status = "running".to_string();
     }
+    super::inference_reach::spawn_ensure_for_sandbox(app, name);
     Ok(sandbox)
 }
 
@@ -259,6 +272,7 @@ pub async fn reapply_network(
     store.start(name).await?;
     engine.create(&session, &sandbox.workspace_path, &backends::msb_sync_beta(name)).await?;
     runtime.reproduce_remote(name, &registry.local_ref(provider), &sandbox.workspace_path).await?;
+    super::inference_reach::spawn_ensure_for_sandbox(app, name);
     Ok(sandbox)
 }
 

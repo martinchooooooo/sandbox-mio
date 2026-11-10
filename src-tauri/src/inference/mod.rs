@@ -17,9 +17,9 @@ use types::{
     ModelDownloadEvent, StaticMachineSpecs,
 };
 
-/// The Mutagen forward carrying the inference server into the Podman VM. Named here because both
-/// `start_inference` and `stop_inference` address it.
-pub const INFERENCE_FORWARD: &str = "inference-reverse";
+/// Port the inference forward listens on inside a sandbox; must equal `INFERENCE_GUEST_PORT` in
+/// `src/lib/agents/local-llm.ts`.
+pub const INFERENCE_GUEST_PORT: u16 = 51199;
 
 /// A free host loopback port for a server about to start. Bound and released, so the caller races
 /// anything else on the host for it — acceptable because the engine binds it immediately after.

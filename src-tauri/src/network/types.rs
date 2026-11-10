@@ -11,6 +11,8 @@ pub enum ServiceKind {
     AgentWeb,
     /// User-exposed port (the value is the target port inside sandbox).
     Exposed(u16),
+    /// Reverse forward offering the host inference server on the sandbox's own loopback.
+    Inference,
 }
 
 /// Errors from [`NetworkManager`]. Converts into [`crate::error::AppError`] via `#[from]`.
@@ -37,7 +39,8 @@ impl From<crate::provider::types::ProviderError> for NetworkError {
 pub struct ForwardInfo {
     pub sandbox: String,
     pub kind: ServiceKind,
-    /// Windows-host loopback port for frontend/webview connection.
+    /// Windows-host loopback port for frontend/webview connection. For an `Inference` forward, the
+    /// host port the forward dials instead.
     pub host_port: u16,
     /// The SSH alias the forward tunnels over.
     pub connection: String,
@@ -54,7 +57,8 @@ pub struct ForwardInfo {
     pub auto_detected: bool,
 }
 
-/// Mutagen-forward lifecycle and port allocation for terminal, agent-web, and user-exposed ports.
+/// Mutagen-forward lifecycle and port allocation for terminal, agent-web, inference and user-exposed
+/// ports.
 #[async_trait::async_trait]
 pub trait NetworkManager: Send + Sync {
     /// Allocate a fresh host loopback port, create/replace a Mutagen forward to the remote port,
@@ -67,10 +71,24 @@ pub trait NetworkManager: Send + Sync {
         remote_port: u16,
     ) -> Result<u16, NetworkError>;
 
+    /// Create or replace a reverse forward for (`sandbox`, `kind`): a listener on the sandbox's
+    /// loopback at `guest_port`, reached over `alias`, relaying to host loopback `host_port`. The
+    /// listener binds guest loopback only, so only processes inside the sandbox can dial it. In the
+    /// registered [`ForwardInfo`], `host_port` is the destination port rather than a host listener,
+    /// and `remote_port` is the guest listener.
+    async fn open_reverse_forward(
+        &self,
+        sandbox: &str,
+        kind: ServiceKind,
+        alias: &str,
+        guest_port: u16,
+        host_port: u16,
+    ) -> Result<(), NetworkError>;
+
     /// Tear down the forward for (`sandbox`, `kind`). Best-effort.
     async fn close_forward(&self, sandbox: &str, kind: ServiceKind);
 
-    /// Tear down every forward for `sandbox` (Terminal, AgentWeb, and Exposed ports).
+    /// Tear down every forward for `sandbox` (Terminal, AgentWeb, Inference, and Exposed ports).
     async fn close_sandbox(&self, sandbox: &str);
 
     /// Return snapshot of all tracked forwards for the frontend's open-ports view.

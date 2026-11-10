@@ -3,8 +3,8 @@ type: architecture
 title: "Transport: SSH Aliases, Mutagen and Ports"
 description: "How the app reaches services inside a sandbox: per-sandbox SSH aliases tunnelled through the engine's exec, Mutagen sync sessions and forwards, and port exposure."
 generated:
-  by: claude-code/sonnet-5-5
-  at: 2026-11-07T12:00:00+11:00
+  by: claude-code/opus-5-5
+  at: 2026-11-10T18:00:00+11:00
 stale_after: 2027-02-05T00:00:00+11:00
 code:
   - src-tauri/src/ssh/
@@ -15,6 +15,7 @@ sources:
   - resource: docs/features/podman-exec-transport/02_dev.md
   - resource: docs/features/mutagen-transport/02_dev.md
   - resource: docs/features/expose-ports/04_improvements.md
+  - resource: docs/features/local-llm-reachability/02_dev.md
 ---
 # Transport: SSH Aliases, Mutagen and Ports
 
@@ -33,14 +34,14 @@ Sandboxes publish no ports. The app reaches every in-sandbox service (the web te
 - Mutagen is bundled with the app and runs with an app-private data directory, so it never shares state with a user-installed Mutagen. Its daemon outlives the app.
 - **Sync sessions** mirror a workspace between the host and a sandbox: one per deployed sandbox ([Remote](remote.md)), and one per microsandbox sandbox to keep its disk volume in step with the host folder.
 - **Forwards** connect a fresh OS-assigned host loopback port to a port inside a sandbox, through the sandbox's alias, so concurrent app instances never collide.
-- **Reverse forwards** run the other way: the host inference server is offered to sandboxes through a listener on the Podman machine ([Local Inference](inference.md)).
-- At startup the app ends forwards whose sandbox no longer exists.
+- **Reverse forwards** run the other way: each running local sandbox gets a loopback listener relaying to the host inference server ([Local Inference](inference.md)).
+- At startup the app ends forwards whose sandbox no longer exists, and every inference forward, since no server runs yet.
 
 ## Ports and Exposure
 
-- A network manager tracks every forward by sandbox and service (terminal, agent web UI, or an exposed port) and pushes changes to the frontend.
+- A network manager tracks every forward by sandbox and service (terminal, agent web UI, inference, or an exposed port) and pushes changes to the frontend. A tracked forward's own in-sandbox listener is never auto-exposed.
 - Per sandbox, a poller exposes the ports declared in the workspace's `.mio/ports.json` and the ports detected listening inside the sandbox. Each source removes only the ports it added; a port the user exposed by hand is never removed automatically.
-- Re-applying a sandbox's network, undeploying or destroying it closes its panes and forwards first; a plain stop leaves them registered.
+- Re-applying a sandbox's network, undeploying or destroying it closes its panes and forwards first; a plain stop closes only the inference forward and leaves the rest registered.
 
 ## Invariants
 

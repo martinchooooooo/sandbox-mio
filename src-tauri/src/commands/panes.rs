@@ -57,6 +57,7 @@ pub async fn watch_workspace_ports(
         .clone()
         .watch_ports_file(&name, &workspace_path, &route.machine)
         .await;
+    crate::services::inference_reach::spawn_ensure_for_sandbox(&app, &name);
     Ok(())
 }
 

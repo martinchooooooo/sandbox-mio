@@ -141,11 +141,8 @@ pub async fn forward_create<R: Runtime>(
         .map(|_| ())
 }
 
-pub const INFERENCE_VM_PORT: u16 = 51199;
-
-/// Reverse of `forward_create`: listen on the remote, dial the host. The `0.0.0.0` bind is
-/// required — a `127.0.0.1` bind is VM-loopback-only and unreachable from container netns via
-/// `host.containers.internal` (spiked 2026-06-29). Idempotent across retries.
+/// Idempotent reverse of `forward_create`: listen on the remote's loopback, dial the host. Loopback
+/// suffices because the alias lands inside the sandbox, beside the processes that dial it.
 pub async fn forward_create_reverse<R: Runtime>(
     app: &AppHandle<R>,
     name: &str,
@@ -156,7 +153,7 @@ pub async fn forward_create_reverse<R: Runtime>(
     let _guard = FORWARD_CREATE_LOCK.lock().await;
     // Best-effort: a missing session is not an error, so ignore the result.
     let _ = run(app, &["forward", "terminate", name]).await;
-    let source = format!("{remote_alias}:tcp:0.0.0.0:{remote_listen_port}");
+    let source = format!("{remote_alias}:tcp:127.0.0.1:{remote_listen_port}");
     let dest = format!("tcp:127.0.0.1:{host_port}");
     run(app, &["forward", "create", &format!("--name={name}"), &source, &dest])
         .await
@@ -184,7 +181,9 @@ pub async fn sweep_stale_forwards<R: Runtime>(app: &AppHandle<R>, live_sandboxes
             .or_else(|| session.get("Name"))
             .and_then(|v| v.as_str());
         let Some(name) = name else { continue };
-        let orphaned = if name.starts_with("expose-") {
+        // No server runs at startup, so every `inference-` session is stale, legacy `inference-reverse`
+        // included (`docs/features/local-llm-reachability/02_dev.md`, Resolved Decision 9).
+        let orphaned = if name.starts_with("expose-") || name.starts_with("inference-") {
             true
         } else {
             let sandbox = name

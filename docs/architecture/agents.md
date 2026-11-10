@@ -4,7 +4,7 @@ title: "Coding Agents and Credentials"
 description: "The agent catalogue, installing agents into sandboxes, logging in once and reusing the login everywhere, local-model wiring, and the Paseo agent web UI."
 generated:
   by: claude-code/opus-5-5
-  at: 2026-11-05T23:55:00+11:00
+  at: 2026-11-10T18:00:00+11:00
 stale_after: 2027-02-05T00:00:00+11:00
 code:
   - src/lib/agents/
@@ -21,6 +21,7 @@ sources:
   - resource: docs/features/opencode-agent/02_dev.md
   - resource: docs/features/pi-agent/02_dev.md
   - resource: docs/features/agent-web-ui/02_dev.md
+  - resource: docs/features/local-llm-reachability/02_dev.md
 ---
 # Coding Agents and Credentials
 
@@ -53,7 +54,8 @@ The app installs coding agents (Claude Code, OpenCode, pi) into a sandbox, lets 
 ## Local-Model Agents: OpenCode and pi
 
 - OpenCode and pi are provisioned to use the host inference server as a model provider ([Local Inference](inference.md)). Provisioning writes their configuration into the workspace from the host, so it works whether or not the sandbox is running. OpenCode's configuration is merged into any existing user settings; pi's lives in its own file under `.mio/`.
-- When the running model changes, every sandbox is re-provisioned on a best-effort basis, so the agents' default model follows the server.
+- Every provisioned agent in every sandbox is re-provisioned, best-effort, at app startup and after each server start. That keeps the model list and server address current and migrates older workspaces.
+- An agent's default model follows the running server, unless the user picked a model from another provider in the agent itself.
 
 ## Agent Web UI (Paseo)
 

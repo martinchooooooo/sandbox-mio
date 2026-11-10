@@ -4,7 +4,7 @@ title: "Outbound Network Control"
 description: "Per-sandbox traffic viewer, secret injection and egress policy, and how Podman and microsandbox each implement them."
 generated:
   by: claude-code/opus-5-5
-  at: 2026-11-05T23:55:00+11:00
+  at: 2026-11-10T18:00:00+11:00
 stale_after: 2027-02-05T00:00:00+11:00
 code:
   - src-tauri/src/proxy/
@@ -19,6 +19,7 @@ sources:
   - resource: docs/features/network-proxy/02_dev.md
   - resource: docs/features/proxy-traffic-viewer/02_dev.md
   - resource: docs/features/microsandbox-network-policy/02_dev.md
+  - resource: docs/features/local-llm-reachability/02_dev.md
 ---
 # Outbound Network Control
 
@@ -56,7 +57,7 @@ Podman and microsandbox implement each control differently.
 ## Invariants
 
 - No secret value is ever written into the workspace, passed as a process argument, logged, or returned over IPC.
-- Local-model traffic to `host.containers.internal` bypasses the proxy.
+- Local-model traffic never leaves the sandbox's network stack: it reaches the host over the sandbox's own loopback forward, so neither proxy nor egress policy sees it.
 - A sidecar is recognised by its image, never by its `-proxy` name suffix.
 - The msb store is shared by every worktree on the host, so a microsandbox sidecar is swept only by the app-data root that created it.
 - The flow-record line cap is one value shared by the addon, the backend poller and the frontend store.

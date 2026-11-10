@@ -62,6 +62,31 @@ impl NetworkManager for MockNetworkManager {
         Ok(host_port)
     }
 
+    async fn open_reverse_forward(
+        &self,
+        sandbox: &str,
+        kind: ServiceKind,
+        alias: &str,
+        guest_port: u16,
+        host_port: u16,
+    ) -> Result<(), NetworkError> {
+        self.forwards.lock().unwrap().insert(
+            (sandbox.to_string(), kind),
+            ForwardInfo {
+                sandbox: sandbox.to_string(),
+                kind,
+                host_port,
+                connection: alias.to_string(),
+                remote_port: guest_port,
+                forward_name: format!("mock-reverse-{sandbox}"),
+                label: None,
+                auto_detected: false,
+            },
+        );
+        self.emit_forwards();
+        Ok(())
+    }
+
     async fn close_forward(&self, sandbox: &str, kind: ServiceKind) {
         self.forwards.lock().unwrap().remove(&(sandbox.to_string(), kind));
         self.emit_forwards();

@@ -8,10 +8,10 @@ import { podman, podmanOk, LOCAL_CONNECTION } from "../../../lib/podman-connecti
 import { captureDiagOnFailure } from "../../../lib/diag.js";
 import { useSandboxWorkspace } from "../../../lib/sandbox-suite.js";
 
-// Must equal INFERENCE_VM_PORT in src-tauri/src/sync/mod.rs and src/lib/agents/local-llm.ts. The
-// constant is asserted in the written config below so a drift between the two languages is caught.
-const INFERENCE_VM_PORT = 51199;
-const EXPECTED_BASE_URL = `http://host.containers.internal:${INFERENCE_VM_PORT}/v1`;
+// Must equal INFERENCE_GUEST_PORT in src-tauri/src/inference/mod.rs and src/lib/agents/local-llm.ts.
+// The constant is asserted in the written config below so a drift between the two languages is caught.
+const INFERENCE_GUEST_PORT = 51199;
+const EXPECTED_BASE_URL = `http://127.0.0.1:${INFERENCE_GUEST_PORT}/v1`;
 
 // Invoke a Tauri command from inside the running webview. Mirrors the heavy local-llm spec; the
 // command bridge is the only way to drive provision_opencode in isolation from the install flow.
@@ -109,7 +109,7 @@ describe("OpenCode agent — install, provision, merge", function () {
       provider.options?.baseURL,
       EXPECTED_BASE_URL,
       `local-llm baseURL is "${provider.options?.baseURL}", expected "${EXPECTED_BASE_URL}". A ` +
-        "mismatch means INFERENCE_VM_PORT drifted between src/lib/agents/local-llm.ts and the forward.",
+        "mismatch means INFERENCE_GUEST_PORT drifted between src/lib/agents/local-llm.ts and the forward.",
     );
     assert(
       provider.options?.apiKey,
@@ -166,7 +166,7 @@ describe("OpenCode agent — install, provision, merge", function () {
     assert.equal(
       merged.model,
       "anthropic/claude-opus-4-1",
-      `merge overwrote the user's top-level model to "${merged.model}". It must be set only when absent.`,
+      `merge overwrote the user's top-level model to "${merged.model}". It must be replaced only when absent or naming the local-llm provider.`,
     );
     assert(
       merged.provider?.anthropic,

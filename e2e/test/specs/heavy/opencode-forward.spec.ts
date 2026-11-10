@@ -9,13 +9,12 @@ import { podman, podmanOk, LOCAL_CONNECTION } from "../../../lib/podman-connecti
 import { captureDiagOnFailure } from "../../../lib/diag.js";
 import { APP_DATA_ROOT } from "../../../lib/run-identity.js";
 
-// HEAVY spec: covers docs/features/opencode-agent/02_dev.md, Cross-Cutting Concerns — the
-// container must reach host.containers.internal:51199. Only test exercising the full app-wide
-// reverse-forward bridge; excluded from the default glob (downloads a GGUF, starts a container).
+// HEAVY (downloads a GGUF): the only end-to-end proof that a sandbox reaches the host inference
+// server on its own loopback (docs/features/local-llm-reachability/02_dev.md).
 
 const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
-// Must equal INFERENCE_VM_PORT in src-tauri/src/sync/mod.rs and src/lib/agents/local-llm.ts.
-const INFERENCE_VM_PORT = 51199;
+// Must equal INFERENCE_GUEST_PORT in src-tauri/src/inference/mod.rs and src/lib/agents/local-llm.ts.
+const INFERENCE_GUEST_PORT = 51199;
 
 // The app writes models under the slug-keyed app-data root the launcher sets via MIO_APP_DATA_DIR
 // (src-tauri/src/paths.rs), not under %APPDATA%/<bundle identifier>.
@@ -26,7 +25,7 @@ const APP_DATA_MODELS = path.join(APP_DATA_ROOT, "models");
 // listener is absent, which is exactly the post-stop state the negative assertion needs.
 function probeFromContainer(container: string): string {
   const script =
-    `exec 3<>/dev/tcp/host.containers.internal/${INFERENCE_VM_PORT} && ` +
+    `exec 3<>/dev/tcp/127.0.0.1/${INFERENCE_GUEST_PORT} && ` +
     `printf 'GET /v1/models HTTP/1.0\\r\\nHost: h\\r\\n\\r\\n' >&3 && cat <&3`;
   return podman(LOCAL_CONNECTION, ["exec", container, "bash", "-c", script], { check: false });
 }
@@ -76,24 +75,15 @@ describe("OpenCode forward — container reaches host inference", function () {
     await row.start();
     await row.waitForRunning(30000);
 
-    // host.containers.internal must resolve in the container netns, or the probe can never connect
-    // regardless of the forward. Assert the precondition up front for a clear failure.
-    const hosts = podman(LOCAL_CONNECTION, ["exec", projectName, "cat", "/etc/hosts"], { check: false });
-    assert(
-      /host\.containers\.internal/.test(hosts),
-      `host.containers.internal is not in the container's /etc/hosts, so the OpenCode baseURL can ` +
-        `never resolve. /etc/hosts:\n${hosts}`,
-    );
-
     // Before inference starts there is no forward — the listener must be absent.
     const before = probeFromContainer(projectName);
     assert(
       !/HTTP\/1\./.test(before),
-      `Container reached :${INFERENCE_VM_PORT} before inference started. No forward should exist ` +
+      `Container reached :${INFERENCE_GUEST_PORT} before inference started. No forward should exist ` +
         `yet. Response:\n${before}`,
     );
 
-    // ── Start inference, which creates the app-wide reverse forward ──────────────────────────
+    // ── Start inference, which creates the sandbox's inference forward ────────────────────────
     await navigateHome();
     await ModelsPage.open();
     await ModelsPage.startDownload(testModelId);
@@ -101,8 +91,8 @@ describe("OpenCode forward — container reaches host inference", function () {
     await ModelsPage.startInference(testModelId);
     await ModelsPage.waitForRunning(180000);
 
-    // The reverse forward is created right after the server is Ready. Give Mutagen a moment to
-    // bring the session up, then assert the container reaches the host server through the VM port.
+    // The inference forward is created right after the server is Ready. Give Mutagen a moment to
+    // bring the session up, then assert the container reaches the host server on its own loopback.
     let response = "";
     await browser.waitUntil(
       () => {
@@ -113,9 +103,9 @@ describe("OpenCode forward — container reaches host inference", function () {
         timeout: 30000,
         interval: 2000,
         timeoutMsg:
-          `Container never got HTTP 200 from host.containers.internal:${INFERENCE_VM_PORT}/v1/models ` +
-          `while inference was running. The reverse forward was not created, or bound the VM's ` +
-          `127.0.0.1 (invisible to containers) instead of 0.0.0.0. Last response:\n${response}`,
+          `Container never got HTTP 200 from 127.0.0.1:${INFERENCE_GUEST_PORT}/v1/models while ` +
+          `inference was running. The sandbox's inference-<sandbox> forward was not created; check ` +
+          `the "inference" target in mio.log. Last response:\n${response}`,
       },
     );
     assert(
@@ -135,8 +125,8 @@ describe("OpenCode forward — container reaches host inference", function () {
         timeout: 30000,
         interval: 2000,
         timeoutMsg:
-          `Container still reached :${INFERENCE_VM_PORT} after stop_inference. The reverse forward ` +
-          `was orphaned — it must be terminated in stop_inference. Last response:\n${after}`,
+          `Container still reached :${INFERENCE_GUEST_PORT} after stop_inference. The inference ` +
+          `forward was orphaned — stop_inference must close it. Last response:\n${after}`,
       },
     );
   });

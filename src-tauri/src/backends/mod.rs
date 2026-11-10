@@ -163,27 +163,6 @@ fn podman_literal_path() -> String {
     }
 }
 
-static PODMAN_RUNNER: std::sync::OnceLock<Arc<dyn ProcessRunner>> = std::sync::OnceLock::new();
-
-/// Record the shared `podman` [`ProcessRunner`] for the free functions that shell out to `podman`
-/// with no `CliBackend` instance to borrow a `runner` field from — `ensure_connection_alias`,
-/// called directly from `src-tauri/src/commands/inference.rs`, is the only such call site. Every
-/// `&self` method uses `self.runner` instead. Set once at startup from the same `Arc` passed to
-/// `default_backend`/`default_machine_manager`, so all `podman` calls share one director.
-pub fn set_podman_runner(runner: Arc<dyn ProcessRunner>) {
-    if PODMAN_RUNNER.set(runner).is_err() {
-        // A `OnceLock` cannot be replaced, so a second call is a wiring bug: the free-function call
-        // sites keep the runner recorded first and would silently escape a later director swap.
-        tracing::warn!(target: "backends", "set_podman_runner called more than once; keeping the first runner");
-    }
-}
-
-fn podman_global_runner() -> &'static Arc<dyn ProcessRunner> {
-    PODMAN_RUNNER
-        .get()
-        .expect("set_podman_runner must run before any free-function podman call")
-}
-
 async fn run_podman(
     runner: &Arc<dyn ProcessRunner>,
     args: &[&str],
@@ -319,8 +298,7 @@ impl CliBackend {
     }
 
     /// Live SSH endpoint for connection `name`, or `None` for a connection not reachable over SSH.
-    /// Read fresh every call: a machine's SSH port changes on each boot. Takes the runner as an
-    /// argument because both instance methods and `ensure_connection_alias` need it.
+    /// Read fresh every call: a machine's SSH port changes on each boot.
     async fn remote_connection_info(
         runner: &Arc<dyn ProcessRunner>,
         name: &str,
@@ -902,26 +880,6 @@ impl SandboxBackend for CliBackend {
     }
 }
 
-/// Ensure the SSH alias for `connection` is written to `~/.ssh/sandbox-mio/config` so Mutagen
-/// can resolve it for forwarding sessions. Read fresh from `podman system connection list` each
-/// call so the port (reassigned on each machine boot) is always current. Called before any
-/// `mutagen forward create` that targets `connection`.
-pub async fn ensure_connection_alias(connection: &str) -> Result<(), BackendError> {
-    let Some(info) =
-        CliBackend::remote_connection_info(podman_global_runner(), connection).await?
-    else {
-        return Err(BackendError::NoSshEndpoint { connection: connection.to_string() });
-    };
-    crate::ssh::write_alias(&crate::ssh::types::SshAlias::Direct {
-        alias: connection.to_string(),
-        host: info.host,
-        port: info.port,
-        user: info.user,
-        identity: info.identity,
-    })?;
-    Ok(())
-}
-
 /// Per-sandbox ed25519 keypair for the exec-transport `Proxied` alias, generated once and reused
 /// for the sandbox's lifetime. Lives under app data (not `~/.ssh`), per-sandbox and
 /// per-worktree-isolatable via `MIO_APP_DATA_DIR`. Returns the private key path. Free function
@@ -942,10 +900,8 @@ pub fn ensure_sandbox_identity(
 }
 
 /// Ensure the SSH alias for a Podman sandbox is written to `~/.ssh/sandbox-mio/config`.
-/// Unlike [`ensure_connection_alias`], the identity and authorized-keys installation are stable
-/// for the sandbox's lifetime — no per-call refresh needed — but `write_alias` is called anyway on
-/// every terminal/agent-web/expose-port open, since the alias file itself is not guaranteed to
-/// survive between app runs the way the container does.
+/// The identity and installed key last the sandbox's lifetime, but the alias is rewritten on every
+/// terminal, agent-web and expose-port open because the alias file may not survive an app restart.
 pub async fn ensure_sandbox_alias(
     name: &str,
     connection: &str,

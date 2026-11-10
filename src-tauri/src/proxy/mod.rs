@@ -248,13 +248,13 @@ pub fn read_ca_pem(app: &AppHandle, sandbox: &str) -> Result<Vec<u8>, ProxyError
 }
 
 /// The full `--env` list for a proxy-enabled sandbox: the proxy URL under both casings, `no_proxy`
-/// under both spellings (`host.containers.internal` included — load-bearing, or local-LLM inference
-/// gets routed through the proxy for no benefit), and the per-runtime CA trust overrides pointing at
+/// under both spellings (loopback included, which also carries local-LLM inference through the
+/// sandbox's own inference forward), and the per-runtime CA trust overrides pointing at
 /// `CONTAINER_CA_PATH` (Resolved Decision 8). `CONTAINER_CA_PATH` is also referenced by `inject_ca`;
 /// the two must name the same path.
 pub fn proxy_env(proxy_ip: &str) -> Vec<(String, String)> {
     let proxy_url = format!("http://{proxy_ip}:{PROXY_PORT}");
-    let no_proxy = "localhost,127.0.0.1,::1,host.containers.internal";
+    let no_proxy = "localhost,127.0.0.1,::1";
     let mut env = vec![
         ("http_proxy".to_string(), proxy_url.clone()),
         ("https_proxy".to_string(), proxy_url.clone()),

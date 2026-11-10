@@ -5,6 +5,11 @@ Records feature status changes only: creation (`Create`), reaching `implemented`
 history with at most one `Create` and one `Implement` entry per feature, so seeded dates are
 approximate. New entries go on top.
 
+## 2026-11-10
+
+* **Implement** [local-llm-reachability](local-llm-reachability/index.md): per-sandbox inference forward for Podman and microsandbox, unified agent provisioning
+* **Create** [local-llm-reachability](local-llm-reachability/index.md): ideation drafted
+
 ## 2026-11-09
 
 * **Implement** [manage-dashboard-redesign](manage-dashboard-redesign/index.md): feat(dashboard): translate the Manage dashboard and close out the redesign

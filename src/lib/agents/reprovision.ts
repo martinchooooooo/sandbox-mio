@@ -1,12 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Project } from "$lib/sandbox";
 import { AGENTS, miseKey } from "./catalogue";
-import { buildLocalLlmProvider } from "./opencode";
+import { provisionAgent } from "./provision";
 
-// Best-effort re-provision across all sandboxes; sandboxes that fail are skipped.
-export async function reprovisionInstalledAgents(modelId: string): Promise<void> {
-    const opencode = AGENTS.find((a) => a.provision?.kind === "opencode-provider");
-    if (!opencode?.provision) return;
+/** Re-provisions every installed agent that declares `provision`, in every sandbox, best-effort per
+ * sandbox (docs/features/local-llm-reachability/02_dev.md, Resolved Decision 11). */
+export async function reprovisionInstalledAgents(runningModelId: string | null): Promise<void> {
+    const agents = AGENTS.filter((a) => a.provision);
+    if (agents.length === 0) return;
 
     let sandboxes: Project[];
     try {
@@ -15,22 +16,21 @@ export async function reprovisionInstalledAgents(modelId: string): Promise<void>
         return;
     }
 
-    const { providerId, providerJson, defaultModel } = buildLocalLlmProvider(modelId);
     await Promise.all(
         sandboxes.map(async (sandbox) => {
+            let packages: string[];
             try {
-                const packages = await invoke<string[]>("list_packages", { workspacePath: sandbox.workspace_path });
-                const installed = opencode.misePackages.every((p) => packages.includes(miseKey(p)));
-                if (!installed) return;
-                await invoke("provision_opencode", {
-                    workspacePath: sandbox.workspace_path,
-                    relativePath: opencode.provision!.relativeConfigPath,
-                    providerId,
-                    providerJson,
-                    defaultModel,
-                });
+                packages = await invoke<string[]>("list_packages", { workspacePath: sandbox.workspace_path });
             } catch {
-                // Best-effort; a stopped/unreachable sandbox shouldn't block the others.
+                return;
+            }
+            for (const agent of agents) {
+                if (!agent.misePackages.every((p) => packages.includes(miseKey(p)))) continue;
+                try {
+                    await provisionAgent(agent, sandbox.workspace_path, runningModelId);
+                } catch {
+                    // Best-effort; one unwritable workspace file shouldn't block the other agents.
+                }
             }
         }),
     );

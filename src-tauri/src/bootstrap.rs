@@ -26,8 +26,7 @@ use crate::sync::types::SyncEngine;
 use crate::workspace;
 use crate::workspace::types::WorkspaceRegistry;
 
-/// The process layer and the two subsystems built directly on it, constructed before the Tauri
-/// builder so `backends::set_podman_runner` can run ahead of every `manage` call.
+/// The process layer and the two subsystems built directly on it, constructed before the Tauri builder.
 pub struct Bootstrap {
     mock_director: Arc<mockctl::types::MockDirector>,
     podman_runner: Arc<dyn ProcessRunner>,
@@ -35,9 +34,7 @@ pub struct Bootstrap {
     machine: Arc<dyn machine::types::MachineManager>,
 }
 
-/// Builds the process layer and arms the podman global runner. Must be called before any
-/// free-function podman call, which the `PODMAN_RUNNER` `OnceLock` in
-/// `src-tauri/src/backends/mod.rs` otherwise panics on.
+/// Builds the process layer.
 pub fn build() -> Bootstrap {
     let mock_director = Arc::new(mockctl::types::MockDirector::new());
     let podman_runner: Arc<dyn ProcessRunner> = if backends::mock_backend_enabled() {
@@ -45,7 +42,6 @@ pub fn build() -> Bootstrap {
     } else {
         Arc::new(process::types::SystemPodmanRunner)
     };
-    backends::set_podman_runner(podman_runner.clone());
     let msb_runner: Arc<dyn ProcessRunner> = if backends::mock_backend_enabled() {
         Arc::new(mockctl::types::ScriptedMsbRunner::new(mock_director.clone()))
     } else {
@@ -150,16 +146,20 @@ fn staged_msb_dir(app: &tauri::AppHandle, bundled: std::path::PathBuf) -> std::p
     })
 }
 
-/// Stops the active inference server and shuts the sync engine down on exit.
+/// Stops the active inference server, closes its forwards and shuts the sync engine down on exit.
 pub fn on_run_event(app_handle: &tauri::AppHandle, event: tauri::RunEvent) {
     if let tauri::RunEvent::Exit = event {
         let active = app_handle.state::<ActiveServer>();
+        let network = app_handle.state::<Arc<dyn NetworkManager>>().inner().clone();
         let app_for_stop = app_handle.clone();
         tauri::async_runtime::block_on(async move {
             if let Some(handle) = active.lock().await.take() {
                 let engine = inference::engine_for(handle.engine, &app_for_stop);
                 let _ = engine.stop(handle).await;
             }
+            // Before `daemon stop`, so no inference session resumes against a stopped sandbox on the
+            // next daemon start (`docs/features/local-llm-reachability/02_dev.md`, Resolved Decision 9).
+            crate::services::inference_reach::close_all(&network).await;
         });
         let engine = app_handle.state::<Arc<dyn SyncEngine>>();
         tauri::async_runtime::block_on(engine.shutdown());

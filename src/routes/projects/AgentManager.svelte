@@ -5,8 +5,7 @@
     import { m } from "$lib/paraglide/messages.js";
     import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
     import { AGENTS, miseKey, onboardingSeed } from "$lib/agents/catalogue";
-    import { buildLocalLlmProvider, FALLBACK_MODEL_ID } from "$lib/agents/opencode";
-    import { buildPiLocalLlmProvider, PI_CONFIG_ENV, PI_CONFIG_DIR_CONTAINER } from "$lib/agents/pi";
+    import { provisionAgent } from "$lib/agents/provision";
     import type { AgentDescriptor, AgentInstallEvent } from "$lib/agents/types";
     import { agentAuthFor, refreshAgentAuth } from "$lib/agents/authStatus.svelte";
     import type { InferenceStatus } from "$lib/models/types";
@@ -75,35 +74,14 @@
             });
             if (descriptor.provision) {
                 installLog = [...installLog, m.projects_agent_provisioning()];
-                if (descriptor.provision.kind === "pi-provider") {
-                    const { providerId, providerJson } = buildPiLocalLlmProvider();
-                    await invoke("provision_pi", {
-                        workspacePath,
-                        relativePath: descriptor.provision.relativeConfigPath,
-                        providerId,
-                        providerJson,
-                        configEnv: PI_CONFIG_ENV,
-                        configDirContainer: PI_CONFIG_DIR_CONTAINER,
-                    });
-                } else {
-                    let runningModelId: string | null = null;
-                    try {
-                        const status = await invoke<InferenceStatus>("inference_status");
-                        runningModelId = status.running ? status.modelId : null;
-                    } catch {
-                        runningModelId = null;
-                    }
-                    const { providerId, providerJson, defaultModel } = buildLocalLlmProvider(
-                        runningModelId ?? FALLBACK_MODEL_ID,
-                    );
-                    await invoke("provision_opencode", {
-                        workspacePath,
-                        relativePath: descriptor.provision.relativeConfigPath,
-                        providerId,
-                        providerJson,
-                        defaultModel,
-                    });
+                let runningModelId: string | null = null;
+                try {
+                    const status = await invoke<InferenceStatus>("inference_status");
+                    runningModelId = status.running ? status.modelId : null;
+                } catch {
+                    runningModelId = null;
                 }
+                await provisionAgent(descriptor, workspacePath, runningModelId);
                 installLog = [...installLog, `✓ ${m.projects_agent_provider_configured()}`];
             }
         });

@@ -35,6 +35,7 @@
 * [lib-decomposition](lib-decomposition/index.md) - Split the 1,800-line src-tauri/src/lib.rs into command, service and startup modules.
 * [loading-states](loading-states/index.md) - Per-row in-flight feedback (loading buttons, StatusRow, action runner) for every sandbox action.
 * [local-llm](local-llm/index.md) - Detect host specs, recommend and download a local model, and run a host inference server.
+* [local-llm-reachability](local-llm-reachability/index.md) - Make the host inference server reachable from every sandbox, microsandbox included, through a per-sandbox loopback forward, and keep every local-model agent's provisioned config current.
 * [manage-dashboard-redesign](manage-dashboard-redesign/index.md) - Make a sandbox's Manage dashboard open instantly and read simply: an Overview for launching and agents, advanced controls in a section sidebar that loads on demand.
 * [microsandbox-network-policy](microsandbox-network-policy/index.md) - Native egress policy, host-held secrets and a chained traffic proxy for microsandbox sandboxes.
 * [microsandbox-provider](microsandbox-provider/index.md) - microsandbox (libkrun microVMs via the msb CLI) as a second machine provider alongside Podman.

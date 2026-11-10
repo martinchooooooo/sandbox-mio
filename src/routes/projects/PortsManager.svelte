@@ -2,6 +2,7 @@
     import { openUrl } from "@tauri-apps/plugin-opener";
     import Button from "$lib/components/ui/button/button.svelte";
     import { parseError } from "$lib/errors";
+    import { m } from "$lib/paraglide/messages.js";
     import { openForwardsFor, exposePort, unexposePort, type ForwardInfo } from "$lib/network/state.svelte";
     import type { createActionRunner } from "$lib/actions.svelte";
 
@@ -35,6 +36,7 @@
         switch (fwd.kind.kind) {
             case "terminal": return "Terminal";
             case "agent-web": return "Agents";
+            case "inference": return m.ports_kind_local_model();
             case "exposed": return fwd.autoDetected ? `Auto :${fwd.kind.targetPort}` : `Exposed :${fwd.kind.targetPort}`;
         }
     }

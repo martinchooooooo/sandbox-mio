@@ -1,15 +1,18 @@
 //! Machine-spec probing, model downloads, and local inference server lifecycle.
 
+use std::sync::Arc;
+
 use tauri::{ipc::Channel, State};
 
 use crate::activity;
 use crate::activity::types::TaskKind;
 use crate::error::AppError;
 use crate::inference;
+use crate::network::types::NetworkManager;
+use crate::services;
 use crate::inference::types::{
     ActiveServer, EngineKind, InferenceStatus, MachineSpecs, MachineSpecsCache, SetupStep,
 };
-use crate::sync;
 
 /// Probe host CPU/RAM/GPU/NPU and Foundry availability (runs on host, uses cache after first call).
 #[tauri::command]
@@ -107,35 +110,19 @@ pub async fn start_inference(
     .await?;
     tracing::info!(target: "inference", base_url = %handle.base_url, model_id = %handle.model_id, "server ready");
 
-    // The inference server is reached from inside the Podman VM regardless of which provider a
-    // sandbox runs on; microsandbox instances dial the same host loopback through their own netns.
-    let connection = crate::backends::connection_name();
-    match crate::backends::ensure_connection_alias(&connection).await {
-        Ok(()) => {
-            if let Err(e) = sync::forward_create_reverse(
-                &app,
-                inference::INFERENCE_FORWARD,
-                &connection,
-                sync::INFERENCE_VM_PORT,
-                handle.port,
-            )
-            .await
-            {
-                tracing::warn!(target: "inference", error = %e, "inference reverse forward failed");
-            }
-        }
-        Err(e) => {
-            tracing::warn!(target: "inference", error = %e, "could not resolve connection alias for inference forward");
-        }
-    }
-
     let status = handle.status();
     *guard = Some(handle);
+    // Waits on the `ActiveServer` lock this command still holds, so it sees the new server.
+    services::inference_reach::spawn_ensure_all(&app);
     Ok(status)
 }
 
 #[tauri::command]
-pub async fn stop_inference(active: State<'_, ActiveServer>, app: tauri::AppHandle) -> Result<(), AppError> {
+pub async fn stop_inference(
+    active: State<'_, ActiveServer>,
+    network: State<'_, Arc<dyn NetworkManager>>,
+    app: tauri::AppHandle,
+) -> Result<(), AppError> {
     let handle = active.lock().await.take();
     if let Some(handle) = handle {
         let engine = inference::engine_for(handle.engine, &app);
@@ -143,9 +130,9 @@ pub async fn stop_inference(active: State<'_, ActiveServer>, app: tauri::AppHand
     }
     // Spawned off the critical path: `forward terminate` can take seconds and the frontend
     // awaits this command; a briefly dangling forward just gets connection-refused.
-    let app_for_forward = app.clone();
+    let network = network.inner().clone();
     tauri::async_runtime::spawn(async move {
-        sync::forward_terminate(&app_for_forward, inference::INFERENCE_FORWARD).await;
+        services::inference_reach::close_all(&network).await;
     });
     Ok(())
 }

@@ -6,7 +6,8 @@ import { listen } from "@tauri-apps/api/event";
 export type ServiceKind =
     | { kind: "terminal" }
     | { kind: "agent-web" }
-    | { kind: "exposed"; targetPort: number };
+    | { kind: "exposed"; targetPort: number }
+    | { kind: "inference" };
 
 export type ForwardInfo = {
     sandbox: string;

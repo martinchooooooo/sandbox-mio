@@ -1,4 +1,4 @@
-//! Mutagen-forward lifecycle and port allocation for terminal/agent-web and user-exposed ports.
+//! Mutagen-forward lifecycle and port allocation for terminal/agent-web, inference and user-exposed ports.
 
 pub mod types;
 
@@ -23,6 +23,7 @@ fn forward_name(sandbox: &str, kind: ServiceKind) -> String {
         ServiceKind::Terminal => format!("terminal-{sandbox}"),
         ServiceKind::AgentWeb => format!("agentweb-{sandbox}"),
         ServiceKind::Exposed(port) => format!("expose-{sandbox}-{port}"),
+        ServiceKind::Inference => format!("inference-{sandbox}"),
     }
 }
 
@@ -111,6 +112,34 @@ impl NetworkManager for MutagenNetworkManager {
         );
         self.emit_forwards();
         Ok(host_port)
+    }
+
+    async fn open_reverse_forward(
+        &self,
+        sandbox: &str,
+        kind: ServiceKind,
+        alias: &str,
+        guest_port: u16,
+        host_port: u16,
+    ) -> Result<(), NetworkError> {
+        let name = forward_name(sandbox, kind);
+        crate::sync::forward_create_reverse(&self.app, &name, alias, guest_port, host_port)
+            .await?;
+        self.forwards.lock().unwrap().insert(
+            (sandbox.to_string(), kind),
+            ForwardInfo {
+                sandbox: sandbox.to_string(),
+                kind,
+                host_port,
+                connection: alias.to_string(),
+                remote_port: guest_port,
+                forward_name: name,
+                label: None,
+                auto_detected: false,
+            },
+        );
+        self.emit_forwards();
+        Ok(())
     }
 
     async fn close_forward(&self, sandbox: &str, kind: ServiceKind) {
@@ -358,13 +387,15 @@ async fn poll_ports_file(
                     _ => None,
                 })
                 .collect();
-            // A pane's own server (zellij, paseo) listens in the sandbox too and must not be
-            // auto-exposed as a user port.
+            // A pane's own server (zellij, paseo) and the inference forward's guest listener sit
+            // in the sandbox too and must not be auto-exposed as user ports.
             let exclude = exposed_for_sandbox
                 .iter()
                 .map(|f| match f.kind {
                     ServiceKind::Exposed(p) => p,
-                    ServiceKind::Terminal | ServiceKind::AgentWeb => f.remote_port,
+                    ServiceKind::Terminal | ServiceKind::AgentWeb | ServiceKind::Inference => {
+                        f.remote_port
+                    }
                 })
                 .collect();
             (auto_tracked, exclude)

@@ -324,5 +324,6 @@
   "dashboard_summary_network_unhealthy": "сбой",
   "dashboard_summary_network_recorded": "запись идёт",
   "dashboard_summary_ports": [{"declarations":["input count","local countPlural = count: plural"],"selectors":["countPlural"],"match":{"countPlural=one":"{count} порт открыт","countPlural=few":"{count} порта открыто","countPlural=many":"{count} портов открыто","countPlural=other":"{count} порта открыто"}}],
-  "dashboard_summary_local": "Локально"
+  "dashboard_summary_local": "Локально",
+  "ports_kind_local_model": "Локальная модель"
 }

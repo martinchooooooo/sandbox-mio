@@ -324,5 +324,6 @@
   "dashboard_summary_network_unhealthy": "unhealthy",
   "dashboard_summary_network_recorded": "recorded",
   "dashboard_summary_ports": [{"declarations":["input count","local countPlural = count: plural"],"selectors":["countPlural"],"match":{"countPlural=one":"{count} port open","countPlural=other":"{count} ports open"}}],
-  "dashboard_summary_local": "Local"
+  "dashboard_summary_local": "Local",
+  "ports_kind_local_model": "Local model"
 }

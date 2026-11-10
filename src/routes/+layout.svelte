@@ -17,6 +17,8 @@
     import WorkspaceContent from "$lib/workspace/WorkspaceContent.svelte";
     import { ensureNetworkState } from "$lib/network/state.svelte";
     import { ensureOnboardingState, onboardingCompleted } from "$lib/settings/onboarding.svelte";
+    import { reprovisionInstalledAgents } from "$lib/agents/reprovision";
+    import type { InferenceStatus } from "$lib/models/types";
     import { m } from "$lib/paraglide/messages.js";
     import { rise } from "$lib/motion";
     import type { Snippet } from "svelte";
@@ -96,6 +98,18 @@
         }
     }
 
+    // Once per app run, from the main-navigation-panel webview only, like `checkForUpdate`.
+    async function reprovisionAtStartup() {
+        let runningModelId: string | null = null;
+        try {
+            const status = await invoke<InferenceStatus>("inference_status");
+            runningModelId = status.running ? status.modelId : null;
+        } catch {
+            runningModelId = null;
+        }
+        await reprovisionInstalledAgents(runningModelId);
+    }
+
     onMount(() => {
         (async () => {
             try {
@@ -107,7 +121,10 @@
             await ensureWorkspaceState();
             await ensureNetworkState();
             await ensureOnboardingState();
-            if (isNavigationPanel) checkForUpdate();
+            if (isNavigationPanel) {
+                checkForUpdate();
+                reprovisionAtStartup();
+            }
         })();
     });
 </script>
