@@ -437,10 +437,9 @@ export const config: WebdriverIO.Config = {
     // the test model's own subdirectory is deleted.
     fs.rmSync(path.join(APP_DATA_MODELS, TEST_MODEL.id), { recursive: true, force: true });
 
-    // Tear down real-infra-only state. A light run writes neither the SSH alias nor the remote
-    // machine, so both used to be pure collateral damage against a concurrent standard-tier run in
-    // another worktree; the host lock above now also means no *other* real-infra run can be mid-way
-    // through writing them when this runs.
+    // Real-infra runs only: a light run's creates write just their own alias blocks, which destroy
+    // removes, so deleting the shared file here would wipe a concurrent standard run's aliases.
+    // The host lock means no other real-infra run is mid-way through writing them.
     if (!IS_LIGHT_RUN) {
       // Remove the SSH alias block the app's deploy flow wrote under ~/.ssh/sandbox-mio/config
       // and strip the one-time Include line from ~/.ssh/config so the user's file is left clean.

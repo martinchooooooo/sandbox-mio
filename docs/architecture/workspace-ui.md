@@ -20,6 +20,7 @@ sources:
   - resource: docs/features/nav-responsive/02_dev.md
   - resource: docs/features/web-terminal/02_dev.md
   - resource: docs/features/manage-dashboard-redesign/02_dev.md
+  - resource: docs/features/techdebt-sweep/02_dev.md
 ---
 # Workspace UI: Window, Panes and Tabs
 

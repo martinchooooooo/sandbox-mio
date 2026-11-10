@@ -2,7 +2,7 @@
 type: feature
 title: "sandbox-runtime-management"
 description: "Record installed software with mise and reproduce it on a remote host at deploy."
-status: in-progress
+status: implemented
 architecture: [docs/architecture/providers.md, docs/architecture/remote.md]
 ---
 
@@ -12,4 +12,4 @@ Record installed software with mise and reproduce it on a remote host at deploy.
 
 ## Status note
 
-Phases A-C and the reproduce engine of D implemented; deploy verification remains.
+Phases A-D implemented. The deploy verification passed on 2026-11-10: `runtime-management.spec.ts` (asserting the mise flow) and `deploy-remote.spec.ts`, both in the `standard` tier.

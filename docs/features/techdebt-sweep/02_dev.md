@@ -5,7 +5,7 @@ feature: techdebt-sweep
 ---
 # Tech Debt Sweep — Build Plan
 
-Build plan for resolving the tech debt found by a 2026-11-07 audit of `NOTES.md`, `docs/techdebt.md`, every `04_improvements.md`, and the code's `TODO` markers, each checked against the code at commit `f11be30`. There is no `01_ideas.md`: the audit findings and the maintainer's decisions are recorded here directly. Status: Phases A–J implemented, each as its own commit on `feat/proxy-traffic-viewer`; Phase K (integration, harness fixes, real-infrastructure verification, close-out) remains.
+Build plan for resolving the tech debt found by a 2026-11-07 audit of `NOTES.md`, `docs/techdebt.md`, every `04_improvements.md`, and the code's `TODO` markers, each checked against the code at commit `f11be30`. There is no `01_ideas.md`: the audit findings and the maintainer's decisions are recorded here directly. Status: Phases A–K implemented. Phases A–J landed as one commit each on `feat/proxy-traffic-viewer`, and Phase K closed the sweep with the `standard` tier run of 2026-11-10.
 
 ## The Concrete Model
 
@@ -123,7 +123,7 @@ Problem: `ssh::remove_alias` (`src-tauri/src/ssh/mod.rs`) has no caller, so `des
 - Replace every `TODO(i18n)` literal in `src/routes/projects/NetPolicyEditor.svelte`, `src/lib/machine/MachineSteps.svelte`, `src/routes/projects/ProxyPanel.svelte`, `src/routes/projects/TrafficPanel.svelte`, `src/lib/welcome/WelcomeFlow.svelte`, `src/routes/projects/CreateSandboxItem.svelte`, `src/routes/+page.svelte`, `src/lib/activity/activity.svelte.ts` and `src/lib/providers.ts` with Paraglide keys in `messages/en.json`, `messages/de.json` and `messages/ru.json`, per the root `AGENTS.md` Translations section.
 - No `TODO(i18n)` marker remains in those nine files.
 
-## Remaining: Phase K — Integration and close-out
+## Implemented: Phase K — Integration and close-out
 
 Runs after the six work units merge.
 
@@ -137,6 +137,8 @@ Runs after the six work units merge.
 - When `deploy-remote` and `runtime-management` pass, set `sandbox-runtime-management` to `implemented`.
 - Update `docs/architecture/` where a phase changed the picture and the phase did not already: `providers.md` (staged msb, bounded calls), `transport.md` (single reachability model), `agents.md` (GitHub token credential), `workspace-ui.md` (no secret in the workspace).
 - Set this feature to `implemented` and add the `**Implement**` log entry.
+
+Outcome (2026-11-10): the full `standard` tier passed 15 of 16 spec files. `podman-startup-recovery` failed only because its app instance never loaded the UI, and it passed 7 of 7 when re-run alone. Every Phase K spec therefore passed against real Podman, `microsandbox-egress-allowlist` on a real microVM. The intermittent never-loaded app launch also failed 4 and then 2 of 14 `light` spec files in two full runs, and each of those passed on re-run. It predates this sweep and is deferred in `docs/features/techdebt-sweep/04_improvements.md`. The optional `heavy` `local-llm` spec was not run. `docs/architecture/providers.md` also gained the guarded single bring-up of Phase C and was trimmed back under the word budget.
 
 ## Lifecycle and Cross-Cutting Concerns
 

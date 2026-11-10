@@ -4,7 +4,7 @@ title: "Providers, Machines and the Process Layer"
 description: "The Podman and microsandbox engines behind one provider seam, how each is made ready on the host, and how every external process is run."
 generated:
   by: claude-code/opus-5-5
-  at: 2026-11-08T01:00:00+11:00
+  at: 2026-11-10T23:30:00+11:00
 stale_after: 2027-02-05T00:00:00+11:00
 code:
   - src-tauri/src/provider/
@@ -17,17 +17,18 @@ sources:
   - resource: docs/features/podman-startup-recovery/02_dev.md
   - resource: docs/features/podman-process-isolation/02_dev.md
   - resource: docs/features/sandbox-runtime-management/02_dev.md
+  - resource: docs/features/techdebt-sweep/02_dev.md
 ---
 # Providers, Machines and the Process Layer
 
-A sandbox runs on one of two engines, Podman or microsandbox, behind one provider seam. This document covers how the engines differ, how each is made ready, and the process layer every external binary runs through.
+A sandbox runs on Podman or microsandbox behind one provider seam. This document covers how the engines differ, how each is made ready, and the process layer.
 
 ## The Provider Seam
 
 - A provider exposes an engine-neutral instance API: build or load the base image; create, start, stop, recreate and remove instances; run commands inside them; manage sidecars and networks.
-- Create takes a provider-neutral spec (name, image, workspace, environment, network, optional egress policy). Each provider translates the spec into its own engine's flags.
+- Create takes a provider-neutral spec (name, image, workspace, environment, network, optional egress policy) that each provider translates into its own engine's flags.
 - Each provider declares its capabilities as flags. The frontend hides controls a provider cannot honour, and the backend refuses them as a second gate.
-- The engine is chosen per sandbox at create, defaulting to an app setting. Which engine runs a sandbox is never stored: the registry asks each engine in turn, Podman first. Sandbox names are unique across both engines.
+- The engine is chosen per sandbox at create, defaulting to an app setting, and is never stored: the registry asks each engine in turn, Podman first. Sandbox names are unique across both engines.
 
 ## Comparison
 
@@ -44,9 +45,9 @@ A sandbox runs on one of two engines, Podman or microsandbox, behind one provide
 
 ## Podman Machine Readiness
 
-- Machine lifecycle (WSL install, machine init and start, API socket activation, readiness polling) always targets the default Podman machine, never the connection that container calls use, because a connection may name a remote host that no machine command can act on.
-- At startup the frontend asks whether Podman is ready. A stopped machine or missing socket surfaces as a recoverable error, and starting the machine runs as an activity.
-- First run provisions WSL and the machine through the stepped setup flow shown in onboarding.
+- Machine lifecycle (WSL install, machine init and start, socket activation, readiness polling) always targets the default Podman machine, never the container connection, which may name a remote host no machine command can act on.
+- At startup a stopped machine or missing socket surfaces as a recoverable error; starting the machine runs as an activity.
+- Onboarding's stepped setup and the projects page's recovery run one guarded bring-up: it never starts a running machine and never shuts WSL down while another machine runs.
 
 ## microsandbox Readiness
 
@@ -56,10 +57,10 @@ A sandbox runs on one of two engines, Podman or microsandbox, behind one provide
 
 ## The Process Layer
 
-- Every external binary is spawned with a windowless console of its own, and the app clears handle inheritance at startup. Without both, packaged builds flash a console window per call and terminal-launched dev builds can hang on inherited handles.
-- One-shot calls go through a runner seam with real and scripted implementations; the scripted runners back the `light` test tier ([Testing](testing.md)). Streaming calls (interactive exec, event streams) bypass the seam and must check the mock switch themselves.
-- Only one container event stream runs at a time: a new subscription ends the previous one and its Podman process. A frontend reload subscribes again, and the old stream cannot tell on its own that its page is gone.
-- Podman calls carry per-call-shape timeouts. A timeout trips a process-wide breaker: while the breaker is open, one probe call at a time is let through and every other call fails fast, until any answer closes it.
+- Every external binary gets a windowless console of its own, and the app clears handle inheritance at startup; otherwise packaged builds flash a window per call and terminal-launched dev builds can hang.
+- One-shot calls go through a runner seam whose scripted implementations back the `light` test tier ([Testing](testing.md)). Streaming calls (interactive exec, event streams) bypass the seam and must check the mock switch themselves.
+- Only one container event stream runs at a time: a new subscription, such as a frontend reload's, ends the previous one and its Podman process, since the old stream cannot tell its page is gone.
+- Podman calls carry per-call-shape timeouts. A timeout trips a process-wide breaker: while it is open, one probe call at a time goes through and the rest fail fast until an answer closes it.
 - msb and Mutagen one-shot calls are bounded too; a timeout kills only the called process, never a VM it started.
 - The bundled `msb` runs from a copy staged in the app-data root, so a running VM never locks the app's own files.
 

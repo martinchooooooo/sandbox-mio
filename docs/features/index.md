@@ -4,8 +4,6 @@
 ## in-progress
 
 * [retro-ui-migration](retro-ui-migration/index.md) - Re-skin the UI primitives with the retro-ui-svelte registry (Sunset Orange, rounded).
-* [sandbox-runtime-management](sandbox-runtime-management/index.md) - Record installed software with mise and reproduce it on a remote host at deploy.
-* [techdebt-sweep](techdebt-sweep/index.md) - Resolve the open tech debt found by the 2026-11-07 audit: msb build locks, duplicated Podman bring-up, the legacy relay path, secrets on disk and in logs, unbounded calls.
 
 ## planned
 
@@ -56,8 +54,10 @@
 * [remote-terminal](remote-terminal/index.md) - The in-app Zellij web terminal for sandboxes deployed on a remote host, via a Mutagen forward.
 * [responsive-panel](responsive-panel/index.md) - Make the embedded workspace's global panel content adapt to narrow widths.
 * [sandbox-list-create](sandbox-list-create/index.md) - Inline create-sandbox item at the bottom of the sandbox list, with an existing-folder option.
+* [sandbox-runtime-management](sandbox-runtime-management/index.md) - Record installed software with mise and reproduce it on a remote host at deploy.
 * [scriptable-mock-backend](scriptable-mock-backend/index.md) - Runtime-scriptable mocks so light e2e specs can simulate failures and non-happy states.
 * [shared-agent-auth](shared-agent-auth/index.md) - Host-side credential store so an agent login is done once and reused across sandboxes.
+* [techdebt-sweep](techdebt-sweep/index.md) - Resolve the open tech debt found by the 2026-11-07 audit: msb build locks, duplicated Podman bring-up, the legacy relay path, secrets on disk and in logs, unbounded calls.
 * [web-terminal](web-terminal/index.md) - Interactive Zellij web terminal for each sandbox, shown inside the app.
 * [welcome-onboarding](welcome-onboarding/index.md) - First-run hero and onboarding flow that sets up the VM and base image.
 * [workspace-app-tabs](workspace-app-tabs/index.md) - Open a sandbox on a Manage launcher tab and let the user open app tabs from it.

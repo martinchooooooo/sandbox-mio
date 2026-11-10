@@ -10,8 +10,6 @@
 
 ## In-flight plans
 
-* [sandbox-runtime-management](../features/sandbox-runtime-management/index.md) - in-progress, changes providers.md, remote.md: Record installed software with mise and reproduce it on a remote host at deploy.
-* [techdebt-sweep](../features/techdebt-sweep/index.md) - in-progress, changes providers.md, transport.md, agents.md, workspace-ui.md: Resolve the open tech debt found by the 2026-11-07 audit: msb build locks, duplicated Podman bring-up, the legacy relay path, secrets on disk and in logs, unbounded calls.
 * [host-tool-ssh-access](../features/host-tool-ssh-access/index.md) - planned, changes transport.md: Let host SSH clients (e.g. the Claude Code desktop app) attach to a sandbox over the existing exec transport.
 * [proxy-credential-secrets](../features/proxy-credential-secrets/index.md) - planned, changes network.md, agents.md: Source proxy secret-injection values from the credential store instead of hand-entered values.
 * [proxy-network-policy](../features/proxy-network-policy/index.md) - planned, changes network.md: Domain allow/deny and interactive approval for Podman sandboxes through the mitmproxy sidecar.

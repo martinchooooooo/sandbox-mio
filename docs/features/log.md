@@ -7,6 +7,8 @@ approximate. New entries go on top.
 
 ## 2026-11-10
 
+* **Implement** [techdebt-sweep](techdebt-sweep/index.md): Phases A–K, closed out by the `standard` tier run
+* **Implement** [sandbox-runtime-management](sandbox-runtime-management/index.md): mise deploy verification passed (`runtime-management`, `deploy-remote`)
 * **Implement** [local-llm-reachability](local-llm-reachability/index.md): per-sandbox inference forward for Podman and microsandbox, unified agent provisioning
 * **Create** [local-llm-reachability](local-llm-reachability/index.md): ideation drafted
 

@@ -22,6 +22,7 @@ sources:
   - resource: docs/features/pi-agent/02_dev.md
   - resource: docs/features/agent-web-ui/02_dev.md
   - resource: docs/features/local-llm-reachability/02_dev.md
+  - resource: docs/features/techdebt-sweep/02_dev.md
 ---
 # Coding Agents and Credentials
 
