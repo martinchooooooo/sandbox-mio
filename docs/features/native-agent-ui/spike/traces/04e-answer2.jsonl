@@ -1,0 +1,2 @@
+{"offset":116169,"bytes":155,"ms":1476,"record":{"type":"extension_ui_request","id":"aead44ed-e25a-4a66-9d3f-4818c0aa3548","method":"notify","message":"spikeconfirm answered: false","notifyType":"info"}}
+{"offset":116324,"bytes":97,"ms":1477,"record":{"id":"x2","type":"response","command":"prompt","success":true,"data":{"disposition":"handled"}}}

@@ -10,6 +10,7 @@
 
 ## In-flight plans
 
+* [native-agent-ui](../features/native-agent-ui/index.md) - in-progress, changes agents.md, workspace-ui.md, inference.md: Built-in chat UI in the app's own frontend, driving pi inside the sandbox over its RPC mode, kept alive by an in-sandbox supervisor.
 * [onboarding-story](../features/onboarding-story/index.md) - in-progress, changes workspace-ui.md: Illustrated onboarding book inside the welcome flow, extensible by chapter, with first-run setup running in the background and reported through the activity center.
 * [host-tool-ssh-access](../features/host-tool-ssh-access/index.md) - planned, changes transport.md: Let host SSH clients (e.g. the Claude Code desktop app) attach to a sandbox over the existing exec transport.
 * [proxy-credential-secrets](../features/proxy-credential-secrets/index.md) - planned, changes network.md, agents.md: Source proxy secret-injection values from the credential store instead of hand-entered values.
@@ -19,4 +20,3 @@
 * [proxy-toggle-management](../features/proxy-toggle-management/index.md) - planned, changes network.md, providers.md: App-global proxy default and turning the proxy on or off for an existing sandbox by recreating it.
 * [tailscale-access](../features/tailscale-access/index.md) - planned, changes remote.md: Join deployed sandboxes to the user's tailnet so their web services are reachable from other devices.
 * [cloud-sandboxes](../features/cloud-sandboxes/index.md) - idea, changes remote.md: Top-level Cloud Sandboxes nav panel for administering remote Podman hosts, including Oracle Cloud and Google Cloud provisioning.
-* [native-agent-ui](../features/native-agent-ui/index.md) - idea, changes agents.md, workspace-ui.md: Built-in chat UI in the app's own frontend, driving pi inside the sandbox over its RPC mode, kept alive by an in-sandbox supervisor.

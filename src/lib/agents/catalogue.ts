@@ -1,4 +1,5 @@
 import type { AgentDescriptor, OnboardingSeed } from "./types";
+import { PI_PINNED_VERSION } from "./pi";
 
 export const AGENTS: AgentDescriptor[] = [
   {
@@ -45,7 +46,7 @@ export const AGENTS: AgentDescriptor[] = [
     id: "pi",
     label: "Pi",
     description: "Minimal terminal coding agent, pre-wired to your local LLM",
-    misePackages: ["pi"],
+    misePackages: [`pi@${PI_PINNED_VERSION}`],
     postInstallSteps: [],
     provision: { kind: "pi-provider", providerId: "local-llm", relativeConfigPath: ".mio/pi-agent/models.json" },
     // The local LLM is reached through the reverse forward, which is not egress.

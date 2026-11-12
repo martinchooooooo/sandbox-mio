@@ -18,7 +18,7 @@ pub struct AppSettings {
     pub inference_engine: EngineKind,
     /// Llama-specific: GPU layer offload count; `None` = auto-detect.
     pub llama_gpu_layers: Option<u32>,
-    /// Llama-specific: context window size; `None` = model default.
+    /// Llama-specific: context window size; `None` = `DEFAULT_LLAMA_CTX_SIZE` in `inference/llama.rs`.
     pub llama_ctx_size: Option<u32>,
     /// Whether the user has finished the welcome/onboarding flow. Absent from a settings file
     /// written before the feature, so an existing install deserializes as not yet onboarded.

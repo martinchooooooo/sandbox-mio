@@ -23,17 +23,21 @@ pub enum WorkspaceError {
 pub enum AppKind {
     Terminal,
     AgentWeb,
+    /// The native agent chat, rendered by the main webview: no child webview and no forward.
+    AgentChat,
 }
 
-/// One embedded app surface: a content child webview plus the Mutagen forward backing its URL.
+/// One app surface. Terminal and AgentWeb are a content child webview plus the Mutagen forward
+/// backing its URL; a native pane (AgentChat) has neither, so `forward_name` and `url` are `None`
+/// (`docs/features/native-agent-ui/02_dev.md`, Resolved Decision 14).
 #[derive(Debug, Clone, Serialize)]
 pub struct AppPane {
     pub label: String,
     pub sandbox: String,
     pub workspace_path: String,
-    pub forward_name: String,
+    pub forward_name: Option<String>,
     pub kind: AppKind,
-    pub url: String,
+    pub url: Option<String>,
 }
 
 /// Inputs for embedding the terminal as a content child webview. Produced by

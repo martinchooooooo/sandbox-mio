@@ -1,0 +1,2 @@
+{"type":"extension_ui_request","id":"819f15d8-b57c-41ee-8859-2504daf84c8e","method":"notify","message":"spikeconfirm answered: true","notifyType":"info"}
+{"id":"x1","type":"response","command":"prompt","success":true,"data":{"disposition":"handled"}}

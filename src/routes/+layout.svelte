@@ -12,6 +12,8 @@
         hasTabs as hasTabsStore,
         activeSandboxName,
         activeAppLabel,
+        activePane,
+        type AppPane,
     } from "$lib/workspace/state.svelte";
     import NavigationColumn from "$lib/workspace/NavigationColumn.svelte";
     import WorkspaceContent from "$lib/workspace/WorkspaceContent.svelte";
@@ -43,6 +45,8 @@
     const collapsed = $derived(isCollapsed());
     const hasTabs = $derived(hasTabsStore());
     const dashboardSandbox = $derived(activeAppLabel() === null ? activeSandboxName() : null);
+    // A native pane has no webview of its own, so the main webview renders it in the content area.
+    const chatPane = $derived(activePane()?.kind === "agentchat" ? activePane() : null);
     // Whether the switcher/content column exists at all: either a Terminal/AgentWeb pane is open
     // somewhere, or the user has navigated to a sandbox's Dashboard. With neither, the nav column
     // is the whole window, same as before any workspace existed.
@@ -53,9 +57,13 @@
     let workspaceLeaving = $state(false);
     const dockNavigation = $derived(showWorkspaceChrome || workspaceLeaving);
     // Held while the column fades out, so it leaves with its content rather than going blank first.
-    let lastWorkspace = { hasTabs: false, dashboardSandbox: null as string | null };
+    let lastWorkspace = {
+        hasTabs: false,
+        dashboardSandbox: null as string | null,
+        chatPane: null as AppPane | null,
+    };
     const workspace = $derived.by(() => {
-        if (showWorkspaceChrome) lastWorkspace = { hasTabs, dashboardSandbox };
+        if (showWorkspaceChrome) lastWorkspace = { hasTabs, dashboardSandbox, chatPane };
         return lastWorkspace;
     });
 
@@ -152,7 +160,11 @@
                 onoutrostart={() => (workspaceLeaving = true)}
                 onoutroend={() => (workspaceLeaving = false)}
             >
-                <WorkspaceContent hasTabs={workspace.hasTabs} dashboardSandbox={workspace.dashboardSandbox} />
+                <WorkspaceContent
+                    hasTabs={workspace.hasTabs}
+                    dashboardSandbox={workspace.dashboardSandbox}
+                    chatPane={workspace.chatPane}
+                />
             </div>
         {/if}
     {:else}

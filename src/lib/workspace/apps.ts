@@ -1,8 +1,9 @@
-import { Home01Icon, TerminalIcon, BotIcon } from "@hugeicons/core-free-icons";
+import { Home01Icon, TerminalIcon, BotIcon, AiChat02Icon } from "@hugeicons/core-free-icons";
 import { m } from "$lib/paraglide/messages.js";
+import type { AgentDescriptor } from "$lib/agents/types";
 import type { AppKind } from "./state.svelte";
 
-export type LaunchContext = { installedAgents: unknown[] };
+export type LaunchContext = { installedAgents: AgentDescriptor[] };
 
 export type AppDescriptor = {
     kind: AppKind;
@@ -33,5 +34,13 @@ export const LAUNCHABLE_APPS: AppDescriptor[] = [
         icon: BotIcon,
         command: "open_agent_web",
         available: (ctx) => ctx.installedAgents.length > 0,
+    },
+    {
+        kind: "agentchat",
+        title: () => "Chat", // TODO(i18n)
+        icon: AiChat02Icon,
+        command: "open_agent_chat",
+        // The native chat drives pi only (docs/features/native-agent-ui/02_dev.md).
+        available: (ctx) => ctx.installedAgents.some((a) => a.id === "pi"),
     },
 ];

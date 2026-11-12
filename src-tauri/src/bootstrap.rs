@@ -110,6 +110,7 @@ impl Bootstrap {
             app.state::<Arc<dyn SyncEngine>>().inner().clone(),
             registry.clone(),
         ));
+        app.manage(crate::agent_host::default_agent_host(registry.clone()));
         app.manage(WorkspaceRegistry::default());
         app.manage(crate::proxy::flowlog::FlowWatchRegistry::default());
         app.manage(AuthSessionMap::default());
@@ -146,9 +147,12 @@ fn staged_msb_dir(app: &tauri::AppHandle, bundled: std::path::PathBuf) -> std::p
     })
 }
 
-/// Stops the active inference server, closes its forwards and shuts the sync engine down on exit.
+/// Stops the active inference server, closes its forwards, ends every chat attach stream and shuts
+/// the sync engine down on exit.
 pub fn on_run_event(app_handle: &tauri::AppHandle, event: tauri::RunEvent) {
     if let tauri::RunEvent::Exit = event {
+        let agent_host = app_handle.state::<Arc<dyn crate::agent_host::types::AgentHost>>().inner().clone();
+        tauri::async_runtime::block_on(agent_host.detach_all());
         let active = app_handle.state::<ActiveServer>();
         let network = app_handle.state::<Arc<dyn NetworkManager>>().inner().clone();
         let app_for_stop = app_handle.clone();

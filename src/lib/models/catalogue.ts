@@ -20,6 +20,8 @@ export const MODELS: ModelDescriptor[] = [
     },
     // The text-only Foundry variant; GPU and CPU builds only, no NPU build.
     foundryAlias: "qwen3.5-2b-text",
+    contextWindow: 262_144,
+    reasoning: true,
   },
   {
     id: "qwen3.5-4b",
@@ -33,6 +35,8 @@ export const MODELS: ModelDescriptor[] = [
       sizeBytes: 2_740_937_888,
     },
     foundryAlias: "qwen3.5-4b",
+    contextWindow: 262_144,
+    reasoning: true,
   },
   {
     id: "qwen3.5-9b",
@@ -46,6 +50,8 @@ export const MODELS: ModelDescriptor[] = [
       sizeBytes: 5_680_522_464,
     },
     foundryAlias: null,
+    contextWindow: 262_144,
+    reasoning: true,
   },
   {
     id: "gemma-4-12b-it",
@@ -60,6 +66,8 @@ export const MODELS: ModelDescriptor[] = [
     },
     // Foundry ships only the smaller gemma-4-e2b-it.
     foundryAlias: null,
+    contextWindow: 131_072,
+    reasoning: true,
   },
   {
     id: "gpt-oss-20b",
@@ -74,6 +82,8 @@ export const MODELS: ModelDescriptor[] = [
     },
     // Foundry lists gpt-oss-20b for chat only, without tool calling, which coding agents need.
     foundryAlias: null,
+    contextWindow: 131_072,
+    reasoning: true,
   },
   {
     id: "devstral-small-2-24b",
@@ -87,6 +97,8 @@ export const MODELS: ModelDescriptor[] = [
       sizeBytes: 14_330_000_000,
     },
     foundryAlias: null,
+    contextWindow: 262_144,
+    reasoning: false,
   },
   {
     id: "qwen3.8-27b",
@@ -100,6 +112,8 @@ export const MODELS: ModelDescriptor[] = [
       sizeBytes: 16_464_440_224,
     },
     foundryAlias: null,
+    contextWindow: 262_144,
+    reasoning: true,
   },
   {
     id: "qwen3.6-35b-a3b",
@@ -115,6 +129,8 @@ export const MODELS: ModelDescriptor[] = [
     // Mixture of experts with ~3B active parameters: larger download, but faster per token than
     // the dense 27B on CPU and integrated GPUs.
     foundryAlias: null,
+    contextWindow: 262_144,
+    reasoning: true,
   },
 ];
 
@@ -137,6 +153,8 @@ export function testModelFromEnv(raw: string | undefined): ModelDescriptor | nul
       ramFloorBytes: GB,
       llama: { repo: m.repo, file: m.file, sha256: m.sha256, sizeBytes: m.sizeBytes },
       foundryAlias: null,
+      contextWindow: 32_768,
+      reasoning: false,
     };
   } catch {
     return null;

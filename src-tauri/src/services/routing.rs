@@ -51,6 +51,11 @@ impl SandboxRouter {
         Ok(SandboxRoute { machine, forward_alias: name.to_string() })
     }
 
+    /// Whether `machine` is its provider's local machine, i.e. not a deploy target.
+    pub fn is_local(&self, machine: &MachineRef) -> bool {
+        *machine == self.registry.local_ref(machine.provider)
+    }
+
     /// [`Self::locate`] plus the managed `~/.ssh` block for the route's alias. Every forward opened
     /// against a route needs this: unlike the container, the SSH config is not guaranteed to
     /// survive between app runs, so the block is rewritten on every call.

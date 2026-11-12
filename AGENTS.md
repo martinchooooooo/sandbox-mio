@@ -82,21 +82,38 @@ This project uses [shadcn-svelte](https://shadcn-svelte.com) for UI primitives, 
 When building UI features, always check `src/lib/components/ui/` first and reach for an existing component before writing custom markup.
 
 Currently available components:
+- `alert` (Root, Title, Description)
+- `badge`
 - `button`
+- `card` (Root, Header, Title, Description, Action, Content, Footer)
 - `collapsible`
 - `command` (includes `command-dialog`)
 - `dialog`
+- `dropdown-menu`
+- `empty` (Root, Header, Media, Title, Description, Content) — retro-ui-svelte has no `empty` registry item; pulled from shadcn-svelte and hand-restyled, like `field`
 - `field` (Field.Set, Field.Group, Field.Field, Field.Label, Field.Description, Field.Error, etc.) — retro-ui-svelte has no `field` registry item; this component keeps shadcn-svelte markup, restyled by hand to match the retro look (see `docs/features/retro-ui-migration/02_dev.md`)
+- `hover-card`
 - `input`
 - `input-group` — retro-ui-svelte has no `input-group` registry item either; same hand-restyle situation as `field`
+- `item` (Root, Group, Media, Content, Title, Description, Actions, Header, Footer, Separator) — retro-ui-svelte has no `item` registry item; pulled from shadcn-svelte and hand-restyled, like `field`
+- `kbd` (Root, Group) — retro-ui-svelte has no `kbd` registry item; pulled from shadcn-svelte and hand-restyled, like `field`
 - `label`
+- `loader` (retro-ui-svelte's animated loading indicator)
+- `popover`
+- `progress`
+- `scroll-area` — retro-ui-svelte has no `scroll-area` registry item; pulled from shadcn-svelte and hand-restyled, like `field`
 - `section-nav` (Root, List, Item, Separator, Content) — vertical section list that collapses to icons with tooltips by container width and mounts only the active section; retro-ui-svelte has no `sidebar` item, so it is hand-built on bits-ui vertical `Tabs` and hand-restyled, like `field` and `input-group` (see `docs/features/manage-dashboard-redesign/02_dev.md`)
+- `select`
 - `separator`
+- `sheet`
 - `sonner` (toast notifications; mount a single `<Toaster />` in `src/routes/+layout.svelte`, call `toast.success`/`toast.error` from `svelte-sonner`)
+- `spinner` — retro-ui-svelte has no `spinner` registry item; pulled from shadcn-svelte as-is (a spinning icon, nothing to restyle)
 - `switch`
 - `tabs`
+- `text` (retro-ui-svelte typography; `as` picks the element and the `font-head` heading style; used by `alert` and `card`)
 - `textarea`
 - `tooltip`
+- `src/lib/components/ai-elements/` holds the building blocks of the shadcn-svelte [AI Elements](https://shadcn-svelte.com/docs/ai-elements), pulled with the shadcn-svelte CLI and hand-restyled to the retro theme: `message-scroller`, `message`, `bubble`, `trace`, `code-block` (with its Shiki `useHighlightedCode` hook and `highlighter`), `attachment` and `marker`. The AI Elements themselves (Chat, Message, Prompt Input, Reasoning, Tool, Queue, Context, Confirmation, Model Selector, …) are documented patterns composed from these plus `ui/` components, not separate components; the `shimmer` and `scroll-fade-*` utilities they use come from `shadcn-svelte/tailwind.css`
 
 ## Adding new components
 

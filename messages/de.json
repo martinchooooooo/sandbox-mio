@@ -154,7 +154,7 @@
   "settings_engine_llama": "llama.cpp (Vulkan) — gebündelt, portabel",
   "settings_engine_foundry": "Foundry Local — NPU/GPU-Beschleunigung (Windows)",
   "settings_llama_gpu_layers": "GPU-Schichten (leer = automatisch)",
-  "settings_llama_ctx_size": "Kontextgröße (leer = Standard)",
+  "settings_llama_ctx_size": "Kontextgröße (leer = 32.768)",
   "settings_foundry_install": "Foundry Local installieren",
   "settings_foundry_installing": "Foundry Local wird installiert…",
   "settings_foundry_installed": "Foundry Local ist installiert.",

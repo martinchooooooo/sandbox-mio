@@ -110,7 +110,7 @@ function killStaleDevProcesses(): void {
     [
       "-NoProfile",
       "-Command",
-      "Get-Process -Name podman,win-sshproxy,gvproxy,sandbox-mio,mutagen -ErrorAction SilentlyContinue | " +
+      "Get-Process -Name podman,msb,win-sshproxy,gvproxy,sandbox-mio,mutagen -ErrorAction SilentlyContinue | " +
         "Where-Object { $_.Path -and $_.Path.StartsWith($env:MIO_DEBUG_DIR, [StringComparison]::OrdinalIgnoreCase) } | " +
         "Stop-Process -Force -ErrorAction SilentlyContinue",
     ],

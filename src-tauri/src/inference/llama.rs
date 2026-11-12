@@ -20,6 +20,9 @@ use crate::settings;
 /// Default GPU offload when the user has not pinned `llama_gpu_layers`. 99 offloads every layer
 /// that fits; llama-server silently caps it to the model's real layer count.
 const DEFAULT_GPU_LAYERS: u32 = 99;
+/// Context size when settings leave it blank. Mirrors `DEFAULT_LLAMA_CTX_SIZE` in
+/// `src/lib/agents/pi.ts`, which provisions pi's `contextWindow` from it; keep the two equal.
+const DEFAULT_LLAMA_CTX_SIZE: u32 = 32_768;
 
 /// Health-poll ceiling. A large model can take tens of seconds to load into RAM/VRAM before
 /// `/health` returns 200, so the timeout is generous (gotcha: never treat the first poll as fatal).
@@ -104,6 +107,7 @@ impl InferenceEngine for LlamaServerEngine {
     ) -> Result<ServerHandle, InferenceError> {
         let cfg = settings::load(&self.app).unwrap_or_default();
         let gpu_layers = cfg.llama_gpu_layers.unwrap_or(DEFAULT_GPU_LAYERS);
+        let ctx_size = cfg.llama_ctx_size.unwrap_or(DEFAULT_LLAMA_CTX_SIZE);
         let exe = self.server_exe()?;
         let engine_dir = self.engine_dir()?;
 
@@ -138,10 +142,8 @@ impl InferenceEngine for LlamaServerEngine {
             .arg(&model_path)
             .args(["--port", &port.to_string()])
             .args(["--host", "127.0.0.1"])
-            .args(["-ngl", &gpu_layers.to_string()]);
-        if let Some(ctx) = cfg.llama_ctx_size {
-            cmd.args(["--ctx-size", &ctx.to_string()]);
-        }
+            .args(["-ngl", &gpu_layers.to_string()])
+            .args(["--ctx-size", &ctx_size.to_string()]);
         let child = cmd.spawn().map_err(|e| InferenceError::Sidecar(e.to_string()))?;
         RuntimeSetupEvent::StepDone {
             id: "launch-server".into(),

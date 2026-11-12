@@ -115,6 +115,27 @@ pub async fn open_agent_web(
     Ok(())
 }
 
+/// Open sandbox's native agent chat pane, or switch to it when it is already open. The pane has no
+/// webview: the main webview renders the chat while it is active.
+#[tauri::command]
+pub fn open_agent_chat(
+    name: String,
+    workspace_path: String,
+    workspaces: State<'_, WorkspaceRegistry>,
+    app: tauri::AppHandle,
+) -> Result<(), AppError> {
+    let exists = workspaces
+        .lock()
+        .unwrap()
+        .apps
+        .iter()
+        .any(|p| p.sandbox == name && p.kind == AppKind::AgentChat);
+    if exists {
+        return workspace::switch_pane(&app, &name, AppKind::AgentChat).map_err(Into::into);
+    }
+    Ok(workspace::open_native_pane(&app, &name, &workspace_path, AppKind::AgentChat)?)
+}
+
 /// Bring sandbox's last-active Terminal/AgentWeb pane to the front. No-op if none is open.
 #[tauri::command]
 pub fn switch_app(name: String, app: tauri::AppHandle) -> Result<(), AppError> {

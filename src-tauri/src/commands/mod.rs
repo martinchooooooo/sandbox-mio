@@ -1,5 +1,6 @@
 //! The Tauri command surface: one file per domain, plus the `generate_handler!` inventory.
 
+pub mod agent_chat;
 pub mod agents;
 pub mod app;
 pub mod credentials;
@@ -38,6 +39,13 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         panes::watch_workspace_ports,
         panes::open_terminal_pane,
         panes::open_agent_web,
+        panes::open_agent_chat,
+        agent_chat::agent_chat_attach,
+        agent_chat::agent_chat_send,
+        agent_chat::agent_chat_detach,
+        agent_chat::agent_chat_takeover,
+        agent_chat::agent_chat_stop,
+        agent_chat::agent_chat_sessions,
         panes::switch_app,
         panes::switch_pane,
         panes::hide_active_pane,

@@ -15,7 +15,9 @@ export type AppErrorKind =
     | "PodmanUnresponsive"
     | "PodmanRebootRequired"
     | "MockControl"
-    | "ProxyDeployUnsupported";
+    | "ProxyDeployUnsupported"
+    | "AgentHost"
+    | "AgentChatDeployed";
 
 /** Structured error sent over the Tauri IPC boundary from every `#[tauri::command]`. */
 export interface AppError {

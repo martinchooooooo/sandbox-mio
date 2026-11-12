@@ -1,3 +1,4 @@
+use crate::agent_host::types::AgentHostError;
 use crate::agents::types::AgentError;
 use crate::backends::types::BackendError;
 use crate::credentials::types::CredentialError;
@@ -66,6 +67,23 @@ pub enum AppError {
     /// backend-error toast (`docs/features/network-proxy/02_dev.md`, Resolved Decision 6).
     #[error("{0}")]
     ProxyDeployUnsupported(String),
+    /// Transparent: native agent chat host error.
+    #[error(transparent)]
+    AgentHost(AgentHostError),
+    /// The native chat was opened for a deployed sandbox. Pulled out of `AgentHost` so the chat can
+    /// show its empty state (`docs/features/native-agent-ui/02_dev.md`, Resolved Decision 11).
+    #[error("{0}")]
+    AgentChatDeployed(String),
+}
+
+/// Hand-written for the same reason as the `BackendError` impl: `Deployed` keeps its own kind.
+impl From<AgentHostError> for AppError {
+    fn from(e: AgentHostError) -> Self {
+        match e {
+            AgentHostError::Deployed => AppError::AgentChatDeployed(e.to_string()),
+            other => AppError::AgentHost(other),
+        }
+    }
 }
 
 /// Hand-written rather than `#[from]`, so the one `BackendError` variant that has its own IPC kind
@@ -111,6 +129,8 @@ impl AppError {
             AppError::PodmanRebootRequired(_) => "PodmanRebootRequired",
             AppError::MockControl(_) => "MockControl",
             AppError::ProxyDeployUnsupported(_) => "ProxyDeployUnsupported",
+            AppError::AgentHost(_) => "AgentHost",
+            AppError::AgentChatDeployed(_) => "AgentChatDeployed",
         }
     }
 }

@@ -31,6 +31,10 @@ export interface ModelDescriptor {
   llama: LlamaModelSource | null;
   /** Foundry catalog alias, or `null` when Foundry has no matching model. */
   foundryAlias: string | null;
+  /** Context window in tokens from the model card; the served window may be smaller. */
+  contextWindow: number;
+  /** Whether the model emits thinking blocks, so agents show a thinking-level control. */
+  reasoning: boolean;
 }
 
 export type ModelRating = "recommended" | "slow" | "wont-fit";

@@ -3,6 +3,8 @@
 @import "shadcn-svelte/tailwind.css";
 @import "@fontsource/archivo-black";
 @import "@fontsource-variable/space-grotesk";
+/* The native chat's markdown renderer ships Tailwind classes Tailwind must scan. */
+@source "../node_modules/svelte-streamdown/**/*";
 
 @custom-variant dark (&:is(.dark *));
 

@@ -3,14 +3,15 @@ import { listen } from "@tauri-apps/api/event";
 
 // Module-scoped store; owns the single `workspace://state` subscription shared by layout and projects list.
 
-export type AppKind = "terminal" | "dashboard" | "agentweb";
+export type AppKind = "terminal" | "dashboard" | "agentweb" | "agentchat";
+/** Mirrors Rust `AppPane`; a native pane (`agentchat`) has no forward and no URL. */
 export type AppPane = {
     label: string;
     sandbox: string;
     workspace_path: string;
-    forward_name: string;
+    forward_name: string | null;
     kind: AppKind;
-    url: string;
+    url: string | null;
 };
 type WorkspaceState = { apps: AppPane[]; active_app: string | null; collapsed: boolean } /* collapsed = NavigationPanel is collapsed */;
 
@@ -43,6 +44,11 @@ export function hasTabs(): boolean {
 
 export function activeAppLabel(): string | null {
     return activeApp;
+}
+
+/** The pane Rust reports as active, or null while the Manage dashboard (or nothing) shows. */
+export function activePane(): AppPane | null {
+    return apps.find((p) => p.label === activeApp) ?? null;
 }
 
 // True if sandbox has an open pane or its Dashboard has been viewed.

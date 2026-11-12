@@ -1,4 +1,5 @@
 mod activity;
+mod agent_host;
 mod agents;
 mod backends;
 mod bootstrap;

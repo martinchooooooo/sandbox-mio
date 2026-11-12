@@ -1,15 +1,15 @@
 // Drives the AppContainer workspace registry (src-tauri/src/workspace/mod.rs) through its Tauri
 // commands. Terminal/AgentWeb panes are the only native surface besides `main-navigation-panel`.
 
-export type AppKind = "terminal" | "agentweb";
+export type AppKind = "terminal" | "agentweb" | "agentchat";
 
 export interface AppPane {
   label: string;
   sandbox: string;
   workspace_path: string;
-  forward_name: string;
+  forward_name: string | null;
   kind: AppKind;
-  url: string;
+  url: string | null;
 }
 
 export interface Rect {

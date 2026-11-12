@@ -112,11 +112,7 @@ fn embed_external_on_main<R: Runtime>(
 ) -> Result<(), WorkspaceError> {
     let win = |e: tauri::Error| WorkspaceError::Window(e.to_string());
     let window = main_window(app)?;
-    let suffix = match kind {
-        AppKind::Terminal => "terminal",
-        AppKind::AgentWeb => "agentweb",
-    };
-    let label = format!("workspace-{name}-{suffix}");
+    let label = pane_label(name, kind);
 
     let registry = app.state::<WorkspaceRegistry>();
     let collapsed = registry.lock().unwrap().collapsed;
@@ -142,9 +138,9 @@ fn embed_external_on_main<R: Runtime>(
             label,
             sandbox: name.to_string(),
             workspace_path: workspace_path.to_string(),
-            forward_name: pane.forward_name,
+            forward_name: Some(pane.forward_name),
             kind,
-            url: pane.url.to_string(),
+            url: Some(pane.url.to_string()),
         },
         overlay,
     );
@@ -153,6 +149,47 @@ fn embed_external_on_main<R: Runtime>(
     apply_layout(&window, &state, overlay)?;
     emit_state(app);
     Ok(())
+}
+
+fn pane_label(name: &str, kind: AppKind) -> String {
+    let suffix = match kind {
+        AppKind::Terminal => "terminal",
+        AppKind::AgentWeb => "agentweb",
+        AppKind::AgentChat => "agentchat",
+    };
+    format!("workspace-{name}-{suffix}")
+}
+
+/// Opens a pane the main webview renders itself (no child webview, no forward) and makes it the
+/// active tab. Showing, hiding and bounding its label are no-ops, so the frontend draws it in the
+/// content area whenever it is active.
+pub fn open_native_pane<R: Runtime>(
+    app: &AppHandle<R>,
+    name: &str,
+    workspace_path: &str,
+    kind: AppKind,
+) -> Result<(), WorkspaceError> {
+    let app_in = app.clone();
+    let name = name.to_string();
+    let workspace_path = workspace_path.to_string();
+    run_on_main(app, move || {
+        let window = main_window(&app_in)?;
+        let registry = app_in.state::<WorkspaceRegistry>();
+        let collapsed = registry.lock().unwrap().collapsed;
+        let size = logical_size(&window)?;
+        let overlay = workspace_layout(size.width, size.height, collapsed);
+        let pane = AppPane {
+            label: pane_label(&name, kind),
+            sandbox: name.clone(),
+            workspace_path,
+            forward_name: None,
+            kind,
+            url: None,
+        };
+        activate_new_pane(&window, &registry, pane, overlay);
+        emit_state(&app_in);
+        Ok(())
+    })?
 }
 
 /// Push a newly created pane into the registry, make it the sandbox's active tab, and hide
@@ -379,12 +416,18 @@ pub async fn close_pane<R: Runtime>(app: &AppHandle<R>, name: &str, kind: AppKin
     emit_state(app);
 }
 
+/// Ends what backs each closed pane: a forward, or the native chat's attach stream (pi keeps
+/// running inside the sandbox).
 async fn teardown_forwards<R: Runtime>(app: &AppHandle<R>, name: &str, panes: &[AppPane]) {
     let network = app.state::<std::sync::Arc<dyn crate::network::types::NetworkManager>>();
     for pane in panes {
         let kind = match pane.kind {
             AppKind::Terminal => crate::network::types::ServiceKind::Terminal,
             AppKind::AgentWeb => crate::network::types::ServiceKind::AgentWeb,
+            AppKind::AgentChat => {
+                app.state::<std::sync::Arc<dyn crate::agent_host::types::AgentHost>>().detach(name).await;
+                continue;
+            }
         };
         network.close_forward(name, kind).await;
     }
