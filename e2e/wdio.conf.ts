@@ -404,19 +404,9 @@ export const config: WebdriverIO.Config = {
   // handle so it doesn't land on a pane's window instead.
   // A webview still on `about:blank` has not loaded the app yet; pinning it made every later
   // `execute` fail with "Origin header is not a valid URL", so wait for a loaded app page instead.
-  // `getUrl` is a WebDriver command, so it also answers on a page no script can run in yet.
+  // `getUrl` also answers on a page no script can run in yet, so readiness is checked by script.
   before: async () => {
-    await browser.waitUntil(
-      async () => {
-        for (const handle of await browser.getWindowHandles()) {
-          await browser.switchToWindow(handle);
-          const url = new URL(await browser.getUrl());
-          if (url.protocol !== "about:" && !url.pathname.startsWith("/workspace")) return true;
-        }
-        return false;
-      },
-      { timeout: 30000, interval: 250, timeoutMsg: "[e2e] no loaded app webview found among the window handles" },
-    );
+    await waitForAppWebview();
   },
   afterTest(_test, _context, result) {
     logFailure(_test.fullTitle || `${_test.parent} > ${_test.title}`, result);
@@ -480,6 +470,55 @@ export const config: WebdriverIO.Config = {
 };
 
 const stripAnsi = (s: string) => s.replace(/\x1B\[[0-9;]*[A-Za-z]/g, "");
+
+// How long the app's page gets to load. A healthy launch takes seconds; the first after a rebuild
+// is the slowest.
+const APP_LAUNCH_TIMEOUT_MS = 30000;
+
+// The main webview's `WebviewUrl::App` address on Windows (`create_main_window` in
+// src-tauri/src/workspace/mod.rs); it becomes `https://` if that webview opts into the https scheme.
+const APP_URL = "http://tauri.localhost/";
+// The app navigates within milliseconds of the driver attaching, so a window still blank after this
+// has lost that navigation rather than not started it.
+const APP_BLANK_GRACE_MS = 3000;
+
+// Resolves once a window handle is a loaded app page, leaving the session pinned to it.
+// A page counts as loaded once a script runs in it, the Tauri bridge exists and the app has rendered
+// into the SvelteKit root (`:not(script)` skips the bootstrap script that sits there until mount).
+// msedgedriver's session start navigates the page it attaches to to `about:blank`, racing the app's
+// own first navigation. When the driver's lands second (about one launch in three) the app never
+// navigates again, so the lone blank window is sent to the app once.
+async function waitForAppWebview(): Promise<void> {
+  const start = Date.now();
+  let renavigated = false;
+  await browser.waitUntil(
+    async () => {
+      const handles = await browser.getWindowHandles();
+      let allBlank = true;
+      for (const handle of handles) {
+        await browser.switchToWindow(handle);
+        const url = new URL(await browser.getUrl());
+        if (url.protocol !== "about:") allBlank = false;
+        if (url.protocol === "about:" || url.pathname.startsWith("/workspace")) continue;
+        try {
+          const ready = await browser.execute(
+            "return document.readyState === 'complete' && typeof window.__TAURI_INTERNALS__ !== 'undefined' && !!document.querySelector('body > div > :not(script)')",
+          );
+          if (ready) return true;
+        } catch {
+          // A page no script can run in yet ("Origin header is not a valid URL"): keep waiting.
+        }
+      }
+      if (allBlank && handles.length === 1 && !renavigated && Date.now() - start >= APP_BLANK_GRACE_MS) {
+        renavigated = true;
+        console.warn("[e2e] app window left on about:blank by the driver's session start; navigating it to the app");
+        await browser.url(APP_URL);
+      }
+      return false;
+    },
+    { timeout: APP_LAUNCH_TIMEOUT_MS, interval: 250, timeoutMsg: "[e2e] no loaded app webview found among the window handles" },
+  );
+}
 
 // Shared by afterTest and afterHook so a suite hook failure is logged identically to a test failure.
 function logFailure(title: string, result: { passed: boolean; error?: Error }): void {

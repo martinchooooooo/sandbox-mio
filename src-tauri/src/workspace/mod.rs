@@ -38,6 +38,8 @@ pub fn create_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), Workspac
 
     let size = logical_size(&window)?;
 
+    // The URL this resolves to is mirrored by `APP_URL` in e2e/wdio.conf.ts; switching this webview
+    // to the https scheme must update it.
     window
         .add_child(
             tauri::webview::WebviewBuilder::new(
