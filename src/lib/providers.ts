@@ -14,6 +14,8 @@ export interface ProviderCapabilities {
     hostBindMount: boolean;
     /** Whether the engine enforces `.mio/net-policy.json` itself (microsandbox). */
     egressPolicy: boolean;
+    /** Whether the proxy sidecar enforces `.mio/net-policy.json` when the sandbox has one (Podman). */
+    sidecarEgress: boolean;
 }
 
 const LABELS: Record<ProviderId, () => string> = {

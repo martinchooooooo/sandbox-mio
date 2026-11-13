@@ -1,0 +1,27 @@
+{
+  "dns": { "listen": ":53", "proxy_ip": "10.90.250.2" },
+  "proxy": {
+    "http_listen": ":80",
+    "https_listen": ":443",
+    "tunnel_listen": ":8080",
+    "upstream_deny_cidrs": [
+      "0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16",
+      "172.16.0.0/12", "192.168.0.0/16", "::1/128", "fc00::/7", "fe80::/10", "fd00:ec2::254/128"
+    ]
+  },
+  "tls": { "ca_cert": "/etc/iron-proxy/certs/ca.pem", "ca_key": "/etc/iron-proxy/certs/ca-key.pem" },
+  "transforms": [
+    { "name": "allowlist", "config": { "warn": false, "domains": ["example.com","httpbin.org"] } },
+    { "name": "secrets", "config": { "secrets": [
+ {"source":{"type":"file","path":"/etc/iron-proxy/secrets/OPENAI_API_KEY"},
+  "replace":{"proxy_value":"mio-placeholder-openai_api_key","match_headers":["Authorization"],"match_query":true},
+  "rules":[{"host":"httpbin.org"}]},
+ {"source":{"type":"file","path":"/etc/iron-proxy/secrets/INJECTED"},
+  "inject":{"header":"X-Mio-Injected"},
+  "rules":[{"host":"httpbin.org","paths":["/anything/inject*"]}]}
+] } }
+  ],
+  "metrics": { "listen": "127.0.0.1:9090" },
+  "management": { "listen": "127.0.0.1:9092" },
+  "log": { "level": "info" }
+}

@@ -389,7 +389,7 @@ impl CliBackend {
         let mode = request.and_then(|r| r.mode);
         if let Some(mode) = mode {
             if mode == net_policy::EgressMode::Allowlist && policy.rules.is_empty() {
-                let starter = net_policy::starter(&request.map(|r| r.starter_hosts.clone()).unwrap_or_default());
+                let starter = net_policy::starter(caps, &request.map(|r| r.starter_hosts.clone()).unwrap_or_default());
                 policy.rules = starter.rules;
             }
             policy.egress = mode;
@@ -557,6 +557,7 @@ impl SandboxBackend for CliBackend {
             network: bridge.map(|(network, _)| crate::provider::types::InstanceNetwork {
                 name: network,
                 ip: None,
+                dns: None,
             }),
             egress: egress_policy,
         };

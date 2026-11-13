@@ -10,6 +10,7 @@
 //! on is recorded in its `meta.json`; state written before that feature is Podman's.
 
 pub mod flowlog;
+pub mod iron_config;
 pub mod rules;
 pub mod types;
 
@@ -213,7 +214,7 @@ async fn allocate_network(
     let mut last_err = None;
     for index in 0..=SUBNET_INDEX_MAX {
         let subnet = format!("10.90.{index}.0/24");
-        match provider.create_network(&name, &subnet).await {
+        match provider.create_network(&name, &subnet, false).await {
             Ok(()) => return Ok((name, format!("10.90.{index}.2"))),
             Err(e) => last_err = Some(e),
         }
@@ -342,7 +343,13 @@ async fn create_podman_proxy(
     let spec = SidecarSpec {
         name: container_name.clone(),
         image: mitmproxy_image(),
-        network: Some(InstanceNetwork { name: network.clone(), ip: Some(proxy_ip.clone()) }),
+        network: Some(InstanceNetwork {
+            name: network.clone(),
+            ip: Some(proxy_ip.clone()),
+            dns: None,
+        }),
+        extra_networks: Vec::new(),
+        log_max_size: None,
         publish: Vec::new(),
         env: Vec::new(),
         mounts: vec![
@@ -478,6 +485,8 @@ async fn create_msb_proxy(
             name: name.clone(),
             image: mitmproxy_image(),
             network: None,
+            extra_networks: Vec::new(),
+            log_max_size: None,
             mounts: vec![
                 SidecarMount {
                     host_path: host_path(&certs),

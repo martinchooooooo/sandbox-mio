@@ -414,6 +414,7 @@ impl MachineProvider for MsbProvider {
             event_stream: false,
             host_bind_mount: false,
             egress_policy: true,
+            sidecar_egress: false,
         }
     }
 
@@ -687,7 +688,12 @@ impl MachineProvider for MsbProvider {
         check(out).map(|_| ())
     }
 
-    async fn create_network(&self, _name: &str, _subnet: &str) -> Result<(), ProviderError> {
+    async fn create_network(
+        &self,
+        _name: &str,
+        _subnet: &str,
+        _internal: bool,
+    ) -> Result<(), ProviderError> {
         Err(ProviderError::CommandFailed(
             "microsandbox chains the proxy through host loopback and needs no network".to_string(),
         ))
@@ -696,6 +702,17 @@ impl MachineProvider for MsbProvider {
     async fn remove_network(&self, _name: &str) -> Result<(), ProviderError> {
         Err(ProviderError::CommandFailed(
             "microsandbox chains the proxy through host loopback and needs no network".to_string(),
+        ))
+    }
+
+    async fn sidecar_logs(
+        &self,
+        _name: &str,
+        _since: Option<&str>,
+        _tail: Option<usize>,
+    ) -> Result<Vec<String>, ProviderError> {
+        Err(ProviderError::CommandFailed(
+            "a microsandbox sidecar writes its traffic record to a file, not its log".to_string(),
         ))
     }
 }
@@ -975,6 +992,8 @@ mod tests {
             name: "s-proxy".to_string(),
             image: "docker.io/mitmproxy/mitmproxy:11.1.3".to_string(),
             network: None,
+            extra_networks: Vec::new(),
+            log_max_size: None,
             mounts: vec![
                 SidecarMount {
                     host_path: "C:/p/addons".to_string(),
@@ -1009,6 +1028,28 @@ mod tests {
         assert_eq!(argv[pos("--init") + 1], "/.msb/scripts/start");
         assert!(pos("--script-raw") < pos("--init"));
         assert!(!argv.iter().any(|a| a == "--copy-dir" || a == "--net-default-egress"));
+    }
+
+    #[tokio::test]
+    async fn create_sidecar_ignores_podman_only_network_and_log_fields() {
+        let director = Arc::new(MockDirector::new());
+        let provider = provider_with(director.clone());
+        let spec = SidecarSpec {
+            extra_networks: vec!["podman".to_string()],
+            log_max_size: Some("4mb".to_string()),
+            ..sidecar_spec()
+        };
+        provider.create_sidecar(&spec).await.expect("create succeeds");
+        let argv = director.calls("msb.create")[0].argv.clone();
+        assert!(argv.iter().all(|a| !a.contains("podman") && !a.contains("4mb")));
+    }
+
+    #[tokio::test]
+    async fn sidecar_logs_and_sidecar_egress_are_podman_only() {
+        let provider = provider();
+        assert!(!provider.capabilities().sidecar_egress);
+        let err = provider.sidecar_logs("s-proxy", None, None).await.expect_err("unsupported");
+        assert!(matches!(err, ProviderError::CommandFailed(_)), "{err}");
     }
 
     #[tokio::test]

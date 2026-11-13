@@ -97,14 +97,17 @@ pub struct NetRule {
 }
 
 impl NetRule {
-    fn allow_host_443(host: &str) -> Self {
+    /// TCP 443 for an engine-enforced policy; no protocol or ports in the sidecar dialect, which
+    /// refuses both.
+    fn starter_allow(host: &str, caps: ProviderCapabilities) -> Self {
+        let sidecar = caps.sidecar_egress;
         NetRule {
             action: RuleAction::Allow,
             host: Some(host.to_string()),
             cidr: None,
             group: None,
-            protocol: Some(NetProtocol::Tcp),
-            ports: Some(vec![PortSpec::Single(443)]),
+            protocol: (!sidecar).then_some(NetProtocol::Tcp),
+            ports: (!sidecar).then(|| vec![PortSpec::Single(443)]),
         }
     }
 
@@ -171,7 +174,8 @@ pub struct NetPolicy {
     pub violation_action: ViolationAction,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deny_message: Option<String>,
-    /// Reserved for `proxy-network-policy`'s Podman approval mode.
+    /// Reserved for a future approval mode; refused for every provider
+    /// (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 2).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interactive: Option<bool>,
 }
@@ -276,15 +280,50 @@ fn allowed_by_rule(policy: &NetPolicy, host: &str) -> bool {
     })
 }
 
+/// The sidecar dialect: what iron-proxy can enforce
+/// (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 6).
+fn validate_sidecar_dialect(policy: &NetPolicy) -> Result<(), NetPolicyError> {
+    if policy.violation_action != ViolationAction::BlockAndLog {
+        return Err(NetPolicyError(
+            "violation actions are not available for Podman sandboxes".to_string(),
+        ));
+    }
+    for rule in &policy.rules {
+        let what = match (rule.action, rule.target()?) {
+            (RuleAction::Allow, EgressTarget::Host(_))
+            | (RuleAction::Deny, EgressTarget::Cidr(_)) => None,
+            (RuleAction::Allow, EgressTarget::Cidr(c)) => Some(format!(
+                "allow rule {c:?}: Podman sandboxes allow hostnames only, not CIDR ranges"
+            )),
+            (RuleAction::Deny, EgressTarget::Host(h)) => Some(format!(
+                "deny rule {h:?}: Podman sandboxes deny CIDR ranges only, not hostnames"
+            )),
+            (_, EgressTarget::Group(_)) => {
+                Some("group rules are not available for Podman sandboxes".to_string())
+            }
+        };
+        if let Some(what) = what {
+            return Err(NetPolicyError(what));
+        }
+        if rule.protocol == Some(NetProtocol::Udp) {
+            return Err(NetPolicyError("Podman sandboxes cannot allow or deny UDP".to_string()));
+        }
+        if rule.ports.is_some() {
+            return Err(NetPolicyError(
+                "port lists are not available for Podman sandboxes".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Refuses a policy the provider cannot enforce exactly as written.
 pub fn validate(policy: &NetPolicy, caps: ProviderCapabilities) -> Result<(), NetPolicyError> {
     if policy.version != 1 {
         return Err(NetPolicyError(format!("unsupported policy version {}", policy.version)));
     }
-    if caps.egress_policy && policy.interactive == Some(true) {
-        return Err(NetPolicyError(
-            "interactive approval is not available for microsandbox sandboxes".to_string(),
-        ));
+    if policy.interactive == Some(true) {
+        return Err(NetPolicyError("interactive approval is not available".to_string()));
     }
     for rule in &policy.rules {
         match rule.target()? {
@@ -293,6 +332,9 @@ pub fn validate(policy: &NetPolicy, caps: ProviderCapabilities) -> Result<(), Ne
             EgressTarget::Group(_) => {}
         }
         rule.port_ranges()?;
+    }
+    if caps.sidecar_egress {
+        validate_sidecar_dialect(policy)?;
     }
     let mut seen = std::collections::HashSet::new();
     for binding in &policy.secrets {
@@ -332,9 +374,9 @@ pub fn validate(policy: &NetPolicy, caps: ProviderCapabilities) -> Result<(), Ne
     Ok(())
 }
 
-/// An allowlist policy holding [`STARTER_BASE_HOSTS`] plus `extra_hosts`, deduplicated, each
-/// allowed on TCP 443.
-pub fn starter(extra_hosts: &[String]) -> NetPolicy {
+/// An allowlist policy holding [`STARTER_BASE_HOSTS`] plus `extra_hosts`, deduplicated, in the
+/// dialect `caps` validates.
+pub fn starter(caps: ProviderCapabilities, extra_hosts: &[String]) -> NetPolicy {
     let mut hosts: Vec<String> = Vec::new();
     for h in STARTER_BASE_HOSTS.iter().map(|h| h.to_string()).chain(extra_hosts.iter().cloned()) {
         let h = h.trim().to_ascii_lowercase();
@@ -344,9 +386,15 @@ pub fn starter(extra_hosts: &[String]) -> NetPolicy {
     }
     NetPolicy {
         egress: EgressMode::Allowlist,
-        rules: hosts.iter().map(|h| NetRule::allow_host_443(h)).collect(),
+        rules: hosts.iter().map(|h| NetRule::starter_allow(h, caps)).collect(),
         ..NetPolicy::default()
     }
+}
+
+/// The non-secret value a sandbox sees in a binding's variable until the sidecar swaps it
+/// (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 16).
+pub fn placeholder(env_var: &str) -> String {
+    format!("mio-placeholder-{}", env_var.to_ascii_lowercase())
 }
 
 /// The provider-neutral rendering input. Call [`validate`] first: an invalid rule is an error here
@@ -447,7 +495,11 @@ mod tests {
         event_stream: false,
         host_bind_mount: false,
         egress_policy: true,
+        sidecar_egress: false,
     };
+
+    const PODMAN: ProviderCapabilities =
+        ProviderCapabilities { egress_policy: false, sidecar_egress: true, ..MSB };
 
     fn binding(host: &str) -> SecretBinding {
         SecretBinding {
@@ -477,7 +529,7 @@ mod tests {
 
     #[test]
     fn starter_is_allowlist_with_deduplicated_hosts() {
-        let p = starter(&["api.anthropic.com".to_string(), "GitHub.com".to_string()]);
+        let p = starter(MSB, &["api.anthropic.com".to_string(), "GitHub.com".to_string()]);
         assert_eq!(p.egress, EgressMode::Allowlist);
         assert_eq!(p.rules.len(), STARTER_BASE_HOSTS.len() + 1);
         assert!(p.rules.iter().all(|r| r.protocol == Some(NetProtocol::Tcp)));
@@ -486,16 +538,16 @@ mod tests {
 
     #[test]
     fn rejects_bad_targets_and_ports() {
-        let mut p = starter(&[]);
+        let mut p = starter(MSB, &[]);
         p.rules[0].host = Some("*.com".to_string());
         assert!(validate(&p, MSB).is_err());
-        let mut p = starter(&[]);
+        let mut p = starter(MSB, &[]);
         p.rules[0].cidr = Some("10.0.0.0/8".to_string());
         assert!(validate(&p, MSB).is_err(), "two targets on one rule");
-        let mut p = starter(&[]);
+        let mut p = starter(MSB, &[]);
         p.rules[0].ports = Some(vec![PortSpec::Range("90-80".to_string())]);
         assert!(validate(&p, MSB).is_err());
-        let mut p = starter(&[]);
+        let mut p = starter(MSB, &[]);
         p.rules[0].host = None;
         p.rules[0].cidr = Some("10.0.0.0/33".to_string());
         assert!(validate(&p, MSB).is_err());
@@ -503,7 +555,7 @@ mod tests {
 
     #[test]
     fn rejects_bad_secret_bindings() {
-        let base = starter(&[]);
+        let base = starter(MSB, &[]);
         let with = |b: SecretBinding| NetPolicy { secrets: vec![b], ..base.clone() };
         validate(&with(binding("api.github.com")), MSB).unwrap();
         assert!(validate(&with(binding("example.com")), MSB).is_err(), "not allowed by a rule");
@@ -522,15 +574,47 @@ mod tests {
     }
 
     #[test]
-    fn interactive_is_refused_for_microsandbox() {
+    fn interactive_is_refused_for_every_provider() {
         let p = NetPolicy { interactive: Some(true), ..NetPolicy::default() };
         assert!(validate(&p, MSB).is_err());
-        assert!(validate(&p, ProviderCapabilities { egress_policy: false, ..MSB }).is_ok());
+        assert!(validate(&p, PODMAN).is_err());
+        let p = NetPolicy { interactive: Some(false), ..NetPolicy::default() };
+        validate(&p, PODMAN).unwrap();
+    }
+
+    fn rule(action: RuleAction) -> NetRule {
+        NetRule { action, host: None, cidr: None, group: None, protocol: None, ports: None }
+    }
+
+    #[test]
+    fn podman_dialect_rejects_what_the_sidecar_cannot_enforce() {
+        let host = |action| NetRule { host: Some("example.com".to_string()), ..rule(action) };
+        let cidr = |action| NetRule { cidr: Some("10.0.0.0/8".to_string()), ..rule(action) };
+        let refused = [
+            ("allow cidr", cidr(RuleAction::Allow)),
+            ("deny host", host(RuleAction::Deny)),
+            ("group", NetRule { group: Some(NetGroup::Public), ..rule(RuleAction::Allow) }),
+            ("udp", NetRule { protocol: Some(NetProtocol::Udp), ..host(RuleAction::Allow) }),
+            (
+                "ports",
+                NetRule { ports: Some(vec![PortSpec::Single(443)]), ..host(RuleAction::Allow) },
+            ),
+            ("empty ports", NetRule { ports: Some(vec![]), ..host(RuleAction::Allow) }),
+        ];
+        for (what, r) in refused {
+            let p = NetPolicy { rules: vec![r.clone()], ..NetPolicy::default() };
+            assert!(validate(&p, PODMAN).is_err(), "{what} must be refused for Podman");
+            validate(&p, MSB).unwrap_or_else(|e| panic!("{what} is valid for microsandbox: {e}"));
+        }
+        for action in [ViolationAction::Block, ViolationAction::BlockAndTerminate] {
+            let p = NetPolicy { violation_action: action, ..NetPolicy::default() };
+            assert!(validate(&p, PODMAN).is_err(), "{action:?} must be refused for Podman");
+        }
     }
 
     #[test]
     fn converts_to_the_provider_shape() {
-        let p = NetPolicy { secrets: vec![binding("api.github.com")], ..starter(&[]) };
+        let p = NetPolicy { secrets: vec![binding("api.github.com")], ..starter(MSB, &[]) };
         let e = to_egress(&p, None).unwrap();
         assert_eq!(e.mode, EgressMode::Allowlist);
         assert_eq!(e.rules.len(), p.rules.len());

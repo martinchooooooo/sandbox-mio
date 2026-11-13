@@ -266,6 +266,26 @@ fn exec_args(name: &str, argv: &[&str], opts: &ExecOpts) -> Vec<String> {
     full
 }
 
+/// Interleaves `podman logs --timestamps` output into one oldest-first list. Podman replays the
+/// container's stdout and stderr on its own two streams, so each arrives ordered but separately.
+/// The timestamp prefix is fixed-width, so a string sort is chronological; the sort is stable, so
+/// equal stamps keep their stream order.
+fn merge_log_streams(stdout: &[u8], stderr: &[u8]) -> Vec<String> {
+    let mut lines: Vec<String> = [stdout, stderr]
+        .iter()
+        .flat_map(|stream| {
+            String::from_utf8_lossy(stream).lines().map(str::to_string).collect::<Vec<_>>()
+        })
+        .filter(|l| !l.is_empty())
+        .collect();
+    lines.sort_by(|a, b| log_stamp(a).cmp(log_stamp(b)));
+    lines
+}
+
+fn log_stamp(line: &str) -> &str {
+    line.split_once(' ').map_or(line, |(stamp, _)| stamp)
+}
+
 #[async_trait::async_trait]
 impl MachineProvider for PodmanProvider {
     fn capabilities(&self) -> ProviderCapabilities {
@@ -274,6 +294,7 @@ impl MachineProvider for PodmanProvider {
             event_stream: true,
             host_bind_mount: true,
             egress_policy: false,
+            sidecar_egress: true,
         }
     }
 
@@ -313,6 +334,10 @@ impl MachineProvider for PodmanProvider {
                     Some(ip) => format!("{}:ip={ip}", net.name),
                     None => net.name.clone(),
                 });
+                if let Some(dns) = &net.dns {
+                    args.push("--dns".to_string());
+                    args.push(dns.clone());
+                }
             }
             None => {
                 // No `--publish`: reachability goes through the exec-tunnelled `sshd`, not a
@@ -354,6 +379,19 @@ impl MachineProvider for PodmanProvider {
             Some(ip) => format!("{}:ip={ip}", network.name),
             None => network.name.clone(),
         });
+        for extra in &spec.extra_networks {
+            args.push("--network".to_string());
+            args.push(extra.clone());
+        }
+        if let Some(size) = &spec.log_max_size {
+            // `k8s-file`, not the machine default `journald`, which needs a user systemd bus the
+            // podman machine lacks (`docs/features/podman-egress-boundary/02_dev.md`, Resolved
+            // Decision 4).
+            args.push("--log-driver".to_string());
+            args.push("k8s-file".to_string());
+            args.push("--log-opt".to_string());
+            args.push(format!("max-size={size}"));
+        }
         for p in &spec.publish {
             args.push("--publish".to_string());
             args.push(format!("{}:{}:{}", p.bind, p.host_port, p.guest_port));
@@ -487,19 +525,49 @@ impl MachineProvider for PodmanProvider {
         check(self.run(&["cp", host_path, &format!("{name}:{dest}")]).await?).map(|_| ())
     }
 
-    async fn create_network(&self, name: &str, subnet: &str) -> Result<(), ProviderError> {
+    async fn create_network(
+        &self,
+        name: &str,
+        subnet: &str,
+        internal: bool,
+    ) -> Result<(), ProviderError> {
         // `--disable-dns`: `aardvark-dns` cannot start on this project's podman machine
-        // (`docs/features/network-proxy/02_dev.md`, Spike Results) — every network this feature
-        // creates must pass it, or every container on it fails to start.
-        check(
-            self.run(&["network", "create", "--disable-dns", "--subnet", subnet, name])
-                .await?,
-        )
-        .map(|_| ())
+        // (`docs/features/network-proxy/02_dev.md`, Spike Results) — every network this app
+        // creates must pass it, internal or not, or every container on it fails to start.
+        let mut args = vec!["network", "create", "--disable-dns"];
+        if internal {
+            args.push("--internal");
+        }
+        args.extend(["--subnet", subnet, name]);
+        check(self.run(&args).await?).map(|_| ())
     }
 
     async fn remove_network(&self, name: &str) -> Result<(), ProviderError> {
         check(self.run(&["network", "rm", "--force", name]).await?).map(|_| ())
+    }
+
+    async fn sidecar_logs(
+        &self,
+        name: &str,
+        since: Option<&str>,
+        tail: Option<usize>,
+    ) -> Result<Vec<String>, ProviderError> {
+        let tail = tail.map(|n| n.to_string());
+        let mut args = vec!["logs", "--timestamps"];
+        if let Some(since) = since {
+            args.extend(["--since", since]);
+        }
+        if let Some(tail) = &tail {
+            args.extend(["--tail", tail]);
+        }
+        args.push(name);
+        let out = self.run(&args).await?;
+        if !out.status.success() {
+            return Err(ProviderError::CommandFailed(
+                String::from_utf8_lossy(&out.stderr).trim().to_string(),
+            ));
+        }
+        Ok(merge_log_streams(&out.stdout, &out.stderr))
     }
 
     async fn pull_image(&self, image: &str) -> Result<(), ProviderError> {
@@ -544,5 +612,211 @@ mod tests {
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].env_names, ["PASEO_PASSWORD"]);
         assert!(calls[0].argv.iter().all(|a| !a.contains("s3cret-value")));
+    }
+
+    fn scripted() -> (Arc<MockDirector>, Arc<dyn MachineProvider>) {
+        let director = Arc::new(MockDirector::new());
+        let runner: Arc<dyn ProcessRunner> = Arc::new(ScriptedPodmanRunner::new(director.clone()));
+        (director, default_provider(runner, "conn".to_string()))
+    }
+
+    fn has_pair(argv: &[String], flag: &str, value: &str) -> bool {
+        argv.windows(2).any(|w| w[0] == flag && w[1] == value)
+    }
+
+    #[tokio::test]
+    async fn create_network_adds_internal_only_when_asked_and_always_disables_dns() {
+        let (director, provider) = scripted();
+        provider.create_network("open", "10.90.0.0/24", false).await.expect("create succeeds");
+        provider.create_network("closed", "10.90.1.0/24", true).await.expect("create succeeds");
+        let calls = director.calls("podman.network-create");
+        assert_eq!(
+            calls[0].argv,
+            ["network", "create", "--disable-dns", "--subnet", "10.90.0.0/24", "open"]
+        );
+        assert_eq!(
+            calls[1].argv,
+            ["network", "create", "--disable-dns", "--internal", "--subnet", "10.90.1.0/24", "closed"]
+        );
+    }
+
+    fn sidecar_spec() -> SidecarSpec {
+        use types::{InstanceNetwork, SidecarMount};
+        SidecarSpec {
+            name: "s-proxy".to_string(),
+            image: "docker.io/ironsh/iron-proxy:0.56.0".to_string(),
+            network: Some(InstanceNetwork {
+                name: "mio-proxy-s".to_string(),
+                ip: Some("10.90.3.2".to_string()),
+                dns: None,
+            }),
+            extra_networks: Vec::new(),
+            log_max_size: None,
+            mounts: vec![SidecarMount {
+                host_path: "C:/p/certs".to_string(),
+                dest: "/certs".to_string(),
+                read_only: true,
+            }],
+            publish: Vec::new(),
+            env: Vec::new(),
+            command: vec!["-config".to_string(), "/config/config.yaml".to_string()],
+            labels: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn create_sidecar_renders_the_pinned_network_alone_by_default() {
+        let (director, provider) = scripted();
+        provider.create_sidecar(&sidecar_spec()).await.expect("create succeeds");
+        let argv = director.calls("podman.create")[0].argv.clone();
+        assert_eq!(argv.iter().filter(|a| *a == "--network").count(), 1);
+        assert!(has_pair(&argv, "--network", "mio-proxy-s:ip=10.90.3.2"));
+        assert!(has_pair(&argv, "--volume", "C:/p/certs:/certs:ro"));
+        assert!(!argv.iter().any(|a| a == "--log-driver" || a == "--log-opt"));
+        assert_eq!(
+            argv[argv.len() - 3..],
+            ["docker.io/ironsh/iron-proxy:0.56.0", "-config", "/config/config.yaml"]
+        );
+    }
+
+    #[tokio::test]
+    async fn create_sidecar_joins_extra_networks_after_the_pinned_one() {
+        let (director, provider) = scripted();
+        let spec = SidecarSpec {
+            extra_networks: vec!["podman".to_string(), "other".to_string()],
+            ..sidecar_spec()
+        };
+        provider.create_sidecar(&spec).await.expect("create succeeds");
+        let argv = director.calls("podman.create")[0].argv.clone();
+        let networks: Vec<&str> = argv
+            .windows(2)
+            .filter(|w| w[0] == "--network")
+            .map(|w| w[1].as_str())
+            .collect();
+        assert_eq!(networks, ["mio-proxy-s:ip=10.90.3.2", "podman", "other"]);
+    }
+
+    #[tokio::test]
+    async fn create_sidecar_selects_a_capped_file_log_when_a_size_is_set() {
+        let (director, provider) = scripted();
+        let spec = SidecarSpec { log_max_size: Some("4mb".to_string()), ..sidecar_spec() };
+        provider.create_sidecar(&spec).await.expect("create succeeds");
+        let argv = director.calls("podman.create")[0].argv.clone();
+        assert!(has_pair(&argv, "--log-driver", "k8s-file"));
+        assert!(has_pair(&argv, "--log-opt", "max-size=4mb"));
+        let image =
+            argv.iter().position(|a| a == "docker.io/ironsh/iron-proxy:0.56.0").expect("image");
+        let driver = argv.iter().position(|a| a == "--log-driver").expect("driver");
+        assert!(driver < image, "log flags precede the image");
+    }
+
+    fn instance_spec(dns: Option<&str>) -> InstanceSpec {
+        InstanceSpec {
+            name: "s".to_string(),
+            image: "localhost/sandbox-mio/base:7".to_string(),
+            workspace_source: "C:/work".to_string(),
+            labels: Vec::new(),
+            env: Vec::new(),
+            network: Some(types::InstanceNetwork {
+                name: "mio-proxy-s".to_string(),
+                ip: None,
+                dns: dns.map(str::to_string),
+            }),
+            egress: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn create_instance_points_the_resolver_at_the_given_address() {
+        let (director, provider) = scripted();
+        provider.create_instance(&instance_spec(Some("10.90.3.2"))).await.expect("create succeeds");
+        let argv = director.calls("podman.create")[0].argv.clone();
+        assert!(has_pair(&argv, "--network", "mio-proxy-s"));
+        assert!(has_pair(&argv, "--dns", "10.90.3.2"));
+    }
+
+    #[tokio::test]
+    async fn create_instance_keeps_the_network_resolver_without_a_dns_address() {
+        let (director, provider) = scripted();
+        provider.create_instance(&instance_spec(None)).await.expect("create succeeds");
+        let argv = director.calls("podman.create")[0].argv.clone();
+        assert!(!argv.iter().any(|a| a == "--dns"));
+    }
+
+    #[test]
+    fn podman_reports_sidecar_egress() {
+        let (_, provider) = scripted();
+        assert!(provider.capabilities().sidecar_egress);
+        assert!(!provider.capabilities().egress_policy);
+    }
+
+    #[tokio::test]
+    async fn sidecar_logs_renders_since_and_tail() {
+        let (director, provider) = scripted();
+        provider
+            .sidecar_logs("s-proxy", Some("2026-11-13T21:39:03.624385714+11:00"), Some(500))
+            .await
+            .expect("logs succeed");
+        provider.sidecar_logs("s-proxy", None, None).await.expect("logs succeed");
+        let calls = director.calls("podman.logs");
+        assert_eq!(
+            calls[0].argv,
+            [
+                "logs",
+                "--timestamps",
+                "--since",
+                "2026-11-13T21:39:03.624385714+11:00",
+                "--tail",
+                "500",
+                "s-proxy"
+            ]
+        );
+        assert_eq!(calls[1].argv, ["logs", "--timestamps", "s-proxy"]);
+    }
+
+    #[tokio::test]
+    async fn sidecar_logs_reads_no_lines_from_an_unscripted_mock() {
+        let (_, provider) = scripted();
+        let lines = provider.sidecar_logs("s-proxy", None, None).await.expect("logs succeed");
+        assert!(lines.is_empty());
+    }
+
+    #[tokio::test]
+    async fn sidecar_logs_returns_scripted_lines_and_surfaces_a_failure() {
+        use crate::mockctl::types::Behaviour;
+        let (director, provider) = scripted();
+        director
+            .configure(
+                "podman.logs",
+                Behaviour::ReturnValue {
+                    stdout: "t1 {\"a\":1}\nt2 {\"b\":2}\n".to_string(),
+                    exit_code: 0,
+                },
+            )
+            .expect("known mock key");
+        let lines = provider.sidecar_logs("s-proxy", None, None).await.expect("logs succeed");
+        assert_eq!(lines, ["t1 {\"a\":1}", "t2 {\"b\":2}"]);
+
+        director
+            .configure(
+                "podman.logs",
+                Behaviour::FailOnce { exit_code: 125, stderr: "no such container".to_string() },
+            )
+            .expect("known mock key");
+        let err = provider.sidecar_logs("s-proxy", None, None).await.expect_err("logs fail");
+        assert!(
+            matches!(err, ProviderError::CommandFailed(ref m) if m == "no such container"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn merge_log_streams_interleaves_by_timestamp() {
+        let stdout = b"2026-11-13T21:39:04.000000000+11:00 out-b\n";
+        let stderr = b"2026-11-13T21:39:03.000000000+11:00 err-a\n\
+                       2026-11-13T21:39:05.000000000+11:00 err-c\n";
+        let lines = merge_log_streams(stdout, stderr);
+        let bodies: Vec<&str> = lines.iter().map(|l| l.split_once(' ').unwrap().1).collect();
+        assert_eq!(bodies, ["err-a", "out-b", "err-c"]);
     }
 }

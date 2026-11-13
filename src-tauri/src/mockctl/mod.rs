@@ -57,6 +57,11 @@ static KNOWN_CALLS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "podman.network-inspect",
         // `MachineProvider::pull_image` (docs/features/network-proxy/02_dev.md, Resolved Decision 10).
         "podman.pull",
+        // `MachineProvider::sidecar_logs` and `exec`, scripted to stand in for the egress sidecar's
+        // audit lines and reload failures (docs/features/podman-egress-boundary/02_dev.md, Phase B).
+        // An unscripted `podman.logs` reads back as no lines.
+        "podman.logs",
+        "podman.exec",
         // Mutagen's `sync` subcommands only — `forward`/`version`/`daemon` reach the sidecar via
         // `sync::run` (NetworkManager territory), unscripted for now (docs/features/scriptable-mock-backend/04_improvements.md).
         "mutagen.sync-create",

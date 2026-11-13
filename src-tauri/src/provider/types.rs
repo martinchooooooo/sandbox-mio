@@ -186,6 +186,9 @@ pub struct SecretViolation {
 pub struct InstanceNetwork {
     pub name: String,
     pub ip: Option<String>,
+    /// Resolver the instance uses instead of the network's own: the egress sidecar's address on an
+    /// internal network (`docs/features/podman-egress-boundary/02_dev.md`, Concrete Model).
+    pub dns: Option<String>,
 }
 
 /// A bind mount for [`SidecarSpec`]: `host_path` mounted at `dest` inside the container.
@@ -222,6 +225,14 @@ pub struct SidecarSpec {
     pub image: String,
     /// Required by Podman; microsandbox chains over host loopback and ignores it.
     pub network: Option<InstanceNetwork>,
+    /// Networks joined after `network` without a pinned address: the egress sidecar's route out of
+    /// an internal network (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 3).
+    /// Microsandbox ignores it.
+    pub extra_networks: Vec<String>,
+    /// Caps the container log and selects a file-backed log driver, so `sidecar_logs` can read it
+    /// back (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 4). Microsandbox
+    /// ignores it.
+    pub log_max_size: Option<String>,
     pub mounts: Vec<SidecarMount>,
     /// Ports published to the host.
     pub publish: Vec<PortPublish>,
@@ -263,6 +274,9 @@ pub struct ProviderCapabilities {
     /// Whether `create_instance` enforces [`InstanceSpec::egress`] with the engine's own network
     /// stack (`docs/features/microsandbox-network-policy/02_dev.md`).
     pub egress_policy: bool,
+    /// Whether the proxy sidecar enforces `.mio/net-policy.json` when the sandbox has one, rather
+    /// than the engine (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 14).
+    pub sidecar_egress: bool,
 }
 
 /// Which engine a [`MachineRef`] names. Also crosses IPC directly as a command parameter
@@ -455,9 +469,31 @@ pub trait MachineProvider: Send + Sync {
     async fn copy_in(&self, name: &str, host_path: &str, dest: &str) -> Result<(), ProviderError>;
     /// Create a DNS-disabled network with the given subnet (CIDR), for a caller that needs
     /// reachability between two instances without relying on `aardvark-dns`
-    /// (`docs/features/network-proxy/02_dev.md`, Spike Results). Idempotent name collision is the
-    /// caller's concern, not this method's.
-    async fn create_network(&self, name: &str, subnet: &str) -> Result<(), ProviderError>;
+    /// (`docs/features/network-proxy/02_dev.md`, Spike Results). `internal` gives the network no
+    /// gateway and no route out, so an attached instance reaches only its peers on it
+    /// (`docs/features/podman-egress-boundary/02_dev.md`, Concrete Model). Idempotent name collision
+    /// is the caller's concern, not this method's.
+    async fn create_network(
+        &self,
+        name: &str,
+        subnet: &str,
+        internal: bool,
+    ) -> Result<(), ProviderError>;
     /// Remove a network created by [`Self::create_network`]. Fails if an instance is still attached.
     async fn remove_network(&self, name: &str) -> Result<(), ProviderError>;
+    /// A sidecar's log lines from both output streams, each prefixed with the engine's timestamp,
+    /// oldest first. `since` is an engine timestamp and is inclusive; `tail` keeps only the last
+    /// lines. Readable from a stopped sidecar. Only Podman sidecars log this way; microsandbox's
+    /// keep the file-based flow log (`docs/features/podman-egress-boundary/02_dev.md`, Resolved
+    /// Decision 4).
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "first caller lands in podman-egress-boundary Phase D")
+    )]
+    async fn sidecar_logs(
+        &self,
+        name: &str,
+        since: Option<&str>,
+        tail: Option<usize>,
+    ) -> Result<Vec<String>, ProviderError>;
 }
