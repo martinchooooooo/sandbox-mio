@@ -2,7 +2,8 @@
 type: feature
 title: "proxy-network-policy"
 description: "Domain allow/deny and interactive approval for Podman sandboxes through the mitmproxy sidecar."
-status: planned
+status: superseded
+superseded_by: podman-egress-boundary
 architecture: [docs/architecture/network.md]
 depends_on: [network-proxy, microsandbox-network-policy]
 ---
@@ -13,4 +14,4 @@ Domain allow/deny and interactive approval for Podman sandboxes through the mitm
 
 ## Status note
 
-Gating spikes A1/A2 done. 02_dev.md predates the shared .mio/net-policy.json from microsandbox-network-policy and needs a refresh.
+Superseded by `podman-egress-boundary`: iron-proxy behind an internal Podman network replaces the hand-written mitmproxy policy addon, and interactive approval is deferred (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decisions 1–2). Spikes A1/A2 here remain valid history.

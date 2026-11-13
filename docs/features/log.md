@@ -7,6 +7,8 @@ approximate. New entries go on top.
 
 ## 2026-11-13
 
+* **Supersede** [proxy-network-policy](proxy-network-policy/index.md): replaced by [podman-egress-boundary](podman-egress-boundary/index.md); interactive approval deferred
+* **Create** [podman-egress-boundary](podman-egress-boundary/index.md): ideation drafted, gating spikes not yet run
 * **Create** [unified-sidebar-nav](unified-sidebar-nav/index.md): ideation drafted from the user-approved design
 
 ## 2026-11-11

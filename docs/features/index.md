@@ -5,6 +5,7 @@
 
 * [native-agent-ui](native-agent-ui/index.md) - Built-in chat UI in the app's own frontend, driving pi inside the sandbox over its RPC mode, kept alive by an in-sandbox supervisor.
 * [onboarding-story](onboarding-story/index.md) - Illustrated onboarding book inside the welcome flow, extensible by chapter, with first-run setup running in the background and reported through the activity center.
+* [podman-egress-boundary](podman-egress-boundary/index.md) - Fail-closed egress for Podman sandboxes: an internal Podman network with the proxy sidecar as the only exit, and iron-proxy replacing the mitmproxy sidecar for policy, secret swap and the traffic record.
 * [retro-ui-migration](retro-ui-migration/index.md) - Re-skin the UI primitives with the retro-ui-svelte registry (Sunset Orange, rounded).
 * [unified-sidebar-nav](unified-sidebar-nav/index.md) - One persistent left sidebar replaces the top page tabs and the multi-sandbox switcher bar, pages use the full content area, and navigation labels speak plain language.
 
@@ -12,7 +13,6 @@
 
 * [host-tool-ssh-access](host-tool-ssh-access/index.md) - Let host SSH clients (e.g. the Claude Code desktop app) attach to a sandbox over the existing exec transport.
 * [proxy-credential-secrets](proxy-credential-secrets/index.md) - Source proxy secret-injection values from the credential store instead of hand-entered values.
-* [proxy-network-policy](proxy-network-policy/index.md) - Domain allow/deny and interactive approval for Podman sandboxes through the mitmproxy sidecar.
 * [proxy-non-http-capture](proxy-non-http-capture/index.md) - Surface connections that bypass the proxy (non-HTTP(S) traffic) in the proxy panel.
 * [proxy-remote-deploy](proxy-remote-deploy/index.md) - Let a proxy-enabled sandbox be deployed to a remote host instead of being refused.
 * [proxy-toggle-management](proxy-toggle-management/index.md) - App-global proxy default and turning the proxy on or off for an existing sandbox by recreating it.
@@ -64,3 +64,7 @@
 * [web-terminal](web-terminal/index.md) - Interactive Zellij web terminal for each sandbox, shown inside the app.
 * [welcome-onboarding](welcome-onboarding/index.md) - First-run hero and onboarding flow that sets up the VM and base image.
 * [workspace-app-tabs](workspace-app-tabs/index.md) - Open a sandbox on a Manage launcher tab and let the user open app tabs from it.
+
+## superseded
+
+* [proxy-network-policy](proxy-network-policy/index.md) - Domain allow/deny and interactive approval for Podman sandboxes through the mitmproxy sidecar.

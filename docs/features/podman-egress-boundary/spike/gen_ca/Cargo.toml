@@ -1,0 +1,12 @@
+[package]
+name = "gen_ca"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Standalone spike crate, not a workspace member of src-tauri.
+[workspace]
+
+[dependencies]
+rcgen = { version = "0.13", default-features = false, features = ["crypto", "pem", "ring"] }
+time = "0.3"
