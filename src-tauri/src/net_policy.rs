@@ -436,14 +436,45 @@ pub fn to_egress(
     })
 }
 
-/// What a sandbox was actually created with: the policy plus whether a chained proxy was attached.
-/// Drives the start environment and drift detection (Resolved Decision 18).
+/// What a sandbox was created with, or last applied for a Podman sandbox: the policy, whether a
+/// chained proxy was attached, and a Podman sandbox's create-time variables. Drives the start
+/// environment and drift detection (Resolved Decision 18).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppliedPolicy {
     pub policy: NetPolicy,
     #[serde(default)]
     pub chained_proxy: bool,
+    /// The binding variables a Podman sandbox received placeholders for at create; kept across
+    /// applies, since placeholders exist only from create
+    /// (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guest_env: Option<Vec<String>>,
+}
+
+/// A binding whose variable the sandbox never received, with the value to export by hand.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnstampedBinding {
+    pub env_var: String,
+    pub placeholder: String,
+}
+
+/// The bindings of `policy` that `applied` did not stamp into the guest at create. Empty for a
+/// sandbox that records no create-time variables (microsandbox, or a sandbox predating them).
+pub fn unstamped_bindings(policy: &NetPolicy, applied: &AppliedPolicy) -> Vec<UnstampedBinding> {
+    let Some(stamped) = &applied.guest_env else {
+        return Vec::new();
+    };
+    policy
+        .secrets
+        .iter()
+        .filter(|b| !stamped.contains(&b.env_var))
+        .map(|b| UnstampedBinding {
+            env_var: b.env_var.clone(),
+            placeholder: placeholder(&b.env_var),
+        })
+        .collect()
 }
 
 fn applied_path<R: Runtime>(app: &AppHandle<R>, sandbox: &str) -> Result<PathBuf, NetPolicyError> {

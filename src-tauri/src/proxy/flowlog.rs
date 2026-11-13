@@ -91,7 +91,7 @@ async fn watch_flows(app: AppHandle, providers: Arc<ProviderRegistry>, sandbox: 
     let Ok(path) = super::flows_path(&app, &sandbox) else {
         return;
     };
-    let iron = super::read_meta(&app, &sandbox).is_some_and(|m| m["engine"] == super::ENGINE_IRON_PROXY);
+    let iron = super::sidecar_engine(&app, &sandbox) == super::types::ProxyEngine::IronProxy;
     let sidecar = super::proxy_container_name(&sandbox);
     let mut offset: u64 = 0;
     let mut last_id: u64 = 0;

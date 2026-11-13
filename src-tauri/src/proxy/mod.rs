@@ -14,7 +14,6 @@ pub mod audit;
 pub mod flowlog;
 pub mod iron;
 pub mod iron_config;
-pub mod rules;
 pub mod types;
 
 use std::collections::HashMap;
@@ -31,7 +30,7 @@ use crate::provider::types::{
     SidecarReadiness, SidecarSpec,
 };
 use crate::provider::ProviderRegistry;
-use types::{ProxyAttachment, ProxyError, ProxyStatus};
+use types::{ProxyAttachment, ProxyEngine, ProxyError, ProxyStatus};
 
 /// Pinned mitmproxy release, never `latest` (Resolved Decision 10). Overridable for tests.
 const MITMPROXY_IMAGE_DEFAULT: &str = "docker.io/mitmproxy/mitmproxy:11.1.3";
@@ -54,10 +53,6 @@ const PORT_ATTEMPTS: usize = 3;
 /// Bodies above this size are streamed, not buffered: a buffered ~150 MB download OOM-killed a
 /// 512 MiB msb sidecar.
 const STREAM_LARGE_BODIES: &str = "stream_large_bodies=1m";
-
-/// The `meta.json` `engine` of an iron-proxy sidecar. A Podman sidecar without it is a legacy
-/// mitmproxy one (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 8).
-pub const ENGINE_IRON_PROXY: &str = "iron-proxy";
 
 pub fn mitmproxy_image() -> String {
     std::env::var("MIO_PROXY_IMAGE")
@@ -153,8 +148,8 @@ fn meta_path_if_exists(app: &AppHandle, sandbox: &str) -> Option<PathBuf> {
 }
 
 /// Root of the app-global secret-value store: `<app_data_root>/proxy/secrets.json`. Written by
-/// `set_proxy_secret`/`delete_proxy_secret`, never read back over IPC — only `materialise` reads it,
-/// into the proxy-only `rules.json`.
+/// `set_proxy_secret`/`delete_proxy_secret`, never read back over IPC; only the iron-proxy apply
+/// and microsandbox's start environment read it.
 fn secrets_path(app: &AppHandle) -> Result<PathBuf, ProxyError> {
     let root = crate::paths::app_data_root(app)
         .map_err(|e| ProxyError::CommandFailed(e.to_string()))?
@@ -190,20 +185,6 @@ pub fn delete_secret(app: &AppHandle, secret_id: &str) -> Result<(), ProxyError>
     let mut secrets = load_secrets(app)?;
     secrets.remove(secret_id);
     save_secrets(app, &secrets)
-}
-
-/// Materialises `workspace_path`'s `.mio/proxy-rules.json` into `<state>/rules.json`, the copy
-/// mounted into the proxy container.
-fn write_materialised_rules(
-    app: &AppHandle,
-    sandbox: &str,
-    workspace_path: &str,
-) -> Result<(), ProxyError> {
-    let defs = rules::load_rules(workspace_path)?;
-    let materialised = rules::materialise(app, &defs)?;
-    let path = state_dir(app, sandbox)?.join("rules.json");
-    crate::mio_files::write_compact(&path, &materialised)
-        .map_err(|e| ProxyError::CommandFailed(e.to_string()))
 }
 
 /// Pulls `provider_id`'s sidecar image if absent, reported through `activity::TaskRegistry` — a
@@ -397,7 +378,7 @@ async fn create_podman_proxy(
         app,
         sandbox,
         &serde_json::json!({
-            "engine": ENGINE_IRON_PROXY,
+            "engine": ProxyEngine::IronProxy,
             "network": network,
             "proxyIp": proxy_ip,
             "mgmtToken": token,
@@ -602,8 +583,21 @@ fn read_meta(app: &AppHandle, sandbox: &str) -> Option<serde_json::Value> {
 }
 
 fn read_meta_host_port(app: &AppHandle, sandbox: &str) -> Option<u16> {
-    let path = meta_path_if_exists(app, sandbox)?;
-    crate::mio_files::read_value(&path)?["hostPort"].as_u64().and_then(|p| u16::try_from(p).ok())
+    meta_host_port(&read_meta(app, sandbox)?)
+}
+
+fn meta_host_port(meta: &serde_json::Value) -> Option<u16> {
+    meta["hostPort"].as_u64().and_then(|p| u16::try_from(p).ok())
+}
+
+/// Mitmproxy when `meta` records no engine: only iron-proxy sidecars write one.
+fn meta_engine(meta: &serde_json::Value) -> ProxyEngine {
+    serde_json::from_value(meta["engine"].clone()).unwrap_or(ProxyEngine::Mitmproxy)
+}
+
+/// The engine `sandbox`'s sidecar runs, from its `meta.json`.
+pub fn sidecar_engine(app: &AppHandle, sandbox: &str) -> ProxyEngine {
+    read_meta(app, sandbox).map_or(ProxyEngine::Mitmproxy, |m| meta_engine(&m))
 }
 
 /// The chained-proxy SOCKS5 password a microsandbox sidecar's `meta.json` records, read by
@@ -611,11 +605,6 @@ fn read_meta_host_port(app: &AppHandle, sandbox: &str) -> Option<u16> {
 pub fn read_socks_password(app: &AppHandle, sandbox: &str) -> Option<String> {
     let path = meta_path_if_exists(app, sandbox)?;
     crate::mio_files::read_value(&path)?["socksPassword"].as_str().map(str::to_string)
-}
-
-fn read_meta_proxy_ip(app: &AppHandle, sandbox: &str) -> Option<String> {
-    let path = meta_path(app, sandbox).ok()?;
-    crate::mio_files::read_value(&path)?["proxyIp"].as_str().map(str::to_string)
 }
 
 /// The sidecar's provider id and handle, resolved from `meta.json`.
@@ -648,9 +637,9 @@ pub async fn exists(app: &AppHandle, registry: &Arc<ProviderRegistry>, sandbox: 
         .unwrap_or(false)
 }
 
-/// Restarts the proxy sidecar so it re-reads its mounted state: `rules.json` for mitmproxy, whose
-/// addon has no watch on a mounted file (Resolved Decision 11), `config.yaml` for iron-proxy. A microsandbox sidecar is force-stopped and
-/// probed again before returning, since its agent fails closed until the listener is back.
+/// Restarts the proxy sidecar so it re-reads its mounted state: `config.yaml` for iron-proxy, the
+/// secret-host `rules.json` for mitmproxy. A microsandbox sidecar is probed again before returning,
+/// since its agent fails closed until the listener is back.
 pub async fn restart_proxy_container(
     app: &AppHandle,
     registry: &Arc<ProviderRegistry>,
@@ -676,18 +665,6 @@ pub async fn restart_proxy_container(
         crate::provider::probe::wait_sidecar_ready(&msb_readiness(port, &password)).await?;
     }
     Ok(())
-}
-
-/// Re-materialises `workspace_path`'s rules and restarts the proxy container so it picks them up.
-/// Podman only: microsandbox owns secret injection itself.
-pub async fn apply_rules(
-    app: &AppHandle,
-    registry: &Arc<ProviderRegistry>,
-    sandbox: &str,
-    workspace_path: &str,
-) -> Result<(), ProxyError> {
-    write_materialised_rules(app, sandbox, workspace_path)?;
-    restart_proxy_container(app, registry, sandbox).await
 }
 
 /// Removes the proxy container, its network, and its state directory, in that order — Podman
@@ -760,7 +737,9 @@ pub async fn status(
     let container_name = proxy_container_name(sandbox);
     let instances = provider.list_instances().await?;
     let network = if id == ProviderId::Podman { proxy_network_name(sandbox) } else { String::new() };
-    let host_port = if id == ProviderId::Microsandbox { read_meta_host_port(app, sandbox) } else { None };
+    let meta = read_meta(app, sandbox).unwrap_or_default();
+    let host_port = if id == ProviderId::Microsandbox { meta_host_port(&meta) } else { None };
+    let engine = meta_engine(&meta);
     let Some(instance) = instances.into_iter().find(|s| s.name == container_name && is_sidecar(s)) else {
         return Ok(ProxyStatus {
             exists: false,
@@ -770,6 +749,7 @@ pub async fn status(
             provider: id,
             host_port,
             healthy: None,
+            engine,
         });
     };
     let running = instance.status == "running";
@@ -783,11 +763,12 @@ pub async fn status(
     Ok(ProxyStatus {
         exists: true,
         running,
-        proxy_ip: read_meta_proxy_ip(app, sandbox).unwrap_or_default(),
+        proxy_ip: meta["proxyIp"].as_str().unwrap_or_default().to_string(),
         network,
         provider: id,
         host_port,
         healthy,
+        engine,
     })
 }
 

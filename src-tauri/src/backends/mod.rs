@@ -398,7 +398,9 @@ impl CliBackend {
         if mode.is_some() {
             net_policy::save(workspace, &policy)?;
         }
-        let applied = net_policy::AppliedPolicy { policy, chained_proxy: chain.is_some() };
+        let guest_env =
+            caps.sidecar_egress.then(|| policy.secrets.iter().map(|b| b.env_var.clone()).collect());
+        let applied = net_policy::AppliedPolicy { policy, chained_proxy: chain.is_some(), guest_env };
         net_policy::write_applied(&self.app, name, &applied)?;
         Ok(net_policy::to_egress(&applied.policy, chain)?)
     }

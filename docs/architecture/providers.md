@@ -4,7 +4,7 @@ title: "Providers, Machines and the Process Layer"
 description: "The Podman and microsandbox engines behind one provider seam, how each is made ready on the host, and how every external process is run."
 generated:
   by: claude-code/opus-5-5
-  at: 2026-11-10T23:30:00+11:00
+  at: 2026-11-15T12:00:00+11:00
 stale_after: 2027-02-05T00:00:00+11:00
 code:
   - src-tauri/src/provider/
@@ -18,10 +18,11 @@ sources:
   - resource: docs/features/podman-process-isolation/02_dev.md
   - resource: docs/features/sandbox-runtime-management/02_dev.md
   - resource: docs/features/techdebt-sweep/02_dev.md
+  - resource: docs/features/podman-egress-boundary/02_dev.md
 ---
 # Providers, Machines and the Process Layer
 
-A sandbox runs on Podman or microsandbox behind one provider seam. This document covers how the engines differ, how each is made ready, and the process layer.
+A sandbox runs on Podman or microsandbox behind one provider seam, which hides how the engines differ and how each is made ready.
 
 ## The Provider Seam
 
@@ -40,7 +41,7 @@ A sandbox runs on Podman or microsandbox behind one provider seam. This document
 | Workspace | Host folder bind-mounted into the container | Disk volume inside the VM, mirrored to the host folder by a Mutagen sync session |
 | Recreate, keeping the workspace | Not supported yet | Supported; used to apply network changes |
 | Remote deploy | Supported ([Remote](remote.md)) | Not supported |
-| Egress policy | Not enforced | Enforced by msb's network stack ([Network](network.md)) |
+| Egress policy | Enforced by a proxy sidecar | Enforced by msb's network stack ([Network](network.md)) |
 | Engine event stream | Yes | No |
 
 ## Podman Machine Readiness

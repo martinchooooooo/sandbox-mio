@@ -41,15 +41,33 @@
         sandboxName,
         workspacePath,
         provider,
+        sidecar,
         viewerOn,
         onReapplied,
     }: {
         sandboxName: string;
         workspacePath: string;
         provider: ProviderId;
+        /**
+         * The iron-proxy dialect: host allows and CIDR denies only, applied without a recreate, no
+         * violation actions (docs/features/podman-egress-boundary/02_dev.md, Resolved Decision 6).
+         */
+        sidecar: boolean;
         viewerOn: boolean;
         onReapplied: () => void;
     } = $props();
+
+    // Mirrors Rust `proxy::iron::ApplyReport` and `net_policy::UnstampedBinding`.
+    interface ApplyReport {
+        missingSecrets: string[];
+    }
+    interface UnstampedBinding {
+        envVar: string;
+        placeholder: string;
+    }
+    let report = $state<ApplyReport | null>(null);
+    let unstamped = $state<UnstampedBinding[]>([]);
+    const unstampedByVar = $derived(new Map(unstamped.map((u) => [u.envVar, u.placeholder])));
 
     // Mirrors Rust `provider::types::SecretViolation`.
     interface SecretViolation {
@@ -66,6 +84,7 @@
 
     $effect(() => {
         const name = sandboxName;
+        if (sidecar) return;
         const poll = async () => {
             try {
                 violations = await invoke<SecretViolation[]>("net_policy_violations", { name });
@@ -106,6 +125,8 @@
     // guest (docs/features/microsandbox-network-policy/02_dev.md, Secret handling invariants).
     const ECHO_HOSTS = ["httpbin.org", "postman-echo.com"];
 
+    const SIDECAR_TARGET_PLACEHOLDER = "host, *.suffix, or CIDR to deny"; // TODO(i18n)
+
     let policy = $state<NetPolicy | null>(null);
     let drift = $state(false);
     let dirty = $state(false);
@@ -123,8 +144,14 @@
 
     async function refresh() {
         try {
-            policy = await invoke<NetPolicy>("get_net_policy", { workspacePath });
-            drift = await invoke<boolean>("net_policy_drift", { name: sandboxName, workspacePath });
+            const name = sandboxName;
+            [policy, drift, unstamped] = await Promise.all([
+                invoke<NetPolicy>("get_net_policy", { workspacePath }),
+                invoke<boolean>("net_policy_drift", { name, workspacePath }),
+                sidecar
+                    ? invoke<UnstampedBinding[]>("net_policy_unstamped_bindings", { name, workspacePath })
+                    : Promise.resolve([]),
+            ]);
             dirty = false;
         } catch (e) {
             editorError = parseError(e).message;
@@ -135,6 +162,7 @@
         if (!policy) return;
         fn(policy);
         dirty = true;
+        report = null;
     }
 
     async function save() {
@@ -142,7 +170,12 @@
         busy = true;
         editorError = null;
         try {
-            await invoke("set_net_policy", { workspacePath, policy, provider });
+            if (sidecar) {
+                const edited = dirty ? policy : null;
+                report = await invoke<ApplyReport>("apply_sandbox_policy", { name: sandboxName, workspacePath, policy: edited });
+            } else {
+                await invoke("set_net_policy", { workspacePath, policy, provider });
+            }
             await refresh();
         } catch (e) {
             editorError = parseError(e).message;
@@ -169,7 +202,7 @@
     function addRule() {
         const target = newTarget.trim();
         if (!target) return;
-        const ports = parsePorts(newPorts);
+        const ports = sidecar ? undefined : parsePorts(newPorts);
         const rule: NetRule = { action: newAction };
         if (["public", "private", "host"].includes(target)) rule.group = target as NetRule["group"];
         else if (/^[0-9a-fA-F:.]+(\/\d+)?$/.test(target) && /[\d:]/.test(target[0])) rule.cidr = target;
@@ -212,6 +245,12 @@
         try {
             await invoke("set_proxy_secret", { secretId: id, value });
             secretValue = "";
+            // The sidecar reads values only at an apply; unsaved edits wait for the next save
+            // (docs/features/podman-egress-boundary/02_dev.md, Resolved Decision 15).
+            if (sidecar && !dirty) {
+                report = await invoke<ApplyReport>("apply_sandbox_policy", { name: sandboxName, workspacePath, policy: null });
+                await refresh();
+            }
         } catch (e) {
             editorError = parseError(e).message;
         } finally {
@@ -238,7 +277,11 @@
 
     {#if drift}
         <span class="rounded bg-amber-100 px-2 py-1 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200" data-net-policy-drift>
-            {m.netpolicy_drift()}
+            {#if sidecar}
+                The workspace file differs from what the sidecar runs; save to apply it. <!-- TODO(i18n) -->
+            {:else}
+                {m.netpolicy_drift()}
+            {/if}
         </span>
     {/if}
 
@@ -258,8 +301,12 @@
         </div>
 
         <span class="text-muted-foreground text-xs">
-            {#if policy.egress === "allowlist"}
+            {#if policy.egress === "allowlist" && sidecar}
+                Only hosts allowed below are reachable. <!-- TODO(i18n) -->
+            {:else if policy.egress === "allowlist"}
                 {m.netpolicy_mode_allowlist_hint()}
+            {:else if sidecar}
+                Every public host is reachable; the traffic panel marks requests an allowlist would block. <!-- TODO(i18n) -->
             {:else}
                 {m.netpolicy_mode_open_hint()}
             {/if}
@@ -271,7 +318,9 @@
                     <div class="flex items-center gap-2 rounded bg-muted px-2 py-1 text-xs" data-net-policy-rule>
                         <span class={rule.action === "deny" ? "text-destructive" : ""}>{rule.action}</span>
                         <span class="flex-1 truncate font-mono">{targetLabel(rule)}</span>
-                        <span class="text-muted-foreground font-mono">{portsLabel(rule)}</span>
+                        {#if !sidecar}
+                            <span class="text-muted-foreground font-mono">{portsLabel(rule)}</span>
+                        {/if}
                         <Button variant="ghost" size="icon" disabled={busy || i === 0} onclick={() => moveRule(i, -1)}>↑</Button>
                         <Button variant="ghost" size="icon" disabled={busy || i === policy.rules.length - 1} onclick={() => moveRule(i, 1)}>↓</Button>
                         <Button variant="ghost" size="icon" disabled={busy}
@@ -287,13 +336,21 @@
             <Button size="sm" variant="outline" disabled={busy}
                 onclick={() => (newAction = newAction === "allow" ? "deny" : "allow")}>{newAction}</Button>
             <input class="w-40 rounded border bg-background px-2 py-1 text-xs disabled:opacity-50"
-                placeholder={m.netpolicy_target_placeholder()} bind:value={newTarget} disabled={busy} />
-            <input class="w-20 rounded border bg-background px-2 py-1 text-xs disabled:opacity-50"
-                placeholder={m.netpolicy_ports_placeholder()} bind:value={newPorts} disabled={busy} />
+                placeholder={sidecar ? SIDECAR_TARGET_PLACEHOLDER : m.netpolicy_target_placeholder()}
+                bind:value={newTarget} disabled={busy} />
+            {#if !sidecar}
+                <input class="w-20 rounded border bg-background px-2 py-1 text-xs disabled:opacity-50"
+                    placeholder={m.netpolicy_ports_placeholder()} bind:value={newPorts} disabled={busy} />
+            {/if}
             <Button size="sm" disabled={busy} onclick={addRule}>
                 {m.rule_add()}
             </Button>
         </div>
+        {#if sidecar}
+            <span class="text-muted-foreground text-xs" data-net-policy-sidecar-hint>
+                Allow rules take hostnames and deny rules take CIDR ranges. An allowed host is reachable on every port, and *.example.com also allows example.com. <!-- TODO(i18n) -->
+            </span>
+        {/if}
 
         <span class="text-muted-foreground mt-2 border-t pt-2 text-xs shrink-0" data-secrets-heading>
             {m.dashboard_secrets_title()}
@@ -307,6 +364,12 @@
                 <Button variant="ghost" size="icon" disabled={busy}
                     onclick={() => mutate((p) => p.secrets.splice(i, 1))}>✕</Button>
             </div>
+            {#if unstampedByVar.has(binding.envVar)}
+                <span class="text-xs text-amber-700 dark:text-amber-300" data-net-policy-unstamped={binding.envVar}>
+                    Added after this sandbox was created, so ${binding.envVar} is unset inside it. Export it by hand: <!-- TODO(i18n) -->
+                    <code class="font-mono">export {binding.envVar}={unstampedByVar.get(binding.envVar)}</code>
+                </span>
+            {/if}
         {/each}
         <div class="flex flex-wrap items-center gap-2">
             <input class="w-24 rounded border bg-background px-2 py-1 text-xs disabled:opacity-50"
@@ -334,6 +397,7 @@
             </span>
         {/if}
 
+        {#if !sidecar}
         <div class="flex items-center gap-2">
             <span class="text-muted-foreground text-xs">{m.netpolicy_violation_action_label()}</span>
             {#each [["block", m.netpolicy_violation_block()], ["block-and-log", m.netpolicy_violation_block_and_log()], ["block-and-terminate", m.netpolicy_violation_block_and_stop()]] as const as [value, label] (value)}
@@ -346,15 +410,31 @@
                 >{label}</Button>
             {/each}
         </div>
+        {/if}
 
         <div class="flex items-center gap-2">
-            <Button size="sm" disabled={busy || !dirty} onclick={save} data-net-policy-save>
+            <!-- Sidecar drift is applied by saving the file unchanged, so it needs no edit first. -->
+            <Button size="sm" disabled={busy || !(dirty || (sidecar && drift))} onclick={save} data-net-policy-save>
                 {m.netpolicy_save()}
             </Button>
             <span class="text-muted-foreground text-xs">
-                {m.netpolicy_save_hint()}
+                {#if sidecar}
+                    Saving applies the policy to the running sidecar at once. <!-- TODO(i18n) -->
+                {:else}
+                    {m.netpolicy_save_hint()}
+                {/if}
             </span>
         </div>
+
+        {#if report}
+            <span class="text-muted-foreground text-xs" data-net-policy-apply-report>
+                {#if report.missingSecrets.length > 0}
+                    Applied. No value is stored for {report.missingSecrets.map((v) => "$" + v).join(", ")}, so those placeholders pass through unswapped. <!-- TODO(i18n) -->
+                {:else}
+                    Applied. <!-- TODO(i18n) -->
+                {/if}
+            </span>
+        {/if}
 
         {#if violations.length > 0}
             <div class="flex flex-col gap-1" data-net-policy-violations>
@@ -370,6 +450,7 @@
             </div>
         {/if}
 
+        {#if !sidecar}
         <div class="flex flex-col gap-1.5 border-t pt-2" data-net-policy-reapply>
             <div class="flex items-center gap-2">
                 <span class="text-muted-foreground text-xs">{m.proxy_inspect_traffic()}</span>
@@ -399,6 +480,7 @@
                 </div>
             {/if}
         </div>
+        {/if}
     {/if}
 
     {#if editorError}

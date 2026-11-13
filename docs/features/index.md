@@ -5,7 +5,6 @@
 
 * [native-agent-ui](native-agent-ui/index.md) - Built-in chat UI in the app's own frontend, driving pi inside the sandbox over its RPC mode, kept alive by an in-sandbox supervisor.
 * [onboarding-story](onboarding-story/index.md) - Illustrated onboarding book inside the welcome flow, extensible by chapter, with first-run setup running in the background and reported through the activity center.
-* [podman-egress-boundary](podman-egress-boundary/index.md) - Fail-closed egress for Podman sandboxes: an internal Podman network with the proxy sidecar as the only exit, and iron-proxy replacing the mitmproxy sidecar for policy, secret swap and the traffic record.
 * [retro-ui-migration](retro-ui-migration/index.md) - Re-skin the UI primitives with the retro-ui-svelte registry (Sunset Orange, rounded).
 * [unified-sidebar-nav](unified-sidebar-nav/index.md) - One persistent left sidebar replaces the top page tabs and the multi-sandbox switcher bar, pages use the full content area, and navigation labels speak plain language.
 
@@ -48,6 +47,7 @@
 * [package-autocomplete](package-autocomplete/index.md) - Registry-backed suggestion dropdown for the sandbox package install input.
 * [parallel-worktree-e2e](parallel-worktree-e2e/index.md) - Run the e2e light tier concurrently from several git worktrees, isolated by a per-worktree run slug.
 * [pi-agent](pi-agent/index.md) - pi as a third installable agent, pre-wired to the host local-LLM inference server.
+* [podman-egress-boundary](podman-egress-boundary/index.md) - Fail-closed egress for Podman sandboxes: an internal Podman network with the proxy sidecar as the only exit, and iron-proxy replacing the mitmproxy sidecar for policy, secret swap and the traffic record.
 * [podman-exec-transport](podman-exec-transport/index.md) - Reach containers over an SSH-over-exec transport instead of publishing ports.
 * [podman-process-isolation](podman-process-isolation/index.md) - Stop spawned processes on Windows from inheriting the app's console handles.
 * [podman-startup-recovery](podman-startup-recovery/index.md) - Graceful recovery when the Podman machine is stopped or its socket is missing after a host restart.

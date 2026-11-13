@@ -57,4 +57,15 @@ pub struct ProxyStatus {
     /// Whether a running microsandbox sidecar answers a SOCKS5 greeting; `None` for Podman or a
     /// stopped sidecar.
     pub healthy: Option<bool>,
+    pub engine: ProxyEngine,
+}
+
+/// The proxy program a sidecar runs, recorded as `meta.json`'s `engine` by iron-proxy sidecars
+/// only. A Podman sidecar running mitmproxy is a legacy one without the network boundary
+/// (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProxyEngine {
+    IronProxy,
+    Mitmproxy,
 }

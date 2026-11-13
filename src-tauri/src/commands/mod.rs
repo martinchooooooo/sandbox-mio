@@ -109,8 +109,6 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         mockctl::mock_reset,
         mockctl::mock_calls,
         proxy::proxy_status,
-        proxy::list_proxy_rules,
-        proxy::set_proxy_rules,
         proxy::set_proxy_secret,
         proxy::delete_proxy_secret,
         proxy::restart_proxy,
@@ -119,6 +117,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         net_policy::set_net_policy,
         net_policy::net_policy_drift,
         net_policy::apply_sandbox_policy,
+        net_policy::net_policy_unstamped_bindings,
         net_policy::reapply_sandbox_network,
         net_policy::net_policy_violations
     ]

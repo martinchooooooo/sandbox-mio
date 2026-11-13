@@ -188,18 +188,19 @@ async fn is_running(
     Ok(provider.list_instances().await?.iter().any(|s| s.name == sidecar && s.status == "running"))
 }
 
-/// Renders the workspace's `.mio/net-policy.json` into the sidecar's config and makes the sidecar
-/// run it: reload when running, start when stopped (Resolved Decision 13). A rejected reload
-/// restores `config.prev.yaml` and never restarts, so the file on disk always matches the running
-/// pipeline. `applied.json` is rewritten only once the sidecar runs the new policy.
+/// Renders `policy`, already validated by the caller, into the sidecar's config and makes the
+/// sidecar run it: reload when running, start when stopped (Resolved Decision 13). A rejected
+/// reload restores `config.prev.yaml` and never restarts, so the file on disk always matches the
+/// running pipeline. `applied.json` is rewritten only once the sidecar runs the new policy.
 pub async fn apply_policy(
     app: &AppHandle,
     registry: &Arc<ProviderRegistry>,
     sandbox: &str,
-    workspace_path: &str,
+    policy: NetPolicy,
 ) -> Result<ApplyReport, ProxyError> {
     let state = super::state_dir(app, sandbox)?;
-    let meta = super::read_meta(app, sandbox).filter(|m| m["engine"] == super::ENGINE_IRON_PROXY);
+    let meta = super::read_meta(app, sandbox)
+        .filter(|m| super::meta_engine(m) == super::types::ProxyEngine::IronProxy);
     let Some(meta) = meta else {
         return Err(ProxyError::CommandFailed(format!(
             "{sandbox:?} has no iron-proxy sidecar; recreate the sandbox to get the network boundary"
@@ -208,8 +209,9 @@ pub async fn apply_policy(
     let proxy_ip = meta["proxyIp"].as_str().unwrap_or_default().to_string();
     let provider = registry.local(ProviderId::Podman);
     let policy_err = |e: net_policy::NetPolicyError| ProxyError::CommandFailed(e.0);
-    let policy = net_policy::load(workspace_path).map_err(policy_err)?;
-    net_policy::validate(&policy, provider.capabilities()).map_err(policy_err)?;
+    // Read before anything changes: the rewrite below must carry `guest_env` forward, and losing it
+    // would hide every unstamped binding.
+    let guest_env = net_policy::read_applied(app, sandbox).map_err(policy_err)?.and_then(|a| a.guest_env);
 
     let secrets = secrets_dir(&state);
     let (files, missing_secrets) =
@@ -234,7 +236,7 @@ pub async fn apply_policy(
         return Err(e);
     }
     remove_stale_secret_files(&secrets, &files);
-    let applied = net_policy::AppliedPolicy { policy, chained_proxy: false };
+    let applied = net_policy::AppliedPolicy { policy, chained_proxy: false, guest_env };
     net_policy::write_applied(app, sandbox, &applied).map_err(policy_err)?;
     if !missing_secrets.is_empty() {
         tracing::warn!(target: "proxy", %sandbox, ?missing_secrets, "bindings without a stored secret were not applied");

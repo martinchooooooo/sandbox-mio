@@ -49,14 +49,30 @@ pub fn net_policy_drift(
     Ok(current != applied.policy)
 }
 
-/// Validates and saves `policy` as `name`'s workspace file, then applies it to the sandbox's
-/// running iron-proxy sidecar without a recreate. Podman only
+/// The bindings in `workspace_path`'s policy whose variable `name` never received, because they
+/// were added after create (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 7).
+#[tauri::command]
+pub fn net_policy_unstamped_bindings(
+    name: String,
+    workspace_path: String,
+    app: tauri::AppHandle,
+) -> Result<Vec<net_policy::UnstampedBinding>, AppError> {
+    let Some(applied) = net_policy::read_applied(&app, &name).map_err(BackendError::from)? else {
+        return Ok(Vec::new());
+    };
+    let current = net_policy::load(&workspace_path).map_err(BackendError::from)?;
+    Ok(net_policy::unstamped_bindings(&current, &applied))
+}
+
+/// Validates `policy` and saves it as `name`'s workspace file, then applies it to the sandbox's
+/// iron-proxy sidecar without a recreate. `policy: None` applies the workspace file as it stands,
+/// so a secret-value change never overwrites the file with a stale copy. Podman only
 /// (`docs/features/podman-egress-boundary/02_dev.md`, Phase D).
 #[tauri::command]
 pub async fn apply_sandbox_policy(
     name: String,
     workspace_path: String,
-    policy: NetPolicy,
+    policy: Option<NetPolicy>,
     registry: State<'_, Arc<ProviderRegistry>>,
     app: tauri::AppHandle,
 ) -> Result<crate::proxy::iron::ApplyReport, AppError> {
@@ -68,10 +84,17 @@ pub async fn apply_sandbox_policy(
         ))
         .into());
     }
+    let edited = policy.is_some();
+    let policy = match policy {
+        Some(policy) => policy,
+        None => net_policy::load(&workspace_path).map_err(BackendError::from)?,
+    };
     net_policy::validate(&policy, registry.local(provider).capabilities())
         .map_err(BackendError::from)?;
-    net_policy::save(&workspace_path, &policy).map_err(BackendError::from)?;
-    Ok(crate::proxy::iron::apply_policy(&app, &registry, &name, &workspace_path)
+    if edited {
+        net_policy::save(&workspace_path, &policy).map_err(BackendError::from)?;
+    }
+    Ok(crate::proxy::iron::apply_policy(&app, &registry, &name, policy)
         .await
         .map_err(BackendError::from)?)
 }

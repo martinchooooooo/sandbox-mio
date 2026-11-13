@@ -15,6 +15,8 @@ export interface ProxyStatus {
     hostPort: number | null;
     /** Whether a running microsandbox sidecar answers; null for Podman or a stopped sidecar. */
     healthy: boolean | null;
+    /** Mirrors Rust `proxy::types::ProxyEngine`; a Podman sidecar reporting "mitmproxy" is a legacy one. */
+    engine: "iron-proxy" | "mitmproxy";
 }
 
 type Entry = { value: ProxyStatus | null; error: string | null; fetchedAt: number; loading: boolean };

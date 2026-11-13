@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use crate::backends;
-use crate::backends::types::{EgressRequest, Sandbox, SandboxBackend};
+use crate::backends::types::{BackendError, EgressRequest, Sandbox, SandboxBackend};
 use crate::error::AppError;
 use crate::network::types::NetworkManager;
 use crate::provider::types::ProviderId;
@@ -266,6 +266,7 @@ pub async fn reapply_network(
             .unwrap_or_else(|| crate::net_policy::AppliedPolicy {
                 policy: crate::net_policy::NetPolicy::default(),
                 chained_proxy: true,
+                guest_env: None,
             });
         crate::proxy::write_secret_hosts(app, name, &applied)?;
         crate::proxy::restart_proxy_container(app, registry, name).await?;
@@ -289,7 +290,9 @@ async fn apply_policy_and_inject_ca(
     workspace_path: &str,
 ) -> Result<(), AppError> {
     tracing::info!(target: "create", %name, "create_sandbox: applying network policy");
-    crate::proxy::iron::apply_policy(app, registry, name, workspace_path).await?;
+    let policy = crate::net_policy::load(workspace_path).map_err(BackendError::from)?;
+    crate::net_policy::validate(&policy, podman.capabilities()).map_err(BackendError::from)?;
+    crate::proxy::iron::apply_policy(app, registry, name, policy).await?;
     tracing::info!(target: "create", %name, "create_sandbox: injecting proxy CA");
     let pem = crate::proxy::read_ca_pem(app, name, ProviderId::Podman)?;
     crate::proxy::inject_ca(podman, name, &pem).await?;

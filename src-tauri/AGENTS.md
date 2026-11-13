@@ -50,7 +50,7 @@ Modules follow one layout: `types.rs` declares the public types/trait, `mod.rs` 
   `backends`/`machine`/`sync`. Depends on `process/`, never the reverse. See
   `docs/features/scriptable-mock-backend/02_dev.md`.
 - `provider/` — the `MachineProvider` seam and `ProviderRegistry`: `PodmanProvider` (`provider/mod.rs`), `MsbProvider` (`provider/msb.rs`), and `msb_policy.rs`, which renders an egress policy into `msb create` flags. See `docs/architecture/providers.md`.
-- `proxy/` — per-sandbox mitmproxy sidecar (free functions, not a trait subsystem: every external call already crosses the `ProcessRunner` seam through a provider), secret-injection rules, and the flow-log poller. See `docs/architecture/network.md`.
+- `proxy/` — per-sandbox proxy sidecar (free functions, not a trait subsystem: every external call already crosses the `ProcessRunner` seam through a provider): the iron-proxy sidecar, config renderer and audit ingest for Podman, the mitmproxy sidecar VM for microsandbox, and the flow-log poller. See `docs/architecture/network.md`.
 - `net_policy.rs` — the `.mio/net-policy.json` schema, validation, and per-sandbox applied snapshot; a plain file module like `mio_files.rs`, usable from any layer.
 - `activity/` — `TaskRegistry`, the source of truth for long-running task state; pushes `activity://task-updated` events consumed by `src/lib/activity/activity.svelte.ts`.
 - `agent_host/` — the native agent chat's host side: installs and drives the in-sandbox pi supervisor (`resources/agent-host/*.sh`), holds one attach stream per sandbox, frames the journal into offset-tagged records, derives pending dialogs, and lists chat session files host-side. See `docs/features/native-agent-ui/02_dev.md`.

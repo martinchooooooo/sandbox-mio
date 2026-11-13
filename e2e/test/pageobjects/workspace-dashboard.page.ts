@@ -96,7 +96,7 @@ class WorkspaceDashboardPage {
   }
 
   async installedPackages(): Promise<string[]> {
-    // Scoped to the active section: other panels (proxy rules, flows) render monospace spans too.
+    // Scoped to the active section: other panels (network policy, flows) render monospace spans too.
     const chips = await $$('[data-slot="section-nav-content"][data-state="active"] span.font-mono');
     const names: string[] = [];
     for (const chip of chips) names.push(await chip.getText());

@@ -9,7 +9,13 @@
     import { m } from "$lib/paraglide/messages.js";
     import { createActionRunner } from "$lib/actions.svelte";
     import StatusRow from "./StatusRow.svelte";
-    import { PROVIDERS, providerCapabilities, providerLabel, type ProviderId } from "$lib/providers";
+    import {
+        PROVIDERS,
+        providerCapabilities,
+        providerLabel,
+        type ProviderCapabilities,
+        type ProviderId,
+    } from "$lib/providers";
     import { allAgentApiHosts } from "$lib/agents/catalogue";
     import { onMount } from "svelte";
     import { checkPodman, podmanUnavailable } from "$lib/podman/setup.svelte";
@@ -25,15 +31,18 @@
     let proxy = $state(false);
     // Open by default (docs/features/microsandbox-network-policy/02_dev.md, Resolved Decision 3).
     let egress = $state<"open" | "allowlist">("open");
-    let egressSupported = $state(false);
+    let caps = $state<ProviderCapabilities | null>(null);
+    // A Podman policy is enforced by the proxy sidecar, so it exists only with the proxy on
+    // (docs/features/podman-egress-boundary/02_dev.md, Resolved Decision 5).
+    const egressSupported = $derived(!!caps && (caps.egressPolicy || (caps.sidecarEgress && proxy)));
 
     $effect(() => {
         const p = provider;
         providerCapabilities(p)
-            .then((caps) => {
-                if (p === provider) egressSupported = caps.egressPolicy;
+            .then((c) => {
+                if (p === provider) caps = c;
             })
-            .catch(() => (egressSupported = false));
+            .catch(() => (caps = null));
     });
 
     const action = createActionRunner();
@@ -179,6 +188,10 @@
                 {#if proxy && provider === "microsandbox"}
                     <Field.Description data-proxy-msb-hint>
                         {m.create_proxy_msb_hint()}
+                    </Field.Description>
+                {:else if proxy && caps?.sidecarEgress}
+                    <Field.Description data-proxy-podman-hint>
+                        Every request goes through the proxy sidecar; traffic that ignores it (raw sockets, git over SSH) is blocked. <!-- TODO(i18n) -->
                     </Field.Description>
                 {/if}
                 {#if egressSupported}
