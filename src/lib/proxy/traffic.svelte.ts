@@ -16,6 +16,10 @@ export type FlowEntry = {
     respBytes: number | null;
     secretInjected: boolean;
     error: string | null;
+    /** The iron-proxy transform that refused the request. */
+    rejectedBy: string | null;
+    /** An `open`-mode request an allowlist policy would have refused. */
+    wouldBlock: boolean;
 };
 
 // Must equal FLOW_LOG_MAX_LINES in src-tauri/src/proxy/flowlog.rs and

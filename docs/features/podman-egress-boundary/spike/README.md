@@ -36,7 +36,7 @@ Order: build `gen_ca` into `$SPIKE_STATE/certs`, `render_config.sh`, `setup.sh`,
 | 2b | Non-proxy-aware clients | PASS | `curl --noproxy '*'` over 443 and 80, Node `fetch` and Python `urllib` without proxy variables all reach allowed hosts through the DNS route |
 | 2c | Resolver override and odd ports | PASS (blocked) | `nameserver 8.8.8.8` fails; a DNS-routed connection to port 8443 is refused |
 | 3a | Audit shape | PASS | One JSON object per line on stderr; fields nested under `audit`; see Audit Record Shape |
-| 3b | `podman logs --since` | PASS | Nanosecond timestamps; `--since <T>` is inclusive of the line stamped `T` |
+| 3b | `podman logs --since` | PASS | Nanosecond timestamps; `--since <T>` is inclusive of the line stamped `T`. Phase E later found that the Podman 5.8.2 client truncates `--since` to the whole second, so earlier lines of that second come back too (`../02_dev.md`, Phase E) |
 | 3c | `k8s-file` with `max-size=1mb` | PARTIAL | conmon truncates `ctr.log` to zero at the cap, no rotation file: 3,500 requests left 1,075 lines and lost every earlier line, startup lines included |
 | 3d | Logs of a stopped sidecar | PASS | Readable while stopped; a restart appends to the same log |
 | 4 | Toolchains through the tunnel with the rcgen CA | PASS | `git clone` and `git ls-remote` over HTTPS, `mise install node@22` and `python@3.12`, `npm install`, `pip install` |

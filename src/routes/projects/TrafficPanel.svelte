@@ -21,6 +21,9 @@
     } = $props();
 
     const STATUS_CLASSES = ["2xx", "3xx", "4xx", "5xx", "error"];
+    const WOULD_BLOCK_LABEL = "would block"; // TODO(i18n)
+    const WOULD_BLOCK_TITLE = "Allowed in open mode; an allowlist policy would block this request"; // TODO(i18n)
+    const rejectedLabel = (transform: string) => `blocked by ${transform}`; // TODO(i18n)
 
     const statusEntry = $derived(proxyStatusFor(sandboxName));
     const status = $derived(statusEntry.value);
@@ -157,6 +160,22 @@
                             <span class="flex-1 truncate font-mono text-muted-foreground" title={flow.path}>
                                 {flow.path}
                             </span>
+                            {#if flow.rejectedBy}
+                                <span
+                                    class="shrink-0 rounded border border-destructive px-1 text-destructive"
+                                    data-flow-rejected-by={flow.rejectedBy}
+                                >
+                                    {rejectedLabel(flow.rejectedBy)}
+                                </span>
+                            {:else if flow.wouldBlock}
+                                <span
+                                    class="shrink-0 rounded border px-1 text-muted-foreground"
+                                    title={WOULD_BLOCK_TITLE}
+                                    data-flow-would-block
+                                >
+                                    {WOULD_BLOCK_LABEL}
+                                </span>
+                            {/if}
                             {#if flow.secretInjected}
                                 <span class="shrink-0 rounded border px-1" title={m.traffic_secret_badge_title()}>
                                     {m.traffic_secret_badge()}
@@ -173,9 +192,11 @@
                             <div class="mt-1 flex flex-col gap-0.5 border-t pt-1 font-mono break-all">
                                 <span>{flow.path}</span>
                                 <span class="text-muted-foreground">{timestamp(flow.ts)}</span>
-                                <span class="text-muted-foreground">
-                                    {m.traffic_bytes({ sent: flow.reqBytes ?? 0, received: flow.respBytes ?? 0 })}
-                                </span>
+                                {#if flow.reqBytes !== null || flow.respBytes !== null}
+                                    <span class="text-muted-foreground" data-flow-bytes>
+                                        {m.traffic_bytes({ sent: flow.reqBytes ?? 0, received: flow.respBytes ?? 0 })}
+                                    </span>
+                                {/if}
                                 {#if flow.error}
                                     <span class="text-red-500">{flow.error}</span>
                                 {/if}

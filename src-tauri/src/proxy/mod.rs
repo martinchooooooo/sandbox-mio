@@ -10,6 +10,7 @@
 //! (`docs/features/microsandbox-network-policy/02_dev.md`, Phase F). Which provider and engine a
 //! sidecar runs is recorded in its `meta.json`; state written before those features is Podman's.
 
+pub mod audit;
 pub mod flowlog;
 pub mod iron;
 pub mod iron_config;

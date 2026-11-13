@@ -1,13 +1,17 @@
-//! Poll loop over the proxy sidecar's bind-mounted NDJSON flow log
+//! Poll loop over the proxy sidecar's NDJSON flow log
 //! (`docs/features/proxy-traffic-viewer/02_dev.md`). One detached task per watched sandbox parses
-//! only newly appended lines and pushes them to the frontend as `proxy://flows-changed`.
+//! only newly appended lines and pushes them to the frontend as `proxy://flows-changed`. A mitmproxy
+//! sidecar's addon writes the file; for an iron-proxy sidecar each tick first ingests the audit
+//! stream into it ([`super::audit`]).
 
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tauri::{AppHandle, Emitter};
+
+use crate::provider::ProviderRegistry;
 
 const EVENT_NAME: &str = "proxy://flows-changed";
 
@@ -20,7 +24,8 @@ pub const FLOW_LOG_MAX_LINES: usize = 500;
 /// (Resolved Decision 6).
 const FLOW_LOG_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
-/// One finished flow as written by `mitm_flowlog_addon.py`. Metadata only — never headers, bodies,
+/// One finished flow as written by `mitm_flowlog_addon.py` or translated from iron-proxy's audit
+/// stream. Metadata only — never headers, bodies,
 /// or an injected secret value (`docs/features/proxy-traffic-viewer/01_ideas.md`, Capture Scope).
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -42,6 +47,12 @@ pub struct FlowEntry {
     pub secret_injected: bool,
     #[serde(default)]
     pub error: Option<String>,
+    /// The iron-proxy transform that refused the request.
+    #[serde(default)]
+    pub rejected_by: Option<String>,
+    /// An `open`-mode request an allowlist policy would have refused.
+    #[serde(default)]
+    pub would_block: bool,
 }
 
 /// One poll task per watched sandbox, so a repeated `watch_proxy_flows` call is a no-op.
@@ -55,36 +66,55 @@ pub struct FlowWatchRegistry(Mutex<HashMap<String, tauri::async_runtime::JoinHan
 /// Spawns through `tauri::async_runtime`, not `tokio::spawn`: a caller on the IPC thread has no
 /// Tokio runtime entered, and `tokio::spawn`'s panic there cannot unwind across the webview's FFI
 /// boundary — it aborts the process.
-pub fn start_watch(app: &AppHandle, registry: &FlowWatchRegistry, sandbox: &str) -> bool {
+pub fn start_watch(
+    app: &AppHandle,
+    registry: &FlowWatchRegistry,
+    providers: &Arc<ProviderRegistry>,
+    sandbox: &str,
+) -> bool {
     let mut tasks = registry.0.lock().unwrap();
     if tasks.get(sandbox).is_some_and(|handle| !handle.inner().is_finished()) {
         return false;
     }
-    let handle = tauri::async_runtime::spawn(watch_flows(app.clone(), sandbox.to_string()));
+    let handle = tauri::async_runtime::spawn(watch_flows(
+        app.clone(),
+        providers.clone(),
+        sandbox.to_string(),
+    ));
     tasks.insert(sandbox.to_string(), handle);
     true
 }
 
 /// Emits every newly appended flow until the log disappears, which is how proxy teardown is noticed
 /// — there is no explicit cancel (`02_dev.md`, Teardown).
-async fn watch_flows(app: AppHandle, sandbox: String) {
+async fn watch_flows(app: AppHandle, providers: Arc<ProviderRegistry>, sandbox: String) {
     let Ok(path) = super::flows_path(&app, &sandbox) else {
         return;
     };
+    let iron = super::read_meta(&app, &sandbox).is_some_and(|m| m["engine"] == super::ENGINE_IRON_PROXY);
+    let sidecar = super::proxy_container_name(&sandbox);
     let mut offset: u64 = 0;
     let mut last_id: u64 = 0;
     loop {
         tokio::time::sleep(FLOW_LOG_POLL_INTERVAL).await;
 
+        let ingest_rewrote = match (iron, path.parent()) {
+            (true, Some(dir)) => {
+                let (_, provider) = super::sidecar_provider(&app, &providers, &sandbox);
+                super::audit::ingest(provider.as_ref(), &sidecar, dir).await
+            }
+            _ => false,
+        };
         let len = match std::fs::metadata(&path) {
             Ok(meta) => meta.len(),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => break,
             Err(_) => continue,
         };
-        // The addon rewrites the file once it passes its own cap, which invalidates the offset:
-        // re-read from the start and drop the ids already emitted. Ids are monotonic within one
-        // proxy process, so `last_id` is only meaningful on this path.
-        let rewound = len < offset;
+        // The addon or the audit ingest rewrites the file once it passes the cap, which invalidates
+        // the offset: re-read from the start and drop the ids already emitted. Ids are monotonic
+        // within one log, so `last_id` is only meaningful on this path. The ingest reports its
+        // rewrite, since the rewritten file can be longer than the offset.
+        let rewound = len < offset || ingest_rewrote;
         if rewound {
             offset = 0;
         }

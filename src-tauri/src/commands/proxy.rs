@@ -75,9 +75,10 @@ pub async fn delete_proxy_secret(secret_id: String, app: tauri::AppHandle) -> Re
 pub async fn watch_proxy_flows(
     name: String,
     registry: State<'_, FlowWatchRegistry>,
+    providers: State<'_, Arc<ProviderRegistry>>,
     app: tauri::AppHandle,
 ) -> Result<(), AppError> {
-    proxy::flowlog::start_watch(&app, &registry, &name);
+    proxy::flowlog::start_watch(&app, &registry, &providers, &name);
     Ok(())
 }
 
