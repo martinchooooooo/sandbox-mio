@@ -30,9 +30,11 @@ pub const PROXY_CONTAINER_SUFFIX: &str = "-proxy";
 
 /// What `SandboxBackend::create` needs to chain a sandbox through its proxy sidecar.
 pub enum ProxyAttachment {
-    /// Podman: the network to join *instead of* `pasta`, and the environment (proxy vars, CA trust
-    /// vars) to stamp on the sandbox container at create time.
-    PodmanBridge { network: String, env: Vec<(String, String)> },
+    /// Podman: the internal network to join *instead of* `pasta`, the environment (proxy vars, CA
+    /// trust vars) to stamp on the sandbox container at create time, and the sidecar address the
+    /// sandbox resolves every name through
+    /// (`docs/features/podman-egress-boundary/02_dev.md`, Concrete Model).
+    PodmanBridge { network: String, env: Vec<(String, String)>, dns: String },
     /// Microsandbox: the sidecar's SOCKS5 port on host loopback, the variable the agent `msb`
     /// child reads its password from, and the sidecar CA the agent trusts upstream
     /// (`docs/features/microsandbox-network-policy/02_dev.md`, The Concrete Model).

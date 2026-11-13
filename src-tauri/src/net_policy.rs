@@ -460,8 +460,8 @@ pub fn write_applied<R: Runtime>(
     Ok(mio_files::write_pretty(&applied_path(app, sandbox)?, applied)?)
 }
 
-/// The applied snapshot, or `None` for a sandbox created without one (sidecars, Podman, sandboxes
-/// predating this feature).
+/// The applied snapshot, or `None` for a sandbox created without one (sidecars, Podman sandboxes
+/// without a proxy, sandboxes predating this feature).
 pub fn read_applied<R: Runtime>(
     app: &AppHandle<R>,
     sandbox: &str,

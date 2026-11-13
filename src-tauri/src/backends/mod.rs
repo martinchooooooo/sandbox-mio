@@ -372,7 +372,7 @@ impl CliBackend {
         Ok(())
     }
 
-    /// Settles a microsandbox sandbox's policy before `msb create`: loads the workspace file, seeds
+    /// Settles a policy-enforcing sandbox's policy before its create: loads the workspace file, seeds
     /// the starter allowlist when the dialog chose allowlist and the file has no rules, applies the
     /// dialog's mode (an imported workspace's file wins otherwise), validates, and snapshots it as
     /// `applied.json` (`docs/features/microsandbox-network-policy/02_dev.md`, Phase D).
@@ -476,21 +476,23 @@ fn progress(channel: &Channel<serde_json::Value>, step: &str, status: &str, mess
     }));
 }
 
-/// Splits a proxy attachment into the Podman bridge (`network`, `env`) and the microsandbox chain.
-/// A microsandbox attachment never maps onto `network`/`env`, which `MsbProvider` refuses.
+/// A Podman bridge attachment: network, sandbox environment, and DNS server.
+type Bridge = (String, Vec<(String, String)>, String);
+
+/// Splits a proxy attachment into the Podman bridge and the microsandbox chain. A microsandbox
+/// attachment never maps onto the bridge, which `MsbProvider` refuses.
 fn split_attachment(
     name: &str,
     provider_id: ProviderId,
     proxy: Option<&crate::proxy::types::ProxyAttachment>,
-) -> Result<
-    (Option<(String, Vec<(String, String)>)>, Option<crate::provider::types::ChainedProxy>),
-    BackendError,
-> {
+) -> Result<(Option<Bridge>, Option<crate::provider::types::ChainedProxy>), BackendError> {
     use crate::proxy::types::ProxyAttachment;
     match proxy {
         None => Ok((None, None)),
-        Some(ProxyAttachment::PodmanBridge { network, env }) if provider_id == ProviderId::Podman => {
-            Ok((Some((network.clone(), env.clone())), None))
+        Some(ProxyAttachment::PodmanBridge { network, env, dns })
+            if provider_id == ProviderId::Podman =>
+        {
+            Ok((Some((network.clone(), env.clone(), dns.clone())), None))
         }
         Some(ProxyAttachment::MsbChain { host_port, password_env, upstream_ca_path })
             if provider_id == ProviderId::Microsandbox =>
@@ -530,9 +532,14 @@ impl SandboxBackend for CliBackend {
         egress: Option<&types::EgressRequest>,
     ) -> Result<Sandbox, BackendError> {
         validate_new_name(name)?;
-        if egress.is_some() && !self.registry.local(provider_id).capabilities().egress_policy {
+        let caps = self.registry.local(provider_id).capabilities();
+        let (bridge, chain) = split_attachment(name, provider_id, proxy)?;
+        // A Podman sidecar enforces the policy only for a sandbox behind it
+        // (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 14).
+        let sidecar_enforced = caps.sidecar_egress && bridge.is_some();
+        if egress.is_some() && !caps.egress_policy && !sidecar_enforced {
             return Err(BackendError::CommandFailed(format!(
-                "{provider_id} sandboxes cannot enforce a network policy yet"
+                "{provider_id} sandboxes cannot enforce a network policy without the proxy"
             )));
         }
         self.ensure_name_available(name).await?;
@@ -542,9 +549,18 @@ impl SandboxBackend for CliBackend {
         // is always a laptop directory — bind-mounted for Podman, Mutagen-synced into the disk
         // volume `MsbProvider::create_instance` attaches for microsandbox.
         let workspace = self.resolve_create_workspace(name, existing_path).await?;
-        let (bridge, chain) = split_attachment(name, provider_id, proxy)?;
-        let egress_policy = if provider_id == ProviderId::Microsandbox {
-            Some(self.prepare_egress(name, &workspace, egress, provider.capabilities(), chain)?)
+        let mut env = bridge.as_ref().map(|(_, env, _)| env.clone()).unwrap_or_default();
+        let egress_policy = if caps.egress_policy {
+            Some(self.prepare_egress(name, &workspace, egress, caps, chain)?)
+        } else if sidecar_enforced {
+            // Runs even with no request, so `applied.json` always snapshots the workspace file; the
+            // sidecar, not the engine, enforces the result. Placeholders exist only from create
+            // (Resolved Decision 7).
+            let policy = self.prepare_egress(name, &workspace, egress, caps, None)?;
+            env.extend(
+                policy.secrets.iter().map(|b| (b.env_var.clone(), crate::net_policy::placeholder(&b.env_var))),
+            );
+            None
         } else {
             None
         };
@@ -553,11 +569,11 @@ impl SandboxBackend for CliBackend {
             image,
             workspace_source: workspace.clone(),
             labels: vec![(crate::provider::WORKSPACE_LABEL.to_string(), workspace.clone())],
-            env: bridge.as_ref().map(|(_, env)| env.clone()).unwrap_or_default(),
-            network: bridge.map(|(network, _)| crate::provider::types::InstanceNetwork {
+            env,
+            network: bridge.map(|(network, _, dns)| crate::provider::types::InstanceNetwork {
                 name: network,
                 ip: None,
-                dns: None,
+                dns: Some(dns),
             }),
             egress: egress_policy,
         };

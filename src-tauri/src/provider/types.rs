@@ -486,10 +486,6 @@ pub trait MachineProvider: Send + Sync {
     /// lines. Readable from a stopped sidecar. Only Podman sidecars log this way; microsandbox's
     /// keep the file-based flow log (`docs/features/podman-egress-boundary/02_dev.md`, Resolved
     /// Decision 4).
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "first caller lands in podman-egress-boundary Phase D")
-    )]
     async fn sidecar_logs(
         &self,
         name: &str,

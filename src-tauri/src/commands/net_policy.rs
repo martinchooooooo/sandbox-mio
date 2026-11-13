@@ -33,8 +33,9 @@ pub fn set_net_policy(
     Ok(net_policy::save(&workspace_path, &policy).map_err(BackendError::from)?)
 }
 
-/// Whether the workspace file differs from what `name` was created with. A sandbox with no
-/// snapshot (Podman, or created before this feature) never reports drift.
+/// Whether the workspace file differs from what `name` was created with, or last applied for a
+/// Podman sandbox. A sandbox with no snapshot (no proxy, or created before this feature) never
+/// reports drift.
 #[tauri::command]
 pub fn net_policy_drift(
     name: String,
@@ -46,6 +47,33 @@ pub fn net_policy_drift(
     };
     let current = net_policy::load(&workspace_path).map_err(BackendError::from)?;
     Ok(current != applied.policy)
+}
+
+/// Validates and saves `policy` as `name`'s workspace file, then applies it to the sandbox's
+/// running iron-proxy sidecar without a recreate. Podman only
+/// (`docs/features/podman-egress-boundary/02_dev.md`, Phase D).
+#[tauri::command]
+pub async fn apply_sandbox_policy(
+    name: String,
+    workspace_path: String,
+    policy: NetPolicy,
+    registry: State<'_, Arc<ProviderRegistry>>,
+    app: tauri::AppHandle,
+) -> Result<crate::proxy::iron::ApplyReport, AppError> {
+    let registry = registry.inner().clone();
+    let (provider, _) = registry.provider_of(&name).await;
+    if provider != ProviderId::Podman {
+        return Err(BackendError::CommandFailed(format!(
+            "{name:?}: applying a policy without a recreate is only supported for Podman sandboxes"
+        ))
+        .into());
+    }
+    net_policy::validate(&policy, registry.local(provider).capabilities())
+        .map_err(BackendError::from)?;
+    net_policy::save(&workspace_path, &policy).map_err(BackendError::from)?;
+    Ok(crate::proxy::iron::apply_policy(&app, &registry, &name, &workspace_path)
+        .await
+        .map_err(BackendError::from)?)
 }
 
 /// Recreates `name` so its current policy file and the requested viewer state take effect;

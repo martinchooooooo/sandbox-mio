@@ -72,6 +72,8 @@ All read via `std::env::var` at call time, never cached:
 - `MIO_APP_DATA_DIR` — app-data and log root; default the compiled-in `app_data_dir()`, and for logs `app_log_dir()` (`src-tauri/src/paths.rs`, `init_logging()` in `src-tauri/src/logging.rs`). Set by the e2e harness to a per-worktree directory, never by a shipped install.
 - `MIO_SETTINGS_DIR` — relocates `settings.json`; takes precedence over `MIO_APP_DATA_DIR` (`settings_path()` in `src-tauri/src/settings/mod.rs`).
 - `MIO_CREDENTIALS_DIR` — relocates the credential bundle store; takes precedence over `MIO_APP_DATA_DIR` (`store_dir()` in `src-tauri/src/credentials/mod.rs`).
+- `MIO_IRON_PROXY_IMAGE` — overrides the pinned iron-proxy image of the Podman proxy sidecar (`iron_proxy_image()` in `src-tauri/src/proxy/iron.rs`); an override must keep a non-integer tag (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 10).
+- `MIO_PROXY_IMAGE` — overrides the pinned mitmproxy image of the microsandbox proxy sidecar (`mitmproxy_image()` in `src-tauri/src/proxy/mod.rs`).
 - `MIO_PORT_BASE` — base of the e2e WebDriver port band each worktree's run claims a 16-port window from; default `45000` (`e2e/lib/run-identity.ts`).
 - `MIO_DRIVER_PORT` — harness-set, not read by the Rust side: the `msedgedriver` WebDriver port allocated for the session (`beforeSession` in `e2e/wdio.conf.ts`, asserted by `e2e/test/specs/light/run-identity.spec.ts`).
 

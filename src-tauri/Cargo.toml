@@ -54,6 +54,10 @@ uuid = { version = "1", features = ["v4"] }
 # (docs/features/microsandbox-network-policy/02_dev.md, Resolved Decision 7).
 sha1 = "0.10"
 base64 = "0.22"
+# The per-sandbox iron-proxy CA, generated in-process
+# (docs/features/podman-egress-boundary/02_dev.md, Resolved Decision 11).
+rcgen = { version = "0.13", default-features = false, features = ["crypto", "pem", "ring"] }
+time = "0.3"
 
 [features]
 default = []

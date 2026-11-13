@@ -59,7 +59,8 @@ pub async fn list_user(store: &Arc<dyn SandboxBackend>) -> Result<Vec<Sandbox>, 
 }
 
 /// Creates a sandbox on `provider` and brings its workspace up. `proxy` opts the sandbox into a
-/// per-sandbox mitmproxy sidecar (`docs/features/network-proxy/02_dev.md`).
+/// per-sandbox proxy sidecar (`docs/features/network-proxy/02_dev.md`); for Podman that is the
+/// iron-proxy egress boundary (`docs/features/podman-egress-boundary/02_dev.md`).
 pub async fn create(
     name: &str,
     existing_path: Option<&str>,
@@ -95,7 +96,7 @@ pub async fn create(
     let sidecar = registry.local(provider);
     let attachment = if proxy {
         tracing::info!(target: "create", %name, "create_sandbox: ensuring proxy image");
-        crate::proxy::ensure_proxy_image(app, &sidecar).await?;
+        crate::proxy::ensure_proxy_image(app, &sidecar, provider).await?;
         tracing::info!(target: "create", %name, "create_sandbox: creating proxy sidecar");
         match crate::proxy::create_proxy(app, &sidecar, provider, name).await {
             Ok(a) => Some(a),
@@ -134,16 +135,18 @@ pub async fn create(
             return Err(e);
         }
     } else if proxy {
-        tracing::info!(target: "create", %name, "create_sandbox: injecting proxy CA");
-        if let Err(e) = inject_proxy_ca(app, &sidecar, name).await {
-            tracing::error!(target: "create", %name, error = %e, "create_sandbox: CA injection failed, rolling back");
+        // Order is load-bearing: the sidecar denies everything until the first apply (Resolved
+        // Decision 18), and the policy can only be read once `store.create` resolved the workspace.
+        if let Err(e) = apply_policy_and_inject_ca(app, registry, &sidecar, name, &sandbox.workspace_path).await {
+            tracing::error!(target: "create", %name, error = %e, "create_sandbox: proxy setup failed, rolling back");
             match store.destroy(name).await {
                 Ok(()) => cleanup_host_state(name, app),
                 Err(destroy_err) => tracing::error!(
                     target: "create", %name, error = %destroy_err,
-                    "create_sandbox: rollback after CA injection failure also failed"
+                    "create_sandbox: rollback after proxy setup failure also failed"
                 ),
             }
+            crate::net_policy::remove_applied(app, name);
             crate::proxy::remove_proxy(app, &sidecar, provider, name).await;
             return Err(e);
         }
@@ -226,7 +229,7 @@ pub async fn reapply_network(
     let attachment = match (want_viewer, had_viewer) {
         (true, true) => Some(crate::proxy::msb_attachment(app, name)?),
         (true, false) => {
-            crate::proxy::ensure_proxy_image(app, &sidecar).await?;
+            crate::proxy::ensure_proxy_image(app, &sidecar, provider).await?;
             match crate::proxy::create_proxy(app, &sidecar, provider, name).await {
                 Ok(a) => Some(a),
                 Err(e) => {
@@ -276,13 +279,19 @@ pub async fn reapply_network(
     Ok(sandbox)
 }
 
-/// Reads the proxy's CA cert off the host and pipes it into the freshly created sandbox.
-async fn inject_proxy_ca(
+/// Applies the workspace policy to a new Podman sandbox's iron-proxy sidecar, then pipes the
+/// sidecar's CA into the sandbox.
+async fn apply_policy_and_inject_ca(
     app: &tauri::AppHandle,
+    registry: &Arc<ProviderRegistry>,
     podman: &Arc<dyn crate::provider::types::MachineProvider>,
     name: &str,
+    workspace_path: &str,
 ) -> Result<(), AppError> {
-    let pem = crate::proxy::read_ca_pem(app, name)?;
+    tracing::info!(target: "create", %name, "create_sandbox: applying network policy");
+    crate::proxy::iron::apply_policy(app, registry, name, workspace_path).await?;
+    tracing::info!(target: "create", %name, "create_sandbox: injecting proxy CA");
+    let pem = crate::proxy::read_ca_pem(app, name, ProviderId::Podman)?;
     crate::proxy::inject_ca(podman, name, &pem).await?;
     Ok(())
 }
