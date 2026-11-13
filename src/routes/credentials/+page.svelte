@@ -1,5 +1,6 @@
 <script lang="ts">
     import Button from "$lib/components/ui/button/button.svelte";
+    import { Text } from "$lib/components/ui/text";
     import { Input } from "$lib/components/ui/input";
     import * as Collapsible from "$lib/components/ui/collapsible";
     import { invoke, Channel } from "@tauri-apps/api/core";
@@ -89,9 +90,8 @@
             }
         }
 
-        // Ephemeral auth container: destroyed after every login attempt regardless
-        // of outcome, so a failed capture never leaks a container (02_dev.md's
-        // "Auth container cleanup on failure" cross-cutting concern).
+        // Destroyed after every attempt, whatever the outcome, so a failed capture never leaks a
+        // container (docs/features/shared-agent-auth/02_dev.md, "Auth container cleanup on failure").
         await invoke("destroy_sandbox", { name: authContainer, force: true }).catch(() => {});
 
         if (code === 0) dismiss(serviceId);
@@ -196,7 +196,7 @@
 </script>
 
 <main class="mx-auto w-full max-w-3xl p-6 pb-16 @max-[420px]:p-3">
-    <h1 class="font-head text-3xl mb-2">{m.credentials_title()}</h1>
+    <Text as="h1" class="mb-2">{m.credentials_title()}</Text>
     <p class="text-sm text-muted-foreground mb-8">{m.credentials_intro()}</p>
 
     <div class="flex flex-col gap-3">

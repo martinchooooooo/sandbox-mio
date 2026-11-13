@@ -1,6 +1,8 @@
 <script lang="ts">
     import Button from "$lib/components/ui/button/button.svelte";
     import { Textarea } from "$lib/components/ui/textarea";
+    import * as Card from "$lib/components/ui/card";
+    import { Text } from "$lib/components/ui/text";
     import { invoke, Channel } from "@tauri-apps/api/core";
     import { onMount } from "svelte";
     import { slide } from "svelte/transition";
@@ -47,7 +49,6 @@
     let collapsedOnce = $state(false);
     let collapseTimer: ReturnType<typeof setTimeout> | null = null;
 
-    // Chat test box.
     let prompt = $state("");
     let reply = $state("");
     let chatting = $state(false);
@@ -88,10 +89,8 @@
         ),
     );
 
-    // The default view shows only this one entry — always displayModels[0], recommended or not
-    // (recommendModels already sorts recommended-first, so this degrades gracefully on constrained
-    // hardware where nothing rates "recommended" instead of ever rendering an empty default state,
-    // docs/features/desktop-app-feel/02_dev.md Phase D). Everything else moves behind AdvancedSection.
+    // The default view shows the first entry even when nothing rates "recommended", so constrained
+    // hardware never sees an empty default (docs/features/desktop-app-feel/02_dev.md, Phase D).
     const topEntry = $derived(displayModels[0] as RankedModel | undefined);
     const restEntries = $derived(displayModels.slice(1));
 
@@ -168,11 +167,9 @@
         }
     }
 
-    // The default row's single action: chains download then start so a first-time user has one
-    // button to press instead of two sequential ones (docs/features/desktop-app-feel/02_dev.md
-    // Phase D). Guards on the freshly re-fetched `downloaded` list rather than downloadModel()'s
-    // own action.run() result, since startModel()'s action.run() resets action.error right away and
-    // would otherwise wipe a download failure before the user saw it.
+    // One button for a first-time user (docs/features/desktop-app-feel/02_dev.md, Phase D). Success
+    // is read from the re-fetched download list: starting clears the action error, which would
+    // otherwise wipe a download failure before the user saw it.
     async function downloadAndStart(model: ModelDescriptor) {
         if (model.llama && !isDownloaded(model.id)) {
             await downloadModel(model);
@@ -247,10 +244,11 @@
 {#snippet modelRow(entry: RankedModel, primary: boolean)}
     {@const descriptor = entry.descriptor}
     {@const rating = entry.rating}
-    <li class="border rounded-lg p-4" data-model-id={descriptor.id} data-running={isRunning(descriptor) ? "" : undefined}>
+    <li data-model-id={descriptor.id} data-running={isRunning(descriptor) ? "" : undefined}>
+    <Card.Root class="gap-0 p-4">
         <div class="flex items-center justify-between gap-3">
             <div class="flex-1 min-w-0 flex items-center gap-2">
-                <span class="font-medium truncate">{descriptor.label}</span>
+                <Card.Title class="mb-0 truncate">{descriptor.label}</Card.Title>
                 <span class={"shrink-0 text-xs " + ratingClass(rating)} data-rating>{ratingLabel(rating)}</span>
                 {#if isRunning(descriptor)}
                     <div class="text-xs mt-0.5">
@@ -300,7 +298,6 @@
             <p class="text-xs text-muted-foreground mt-1">— (llama only)</p>
         {/if}
 
-        <!-- Live runtime-setup checklist for the starting model -->
         {#if startingModel === descriptor.id || (setupModel === descriptor.id && setupEvents.length > 0)}
             <div class="mt-3 border-t pt-3">
                 {#if collapsedOnce}
@@ -316,11 +313,12 @@
                 {/if}
             </div>
         {/if}
+    </Card.Root>
     </li>
 {/snippet}
 
 <main class="mx-auto w-full max-w-3xl p-6 pb-16 @max-[420px]:p-3">
-    <h1 class="font-head text-3xl mb-2">{m.models_title()}</h1>
+    <Text as="h1" class="mb-2">{m.models_title()}</Text>
     <p class="text-sm text-muted-foreground mb-6">{m.models_engine_label({ engine })}</p>
 
     {#if topEntry}
@@ -339,10 +337,9 @@
     {#if action.error}<p class="text-destructive mt-4 text-sm">{action.error}</p>{/if}
 
     <AdvancedSection label="Choose a different model" data-model-advanced class="mt-4">
-        <!-- Host specs -->
-        <section class="border rounded-lg p-4 mb-4" data-specs>
-            <div class="flex items-center justify-between mb-2">
-                <h2 class="text-sm font-medium">{m.models_specs_title()}</h2>
+        <Card.Root class="mb-4 gap-2 p-4" data-specs>
+            <div class="flex items-center justify-between">
+                <Card.Title class="mb-0">{m.models_specs_title()}</Card.Title>
                 {#if specs}
                     <Button
                         size="icon"
@@ -374,7 +371,7 @@
                     <span>{m.models_detecting()}</span>
                 </div>
             {/if}
-        </section>
+        </Card.Root>
 
         {#if restEntries.length === 0 && ranked.length > 0}
             <p class="text-sm text-muted-foreground">
@@ -387,11 +384,10 @@
             {/each}
         </ul>
 
-        <!-- Chat test surface for the running endpoint -->
         {#if status.running}
-            <section class="border rounded-lg p-4 mt-6" data-chat>
+            <Card.Root class="mt-6 gap-0 p-4" data-chat>
                 <div>
-                    <h3 class="text-sm font-medium mb-2">{m.models_test_title()}</h3>
+                    <Card.Title>{m.models_test_title()}</Card.Title>
                     <Textarea
                         value={prompt}
                         oninput={(e) => (prompt = e.currentTarget.value)}
@@ -404,7 +400,7 @@
                     </div>
                     {#if reply}<p class="text-sm mt-3 whitespace-pre-wrap" data-reply>{reply}</p>{/if}
                 </div>
-            </section>
+            </Card.Root>
         {/if}
     </AdvancedSection>
 </main>

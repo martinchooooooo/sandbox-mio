@@ -1,6 +1,7 @@
 <script lang="ts">
     import { onMount } from "svelte";
     import Button from "$lib/components/ui/button/button.svelte";
+    import { Text } from "$lib/components/ui/text";
     import WelcomeFlow from "$lib/welcome/WelcomeFlow.svelte";
     import { m } from "$lib/paraglide/messages.js";
     import {
@@ -17,7 +18,7 @@
         <WelcomeFlow variant="onboarding" />
     {:else if onboardingCompleted()}
         <main class="min-h-full flex flex-col items-center justify-center gap-4 p-8 text-center">
-            <h1 class="text-3xl font-bold">{m.home_all_set_title()}</h1>
+            <Text as="h1">{m.home_all_set_title()}</Text>
             <p class="text-muted-foreground max-w-md">{m.home_all_set_body()}</p>
             <Button href="/projects">{m.home_all_set_cta()}</Button>
         </main>

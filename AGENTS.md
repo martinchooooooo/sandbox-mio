@@ -111,7 +111,7 @@ Currently available components:
 - `spinner` — retro-ui-svelte has no `spinner` registry item; pulled from shadcn-svelte as-is (a spinning icon, nothing to restyle)
 - `switch`
 - `tabs`
-- `text` (retro-ui-svelte typography; `as` picks the element and the `font-head` heading style; used by `alert` and `card`)
+- `text` (retro-ui-svelte typography; `as` picks the element and the `font-head` heading style; use it for every heading, and `card` titles render through it)
 - `textarea`
 - `tooltip`
 - `src/lib/components/ai-elements/` holds the building blocks of the shadcn-svelte [AI Elements](https://shadcn-svelte.com/docs/ai-elements), pulled with the shadcn-svelte CLI and hand-restyled to the retro theme: `message-scroller`, `message`, `bubble`, `trace`, `code-block` (with its Shiki `useHighlightedCode` hook and `highlighter`), `attachment` and `marker`. The AI Elements themselves (Chat, Message, Prompt Input, Reasoning, Tool, Queue, Context, Confirmation, Model Selector, …) are documented patterns composed from these plus `ui/` components, not separate components; the `shimmer` and `scroll-fade-*` utilities they use come from `shadcn-svelte/tailwind.css`

@@ -1,6 +1,7 @@
 <script lang="ts">
     import { onMount } from "svelte";
     import Button from "$lib/components/ui/button/button.svelte";
+    import * as Card from "$lib/components/ui/card";
     import AdvancedSection from "$lib/components/AdvancedSection.svelte";
     import { m } from "$lib/paraglide/messages.js";
     import MachineSteps from "$lib/machine/MachineSteps.svelte";
@@ -34,8 +35,8 @@
     }
 </script>
 
-<div class="border-2 rounded-md shadow-md p-5 space-y-3" data-step="create-vm" data-done={done}>
-    <h3 class="text-lg font-medium">{m.welcome_workspace_title()}</h3>
+<Card.Root class="gap-3 p-5" data-step="create-vm" data-done={done}>
+    <Card.Title>{m.welcome_workspace_title()}</Card.Title>
     <AdvancedSection label={m.welcome_technical_details_label()}>
         <p class="text-muted-foreground text-sm">
             {m.welcome_vm_technical_details()}
@@ -68,4 +69,4 @@
             <p class="text-destructive text-sm">{run.error}</p>
         {/if}
     {/if}
-</div>
+</Card.Root>

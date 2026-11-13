@@ -1,5 +1,6 @@
 <script lang="ts">
     import { onDestroy, type Snippet } from "svelte";
+    import { Text } from "$lib/components/ui/text";
     import type { Scene } from "../stage";
     import { actLabel, chapterLabel, getBook, type PageEntry } from "./context.svelte";
 
@@ -38,7 +39,7 @@
                 {entry.act}
             </p>
         {/if}
-        <h1 class="mb-2.5 font-head text-3xl leading-tight @max-[640px]:text-2xl">{title}</h1>
+        <Text as="h1" class="mb-2.5 leading-tight @max-[640px]:text-2xl">{title}</Text>
         <div class="max-w-[64ch] text-[17px] leading-relaxed [&_p]:mb-2.5">
             {@render children?.()}
         </div>

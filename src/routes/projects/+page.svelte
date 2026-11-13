@@ -1,5 +1,6 @@
 <script lang="ts">
     import Button from "$lib/components/ui/button/button.svelte";
+    import { Text } from "$lib/components/ui/text";
     import { invoke } from "@tauri-apps/api/core";
     import { onMount } from "svelte";
     import { parseError } from "$lib/errors";
@@ -69,33 +70,17 @@
 <!-- Home. The grid's @min-[44rem] is a container query against the layout's route outlet, i.e. the
      content area beside the app sidebar, not the window. -->
 <main data-home class="mx-auto w-full max-w-4xl p-6 pb-16">
-    <h1 class="font-head text-3xl">{m.projects_title()}</h1>
+    <Text as="h1">{m.projects_title()}</Text>
     <p class="text-muted-foreground mt-2 mb-6 max-w-2xl">{m.home_intro()}</p>
 
     <div>
-        <!-- <Field.Set class="w-full">
-            <Field.Group>
-                <Field.Field>
-                    <Field.Label>{m.projects_name_label()}</Field.Label>
-                    <div class="flex w-full gap-2">
-                        <Input placeholder={m.projects_name_placeholder()} bind:value={projectName} />
-                        <Button
-                            loading={action.busy === "create"}
-                            disabled={action.busy !== null}
-                            onclick={createProject}
-                        >{m.projects_create()}</Button>
-                    </div>
-                </Field.Field>
-            </Field.Group>
-        </Field.Set> -->
-
         {#if error || sandboxLoadError()}
             <p class="text-destructive mt-4 text-sm">{error || sandboxLoadError()}</p>
         {/if}
 
         {#if podmanUnavailable() && podmanNeedsSetup()}
             <div class="mt-8 text-center space-y-4">
-                <h2 class="text-lg font-medium">{m.podman_setup_title()}</h2>
+                <Text as="h2">{m.podman_setup_title()}</Text>
                 <p class="text-muted-foreground">{m.podman_setup_description()}</p>
                 {#if podmanRebootRequired()}
                     <p class="text-destructive text-sm">{m.podman_reboot_required()}</p>

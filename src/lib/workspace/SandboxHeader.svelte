@@ -4,6 +4,7 @@
     import { HugeiconsIcon } from "@hugeicons/svelte";
     import { Cancel01Icon, Folder01Icon, PlayIcon, StopIcon } from "@hugeicons/core-free-icons";
     import Button from "$lib/components/ui/button/button.svelte";
+    import { Text } from "$lib/components/ui/text";
     import { navItemBase } from "$lib/components/ui/section-nav/styles";
     import { m } from "$lib/paraglide/messages.js";
     import { cn } from "$lib/utils";
@@ -68,7 +69,7 @@
     <div class="flex w-44 min-w-0 shrink items-center gap-2">
         <span class={["inline-block size-2.5 shrink-0 rounded-full", statusDotClass(status, deployment)]}></span>
         <div class="min-w-0">
-            <h1 class="truncate font-head text-base leading-tight" title={sandbox}>{sandbox}</h1>
+            <Text as="h1" class="truncate text-base leading-tight" title={sandbox}>{sandbox}</Text>
             <div class="[&>div]:truncate">
                 <StatusRow
                     busy={action.busy}

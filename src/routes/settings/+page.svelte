@@ -1,6 +1,7 @@
 <script lang="ts">
     import Button from "$lib/components/ui/button/button.svelte";
     import * as Field from "$lib/components/ui/field";
+    import { Text } from "$lib/components/ui/text";
     import { Input } from "$lib/components/ui/input";
     import { invoke, Channel } from "@tauri-apps/api/core";
     import { onMount } from "svelte";
@@ -133,7 +134,7 @@
 </script>
 
 <main class="mx-auto w-full max-w-3xl p-6 pb-16 @max-[420px]:p-3">
-    <h1 class="font-head text-3xl mb-8">{m.settings_title()}</h1>
+    <Text as="h1" class="mb-8">{m.settings_title()}</Text>
 
     <Field.Set class="mb-8">
         <Field.Legend>{m.settings_appearance()}</Field.Legend>
@@ -258,7 +259,7 @@
     {#if action.error}<p class="text-destructive mt-3 text-sm">{action.error}</p>{/if}
 
     <section class="mt-8 border-t pt-6">
-        <h2 class="text-sm font-medium mb-3">{m.settings_runtime_explainer()}</h2>
+        <Text as="h2" class="mb-3">{m.settings_runtime_explainer()}</Text>
         <RuntimeSteps {steps} />
     </section>
 </main>

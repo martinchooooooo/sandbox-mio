@@ -1,5 +1,6 @@
 <script lang="ts">
     import Button from "$lib/components/ui/button/button.svelte";
+    import * as Card from "$lib/components/ui/card";
     import { invoke } from "@tauri-apps/api/core";
     import { onMount } from "svelte";
     import { m } from "$lib/paraglide/messages.js";
@@ -85,10 +86,11 @@
     });
 </script>
 
-<li data-sandbox={project.name} class="flex flex-col gap-3 rounded-md border-2 bg-card p-4 text-sm shadow-md">
+<li data-sandbox={project.name}>
+<Card.Root class="h-full gap-3 p-4 text-sm">
     <div class="flex min-w-0 items-center gap-2">
         <span class={["inline-block size-2.5 shrink-0 rounded-full", statusDotClass(project.status, deployment)]}></span>
-        <span class="truncate font-head text-base">{project.name}</span>
+        <Card.Title class="mb-0 truncate">{project.name}</Card.Title>
         {#if deployment}
             <span class="text-muted-foreground text-xs shrink-0">→ {deployment.host}</span>
         {/if}
@@ -132,4 +134,5 @@
             </button>
         </div>
     {/if}
+</Card.Root>
 </li>

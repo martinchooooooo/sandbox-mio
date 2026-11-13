@@ -1,5 +1,6 @@
 <script lang="ts">
     import Button from "$lib/components/ui/button/button.svelte";
+    import { Text } from "$lib/components/ui/text";
     import MioHero from "./MioHero.svelte";
     import CreateVmStep from "./CreateVmStep.svelte";
     import DownloadNecessitiesStep from "./DownloadNecessitiesStep.svelte";
@@ -75,7 +76,7 @@
         </div>
     {:else if step === "welcome"}
         <div class="max-w-lg text-center space-y-5">
-            <h1 class="text-3xl font-bold">{m.welcome_heading()}</h1>
+            <Text as="h1">{m.welcome_heading()}</Text>
             <p class="text-muted-foreground">{m.welcome_intro_isolated()}</p>
             <!-- TODO(i18n) -->
             <p class="text-muted-foreground">
@@ -98,7 +99,7 @@
         </div>
     {:else}
         <div class="w-full max-w-3xl space-y-6 pb-16">
-            <h1 class="text-2xl font-bold text-center">{m.welcome_first_stops()}</h1>
+            <Text as="h1" class="text-center">{m.welcome_first_stops()}</Text>
             <div class="grid gap-4 @max-[720px]:grid-cols-1 grid-cols-2">
                 <CreateVmStep ondone={(done) => (vmDone = done)} />
                 <DownloadNecessitiesStep ondone={(done) => (imageDone = done)} />
