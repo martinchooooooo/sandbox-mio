@@ -28,6 +28,9 @@ export const PANEL_RENDER = 15_000;
  */
 export const SUBPROCESS = 30_000;
 
+/** pi settling a run whose model request fails: three retries at 2, 4 and 8 s, about 14 s on pi 1.5.0. */
+export const AGENT_SETTLE = 60_000;
+
 /** A Mutagen sync session settling on a steady status after a workspace scan and transfer. */
 export const SYNC_CONVERGE = 60_000;
 

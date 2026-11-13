@@ -71,6 +71,32 @@ class AgentChatPage extends AppPage {
     return $("[data-chat-empty]");
   }
 
+  get readonlyBanner(): Element {
+    return $("[data-chat-readonly]");
+  }
+
+  get takeControlButton(): Element {
+    return $("[data-chat-take-control]");
+  }
+
+  get inferenceDownBanner(): Element {
+    return $("[data-chat-inference-down]");
+  }
+
+  /** The chat's switcher tab close button; scoped because each sandbox's group has its own. */
+  closeTabButton(sandbox: string): Element {
+    return $(`div[data-sandbox='${sandbox}'] [data-close-tab='agentchat']`);
+  }
+
+  /** Ids of the entries in the open sessions dropdown. */
+  async sessionIds(): Promise<string[]> {
+    const ids: string[] = [];
+    for (const item of await $$("[data-session-id]").getElements()) {
+      ids.push((await item.getAttribute("data-session-id")) ?? "");
+    }
+    return ids;
+  }
+
   dialog(method: string): Element {
     return $(`[data-dialog='${method}']`);
   }

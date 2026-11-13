@@ -5,7 +5,7 @@ feature: native-agent-ui
 ---
 # Native Agent UI Build Plan
 
-This document is the build plan for a chat view, rendered in the app's main webview, that drives the pi coding agent running inside a sandbox in pi's JSON-lines RPC mode. It continues `docs/features/native-agent-ui/01_ideas.md` and supersedes it wherever the two differ; the most important difference is the host-to-sandbox transport (Resolved Decision 1). Spike 01 (`docs/features/native-agent-ui/spike/01_pi-rpc-supervisor.md`) validated the in-sandbox supervisor this plan productionises. Status: Phases A to F are implemented; Phase G (translations and architecture documents) remains, and Phase B's hand verification on real sandboxes is outstanding.
+This document is the build plan for a chat view, rendered in the app's main webview, that drives the pi coding agent running inside a sandbox in pi's JSON-lines RPC mode. It continues `docs/features/native-agent-ui/01_ideas.md` and supersedes it wherever the two differ; the most important difference is the host-to-sandbox transport (Resolved Decision 1). Spike 01 (`docs/features/native-agent-ui/spike/01_pi-rpc-supervisor.md`) validated the in-sandbox supervisor this plan productionises. Status: Phases A to F are implemented; Phase G (translations and architecture documents) remains. Phase B's hand verification is covered on Podman by the standard spec `e2e/test/specs/standard/agent-chat.spec.ts` and remains outstanding on microsandbox.
 
 ## The Concrete Model
 
@@ -104,7 +104,7 @@ flowchart LR
 
 ## Implemented: Phase B — Supervisor and attach scripts
 
-Hand verification on real sandboxes is still outstanding: the bullet at the end of this section has not been run.
+The hand verification in the bullet at the end of this section passed on Podman on 2026-11-13, automated by S1 in `docs/features/native-agent-ui/03_e2e.md`; the microsandbox half has not been run.
 
 - `src-tauri/resources/agent-host/pi-host.sh`: productionise `docs/features/native-agent-ui/spike/pi-host.sh` with subcommands `ensure <version>`, `stop`, `takeover`; a `SCRIPT_VERSION` constant; `--session-dir`; the recorded pi version; the dialog-line output of `ensure`.
 - `src-tauri/resources/agent-host/pi-attach.sh`: productionise `docs/features/native-agent-ui/spike/pi-attach.sh` with the `flock` writer lock, `writer.pid`, the `writer` header field and the reader path.

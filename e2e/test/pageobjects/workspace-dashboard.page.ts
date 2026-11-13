@@ -47,11 +47,13 @@ class WorkspaceDashboardPage {
 
   // ── App launcher (docs/features/workspace-app-tabs/02_dev.md Phase D) ──────
 
-  launcherButton(kind: "terminal" | "agentweb"): Element {
-    return $(`button[data-app="${kind}"]`);
+  // Scoped to `root`: once a pane exists, its switcher tab (SandboxSwitcherGroup.svelte) carries the
+  // same `data-app` value as the launcher.
+  launcherButton(kind: "terminal" | "agentweb" | "agentchat"): Element {
+    return this.root.$(`button[data-app="${kind}"]`);
   }
 
-  async launchApp(kind: "terminal" | "agentweb"): Promise<void> {
+  async launchApp(kind: "terminal" | "agentweb" | "agentchat"): Promise<void> {
     await this.#clickButton(this.launcherButton(kind));
   }
 
