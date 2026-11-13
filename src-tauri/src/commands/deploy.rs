@@ -10,7 +10,7 @@ use crate::network::types::NetworkManager;
 use crate::provider::types::{MachineRef, ProviderId};
 use crate::runtime::types::RuntimeManager;
 use crate::services;
-use crate::sync::types::{SessionInfo, SyncEngine, SyncStatus};
+use crate::sync::types::{SessionInfo, SyncEngine};
 
 /// Deploy a local sandbox to a registered host.
 #[tauri::command]
@@ -50,15 +50,6 @@ pub async fn sandbox_deployments(
     engine: State<'_, Arc<dyn SyncEngine>>,
 ) -> Result<Vec<SessionInfo>, AppError> {
     Ok(engine.sessions().await?)
-}
-
-/// Report the collapsed sync status for a sandbox's session. Backs the frontend status dot.
-#[tauri::command]
-pub async fn sync_status(
-    name: String,
-    engine: State<'_, Arc<dyn SyncEngine>>,
-) -> Result<SyncStatus, AppError> {
-    Ok(engine.status(&name).await?)
 }
 
 /// Turn syncing on for a sandbox — resumes the paused session, preserving conflict state.

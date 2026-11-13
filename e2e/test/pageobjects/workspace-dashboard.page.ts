@@ -286,10 +286,6 @@ class WorkspaceDashboardPage {
     return this.root.$("button=delete");
   }
 
-  async destroySandbox(): Promise<void> {
-    await this.#clickButton(this.destroyButton);
-  }
-
   // ── Remote management (RemoteManager.svelte) ────────────────────────────────
 
   get deployButton(): Element {

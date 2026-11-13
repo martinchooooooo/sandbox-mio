@@ -29,10 +29,6 @@ const EVENT_NAME = "network://forwards-changed";
 let forwards = $state<ForwardInfo[]>([]);
 let started = false;
 
-export function openForwards(): ForwardInfo[] {
-    return forwards;
-}
-
 /** Forwards currently tracked for a given sandbox, for `PortsManager.svelte`'s per-sandbox view. */
 export function openForwardsFor(sandbox: string): ForwardInfo[] {
     return forwards.filter((f) => f.sandbox === sandbox);

@@ -2,43 +2,15 @@
 
 use std::sync::Arc;
 
-use tauri::{Manager, State};
+use tauri::State;
 
 use crate::error::AppError;
 use crate::network::types::NetworkManager;
-use crate::runtime::types::{RuntimeError, RuntimeManager};
+use crate::runtime::types::RuntimeManager;
 use crate::services::panes::{prepare_agent_web_pane, prepare_terminal_webview};
 use crate::services::routing::SandboxRouter;
 use crate::workspace;
 use crate::workspace::types::{AppKind, WorkspaceRegistry, WorkspaceState};
-
-/// Open standalone web-terminal window (code-level fallback to embedded workspace).
-#[tauri::command]
-pub async fn open_terminal(
-    name: String,
-    workspace_path: String,
-    router: State<'_, SandboxRouter>,
-    runtime: State<'_, Arc<dyn RuntimeManager>>,
-    network: State<'_, Arc<dyn NetworkManager>>,
-    app: tauri::AppHandle,
-) -> Result<(), AppError> {
-    let label = format!("terminal-{name}");
-
-    if let Some(window) = app.get_webview_window(&label) {
-        window.set_focus().map_err(RuntimeError::terminal_unavailable)?;
-        return Ok(());
-    }
-
-    let pane =
-        prepare_terminal_webview(&name, &workspace_path, &router, &runtime, &network, &app).await?;
-    tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::External(pane.url))
-        .title(format!("{name} — terminal"))
-        .initialization_script(&pane.init_script)
-        .build()
-        .map_err(RuntimeError::terminal_unavailable)?;
-
-    Ok(())
-}
 
 /// Start watching ports file. Idempotent; safe to call on every view.
 #[tauri::command]

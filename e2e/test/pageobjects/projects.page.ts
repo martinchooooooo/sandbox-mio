@@ -91,10 +91,6 @@ class ProjectsPage extends AppPage {
     return $("p=Podman machine is not running");
   }
 
-  get retryButton(): Element {
-    return $("button=Retry");
-  }
-
   /** A no-op while Home already shows, so Home is not remounted and does not re-probe Podman. */
   async open(timeout = COMMAND): Promise<void> {
     await showHome(timeout);

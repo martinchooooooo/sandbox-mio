@@ -33,12 +33,6 @@ pub fn set_net_policy(
     Ok(net_policy::save(&workspace_path, &policy).map_err(BackendError::from)?)
 }
 
-/// The starter allowlist: the static base hosts plus `extra_hosts` (the catalogue agents' API hosts).
-#[tauri::command]
-pub fn starter_net_policy(extra_hosts: Vec<String>) -> NetPolicy {
-    net_policy::starter(&extra_hosts)
-}
-
 /// Whether the workspace file differs from what `name` was created with. A sandbox with no
 /// snapshot (Podman, or created before this feature) never reports drift.
 #[tauri::command]

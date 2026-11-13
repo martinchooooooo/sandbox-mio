@@ -117,10 +117,6 @@ async fn run_via_discarding(runner: &Arc<dyn ProcessRunner>, args: &[&str]) {
     }
 }
 
-pub async fn version<R: Runtime>(app: &AppHandle<R>) -> Result<String, SyncError> {
-    run(app, &["version"]).await
-}
-
 /// Serializes every terminate-then-create pair below.
 static FORWARD_CREATE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
