@@ -83,9 +83,9 @@ class AgentChatPage extends AppPage {
     return $("[data-chat-inference-down]");
   }
 
-  /** The chat's switcher tab close button; scoped because each sandbox's group has its own. */
+  /** The chat tab's close button in the sandbox header; exists only while `sandbox` is in view. */
   closeTabButton(sandbox: string): Element {
-    return $(`div[data-sandbox='${sandbox}'] [data-close-tab='agentchat']`);
+    return $(`div[data-sandbox-header][data-sandbox='${sandbox}'] [data-close-tab='agentchat']`);
   }
 
   /** Ids of the entries in the open sessions dropdown. */

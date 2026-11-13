@@ -15,7 +15,7 @@
 
     let { sandbox, workspacePath }: { sandbox: string; workspacePath: string } = $props();
 
-    // Keyed by sandbox in WorkspaceContent, so `sandbox` is fixed for this instance.
+    // +layout.svelte keys the sandbox view by sandbox, so `sandbox` is fixed for this instance.
     // svelte-ignore state_referenced_locally
     const store = ensureChat(sandbox, workspacePath);
     let draft = $state("");

@@ -5,6 +5,10 @@ Records feature status changes only: creation (`Create`), reaching `implemented`
 history with at most one `Create` and one `Implement` entry per feature, so seeded dates are
 approximate. New entries go on top.
 
+## 2026-11-13
+
+* **Create** [unified-sidebar-nav](unified-sidebar-nav/index.md): ideation drafted from the user-approved design
+
 ## 2026-11-11
 
 * **Create** [native-agent-ui](native-agent-ui/index.md): ideation drafted

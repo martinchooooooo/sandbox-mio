@@ -1,10 +1,16 @@
-import AppPage, { type Element } from "./app.page.js";
+import AppPage, { navButton, showHome, type Element } from "./app.page.js";
 import ProjectRow from "./project-row.component.js";
 import { COMMAND, PODMAN_RECOVERY, SUBPROCESS, UI_SETTLE } from "../../lib/timeouts.js";
 
+// Home (src/routes/projects/+page.svelte). Every action here calls showHome() first: the create card
+// and the sandbox cards are unmounted while a sandbox is in view.
 class ProjectsPage extends AppPage {
   get navLink(): Element {
-    return $("[role='tab'][data-value='/projects']");
+    return navButton("/projects");
+  }
+
+  get root(): Element {
+    return $("main[data-home]");
   }
 
   // docs/features/sandbox-list-create
@@ -52,6 +58,7 @@ class ProjectsPage extends AppPage {
 
   /** Select which provider the next `createProject()` creates on. */
   async chooseProvider(provider: string): Promise<void> {
+    await showHome();
     const opt = await this.providerOption(provider);
     const visible = (await opt.isExisting()) && (await opt.isDisplayed());
     if (!visible) {
@@ -92,12 +99,9 @@ class ProjectsPage extends AppPage {
     return $("button=Retry");
   }
 
+  /** A no-op while Home already shows, so Home is not remounted and does not re-probe Podman. */
   async open(timeout = COMMAND): Promise<void> {
-    const url = await browser.getUrl();
-    if (url.includes("/projects")) return;
-    const link = await this.navLink;
-    await link.waitForDisplayed({ timeout });
-    await link.click();
+    await showHome(timeout);
   }
 
   /**
@@ -129,6 +133,7 @@ class ProjectsPage extends AppPage {
   // Widen further for the first sandbox on a connection: it triggers the one-time base-image
   // build, so the row can take minutes to appear.
   async createProject(name: string, { timeout = SUBPROCESS }: { timeout?: number } = {}): Promise<ProjectRow> {
+    await showHome();
     await (await this.nameInput).setValue(name);
     const btn = await this.createButton;
     await btn.waitForClickable({ timeout: UI_SETTLE });

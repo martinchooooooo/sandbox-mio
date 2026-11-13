@@ -7,10 +7,10 @@
     import { HugeiconsIcon } from "@hugeicons/svelte";
     import { DashboardSquare01Icon, PlayIcon, StopIcon } from "@hugeicons/core-free-icons";
     import StatusRow from "./StatusRow.svelte";
-    import { setActiveSandbox } from "$lib/workspace/state.svelte";
+    import { openSandbox } from "$lib/workspace/navigation.svelte";
     import {
         translateStatus,
-        syncColor,
+        statusDotClass,
         type Project,
         type Deployment,
     } from "$lib/sandbox";
@@ -59,21 +59,12 @@
         }
     }
 
-    // Primary action: navigate the merged webview's client-side view to this sandbox's Dashboard
-    // (docs/features/consolidate-app-container/02_dev.md); `watch_workspace_ports` no longer embeds
-    // a pane, it only (idempotently) starts `.mio/ports.json` watching. `hide_active_pane` clears
-    // whatever Terminal/AgentWeb overlay another sandbox may have left active, so this sandbox's
-    // Dashboard actually becomes visible (its visibility is derived from `active_app` being null).
+    // The card always lands on Manage; the sidebar restores the last view instead
+    // (docs/features/unified-sidebar-nav/02_dev.md, Resolved Decision 2).
     async function openWorkspace() {
-        setActiveSandbox(project.name);
         await action.run(
             "workspace",
-            async () => {
-                await Promise.all([
-                    invoke("watch_workspace_ports", { name: project.name, workspacePath: project.workspace_path }),
-                    invoke("hide_active_pane"),
-                ]);
-            },
+            () => openSandbox(project.name, project.workspace_path, { restore: false }),
             { message: m.projects_status_opening_workspace() },
         );
     }
@@ -94,49 +85,36 @@
     });
 </script>
 
-<li data-sandbox={project.name} class="flex flex-col gap-2 rounded-lg border p-3 text-sm">
-    <div class="flex justify-between items-center gap-2">
-        <span class="flex items-center gap-2 font-medium min-w-0">
-            <span class={[
-                "inline-block h-2 w-2 rounded-full shrink-0",
-                deployment ? syncColor(deployment.status) :
-                project.status === "running" ? "bg-green-500" :
-                project.status === "paused"  ? "bg-yellow-400" :
-                project.status === "exited"  ? "bg-red-400" :
-                "bg-muted-foreground/40"
-            ].join(" ")}></span>
-            <span class="truncate">{project.name}</span>
-            {#if deployment}
-                <span class="text-muted-foreground text-xs shrink-0">→ {deployment.host}</span>
-            {/if}
-        </span>
-        <!-- @max-[420px]: a *container* query (not a viewport media query) against
-             NavigationColumn.svelte's `@container` ancestor, whose width is
-             NAVIGATION_PANEL_EXPANDED_W = 380 (src-tauri/src/workspace/mod.rs) once a workspace is
-             open: main-navigation-panel is the full app window since Phase C
-             (docs/features/consolidate-app-container/02_dev.md), so a plain viewport media query
-             here would never fire — labels drop to icons only when the nav *column*, not the
-             window, narrows past 420px. -->
-        <span class="flex items-center gap-2 shrink-0">
-            {#if project.status === "running"}
-                <Button variant="ghost" size="sm" onclick={stop} title={m.projects_stop()}
-                    loading={action.busy === "stop"} disabled={action.busy !== null}>
-                    <HugeiconsIcon icon={StopIcon} size={16} />
-                    <span class="@max-[420px]:hidden">{m.projects_stop()}</span>
-                </Button>
-            {:else}
-                <Button variant="ghost" size="sm" onclick={start} title={m.projects_start()}
-                    loading={action.busy === "start"} disabled={action.busy !== null}>
-                    <HugeiconsIcon icon={PlayIcon} size={16} />
-                    <span class="@max-[420px]:hidden">{m.projects_start()}</span>
-                </Button>
-            {/if}
-            <Button variant="ghost" size="sm" onclick={openWorkspace} title={m.projects_workspace()}
-                loading={action.busy === "workspace"} disabled={action.busy !== null}>
-                <HugeiconsIcon icon={DashboardSquare01Icon} size={16} />
-                <span class="@max-[420px]:hidden">{m.projects_workspace()}</span>
+<li data-sandbox={project.name} class="flex flex-col gap-3 rounded-md border-2 bg-card p-4 text-sm shadow-md">
+    <div class="flex min-w-0 items-center gap-2">
+        <span class={["inline-block size-2.5 shrink-0 rounded-full", statusDotClass(project.status, deployment)]}></span>
+        <span class="truncate font-head text-base">{project.name}</span>
+        {#if deployment}
+            <span class="text-muted-foreground text-xs shrink-0">→ {deployment.host}</span>
+        {/if}
+    </div>
+
+    <!-- Label text doubles as the e2e selector (`button=workspace`, `button=start`), so labels stay
+         visible: Home cards always have room since pages use the full content area. -->
+    <div class="flex flex-wrap items-center gap-2">
+        <Button size="sm" onclick={openWorkspace} title={m.projects_workspace()}
+            loading={action.busy === "workspace"} disabled={action.busy !== null}>
+            <HugeiconsIcon icon={DashboardSquare01Icon} size={16} />
+            <span>{m.projects_workspace()}</span>
+        </Button>
+        {#if project.status === "running"}
+            <Button variant="ghost" size="sm" onclick={stop} title={m.projects_stop()}
+                loading={action.busy === "stop"} disabled={action.busy !== null}>
+                <HugeiconsIcon icon={StopIcon} size={16} />
+                <span>{m.projects_stop()}</span>
             </Button>
-        </span>
+        {:else}
+            <Button variant="ghost" size="sm" onclick={start} title={m.projects_start()}
+                loading={action.busy === "start"} disabled={action.busy !== null}>
+                <HugeiconsIcon icon={PlayIcon} size={16} />
+                <span>{m.projects_start()}</span>
+            </Button>
+        {/if}
     </div>
 
     <StatusRow

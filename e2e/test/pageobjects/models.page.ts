@@ -1,11 +1,11 @@
-import AppPage, { type Element } from "./app.page.js";
+import AppPage, { navButton, type Element } from "./app.page.js";
 import { COMMAND, SUBPROCESS } from "../../lib/timeouts.js";
 
 // Selectors are data-attribute based (set in src/routes/models/+page.svelte) so this page object
 // never depends on CSS classes or copy.
 class ModelsPage extends AppPage {
   get navLink(): Element {
-    return $("[role='tab'][data-value='/models']");
+    return navButton("/models");
   }
 
   get specsPanel(): Element {
@@ -88,12 +88,7 @@ class ModelsPage extends AppPage {
 
   /** Returns only once the host-specs probe has resolved; it shells out and can lag by seconds. */
   async open(timeout = COMMAND): Promise<void> {
-    const url = await browser.getUrl();
-    if (!url.includes("/models")) {
-      const link = await this.navLink;
-      await link.waitForDisplayed({ timeout });
-      await link.click();
-    }
+    await this.showPage("/models", timeout);
     await this.#expandAdvanced(timeout);
     await (await this.specsPanel).waitForDisplayed({ timeout });
     await (await this.specsReady).waitForDisplayed({ timeout: SUBPROCESS });

@@ -74,7 +74,7 @@ describe("Activity Center — global task tracking", function () {
     await ActivityCenter.waitForTask(taskId, ["running", "succeeded"], 480000);
 
     // ── Step 4: the task survives navigation to a foreign route (teeth) ───────────────────────
-    // Go home, then to /projects — never back to /models. The component that started the download
+    // Go to Home through the sidebar — never back to /models. The component that started the download
     // is now unmounted, so a component-local progress UI would show nothing here.
     await ModelsPage.goHome();
     await ProjectsPage.open();

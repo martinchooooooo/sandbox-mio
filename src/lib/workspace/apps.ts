@@ -37,7 +37,7 @@ export const LAUNCHABLE_APPS: AppDescriptor[] = [
     },
     {
         kind: "agentchat",
-        title: () => "Chat", // TODO(i18n)
+        title: m.workspace_tab_chat,
         icon: AiChat02Icon,
         command: "open_agent_chat",
         // The native chat drives pi only (docs/features/native-agent-ui/02_dev.md).

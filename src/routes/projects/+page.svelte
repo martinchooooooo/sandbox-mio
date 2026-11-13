@@ -66,14 +66,13 @@
     }
 </script>
 
-<main class="p-6 pb-52">
-    <h1 class="text-center text-3xl mb-8">{m.projects_title()}</h1>
+<!-- Home. The grid's @min-[44rem] is a container query against the layout's route outlet, i.e. the
+     content area beside the app sidebar, not the window. -->
+<main data-home class="mx-auto w-full max-w-4xl p-6 pb-16">
+    <h1 class="font-head text-3xl">{m.projects_title()}</h1>
+    <p class="text-muted-foreground mt-2 mb-6 max-w-2xl">{m.home_intro()}</p>
 
-    <!-- @max-[420px]: a container query against NavigationColumn.svelte's `@container` ancestor
-         (see the comment on SandboxItem.svelte's @max-[420px] usage) — a plain viewport media query
-         would never fire once main-navigation-panel became the full app window (Phase C,
-         docs/features/consolidate-app-container/02_dev.md). -->
-    <div class="max-w-2xl mx-auto @max-[420px]:max-w-none @max-[420px]:mx-0">
+    <div>
         <!-- <Field.Set class="w-full">
             <Field.Group>
                 <Field.Field>
@@ -125,7 +124,7 @@
                 {/if}
             </div>
         {:else}
-            <ul class="stagger mt-6 space-y-2">
+            <ul class="stagger grid gap-4 @min-[44rem]:grid-cols-2">
                 {#each projects as project (project.id)}
                     <SandboxItem
                         {project}

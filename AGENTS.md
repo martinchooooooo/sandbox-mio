@@ -99,6 +99,7 @@ Currently available components:
 - `kbd` (Root, Group) — retro-ui-svelte has no `kbd` registry item; pulled from shadcn-svelte and hand-restyled, like `field`
 - `label`
 - `loader` (retro-ui-svelte's animated loading indicator)
+- `nav-list` (Root, Group, Item) — the app sidebar's vertical navigation list: buttons with an icon and label, collapsing to an icon rail with tooltips; hand-built in the `section-nav` item style (shared base classes in `section-nav/styles.ts`), since retro-ui-svelte has no `sidebar` item (see `docs/features/unified-sidebar-nav/02_dev.md`)
 - `popover`
 - `progress`
 - `scroll-area` — retro-ui-svelte has no `scroll-area` registry item; pulled from shadcn-svelte and hand-restyled, like `field`

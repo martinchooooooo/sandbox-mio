@@ -3,6 +3,7 @@
 	import type { Snippet } from "svelte";
 	import { cn } from "$lib/utils.js";
 	import * as Tooltip from "../tooltip/index.js";
+	import { navItemBase } from "./styles.js";
 
 	let {
 		ref = $bindable(null),
@@ -40,7 +41,8 @@
 				data-slot="section-nav-item"
 				data-section-nav-item={value}
 				class={cn(
-					"flex h-9 items-center justify-center gap-2 rounded-md border-2 border-transparent px-1.5 text-sm font-medium transition-all focus:outline-hidden focus-visible:shadow-xs disabled:pointer-events-none disabled:opacity-50 @min-[48rem]/section-nav:justify-start @min-[48rem]/section-nav:px-2.5 [&_svg]:pointer-events-none [&_svg]:shrink-0",
+					navItemBase,
+					"justify-center px-1.5 @min-[48rem]/section-nav:justify-start @min-[48rem]/section-nav:px-2.5",
 					"data-[state=active]:border-border data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:font-semibold",
 					className
 				)}

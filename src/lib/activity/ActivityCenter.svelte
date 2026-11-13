@@ -3,6 +3,9 @@
     import { m } from "$lib/paraglide/messages.js";
     import { tick } from "svelte";
     import { pop } from "$lib/motion";
+    import { HugeiconsIcon } from "@hugeicons/svelte";
+    import { Notification01Icon } from "@hugeicons/core-free-icons";
+    import * as NavList from "$lib/components/ui/nav-list";
     import {
         tasks,
         activityEvents,
@@ -12,24 +15,31 @@
     } from "$lib/activity/activity.svelte";
     import type { ActivityHeadline, TaskStatus } from "$lib/activity/types";
 
-    // The global activity surface, mounted once in the root layout: a fixed bottom-right bell with a
-    // badge (running + unseen failures) and an expandable panel listing active/recent tasks plus the
-    // container/event scrollback. Selectors are data-attribute based (the e2e Selector Contract).
+    // The global activity surface, mounted once in the app sidebar: a toggle with a badge (running +
+    // unseen failures) and an expandable panel listing active/recent tasks plus the container/event
+    // scrollback. Selectors are data-attribute based (the e2e Selector Contract).
 
     // `headline` widens the bell into a status pill that spells the background work out, for
     // screens where the user would not think to look for a bell (onboarding).
-    // `placement="inline"` leaves positioning to the caller and opens the panel downward, for a
-    // toggle that sits in a top bar instead of the window's corner.
+    // `placement`: "inline" leaves positioning to the caller and opens downward (a top bar);
+    // "sidebar" renders a nav item, so it must sit inside a `NavList.Root`, and opens upward.
     let {
         headline = null,
         placement = "corner",
     }: {
         headline?: ActivityHeadline | null;
-        placement?: "corner" | "inline";
+        placement?: "corner" | "inline" | "sidebar";
     } = $props();
 
     const popupClass = $derived(
-        placement === "inline" ? "absolute right-0 top-full mt-2 origin-top-right" : "origin-bottom-right",
+        placement === "inline"
+            ? "absolute right-0 top-full mt-2 origin-top-right"
+            : placement === "sidebar"
+              ? "absolute bottom-full left-0 mb-2 origin-bottom-left"
+              : "origin-bottom-right",
+    );
+    const wrapperClass = $derived(
+        placement === "corner" ? "fixed bottom-4 right-4 z-50 flex flex-col items-end gap-2" : "relative z-50",
     );
 
     let open = $state(false);
@@ -70,7 +80,7 @@
     }
 </script>
 
-<div class={placement === "inline" ? "relative z-50" : "fixed bottom-4 right-4 z-50 flex flex-col items-end gap-2"}>
+<div class={wrapperClass}>
     {#if open}
         <div
             data-activity-panel
@@ -182,6 +192,17 @@
             </span>
             <span class="shrink-0">🔔</span>
         </button>
+    {:else if placement === "sidebar"}
+        <NavList.Item data-activity-toggle label={m.sidebar_activity()} active={open} onclick={togglePanel}>
+            {#snippet icon()}
+                <HugeiconsIcon icon={Notification01Icon} size={16} />
+            {/snippet}
+            {#snippet trailing()}
+                {#if count > 0}
+                    <span data-activity-badge class="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1 text-xs text-destructive-foreground">{count}</span>
+                {/if}
+            {/snippet}
+        </NavList.Item>
     {:else}
         <Button
             data-activity-toggle

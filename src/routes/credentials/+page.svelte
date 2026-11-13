@@ -195,8 +195,8 @@
     onMount(loadBundles);
 </script>
 
-<main class="p-3 pb-6 @max-[420px]:p-2">
-    <h1 class="text-3xl mb-2">{m.credentials_title()}</h1>
+<main class="mx-auto w-full max-w-3xl p-6 pb-16 @max-[420px]:p-3">
+    <h1 class="font-head text-3xl mb-2">{m.credentials_title()}</h1>
     <p class="text-sm text-muted-foreground mb-8">{m.credentials_intro()}</p>
 
     <div class="flex flex-col gap-3">

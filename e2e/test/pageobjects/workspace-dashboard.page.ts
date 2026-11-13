@@ -7,9 +7,10 @@ type DashboardSectionId = "overview" | "tools" | "ports" | "network" | "traffic"
 
 class WorkspaceDashboardPage {
   // `[data-section-nav]` renders for every section once WorkspaceDashboard.svelte's `workspacePath`
-  // resolves; the package input exists only in the Tools section. `sandbox` only names the error.
+  // resolves; the package input exists only in the Tools section. Scoped to `sandbox`'s dashboard so a
+  // switch between two sandboxes cannot pass on the outgoing one.
   async waitForRendered(sandbox: string): Promise<void> {
-    await this.sectionNav.waitForExist({
+    await $(`[data-dashboard='${sandbox}'] [data-section-nav]`).waitForExist({
       timeout: PANEL_RENDER,
       timeoutMsg: `dashboard content for "${sandbox}" never rendered (workspacePath likely never resolved)`,
     });
@@ -37,17 +38,16 @@ class WorkspaceDashboardPage {
     });
   }
 
-  // `data-dashboard` (WorkspaceDashboard.svelte's `<main>`) scopes the getters below: the sandbox
-  // list (SandboxItem.svelte) and the Dashboard render as siblings, both simultaneously visible
-  // (docs/features/consolidate-app-container/02_dev.md), and both use StatusRow — an unscoped
-  // `errorRow` lookup could resolve to the list row's instead of the Dashboard's.
+  // `data-dashboard` (WorkspaceDashboard.svelte's `<main>`, valued with the sandbox name) scopes the
+  // getters below: the sandbox header above it also renders a StatusRow, so an unscoped `errorRow`
+  // lookup could resolve to the header's instead of the Dashboard's.
   get root(): Element {
     return $("[data-dashboard]");
   }
 
   // ── App launcher (docs/features/workspace-app-tabs/02_dev.md Phase D) ──────
 
-  // Scoped to `root`: once a pane exists, its switcher tab (SandboxSwitcherGroup.svelte) carries the
+  // Scoped to `root`: once a pane exists, its sandbox header tab (SandboxHeader.svelte) carries the
   // same `data-app` value as the launcher.
   launcherButton(kind: "terminal" | "agentweb" | "agentchat"): Element {
     return this.root.$(`button[data-app="${kind}"]`);
@@ -283,14 +283,11 @@ class WorkspaceDashboardPage {
     await this.#clickButton(row.$("button[title='Stop exposing']"));
   }
 
-  // ── Folder reveal / Destroy (WorkspaceDashboard.svelte) ─────────────────────
+  // ── Destroy (WorkspaceDashboard.svelte) ─────────────────────────────────────
 
-  get folderButton(): Element {
-    return this.root.$("button=folder");
-  }
-
+  // The "Delete sandbox" section's button; its label is `projects_destroy` in messages/en.json.
   get destroyButton(): Element {
-    return this.root.$("button=destroy");
+    return this.root.$("button=delete");
   }
 
   async destroySandbox(): Promise<void> {
@@ -321,8 +318,8 @@ class WorkspaceDashboardPage {
 
   /**
    * StatusRow's error line for the Dashboard's shared action runner — deploy/undeploy/destroy/sync
-   * and folder-reveal all run through it (`action` in WorkspaceDashboard.svelte), so one selector
-   * covers all of them, scoped to `root` (see the comment on it above).
+   * all run through it (`action` in WorkspaceDashboard.svelte), so one selector covers all of them,
+   * scoped to `root` (see the comment on it above).
    */
   get errorRow(): Element {
     return this.root.$("div[role='status'].text-destructive");

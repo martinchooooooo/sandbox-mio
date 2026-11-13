@@ -6,6 +6,7 @@
 * [native-agent-ui](native-agent-ui/index.md) - Built-in chat UI in the app's own frontend, driving pi inside the sandbox over its RPC mode, kept alive by an in-sandbox supervisor.
 * [onboarding-story](onboarding-story/index.md) - Illustrated onboarding book inside the welcome flow, extensible by chapter, with first-run setup running in the background and reported through the activity center.
 * [retro-ui-migration](retro-ui-migration/index.md) - Re-skin the UI primitives with the retro-ui-svelte registry (Sunset Orange, rounded).
+* [unified-sidebar-nav](unified-sidebar-nav/index.md) - One persistent left sidebar replaces the top page tabs and the multi-sandbox switcher bar, pages use the full content area, and navigation labels speak plain language.
 
 ## planned
 

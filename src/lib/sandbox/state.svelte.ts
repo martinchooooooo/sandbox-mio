@@ -5,12 +5,10 @@ import type { Project, Deployment } from "$lib/sandbox";
 import { allCapabilities, type ProviderCapabilities, type ProviderId } from "$lib/providers";
 
 // Module-scoped store (mirrors src/lib/workspace/state.svelte.ts): the shared sandbox-list,
-// deployment, host, and capability data read by both the projects list
-// (src/routes/projects/+page.svelte) and the per-sandbox admin controls relocated into
-// WorkspaceDashboard.svelte (RemoteManager.svelte). Both surfaces render as siblings, not
-// ancestor/descendant (docs/features/consolidate-app-container/02_dev.md), so a Destroy or
-// Deploy/Undeploy/Sync triggered from the Dashboard has no direct prop path back to the list —
-// this store is that path.
+// deployment, host, and capability data read by the app sidebar, the Home page
+// (src/routes/projects/+page.svelte), the sandbox header and the Manage dashboard. None of them is
+// an ancestor of another, so a Destroy or Deploy/Undeploy/Sync triggered from the Dashboard has no
+// direct prop path back to the lists — this store is that path.
 
 let projects = $state<Project[]>([]);
 let deployments = $state<Record<string, Deployment>>({});
@@ -85,7 +83,7 @@ export async function refreshSandboxState(): Promise<void> {
 
 // Hydrates and keeps sandbox-list/deployment/host/capability data live via a 3 s poll, gated
 // behind Podman readiness so a down Podman is never flooded with failing invocations. Callers
-// (the projects list, WorkspaceDashboard) may not have already probed Podman themselves, so this
+// (the sidebar, Home, WorkspaceDashboard) may not have already probed Podman themselves, so this
 // takes that gating responsibility itself rather than trusting the caller did — idempotent and
 // safe to call from any component.
 export async function ensureSandboxRemoteState(): Promise<void> {

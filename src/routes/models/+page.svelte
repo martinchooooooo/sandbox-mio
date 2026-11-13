@@ -319,8 +319,8 @@
     </li>
 {/snippet}
 
-<main class="p-3 pb-6 @max-[420px]:p-2">
-    <h1 class="text-3xl mb-2">{m.models_title()}</h1>
+<main class="mx-auto w-full max-w-3xl p-6 pb-16 @max-[420px]:p-3">
+    <h1 class="font-head text-3xl mb-2">{m.models_title()}</h1>
     <p class="text-sm text-muted-foreground mb-6">{m.models_engine_label({ engine })}</p>
 
     {#if topEntry}

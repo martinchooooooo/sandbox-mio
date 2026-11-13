@@ -1,11 +1,11 @@
 import assert from "node:assert";
 
 import ModelsPage from "../../pageobjects/models.page.js";
-import ProjectsPage from "../../pageobjects/projects.page.js";
+import SettingsPage from "../../pageobjects/settings.page.js";
 import ActivityCenter from "../../pageobjects/activity.page.js";
 import { invokeCmd } from "../../../lib/mock.js";
 
-// LIGHT spec for the activity center: proves the bell mounts globally, list_tasks round-trips, and
+// LIGHT spec for the activity center: proves its sidebar toggle mounts globally, list_tasks round-trips, and
 // the store's fold/badge/toast/version-guard logic works, without a real backend task. The real Rust
 // pipeline (registry → app.emit → survives reload) is test/specs/heavy/activity-center.spec.ts.
 //
@@ -46,14 +46,13 @@ async function emitTask(task: Record<string, unknown>): Promise<boolean> {
 describe("Activity Center — UI sanity (no backend task)", function () {
   this.timeout(60000);
 
-  it("renders the bell toggle on every route (layout-mounted global surface)", async () => {
+  it("renders the activity toggle on every route (sidebar-mounted global surface)", async () => {
     await ModelsPage.goHome();
-    assert(await ActivityCenter.isToggleShown(), "Bell toggle missing on home — the activity center must mount in +layout.svelte.");
+    assert(await ActivityCenter.isToggleShown(), "Activity toggle missing on Home — the activity center must mount in the app sidebar.");
     await ModelsPage.open();
-    assert(await ActivityCenter.isToggleShown(), "Bell toggle missing on /models — a per-route mount would not survive navigation.");
-    await ModelsPage.goHome();
-    await ProjectsPage.open();
-    assert(await ActivityCenter.isToggleShown(), "Bell toggle missing on /projects — the surface must be present on every route.");
+    assert(await ActivityCenter.isToggleShown(), "Activity toggle missing on /models — a per-route mount would not survive navigation.");
+    await SettingsPage.open();
+    assert(await ActivityCenter.isToggleShown(), "Activity toggle missing on /settings — the surface must be present on every route.");
   });
 
   it("round-trips the list_tasks command to an array (Phase A)", async () => {

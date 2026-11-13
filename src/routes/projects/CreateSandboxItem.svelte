@@ -13,6 +13,7 @@
     import { allAgentApiHosts } from "$lib/agents/catalogue";
     import { onMount } from "svelte";
     import { checkPodman, podmanUnavailable } from "$lib/podman/setup.svelte";
+    import { createFocusRequested, takeCreateFocus } from "$lib/workspace/navigation.svelte";
 
     let { onCreated }: { onCreated: () => void } = $props();
 
@@ -36,6 +37,16 @@
     });
 
     const action = createActionRunner();
+
+    // The sidebar's "New sandbox" lands here; the first name field takes the focus once.
+    let nameInput = $state<HTMLElement | null>(null);
+    let card = $state<HTMLLIElement | null>(null);
+    $effect(() => {
+        if (createFocusRequested() && nameInput && takeCreateFocus()) {
+            card?.scrollIntoView({ block: "nearest" });
+            nameInput.focus();
+        }
+    });
 
     // Seeded from the persisted `defaultProvider` setting; the picker below overrides it per
     // sandbox without writing the choice back.
@@ -95,14 +106,18 @@
     }
 </script>
 
-<li data-create-row class="flex flex-col gap-2 rounded-lg border p-3 text-sm">
+<li
+    bind:this={card}
+    data-create-row
+    class="flex flex-col gap-2 rounded-md border-2 border-dashed bg-card p-4 text-sm @min-[44rem]:col-span-2"
+>
     <Field.Set class="w-full">
         <Field.Group>
             <Field.Field>
                 <Field.Label>{m.projects_name_label()}</Field.Label>
                 {#if mode === "name"}
                     <div class="flex w-full gap-2">
-                        <Input placeholder={m.projects_name_placeholder()} bind:value={name} />
+                        <Input placeholder={m.projects_name_placeholder()} bind:value={name} bind:ref={nameInput} />
                         <Button
                             loading={action.busy === "create"}
                             disabled={action.busy !== null}

@@ -1,6 +1,7 @@
 import assert from "node:assert";
 import path from "node:path";
 
+import { navButton } from "../../pageobjects/app.page.js";
 import { configureMock, invokeCmd, useMockControl } from "../../../lib/mock.js";
 import { COMMAND, UI_SETTLE } from "../../../lib/timeouts.js";
 
@@ -84,7 +85,8 @@ describe("Onboarding story — book and background setup", function () {
     await finish.waitForEnabled({ timeout: COMMAND });
     await shot("03-setup-cards");
     await finish.click();
-    await $("[role='tab'][data-value='/projects']").waitForDisplayed({ timeout: COMMAND });
+    // Finishing unlocks the app chrome, whose sidebar always carries the Home entry.
+    await navButton("/projects").waitForDisplayed({ timeout: COMMAND });
   });
 
   it("flags a failed background step and offers a way to the setup cards", async () => {

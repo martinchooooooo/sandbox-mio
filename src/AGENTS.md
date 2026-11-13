@@ -4,20 +4,20 @@ The `src/` tree is a SvelteKit app (Svelte 5 runes, static adapter, Tailwind 4) 
 
 ## Route Map
 
-- `src/routes/projects/` — main screen: sandbox list (`SandboxItem.svelte`, `StatusRow.svelte`), per-sandbox package (`PackageManager.svelte`) and agent (`AgentManager.svelte`) management.
-- `src/lib/workspace/` — not a route: the workspace chrome rendered by the root layout (navigation column, sandbox switcher, Manage dashboard, launchable-app catalogue in `apps.ts`); pane state comes from the Rust `WorkspaceRegistry` via `state.svelte.ts`. See `docs/architecture/workspace-ui.md`.
+- `src/routes/projects/` — Home: sandbox cards (`SandboxItem.svelte`, `StatusRow.svelte`), the create card (`CreateSandboxItem.svelte`), plus the panels the Manage dashboard mounts (`PackageManager.svelte`, `AgentManager.svelte`, and others).
+- `src/lib/workspace/` — not a route: the app shell rendered by the root layout (app sidebar `AppSidebar.svelte`, sandbox view and header `SandboxView.svelte`/`SandboxHeader.svelte`, Manage dashboard, launchable-app catalogue in `apps.ts`); pane state comes from the Rust `WorkspaceRegistry` via `state.svelte.ts`, and every page/sandbox navigation action lives in `navigation.svelte.ts`. See `docs/architecture/workspace-ui.md`.
 - `src/routes/models/` — local LLM catalogue, download, and inference control.
 - `src/routes/agent-auth/`, `src/routes/credentials/` — agent login flow and shared credential bundles.
 - `src/routes/settings/`, `src/routes/intro/` — settings page and first-run intro.
 - `src/lib/onboarding/` — not a route: the illustrated onboarding book the welcome flow (`src/lib/welcome/`) shows, its reusable page kit and animation engine, and the background first-run setup store. See `src/lib/onboarding/AGENTS.md` before adding a chapter.
-- `src/routes/+layout.svelte` — mounts the single `<Toaster />`, `GlobalNav`, the activity center, and the collapsible workspace panel chrome.
+- `src/routes/+layout.svelte` — mounts the single `<Toaster />`, the app sidebar (which holds the activity center), and the content area: the sandbox view when a sandbox is in view, otherwise the routed page.
 
 ## Module-Scoped Rune Stores
 
 State shared across routes lives in `.svelte.ts` files under `src/lib/` with module-level `$state` declared above the router, exported through accessor functions, and hydrated by an idempotent `ensure*()`/start function called once from the root layout. Component-local `$state` is destroyed on navigation, so cross-route state must use a store following the established pattern. Existing stores:
 
 - `src/lib/activity/activity.svelte.ts` — task ledger hydrated from `list_tasks`, kept live by `activity://task-updated`; also folds container status per sandbox from the `listen_events` stream.
-- `src/lib/workspace/state.svelte.ts` — the single `workspace://state` subscription; consumed by the layout (panel chrome) and the projects list (per-sandbox open state).
+- `src/lib/workspace/state.svelte.ts` — the single `workspace://state` subscription plus the sandbox in view; consumed by the layout, the app sidebar and the sandbox header.
 - `src/lib/proxy/status.svelte.ts` — per-sandbox `proxy_status` cache (5 s freshness) shared by the Manage dashboard's Overview summary, Network and Traffic sections; call `refreshProxyStatus` after any sidecar-changing command.
 - `src/lib/agents/authStatus.svelte.ts` — per-sandbox coding-agent login status, checked concurrently and kept across dashboard remounts.
 - `src/lib/workspace/dashboard.svelte.ts` — the Manage dashboard section last opened per sandbox (frontend memory; survives the dashboard remount on sandbox switch).
@@ -38,7 +38,7 @@ Event flow is one-directional: Rust emits (`activity://task-updated`, `workspace
 
 Motion is applied at the shell and primitive level, so most new UI animates without opting in. Tokens and utilities live in `src/app.css`; exit presets live in `src/lib/motion.ts`.
 
-- Already automatic: every routed page fades up on navigation (`data-route-outlet`), the workspace column slides in and out (`+layout.svelte`), the Manage dashboard and every `tabs`/`section-nav`/`collapsible` content fade in, and dialogs and tooltips animate via their primitives. Links, buttons and tabs ease their hover colours by default.
+- Already automatic: every routed page fades up on navigation (`data-route-outlet`), the sandbox view fades in (`SandboxView.svelte`), and every `tabs`/`section-nav`/`collapsible` content fade in, and dialogs and tooltips animate via their primitives. Links, buttons and tabs ease their hover colours by default.
 - Something appearing: add a class, no JS. `animate-enter` for a surface arriving, `animate-fade-in` for content swapping in place, `animate-pop-in` for a floating element, `stagger` on a list or stack whose children should cascade.
 - Something that must animate out: use `in:rise out:rise` or `in:pop out:pop` from `src/lib/motion.ts`, never Svelte's raw `fade`/`fly` and never `transition:` (it loses the faster exit).
 - Do not nest movement: inside an element that already rises or slides, use `animate-fade-in`.

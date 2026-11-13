@@ -44,3 +44,12 @@ export function syncColor(status: SyncStatus): string {
            status === "conflict"   ? "bg-yellow-400" :
            "bg-red-500";
 }
+
+/** Status-dot colour for a sandbox: its sync status when deployed, else its container state. */
+export function statusDotClass(status: string | undefined, deployment: Deployment | undefined): string {
+    if (deployment) return syncColor(deployment.status);
+    return status === "running" ? "bg-green-500" :
+           status === "paused"  ? "bg-yellow-400" :
+           status === "exited"  ? "bg-red-400" :
+           "bg-muted-foreground/40";
+}

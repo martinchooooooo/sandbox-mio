@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 
 /// The live state of the single AppContainer window, held in Tauri state (mirroring
-/// `ForwardPortMap`) so the switcher chrome can target the right webviews and undeploy/destroy
+/// `ForwardPortMap`) so the sandbox header can target the right webviews and undeploy/destroy
 /// can close a sandbox's embedded pane.
 pub type WorkspaceRegistry = Arc<Mutex<WorkspaceState>>;
 

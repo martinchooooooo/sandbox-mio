@@ -1,7 +1,6 @@
 <script lang="ts">
     import { invoke } from "@tauri-apps/api/core";
     import { onMount } from "svelte";
-    import { revealItemInDir } from "@tauri-apps/plugin-opener";
     import { HugeiconsIcon } from "@hugeicons/svelte";
     import Button from "$lib/components/ui/button/button.svelte";
     import * as SectionNav from "$lib/components/ui/section-nav";
@@ -14,8 +13,8 @@
     import RemoteManager from "../../routes/projects/RemoteManager.svelte";
     import ProxyPanel from "../../routes/projects/ProxyPanel.svelte";
     import TrafficPanel from "../../routes/projects/TrafficPanel.svelte";
-    import { Folder01Icon, Delete02Icon } from "@hugeicons/core-free-icons";
-    import { clearActiveSandbox } from "$lib/workspace/state.svelte";
+    import { Delete02Icon } from "@hugeicons/core-free-icons";
+    import { closeSandbox } from "$lib/workspace/navigation.svelte";
     import { ensurePackages } from "$lib/workspace/packages.svelte";
     import { ensureSandboxRemoteState, refreshSandboxState, sandboxesList } from "$lib/sandbox/state.svelte";
     import { forgetProxyStatus } from "$lib/proxy/status.svelte";
@@ -24,9 +23,8 @@
     import { DASHBOARD_SECTIONS, type DashboardSectionId } from "$lib/workspace/sections";
     import DashboardOverview from "$lib/workspace/DashboardOverview.svelte";
 
-    // Rendered by `+layout.svelte` when no Terminal/AgentWeb overlay is active for the active
-    // sandbox (docs/features/consolidate-app-container/02_dev.md) — no longer a separate embedded
-    // pane with its own lifecycle.
+    // Rendered by SandboxView.svelte when no pane is active for the sandbox in view
+    // (docs/features/consolidate-app-container/02_dev.md) — not an embedded pane with its own lifecycle.
     let { sandboxName }: { sandboxName: string } = $props();
 
     // Two primitive deriveds: the store's poll replaces every Project object, so effects must not
@@ -49,23 +47,6 @@
         setSection(sandboxName, id);
     }
 
-    // A sandbox with no open Terminal/AgentWeb pane has no `SandboxSwitcherGroup` (WorkspaceSwitcher.svelte
-    // only groups by open panes), so its × close button doesn't exist there either — this is the
-    // only remaining way to close such a sandbox. `close_workspace` is a no-op here (no panes to
-    // tear down), so it's `clearActiveSandbox` that actually drops this Dashboard.
-    async function close() {
-        try {
-            await invoke("close_workspace", { name: sandboxName });
-        } catch (e) {
-            console.error(e);
-        }
-        clearActiveSandbox();
-    }
-
-    async function openFolder() {
-        await action.run("folder", () => revealItemInDir(workspacePath));
-    }
-
     async function destroySandbox() {
         if (await action.run("destroy", async () => {
             try {
@@ -86,7 +67,7 @@
             forgetProxyStatus(sandboxName);
             forgetAgentAuth(sandboxName);
             await refreshSandboxState();
-            await close();
+            await closeSandbox(sandboxName);
         }
     }
 
@@ -101,27 +82,8 @@
     });
 </script>
 
-<!-- Fade only: on first open the workspace column already slides in (+layout.svelte). -->
-<main data-dashboard={sandboxName} class="animate-fade-in flex h-full flex-col gap-3 p-6">
-    <div class="flex items-center justify-between gap-2">
-        <h1 class="text-xl font-medium">{sandboxName}</h1>
-        <span class="flex items-center gap-2">
-            <Button variant="ghost" size="sm" onclick={openFolder} title={workspacePath}
-                loading={action.busy === "folder"} disabled={action.busy !== null}>
-                <HugeiconsIcon icon={Folder01Icon} size={16} />
-                {m.projects_folder()}
-            </Button>
-            <button
-                class="text-muted-foreground hover:text-foreground"
-                data-close-sandbox
-                aria-label={m.workspace_close_sandbox_label({ sandbox: sandboxName })}
-                onclick={close}
-            >
-                ×
-            </button>
-        </span>
-    </div>
-
+<!-- No animation of its own: SandboxView.svelte already fades the whole sandbox view in. -->
+<main data-dashboard={sandboxName} class="flex h-full flex-col gap-3 p-6">
     <StatusRow busy={action.busy} message={action.message} error={action.error} />
 
     {#if workspacePath}

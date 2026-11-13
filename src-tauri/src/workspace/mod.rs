@@ -11,8 +11,12 @@ use types::{AppKind, AppPane, Rect, TerminalPane, WorkspaceError, WorkspaceRegis
 pub const MAIN_WINDOW: &str = "main";
 pub const NAVIGATION_PANEL_LABEL: &str = "main-navigation-panel";
 
-pub const NAVIGATION_PANEL_EXPANDED_W: f64 = 380.0;
+/// Width of the expanded app sidebar. The Tailwind sizes in `src/lib/workspace/AppSidebar.svelte`
+/// and `SandboxHeader.svelte` must match these three constants, or the native panes render shifted.
+pub const NAVIGATION_PANEL_EXPANDED_W: f64 = 240.0;
+/// Width of the collapsed sidebar icon rail.
 pub const NAVIGATION_PANEL_RAIL_W: f64 = 48.0;
+/// Height of the sandbox header (name, controls and app tabs) above the pane area.
 pub const SWITCHER_H: f64 = 64.0;
 
 pub fn workspace_layout(width: f64, height: f64, collapsed: bool) -> Rect {
@@ -266,7 +270,7 @@ fn hide_active_pane_on_main<R: Runtime>(app: &AppHandle<R>) -> Result<(), Worksp
     Ok(())
 }
 
-/// Bring a specific pane of sandbox `name` to the front (switcher tab click), recording it as
+/// Bring a specific pane of sandbox `name` to the front (sandbox header tab click), recording it as
 /// that sandbox's last-active pane so a later cross-sandbox `switch_app` restores it (Resolved
 /// Decision 1, `docs/features/responsive-panel/02_dev.md`).
 pub fn switch_pane<R: Runtime>(
@@ -320,7 +324,7 @@ fn activate_pane<R: Runtime>(
     show_webview(window, &target)
 }
 
-/// Flip the NavigationPanel between expanded and the thin rail. The transition snaps: one
+/// Flip the app sidebar between expanded and the thin rail. The transition snaps: one
 /// `set_bounds` pass, no animation (Resolved Decision 4). With no embedded app this only records
 /// the flag: the layout stays full-bleed.
 pub fn set_collapsed<R: Runtime>(app: &AppHandle<R>, collapsed: bool) -> Result<(), WorkspaceError> {
@@ -497,7 +501,7 @@ fn relayout<R: Runtime>(app: &AppHandle<R>, size: tauri::PhysicalSize<u32>) {
     }
 }
 
-/// Broadcast the fresh state so the switcher tab bar and the NavigationPanel's collapse chrome
+/// Broadcast the fresh state so the sandbox header's app tabs and the sidebar's collapse chrome
 /// track what Rust applied. Best-effort: a dropped event never fails the underlying operation.
 fn emit_state<R: Runtime>(app: &AppHandle<R>) {
     let state = app.state::<WorkspaceRegistry>().lock().unwrap().clone();
@@ -590,7 +594,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn expanded_layout_places_overlay_beside_nav_and_below_switcher() {
+    fn expanded_layout_places_overlay_beside_sidebar_and_below_header() {
         let r = workspace_layout(1024.0, 720.0, false);
         assert_eq!(r.x, NAVIGATION_PANEL_EXPANDED_W);
         assert_eq!(r.y, SWITCHER_H);

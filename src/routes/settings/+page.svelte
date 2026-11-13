@@ -132,8 +132,8 @@
     }
 </script>
 
-<main class="p-3 pb-6 @max-[420px]:p-2">
-    <h1 class="text-3xl mb-8">{m.settings_title()}</h1>
+<main class="mx-auto w-full max-w-3xl p-6 pb-16 @max-[420px]:p-3">
+    <h1 class="font-head text-3xl mb-8">{m.settings_title()}</h1>
 
     <Field.Set class="mb-8">
         <Field.Legend>{m.settings_appearance()}</Field.Legend>

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the AppContainer window. `windows: [main]` covers its one merged child webview (main-navigation-panel), which now hosts NavigationPanel, switcher, and Dashboard content as one document (docs/features/consolidate-app-container/02_dev.md); the per-sandbox Terminal/AgentWeb overlay webviews render a remote page only and get no IPC.",
+  "description": "Capability for the AppContainer window. `windows: [main]` covers its one merged child webview (main-navigation-panel), which hosts the app sidebar, sandbox header, routed pages and Dashboard content as one document (docs/features/consolidate-app-container/02_dev.md); the per-sandbox Terminal/AgentWeb overlay webviews render a remote page only and get no IPC.",
   "windows": ["main"],
   "webviews": ["main-navigation-panel"],
   "permissions": [

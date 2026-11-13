@@ -1,7 +1,7 @@
 import type { DashboardSectionId } from "./sections";
 
-// Module-scoped so the choice survives the `{#key dashboardSandbox}` remount in
-// WorkspaceContent.svelte; frontend memory only, gone on an app restart.
+// Module-scoped so the choice survives the dashboard remounting on every sandbox or pane switch;
+// frontend memory only, gone on an app restart.
 
 const sectionBySandbox = $state<Record<string, DashboardSectionId>>({});
 

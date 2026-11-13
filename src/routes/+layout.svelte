@@ -2,27 +2,19 @@
     import "../app.css";
     import { onMount } from "svelte";
     import { invoke } from "@tauri-apps/api/core";
+    import { page } from "$app/state";
     import { toast } from "svelte-sonner";
     import { ModeWatcher } from "mode-watcher";
     import { Toaster } from "$lib/components/ui/sonner";
     import { ensureActivity } from "$lib/activity/activity.svelte";
-    import {
-        ensureWorkspaceState,
-        isCollapsed,
-        hasTabs as hasTabsStore,
-        activeSandboxName,
-        activeAppLabel,
-        activePane,
-        type AppPane,
-    } from "$lib/workspace/state.svelte";
-    import NavigationColumn from "$lib/workspace/NavigationColumn.svelte";
-    import WorkspaceContent from "$lib/workspace/WorkspaceContent.svelte";
+    import { ensureWorkspaceState, viewSandboxName } from "$lib/workspace/state.svelte";
+    import AppSidebar from "$lib/workspace/AppSidebar.svelte";
+    import SandboxView from "$lib/workspace/SandboxView.svelte";
     import { ensureNetworkState } from "$lib/network/state.svelte";
     import { ensureOnboardingState, onboardingCompleted } from "$lib/settings/onboarding.svelte";
     import { reprovisionInstalledAgents } from "$lib/agents/reprovision";
     import type { InferenceStatus } from "$lib/models/types";
     import { m } from "$lib/paraglide/messages.js";
-    import { rise } from "$lib/motion";
     import type { Snippet } from "svelte";
 
     let { children }: { children?: Snippet } = $props();
@@ -31,51 +23,13 @@
     // before any route mounts and is never torn down for the life of the webview.
     ensureActivity();
 
-    // This layout is the app's home: the `main-navigation-panel` child webview, i.e. the merged
-    // NavigationPanel/Switcher/Dashboard document (docs/features/consolidate-app-container/02_dev.md).
-    // Rust owns the native geometry; `collapsed`/`hasTabs`/`activeAppLabel` mirror the shared
-    // workspace store (src/lib/workspace/state.svelte.ts) so the DOM tracks what Rust actually
-    // applied (with no embedded tab the panel is full-bleed and the collapse control is
-    // meaningless, so it is hidden). Dashboard visibility is *derived* from `activeAppLabel()`
-    // being null (no Terminal/AgentWeb overlay confirmed active) rather than tracked as its own
-    // client-side "current view" — see the comment on `activeSandbox` in state.svelte.ts for why
-    // that distinction matters (a prior version hid the Dashboard optimistically before the
-    // `invoke` that opens a pane resolved, leaving nothing shown if it was slow or failed).
+    // Rust positions native panes beside the sidebar and below the sandbox header. The routed page
+    // unmounts while a sandbox is in view (docs/features/unified-sidebar-nav/02_dev.md, Resolved
+    // Decision 9).
     let isNavigationPanel = $state(false);
-    const collapsed = $derived(isCollapsed());
-    const hasTabs = $derived(hasTabsStore());
-    const dashboardSandbox = $derived(activeAppLabel() === null ? activeSandboxName() : null);
-    // A native pane has no webview of its own, so the main webview renders it in the content area.
-    const chatPane = $derived(activePane()?.kind === "agentchat" ? activePane() : null);
-    // Whether the switcher/content column exists at all: either a Terminal/AgentWeb pane is open
-    // somewhere, or the user has navigated to a sandbox's Dashboard. With neither, the nav column
-    // is the whole window, same as before any workspace existed.
-    const hasWorkspaceContent = $derived(hasTabs || dashboardSandbox !== null);
-    const showWorkspaceChrome = $derived(isNavigationPanel && hasWorkspaceContent);
-    // The navigation column stays docked while the closing workspace fades out; snapping it to
-    // full width first would split the window with the outgoing content.
-    let workspaceLeaving = $state(false);
-    const dockNavigation = $derived(showWorkspaceChrome || workspaceLeaving);
-    // Held while the column fades out, so it leaves with its content rather than going blank first.
-    let lastWorkspace = {
-        hasTabs: false,
-        dashboardSandbox: null as string | null,
-        chatPane: null as AppPane | null,
-    };
-    const workspace = $derived.by(() => {
-        if (showWorkspaceChrome) lastWorkspace = { hasTabs, dashboardSandbox, chatPane };
-        return lastWorkspace;
-    });
-
-    async function toggleCollapsed() {
-        try {
-            // Rust recomputes the layout and re-bounds the sibling child webviews, then echoes
-            // workspace://state; the shared store keeps the DOM authoritative.
-            await invoke("set_panel_collapsed", { collapsed: !collapsed });
-        } catch (e) {
-            console.error(e);
-        }
-    }
+    const viewSandbox = $derived(isNavigationPanel ? viewSandboxName() : null);
+    // The agent login popup is its own window on this layout; it gets no app chrome.
+    const chromeless = $derived(onboardingCompleted() === false || page.url.pathname.startsWith("/agent-auth"));
 
     // Checked once, from the main-navigation-panel webview only (every other webview would otherwise
     // duplicate the same check). Downloads and installs silently on accept, then relaunches —
@@ -143,28 +97,18 @@
 <Toaster position={onboardingCompleted() === false ? "top-left" : "bottom-right"} />
 
 <!-- Gated on `!== false` so the still-loading state matches the eventual `false` case rather than
-     flashing chrome that then hides. NavigationColumn *wraps* the routed page, so the chromeless
-     branch has to re-render `children` itself — and keeps `@container`, which components below
-     resolve their container queries against. -->
+     flashing chrome that then hides. Both branches keep `@container` on the route outlet, which
+     pages resolve their container queries against. -->
 <div class="flex h-screen overflow-hidden">
-    {#if onboardingCompleted() !== false}
-        <NavigationColumn {collapsed} showControls={dockNavigation} onToggleCollapsed={toggleCollapsed}>
-            {@render children?.()}
-        </NavigationColumn>
-        {#if showWorkspaceChrome}
-            <div
-                class="flex min-w-0 flex-1"
-                in:rise={{ x: 16, y: 0 }}
-                out:rise={{ x: 16, y: 0 }}
-                onintrostart={() => (workspaceLeaving = false)}
-                onoutrostart={() => (workspaceLeaving = true)}
-                onoutroend={() => (workspaceLeaving = false)}
-            >
-                <WorkspaceContent
-                    hasTabs={workspace.hasTabs}
-                    dashboardSandbox={workspace.dashboardSandbox}
-                    chatPane={workspace.chatPane}
-                />
+    {#if !chromeless}
+        <AppSidebar />
+        {#if viewSandbox !== null}
+            {#key viewSandbox}
+                <SandboxView sandbox={viewSandbox} />
+            {/key}
+        {:else}
+            <div data-route-outlet class="@container min-w-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+                {@render children?.()}
             </div>
         {/if}
     {:else}

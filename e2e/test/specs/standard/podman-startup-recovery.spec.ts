@@ -2,6 +2,7 @@ import assert from "node:assert";
 import { spawnSync } from "child_process";
 
 import ProjectsPage from "../../pageobjects/projects.page.js";
+import SettingsPage from "../../pageobjects/settings.page.js";
 import ActivityCenter from "../../pageobjects/activity.page.js";
 import { podman, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
 import { activatePodmanSocket, DEFAULT_MACHINE } from "../../../lib/podman-machine.js";
@@ -52,15 +53,14 @@ describe("Podman startup recovery", function () {
     }
   });
 
-  // Step 1 — Land on home so the projects onMount fires fresh on the next step. onMount only runs on
-  // route entry, so revisiting /projects (a prior spec may have left us there) would not re-probe.
-  it("navigates home so the projects onMount fires fresh on the next step", async () => {
-    await ProjectsPage.goHome();
-    const homeHeading = $("h1");
-    await homeHeading.waitForDisplayed({ timeout: UI_SETTLE });
+  // Step 1 — Leave Home so its onMount fires fresh on the next step. Home probes Podman only when
+  // it mounts (entered from another page or from a sandbox), so staying on Home would not re-probe.
+  it("leaves Home so the Home onMount fires fresh on the next step", async () => {
+    await SettingsPage.open();
+    await (await ProjectsPage.root).waitForExist({ timeout: UI_SETTLE, reverse: true });
   });
 
-  // Step 2 — Entering /projects probes check_podman_ready, which detects the stopped machine and
+  // Step 2 — Entering Home probes check_podman_ready, which detects the stopped machine and
   // renders the recovery screen.
   it("shows the 'Start Podman' screen when the machine is stopped", async () => {
     await ProjectsPage.open();

@@ -1,4 +1,4 @@
-import { type Element } from "./app.page.js";
+import { showHome, type Element } from "./app.page.js";
 import workspaceDashboard from "./workspace-dashboard.page.js";
 import { COMMAND, DEPLOY, DESTROY_GRACE, SUBPROCESS, SYNC_CONVERGE, UI_SETTLE } from "../../lib/timeouts.js";
 
@@ -7,14 +7,14 @@ import { COMMAND, DEPLOY, DESTROY_GRACE, SUBPROCESS, SYNC_CONVERGE, UI_SETTLE } 
 const ACTION_CLICK_ATTEMPTS = 3;
 
 /**
- * One project's `<li>` in the projects list, resolved lazily on each access so the component
+ * One sandbox's card on Home (`li[data-sandbox]`), resolved lazily on each access so the component
  * survives an in-place re-render. Keyed on `data-sandbox` rather than text because the create row
  * shows "Creating <name>…" while a sandbox is in flight, which a text selector would match instead.
  *
- * Deploy/Undeploy/Destroy/Sync moved into WorkspaceDashboard.svelte
- * (docs/features/desktop-app-feel/02_dev.md Phase B); this row only keeps Start/Stop and Open.
- * `deployTo`/`undeploy`/`destroy`/`toggleSyncOffOn` open the Dashboard themselves before acting, so
- * every call site that used them before Phase B is unchanged.
+ * Home is unmounted while a sandbox is in view (docs/features/unified-sidebar-nav/02_dev.md,
+ * Resolved Decision 9), so every action and wait here shows Home first; that hides any open pane.
+ * Deploy/Undeploy/Destroy/Sync live in WorkspaceDashboard.svelte, so `deployTo`/`undeploy`/
+ * `destroy`/`toggleSyncOffOn` open the card's Manage dashboard themselves before acting.
  */
 export default class ProjectRow {
   readonly projectName: string;
@@ -59,10 +59,13 @@ export default class ProjectRow {
   }
 
   async waitForDisplayed(timeout = COMMAND): Promise<void> {
+    await showHome();
     await (await this.root).waitForDisplayed({ timeout });
   }
 
+  // Shows Home first: with a sandbox in view no card exists at all, so the wait would pass vacuously.
   async waitForGone(timeout = SUBPROCESS): Promise<void> {
+    await showHome();
     await (await this.root).waitForExist({ timeout, reverse: true });
   }
 
@@ -114,16 +117,19 @@ export default class ProjectRow {
   }
 
   async start(): Promise<void> {
+    await showHome();
     await this.#clickButton(this.startButton);
   }
 
   async stop(): Promise<void> {
+    await showHome();
     await this.#clickButton(this.stopButton);
   }
 
-  // WebDriver cannot drive the child webview this opens; assert against workspace_state
-  // (e2e/lib/workspace.ts) instead.
+  // The card always opens Manage (docs/features/unified-sidebar-nav/02_dev.md, Resolved Decision 2);
+  // the sidebar entry restores the last view instead (`sidebar.selectSandbox`).
   async openWorkspace(): Promise<void> {
+    await showHome();
     await this.#clickButton(this.workspaceButton);
   }
 
@@ -135,10 +141,12 @@ export default class ProjectRow {
   }
 
   async waitForRunning(timeout = SUBPROCESS): Promise<void> {
+    await showHome();
     await (await this.runningIndicator).waitForExist({ timeout });
   }
 
   async waitForStopped(timeout = SUBPROCESS): Promise<void> {
+    await showHome();
     await (await this.runningIndicator).waitForExist({ timeout, reverse: true });
   }
 
@@ -225,10 +233,12 @@ export default class ProjectRow {
   }
 
   async isDeployed(): Promise<boolean> {
+    await showHome();
     return (await this.deploymentIndicator).isExisting();
   }
 
   async isHostShown(host: string): Promise<boolean> {
+    await showHome();
     return (await this.deployedHostLabel(host)).isDisplayed();
   }
 
@@ -262,6 +272,7 @@ export default class ProjectRow {
 
   /** Checks every match: the status span and the host label share the same classes. */
   async waitForSyncStatus(targetStatus: string, timeoutMs = SYNC_CONVERGE): Promise<void> {
+    await showHome();
     await browser.waitUntil(
       async () => {
         const divs = await this.root.$$("div.text-muted-foreground.text-xs");

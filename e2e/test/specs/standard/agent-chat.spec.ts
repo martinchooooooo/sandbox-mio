@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import ProjectsPage from "../../pageobjects/projects.page.js";
 import workspaceDashboard from "../../pageobjects/workspace-dashboard.page.js";
 import chat from "../../pageobjects/agent-chat.page.js";
+import sandboxHeader from "../../pageobjects/sandbox-header.page.js";
 import { captureDiagOnFailure } from "../../../lib/diag.js";
 import { useSandboxWorkspace } from "../../../lib/sandbox-suite.js";
 import { podman, podmanOk, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
@@ -358,14 +359,15 @@ describe("Native agent chat — real pi supervisor on Podman", function () {
 
   it("a sandbox restart starts a new generation despite the stale pi.pid", async () => {
     piPid = stateFile("pi.pid");
-    await row.stop();
-    await row.waitForStopped();
+    // The sandbox header's Stop/Start keep the chat on screen; the Home card's would hide it.
+    await sandboxHeader.stop(projectName);
+    await sandboxHeader.waitForStopped(projectName);
     // The open chat's stream ends with the sandbox, so it offers Reconnect.
     await chat.waitForConnection(projectName, "disconnected", SUBPROCESS);
     await (await $("[data-chat-disconnected]")).waitForDisplayed({ timeout: COMMAND });
 
-    await row.start();
-    await row.waitForRunning();
+    await sandboxHeader.start(projectName);
+    await sandboxHeader.waitForRunning(projectName);
     // /run is not a tmpfs, so the old pid file survives and only the cmdline check rejects it.
     assert.strictEqual(sandboxSh(`cat ${STATE}/pi.pid`, false), piPid, "pi.pid did not survive the restart");
     const reconnect = await $("[data-chat-reconnect]");

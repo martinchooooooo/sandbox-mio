@@ -1,11 +1,11 @@
-import AppPage, { type Element } from "./app.page.js";
+import AppPage, { navButton, type Element } from "./app.page.js";
 import { COMMAND } from "../../lib/timeouts.js";
 
 // Selectors are data-attribute based (src/routes/settings/+page.svelte,
 // src/lib/models/RuntimeSteps.svelte) so this page object never depends on CSS classes or copy.
 class SettingsPage extends AppPage {
   get navLink(): Element {
-    return $("[role='tab'][data-value='/settings']");
+    return navButton("/settings");
   }
 
   get engineGroup(): Element {
@@ -48,17 +48,11 @@ class SettingsPage extends AppPage {
   }
 
   /**
-   * Callers must start from home: the nav link exists nowhere else. Waits on the "tuning"
-   * AdvancedSection's trigger rather than `engineGroup`: the latter is inside its (closed-by-default)
-   * content, so it would never become displayed on a fresh page visit.
+   * Waits on the "tuning" AdvancedSection's trigger rather than `engineGroup`: the latter is inside
+   * its (closed-by-default) content, so it would never become displayed on a fresh page visit.
    */
   async open(timeout = COMMAND): Promise<void> {
-    const url = await browser.getUrl();
-    if (!url.includes("/settings")) {
-      const link = await this.navLink;
-      await link.waitForDisplayed({ timeout });
-      await link.click();
-    }
+    await this.showPage("/settings", timeout);
     await (await this.tuningTrigger).waitForDisplayed({ timeout });
   }
 

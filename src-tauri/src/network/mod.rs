@@ -46,6 +46,10 @@ fn allocate_ephemeral_port() -> Result<u16, NetworkError> {
 /// longer in the live forwards map), so the close could never stick. Best-effort and
 /// non-destructive: a file that already exists is left untouched.
 fn ensure_ports_file(workspace_path: &str) {
+    // An empty or relative path would resolve against the app's working directory, not a workspace.
+    if !std::path::Path::new(workspace_path).has_root() {
+        return;
+    }
     let mio_dir = std::path::Path::new(workspace_path).join(".mio");
     let path = mio_dir.join("ports.json");
     if path.exists() {
