@@ -15,10 +15,6 @@ class SidebarPage {
     return $("button[data-sidebar-toggle]");
   }
 
-  get sandboxList(): Element {
-    return $("[data-sidebar-sandboxes]");
-  }
-
   get newSandboxButton(): Element {
     return $("button[data-new-sandbox]");
   }

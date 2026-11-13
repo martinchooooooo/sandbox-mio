@@ -1,14 +1,10 @@
-import AppPage, { navButton, showHome, type Element } from "./app.page.js";
+import AppPage, { showHome, type Element } from "./app.page.js";
 import ProjectRow from "./project-row.component.js";
 import { COMMAND, PODMAN_RECOVERY, SUBPROCESS, UI_SETTLE } from "../../lib/timeouts.js";
 
 // Home (src/routes/projects/+page.svelte). Every action here calls showHome() first: the create card
 // and the sandbox cards are unmounted while a sandbox is in view.
 class ProjectsPage extends AppPage {
-  get navLink(): Element {
-    return navButton("/projects");
-  }
-
   get root(): Element {
     return $("main[data-home]");
   }

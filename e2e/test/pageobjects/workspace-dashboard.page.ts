@@ -16,10 +16,6 @@ class WorkspaceDashboardPage {
     });
   }
 
-  get sectionNav(): Element {
-    return $("[data-section-nav]");
-  }
-
   sectionItem(id: DashboardSectionId): Element {
     return $(`[data-section-nav-item="${id}"]`);
   }

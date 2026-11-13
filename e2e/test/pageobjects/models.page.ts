@@ -1,13 +1,9 @@
-import AppPage, { navButton, type Element } from "./app.page.js";
+import AppPage, { type Element } from "./app.page.js";
 import { COMMAND, SUBPROCESS } from "../../lib/timeouts.js";
 
 // Selectors are data-attribute based (set in src/routes/models/+page.svelte) so this page object
 // never depends on CSS classes or copy.
 class ModelsPage extends AppPage {
-  get navLink(): Element {
-    return navButton("/models");
-  }
-
   get specsPanel(): Element {
     return $("[data-specs]");
   }

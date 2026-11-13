@@ -3,7 +3,6 @@ import sidebar from "./sidebar.page.js";
 import { PANEL_RENDER, SUBPROCESS } from "../../lib/timeouts.js";
 
 export type HeaderApp = "dashboard" | "terminal" | "agentweb" | "agentchat";
-export type ClosableApp = Exclude<HeaderApp, "dashboard">;
 
 /**
  * The single sandbox header (src/lib/workspace/SandboxHeader.svelte), a DOM region of
@@ -32,10 +31,6 @@ class SandboxHeaderPage {
     return this.root(sandbox).$(`button[data-app='${kind}']`);
   }
 
-  closeTabButton(sandbox: string, kind: ClosableApp): Element {
-    return this.root(sandbox).$(`button[data-close-tab='${kind}']`);
-  }
-
   closeSandboxButton(sandbox: string): Element {
     return this.root(sandbox).$("button[data-close-sandbox]");
   }
@@ -46,10 +41,6 @@ class SandboxHeaderPage {
 
   stopButton(sandbox: string): Element {
     return this.root(sandbox).$("button=stop");
-  }
-
-  folderButton(sandbox: string): Element {
-    return this.root(sandbox).$("button=folder");
   }
 
   /** The header's status dot while the container runs (`statusDotClass` in src/lib/sandbox.ts). */
@@ -103,14 +94,6 @@ class SandboxHeaderPage {
     await tab.waitForExist({ timeout: PANEL_RENDER });
     await tab.scrollIntoView();
     await tab.click();
-  }
-
-  async clickCloseTab(sandbox: string, kind: ClosableApp): Promise<void> {
-    await this.ensureInView(sandbox);
-    const button = await this.closeTabButton(sandbox, kind);
-    await button.waitForExist({ timeout: PANEL_RENDER });
-    await button.scrollIntoView();
-    await button.click();
   }
 
   /** Closes every pane of `sandbox`; the app lands on Home unless another sandbox's pane takes over. */
