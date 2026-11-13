@@ -92,7 +92,7 @@ Decisions taken on 2026-11-13, consistent with the approved design:
 
 - `src/lib/workspace/SandboxHeader.svelte`, `src/lib/workspace/SandboxView.svelte`.
 - `src/lib/workspace/WorkspaceDashboard.svelte`: title row removed, destroy ends with `closeSandbox()`.
-- Removed: `src/lib/components/GlobalNav.svelte`, `src/lib/workspace/NavigationColumn.svelte`, `src/lib/workspace/WorkspaceSwitcher.svelte`, `src/lib/workspace/SandboxSwitcherGroup.svelte`, `src/lib/workspace/WorkspaceContent.svelte`.
+- Removed: `src/lib/components/GlobalNav.svelte`, `src/lib/workspace/NavigationColumn.svelte`, `src/lib/workspace/WorkspaceSwitcher.svelte`, `src/lib/workspace/SandboxSwitcherGroup.svelte`, `src/lib/workspace/WorkspaceContent.svelte`, and the `src/lib/components/ui/tabs/` primitive, whose only user was `GlobalNav.svelte`.
 
 ## Implemented: Phase D — Home and full-width pages
 
