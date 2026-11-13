@@ -207,7 +207,7 @@ describe("Agent web UI (paseo)", function () {
 
   it("the forwarded port serves /api/status with the persisted password", async () => {
     const pane = paneFor(await workspaceState(), projectName, "agentweb")!;
-    const port = new URL(pane.url).port;
+    const port = new URL(pane.url!).port;
     assert(port, `agentweb pane url "${pane.url}" has no port`);
 
     let id: string | undefined;
@@ -256,7 +256,7 @@ describe("Agent web UI (paseo)", function () {
     );
 
     // The daemon still answers on the pane's current URL with the same password and identity.
-    const port = new URL(agentPanes[0].url).port;
+    const port = new URL(agentPanes[0].url!).port;
     const id = await fetchServerId(port, password);
     assert(id, `/api/status on port ${port} did not return 200 with a serverId after re-open`);
     assert.strictEqual(id, serverId, "The daemon's serverId changed across a pane re-open.");

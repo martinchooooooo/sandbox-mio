@@ -150,14 +150,14 @@ describe("Embedded workspace (merged NavigationPanel/Switcher/Dashboard webview)
     const pane = paneFor(state, nameA, "terminal")!;
     assert.strictEqual(pane.kind, "terminal");
     assert(
-      pane.url.startsWith("http://127.0.0.1:"),
+      pane.url!.startsWith("http://127.0.0.1:"),
       `Pane url "${pane.url}" is not a loopback forward — embed_terminal must use the ` +
         "Mutagen-forwarded Windows-host url, not the container-side address.",
     );
     // Phase C: the URL path pins a stable per-sandbox session name (the sandbox name itself) so a
     // later close+reopen reattaches to the same Zellij session instead of spawning a new one.
     assert.strictEqual(
-      new URL(pane.url).pathname,
+      new URL(pane.url!).pathname,
       `/${nameA}`,
       `Terminal pane url "${pane.url}" does not carry "/${nameA}" as its session path — ` +
         "prepare_terminal_webview must build the url as http://127.0.0.1:<port>/<sandbox-name>.",
@@ -234,7 +234,7 @@ describe("Embedded workspace (merged NavigationPanel/Switcher/Dashboard webview)
     await browser.waitUntil(
       async () => {
         try {
-          status200 = (await fetch(pane.url)).status === 200;
+          status200 = (await fetch(pane.url!)).status === 200;
           return status200;
         } catch {
           return false;
@@ -305,8 +305,8 @@ describe("Embedded workspace (merged NavigationPanel/Switcher/Dashboard webview)
     await openTerminalPane(nameA, workspaceDirA);
     const reopened = paneFor(await workspaceState(), nameA, "terminal")!;
     assert.strictEqual(
-      new URL(reopened.url).pathname,
-      new URL(terminalBefore.url).pathname,
+      new URL(reopened.url!).pathname,
+      new URL(terminalBefore.url!).pathname,
       "Reopening the Terminal pane must reuse the same session-name URL path as before closing it.",
     );
   });

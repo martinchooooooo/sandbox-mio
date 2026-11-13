@@ -19,7 +19,11 @@ export default class AppPage {
       const projectsTab = await $("[role='tab'][data-value='/projects']");
       await projectsTab.waitForDisplayed({ timeout: UI_SETTLE });
       await projectsTab.click();
-      await $("[role='tab'][data-value='/settings']").waitForDisplayed({ timeout: UI_SETTLE });
+      // The nav tabs render on every route, so only the URL proves the transition landed.
+      await browser.waitUntil(async () => /\/projects(\/|$)/.test(await browser.getUrl()), {
+        timeout: UI_SETTLE,
+        timeoutMsg: "goHome: URL never reached /projects",
+      });
     }
   }
 }
