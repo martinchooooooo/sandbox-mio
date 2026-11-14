@@ -476,6 +476,11 @@ impl MachineProvider for PodmanProvider {
         argv: &[&str],
         stdin: &[u8],
     ) -> Result<Output, ProviderError> {
+        if crate::backends::mock_backend_enabled() {
+            // Spawns `podman_command()` directly, so the scripted runner cannot divert it; under
+            // mock it is recorded as `podman.exec` and the payload is dropped, as `MsbProvider` does.
+            return self.exec(name, argv, ExecOpts::default()).await;
+        }
         let mut child = self
             .exec_command_inner(name, argv, &ExecOpts::default())
             .stdin(Stdio::piped())
