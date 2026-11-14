@@ -67,6 +67,30 @@ class ProjectsPage extends AppPage {
     await btn.click();
   }
 
+  /**
+   * Turn the proxy switch on for the next `createProject()`. For Podman this makes a bounded sandbox
+   * (docs/features/podman-egress-boundary) and reveals the egress picker. Opens Advanced if closed.
+   */
+  async enableProxy(): Promise<void> {
+    await showHome();
+    const toggle = this.createRow.$("[data-proxy-toggle]");
+    if (!((await toggle.isExisting()) && (await toggle.isDisplayed()))) {
+      const trigger = await this.advancedTrigger;
+      await trigger.waitForClickable({ timeout: UI_SETTLE });
+      await trigger.click();
+    }
+    await toggle.waitForClickable({ timeout: UI_SETTLE });
+    if ((await toggle.getAttribute("aria-checked")) !== "true") await toggle.click();
+    await browser.waitUntil(async () => (await toggle.getAttribute("aria-checked")) === "true", {
+      timeout: UI_SETTLE,
+      timeoutMsg: "proxy switch did not turn on",
+    });
+  }
+
+  get podmanProxyHint(): Element {
+    return this.createRow.$("[data-proxy-podman-hint]");
+  }
+
   // docs/features/microsandbox-network-policy — the egress choice, shown only for a provider whose
   // ProviderCapabilities.egressPolicy is true. Call after chooseProvider(), which opens Advanced.
   egressOption(mode: string): Element {

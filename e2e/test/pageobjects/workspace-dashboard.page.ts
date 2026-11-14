@@ -5,6 +5,9 @@ import { AGENT_INSTALL, COMMAND, PACKAGE_INSTALL, PANEL_RENDER, SUBPROCESS } fro
 // switching needed (docs/features/consolidate-app-container/02_dev.md Phase C).
 type DashboardSectionId = "overview" | "tools" | "ports" | "network" | "traffic" | "remote" | "danger";
 
+// iron-proxy logs a CONNECT row's host as `host:port`; mitmproxy rows carry the bare host.
+const stripPort = (host: string): string => host.replace(/:\d+$/, "");
+
 class WorkspaceDashboardPage {
   // `[data-section-nav]` renders for every section once WorkspaceDashboard.svelte's `workspacePath`
   // resolves; the package input exists only in the Tools section. Scoped to `sandbox`'s dashboard so a
@@ -298,6 +301,78 @@ class WorkspaceDashboardPage {
 
   get undeployButton(): Element {
     return this.root.$("button=undeploy");
+  }
+
+  // ── Network section (docs/features/podman-egress-boundary) ───────────────────
+  // Selected by data attributes, never by placeholder text: the Paraglide pass localises placeholders.
+  get netPolicySave(): Element {
+    return $("[data-net-policy-save]");
+  }
+
+  get netPolicyApplyReport(): Element {
+    return $("[data-net-policy-apply-report]");
+  }
+
+  get netPolicyDrift(): Element {
+    return $("[data-net-policy-drift]");
+  }
+
+  async #typeInto(input: Element, text: string): Promise<void> {
+    await input.waitForEnabled({ timeout: COMMAND });
+    await input.setValue(text);
+  }
+
+  /** Adds an allow rule for `host` (the action toggle defaults to allow) without saving. */
+  async addAllowRule(host: string): Promise<void> {
+    await this.#typeInto($("[data-net-policy-target]"), host);
+    await $("[data-net-policy-add-rule]").click();
+  }
+
+  /** Saves the policy; in the sidecar dialect this also applies it to the running sidecar. */
+  async saveNetPolicy(): Promise<void> {
+    await this.netPolicySave.waitForEnabled({ timeout: COMMAND });
+    await this.netPolicySave.click();
+    await this.netPolicyApplyReport.waitForExist({
+      timeout: SUBPROCESS,
+      timeoutMsg: "no apply report appeared after saving the net policy",
+    });
+  }
+
+  /** Stores a secret's value; the editor re-applies the policy when it holds no unsaved edits. */
+  async storeSecretValue(secretId: string, value: string): Promise<void> {
+    await this.#typeInto($("[data-secret-id]"), secretId);
+    await this.#typeInto($("[data-secret-value]"), value);
+    await $("[data-secret-value-save]").click();
+  }
+
+  async applyReportText(): Promise<string> {
+    return this.netPolicyApplyReport.getText();
+  }
+
+  // ── Traffic section ─────────────────────────────────────────────────────────
+  /** Hosts of every visible traffic row, in display order. */
+  async flowHosts(): Promise<string[]> {
+    const spans = await $$("[data-flow-row] [data-flow-host]");
+    const hosts: string[] = [];
+    for (const span of spans) hosts.push(stripPort(await span.getText()));
+    return hosts;
+  }
+
+  /** Hosts of rows carrying a "blocked by" badge. */
+  async rejectedFlowHosts(): Promise<string[]> {
+    const rows = await $$("[data-flow-row]");
+    const hosts: string[] = [];
+    for (const row of rows) {
+      if (await row.$("[data-flow-rejected-by]").isExisting()) hosts.push(stripPort(await row.$("[data-flow-host]").getText()));
+    }
+    return hosts;
+  }
+
+  async waitForFlowHost(host: string, { rejected = false, timeout = COMMAND } = {}): Promise<void> {
+    await browser.waitUntil(
+      async () => ((rejected ? await this.rejectedFlowHosts() : await this.flowHosts()).includes(host)),
+      { timeout, timeoutMsg: `no ${rejected ? "rejected " : ""}traffic row for ${host}` },
+    );
   }
 
   get hostSelect(): Element {

@@ -156,7 +156,7 @@
                             onclick={() => (expandedId = toggle(expandedId, flow.id))}
                         >
                             <span class="w-12 shrink-0 font-mono">{flow.method}</span>
-                            <span class="shrink-0 font-mono">{flow.host}</span>
+                            <span class="shrink-0 font-mono" data-flow-host>{flow.host}</span>
                             <span class="flex-1 truncate font-mono text-muted-foreground" title={flow.path}>
                                 {flow.path}
                             </span>
