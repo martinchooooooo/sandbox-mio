@@ -9,10 +9,9 @@ use serde_json::{json, Value};
 
 use crate::net_policy::{self, EgressMode, NetPolicy, RuleAction};
 
-/// Replaces iron-proxy's default deny list in every config, the bootstrap included, so an allowed
-/// hostname resolving to a private address cannot reach the machine, the host or the LAN
-/// (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 17). The last entry is
-/// iron-proxy's own IPv6 metadata address; the IPv4 one sits inside `169.254.0.0/16`.
+/// Replaces iron-proxy's default deny list in every config, so an allowed host resolving to a
+/// private address cannot reach the machine, host or LAN (Resolved Decision 17). The last entry is
+/// iron-proxy's IPv6 metadata address; the IPv4 one is inside `169.254.0.0/16`.
 pub const BASELINE_DENY_CIDRS: &[&str] = &[
     "0.0.0.0/8",
     "10.0.0.0/8",
@@ -27,7 +26,6 @@ pub const BASELINE_DENY_CIDRS: &[&str] = &[
     "fd00:ec2::254/128",
 ];
 
-/// Where the sidecar sees the CA directory and the per-binding secret files.
 pub const CONTAINER_CERTS_DIR: &str = "/etc/iron-proxy/certs";
 pub const CONTAINER_SECRETS_DIR: &str = "/etc/iron-proxy/secrets";
 
@@ -35,54 +33,25 @@ pub const CONTAINER_SECRETS_DIR: &str = "/etc/iron-proxy/secrets";
 /// boot a management listener without it (Resolved Decision 13).
 pub const MGMT_API_KEY_ENV: &str = "IRON_MANAGEMENT_API_KEY";
 
+pub const IRON_MGMT_PORT: u16 = 9092;
+
 /// iron-proxy cannot disable metrics, so the listener is pinned to the sidecar's loopback.
 const METRICS_PORT: u16 = 9090;
 
-/// The sidecar-side addresses a rendered config binds or announces.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IronListen {
-    /// The sidecar's pinned address on the internal network, which iron-proxy's DNS server answers
-    /// for every name.
-    pub proxy_ip: String,
-    /// The tunnel listener (`http_proxy`/`https_proxy`, CONNECT, SOCKS5).
-    pub tunnel_port: u16,
-    /// The management listener, bound to the sidecar's loopback.
-    pub mgmt_port: u16,
-}
-
-/// A binding whose value was materialised for the sidecar; bindings without one are not rendered.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SecretFile {
-    pub env_var: String,
-    /// The file's path inside the sidecar.
-    pub path: String,
-}
-
-impl SecretFile {
-    /// The file for `env_var` under [`CONTAINER_SECRETS_DIR`]; the variable name is validated as
-    /// `[A-Z0-9_]`, so it is a safe file name (Resolved Decision 15).
-    pub fn new(env_var: &str) -> Self {
-        SecretFile {
-            env_var: env_var.to_string(),
-            path: format!("{CONTAINER_SECRETS_DIR}/{env_var}"),
-        }
-    }
-}
-
 /// The config the sidecar runs with before the first apply: an empty allowlist outside warn mode,
 /// so it denies everything (Resolved Decision 18).
-pub fn bootstrap(listen: &IronListen) -> Value {
+pub fn bootstrap(proxy_ip: &str) -> Value {
     config(
-        listen,
+        proxy_ip,
         BASELINE_DENY_CIDRS.iter().map(|c| c.to_string()).collect(),
         vec![allowlist(false, Vec::new())],
     )
 }
 
 /// The config enforcing `policy`, which [`net_policy::validate`] has accepted in the sidecar
-/// dialect. `secret_files` lists the bindings whose value exists; any other binding is left out,
-/// so its placeholder passes through unswapped (Resolved Decision 15).
-pub fn render(policy: &NetPolicy, listen: &IronListen, secret_files: &[SecretFile]) -> Value {
+/// dialect. `with_value` names the bindings whose secret has a stored value; any other binding is
+/// left out, so its placeholder passes through unswapped (Resolved Decision 15).
+pub fn render(policy: &NetPolicy, proxy_ip: &str, with_value: &[String]) -> Value {
     let mut domains: Vec<String> = Vec::new();
     let mut deny = BASELINE_DENY_CIDRS.iter().map(|c| c.to_string()).collect::<Vec<_>>();
     for rule in &policy.rules {
@@ -98,12 +67,14 @@ pub fn render(policy: &NetPolicy, listen: &IronListen, secret_files: &[SecretFil
     let secrets: Vec<Value> = policy
         .secrets
         .iter()
-        .filter_map(|b| {
-            let file = secret_files.iter().find(|f| f.env_var == b.env_var)?;
+        .filter(|b| with_value.contains(&b.env_var))
+        .map(|b| {
             let rules: Vec<Value> =
                 b.hosts.iter().map(|h| json!({ "host": h.to_ascii_lowercase() })).collect();
-            Some(json!({
-                "source": { "type": "file", "path": file.path },
+            // `env_var` is validated as `[A-Z0-9_]`, a safe file name (Resolved Decision 15).
+            let path = format!("{CONTAINER_SECRETS_DIR}/{}", b.env_var);
+            json!({
+                "source": { "type": "file", "path": path },
                 "replace": {
                     "proxy_value": net_policy::placeholder(&b.env_var),
                     "match_headers": b.headers.iter().map(|h| canonical_header(h)).collect::<Vec<_>>(),
@@ -111,14 +82,14 @@ pub fn render(policy: &NetPolicy, listen: &IronListen, secret_files: &[SecretFil
                     "match_body": b.body,
                 },
                 "rules": rules,
-            }))
+            })
         })
         .collect();
     // Omitted rather than rendered empty: an empty `secrets` transform was never run in Phase A.
     if !secrets.is_empty() {
         transforms.push(json!({ "name": "secrets", "config": { "secrets": secrets } }));
     }
-    config(listen, deny, transforms)
+    config(proxy_ip, deny, transforms)
 }
 
 fn push_unique(list: &mut Vec<String>, value: String) {
@@ -146,13 +117,13 @@ fn canonical_header(name: &str) -> String {
         .join("-")
 }
 
-fn config(listen: &IronListen, deny: Vec<String>, transforms: Vec<Value>) -> Value {
+fn config(proxy_ip: &str, deny: Vec<String>, transforms: Vec<Value>) -> Value {
     json!({
-        "dns": { "listen": ":53", "proxy_ip": listen.proxy_ip },
+        "dns": { "listen": ":53", "proxy_ip": proxy_ip },
         "proxy": {
             "http_listen": ":80",
             "https_listen": ":443",
-            "tunnel_listen": format!(":{}", listen.tunnel_port),
+            "tunnel_listen": format!(":{}", super::PROXY_PORT),
             "upstream_deny_cidrs": deny,
         },
         "tls": {
@@ -162,7 +133,7 @@ fn config(listen: &IronListen, deny: Vec<String>, transforms: Vec<Value>) -> Val
         "transforms": transforms,
         "metrics": { "listen": format!("127.0.0.1:{METRICS_PORT}") },
         "management": {
-            "listen": format!("127.0.0.1:{}", listen.mgmt_port),
+            "listen": format!("127.0.0.1:{IRON_MGMT_PORT}"),
             "api_key_env": MGMT_API_KEY_ENV,
         },
         "log": { "level": "info" },
@@ -185,10 +156,6 @@ mod tests {
     /// boot error, 6a read `match_body` from the 0.56.0 source.
     const UNCAPTURED_KEYS: &[&str] =
         &["management.api_key_env", "transforms[secrets].config.secrets[].replace.match_body"];
-
-    fn listen() -> IronListen {
-        IronListen { proxy_ip: "10.90.7.2".to_string(), tunnel_port: 8080, mgmt_port: 9092 }
-    }
 
     fn allow(host: &str) -> NetRule {
         NetRule {
@@ -266,11 +233,11 @@ mod tests {
         key_paths(&captured, "", &mut known);
         known.extend(UNCAPTURED_KEYS.iter().map(|k| k.to_string()));
         let open = NetPolicy { egress: EgressMode::Open, ..policy() };
-        let files = [SecretFile::new("OPENAI_API_KEY")];
+        let with_value = ["OPENAI_API_KEY".to_string()];
         for config in [
-            render(&policy(), &listen(), &files),
-            render(&open, &listen(), &files),
-            bootstrap(&listen()),
+            render(&policy(), "10.90.7.2", &with_value),
+            render(&open, "10.90.7.2", &with_value),
+            bootstrap("10.90.7.2"),
         ] {
             let mut rendered = BTreeSet::new();
             key_paths(&config, "", &mut rendered);

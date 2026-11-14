@@ -110,10 +110,9 @@ async fn watch_flows(app: AppHandle, providers: Arc<ProviderRegistry>, sandbox: 
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => break,
             Err(_) => continue,
         };
-        // The addon or the audit ingest rewrites the file once it passes the cap, which invalidates
-        // the offset: re-read from the start and drop the ids already emitted. Ids are monotonic
-        // within one log, so `last_id` is only meaningful on this path. The ingest reports its
-        // rewrite, since the rewritten file can be longer than the offset.
+        // A rewrite past the cap invalidates the offset: re-read from the start and drop ids already
+        // emitted, which are monotonic within one log. The ingest reports its rewrite, since the
+        // rewritten file can be longer than the offset.
         let rewound = len < offset || ingest_rewrote;
         if rewound {
             offset = 0;

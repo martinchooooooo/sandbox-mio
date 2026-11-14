@@ -14,6 +14,7 @@ use std::path::Path;
 use serde_json::Value;
 
 use super::flowlog::{FlowEntry, FLOW_LOG_MAX_LINES};
+use super::types::ProxyError;
 use crate::provider::types::MachineProvider;
 
 const CURSOR_FILE: &str = "audit.cursor";
@@ -110,17 +111,15 @@ fn unseen<'a>(
     (bodies, next.or_else(|| cursor.cloned()))
 }
 
-/// Pulls the sidecar's audit lines logged since the last poll into `flows.ndjson` under
-/// `state_dir`. Returns whether the file was rewritten to its newest [`FLOW_LOG_MAX_LINES`] rows,
-/// which invalidates a reader's byte offset. Does nothing once `flows.ndjson` is gone, so a poll
-/// racing `remove_proxy` never recreates the state directory.
+/// Pulls the audit lines logged since the last poll into `state_dir`'s `flows.ndjson`. Returns
+/// whether the file was rewritten, which invalidates a reader's byte offset. Never creates the
+/// file, so a poll racing `remove_proxy` cannot recreate the state directory.
 pub async fn ingest(provider: &dyn MachineProvider, sidecar: &str, state_dir: &Path) -> bool {
     let flows = state_dir.join("flows.ndjson");
     let cursor_path = state_dir.join(CURSOR_FILE);
     let cursor: Option<AuditCursor> =
         crate::mio_files::read_value(&cursor_path).and_then(|v| serde_json::from_value(v).ok());
-    let Ok(lines) =
-        provider.sidecar_logs(sidecar, cursor.as_ref().map(|c| c.since.as_str()), None).await
+    let Ok(lines) = provider.sidecar_logs(sidecar, cursor.as_ref().map(|c| c.since.as_str())).await
     else {
         return false;
     };
@@ -158,21 +157,22 @@ pub async fn ingest(provider: &dyn MachineProvider, sidecar: &str, state_dir: &P
 
 /// Appends `rows`, or, once the file would pass the cap, atomically replaces it with its newest
 /// [`FLOW_LOG_MAX_LINES`] rows (the cap `mitm_flowlog_addon.py` keeps).
-fn append(flows: &Path, existing: &str, rows: &[String]) -> std::io::Result<bool> {
+fn append(flows: &Path, existing: &str, rows: &[String]) -> Result<bool, ProxyError> {
     if rows.is_empty() {
         return Ok(false);
     }
     let kept = existing.lines().count();
     if kept + rows.len() <= FLOW_LOG_MAX_LINES {
-        let mut file = std::fs::OpenOptions::new().append(true).open(flows)?;
-        file.write_all((rows.join("\n") + "\n").as_bytes())?;
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(flows)
+            .and_then(|mut file| file.write_all((rows.join("\n") + "\n").as_bytes()))
+            .map_err(|e| super::io_err(flows, e))?;
         return Ok(false);
     }
     let all: Vec<&str> = existing.lines().chain(rows.iter().map(String::as_str)).collect();
     let newest = &all[all.len().saturating_sub(FLOW_LOG_MAX_LINES)..];
-    let tmp = flows.with_extension("ndjson.tmp");
-    std::fs::write(&tmp, newest.join("\n") + "\n")?;
-    std::fs::rename(&tmp, flows)?;
+    super::write_atomic(flows, (newest.join("\n") + "\n").as_bytes())?;
     Ok(true)
 }
 

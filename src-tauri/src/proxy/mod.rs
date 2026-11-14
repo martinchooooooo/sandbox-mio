@@ -203,11 +203,9 @@ pub async fn ensure_proxy_image(
     .await
 }
 
-/// Creates the internal `mio-proxy-<sandbox>` network on the first `10.90.<index>.0/24` subnet
-/// Podman accepts, walking to the next index on an overlap failure
-/// (`docs/features/network-proxy/02_dev.md`, Spike Results). Internal, so the sidecar pinned at
-/// `.2` is the sandbox's only exit (`docs/features/podman-egress-boundary/02_dev.md`, Concrete
-/// Model). Returns the network name and the sidecar's address.
+/// Creates the internal `mio-proxy-<sandbox>` network on the first free `10.90.<index>.0/24`
+/// subnet (`docs/features/network-proxy/02_dev.md`, Spike Results). Internal, so the sidecar at
+/// `.2` is the only exit (`docs/features/podman-egress-boundary/02_dev.md`, Concrete Model).
 async fn allocate_network(
     provider: &Arc<dyn MachineProvider>,
     sandbox: &str,
@@ -332,12 +330,7 @@ async fn create_podman_proxy(
     let dir = state_dir(app, sandbox)?;
     let certs = certs_dir(app, sandbox)?;
     iron::generate_ca(&certs)?;
-    let listen = iron_config::IronListen {
-        proxy_ip: proxy_ip.clone(),
-        tunnel_port: PROXY_PORT,
-        mgmt_port: iron::IRON_MGMT_PORT,
-    };
-    iron::write_bootstrap(&dir, &listen)?;
+    iron::write_bootstrap(&dir, &proxy_ip)?;
     let secrets = iron::secrets_dir(&dir);
     std::fs::create_dir_all(&secrets).map_err(|e| io_err(&secrets, e))?;
     // Create-if-absent: a re-run against an existing state directory must not wipe the captured
@@ -363,7 +356,7 @@ async fn create_podman_proxy(
         publish: Vec::new(),
         // Not a user secret: it guards only the sidecar-loopback management listener (Resolved
         // Decision 13).
-        env: vec![(iron_config::MGMT_API_KEY_ENV.to_string(), token.clone())],
+        env: vec![(iron_config::MGMT_API_KEY_ENV.to_string(), token)],
         mounts: vec![
             mount(&certs, iron_config::CONTAINER_CERTS_DIR),
             mount(&dir.join("config"), iron::CONTAINER_CONFIG_DIR),
@@ -381,7 +374,6 @@ async fn create_podman_proxy(
             "engine": ProxyEngine::IronProxy,
             "network": network,
             "proxyIp": proxy_ip,
-            "mgmtToken": token,
         }),
     )?;
 
@@ -390,6 +382,14 @@ async fn create_podman_proxy(
 
 fn io_err(path: &std::path::Path, e: std::io::Error) -> ProxyError {
     ProxyError::Io { path: path.to_string_lossy().to_string(), error: e.to_string() }
+}
+
+/// Writes `bytes` beside `path` and renames over it, so a reader never sees a partial file.
+fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> Result<(), ProxyError> {
+    let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let tmp = path.with_file_name(format!(".{name}.tmp"));
+    std::fs::write(&tmp, bytes).map_err(|e| io_err(&tmp, e))?;
+    std::fs::rename(&tmp, path).map_err(|e| io_err(path, e))
 }
 
 /// An OS-assigned free port on host loopback. Duplicates `allocate_ephemeral_port` in
@@ -577,7 +577,6 @@ fn write_meta(app: &AppHandle, sandbox: &str, body: &serde_json::Value) -> Resul
     crate::mio_files::write_compact(&path, body).map_err(|e| ProxyError::CommandFailed(e.to_string()))
 }
 
-/// The sidecar's `meta.json`, if it has one.
 fn read_meta(app: &AppHandle, sandbox: &str) -> Option<serde_json::Value> {
     crate::mio_files::read_value(&meta_path_if_exists(app, sandbox)?)
 }
@@ -595,7 +594,6 @@ fn meta_engine(meta: &serde_json::Value) -> ProxyEngine {
     serde_json::from_value(meta["engine"].clone()).unwrap_or(ProxyEngine::Mitmproxy)
 }
 
-/// The engine `sandbox`'s sidecar runs, from its `meta.json`.
 pub fn sidecar_engine(app: &AppHandle, sandbox: &str) -> ProxyEngine {
     read_meta(app, sandbox).map_or(ProxyEngine::Mitmproxy, |m| meta_engine(&m))
 }

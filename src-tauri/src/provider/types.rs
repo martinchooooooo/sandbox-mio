@@ -481,16 +481,14 @@ pub trait MachineProvider: Send + Sync {
     ) -> Result<(), ProviderError>;
     /// Remove a network created by [`Self::create_network`]. Fails if an instance is still attached.
     async fn remove_network(&self, name: &str) -> Result<(), ProviderError>;
-    /// A sidecar's log lines from both output streams, each prefixed with the engine's timestamp,
-    /// oldest first. `since` is an engine timestamp and is inclusive, but Podman 5.8 truncates it to
-    /// the whole second, so earlier lines of that second come back too; `tail` keeps only the last
-    /// lines. Readable from a stopped sidecar. Only Podman sidecars log this way; microsandbox's
-    /// keep the file-based flow log (`docs/features/podman-egress-boundary/02_dev.md`, Resolved
-    /// Decision 4).
+    /// A sidecar's log lines, each prefixed with the engine's timestamp: stdout's lines, then
+    /// stderr's, each stream oldest first. `since` is an engine timestamp and is inclusive, but
+    /// Podman 5.8 truncates it to the whole second, so earlier lines of that second come back too.
+    /// Readable from a stopped sidecar. Only Podman sidecars log this way; microsandbox's keep the
+    /// file-based flow log (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 4).
     async fn sidecar_logs(
         &self,
         name: &str,
         since: Option<&str>,
-        tail: Option<usize>,
     ) -> Result<Vec<String>, ProviderError>;
 }

@@ -171,8 +171,8 @@
         editorError = null;
         try {
             if (sidecar) {
-                const edited = dirty ? policy : null;
-                report = await invoke<ApplyReport>("apply_sandbox_policy", { name: sandboxName, workspacePath, policy: edited });
+                if (dirty) await invoke("set_net_policy", { workspacePath, policy, provider });
+                report = await invoke<ApplyReport>("apply_sandbox_policy", { name: sandboxName, workspacePath });
             } else {
                 await invoke("set_net_policy", { workspacePath, policy, provider });
             }
@@ -248,7 +248,7 @@
             // The sidecar reads values only at an apply; unsaved edits wait for the next save
             // (docs/features/podman-egress-boundary/02_dev.md, Resolved Decision 15).
             if (sidecar && !dirty) {
-                report = await invoke<ApplyReport>("apply_sandbox_policy", { name: sandboxName, workspacePath, policy: null });
+                report = await invoke<ApplyReport>("apply_sandbox_policy", { name: sandboxName, workspacePath });
                 await refresh();
             }
         } catch (e) {
@@ -337,12 +337,12 @@
                 onclick={() => (newAction = newAction === "allow" ? "deny" : "allow")}>{newAction}</Button>
             <input class="w-40 rounded border bg-background px-2 py-1 text-xs disabled:opacity-50"
                 placeholder={sidecar ? SIDECAR_TARGET_PLACEHOLDER : m.netpolicy_target_placeholder()}
-                bind:value={newTarget} disabled={busy} />
+                bind:value={newTarget} disabled={busy} data-net-policy-target />
             {#if !sidecar}
                 <input class="w-20 rounded border bg-background px-2 py-1 text-xs disabled:opacity-50"
                     placeholder={m.netpolicy_ports_placeholder()} bind:value={newPorts} disabled={busy} />
             {/if}
-            <Button size="sm" disabled={busy} onclick={addRule}>
+            <Button size="sm" disabled={busy} onclick={addRule} data-net-policy-add-rule>
                 {m.rule_add()}
             </Button>
         </div>
@@ -373,7 +373,7 @@
         {/each}
         <div class="flex flex-wrap items-center gap-2">
             <input class="w-24 rounded border bg-background px-2 py-1 text-xs disabled:opacity-50"
-                placeholder={m.secret_id_placeholder()} bind:value={newSecretId} disabled={busy} />
+                placeholder={m.secret_id_placeholder()} bind:value={newSecretId} disabled={busy} data-secret-id />
             <input class="w-28 rounded border bg-background px-2 py-1 text-xs disabled:opacity-50"
                 placeholder={m.netpolicy_env_var_placeholder()} bind:value={newEnvVar} disabled={busy} />
             <input class="w-40 rounded border bg-background px-2 py-1 text-xs disabled:opacity-50"
@@ -386,8 +386,8 @@
             <span class="text-muted-foreground text-xs shrink-0">{m.secret_set_value()}</span>
             <input class="flex-1 rounded border bg-background px-2 py-1 text-xs disabled:opacity-50"
                 type="password" placeholder={m.secret_value_placeholder()} bind:value={secretValue}
-                disabled={busy} />
-            <Button size="sm" disabled={busy || !newSecretId.trim() || !secretValue.trim()} onclick={saveSecretValue}>
+                disabled={busy} data-secret-value />
+            <Button size="sm" disabled={busy || !newSecretId.trim() || !secretValue.trim()} onclick={saveSecretValue} data-secret-value-save>
                 {m.settings_save()}
             </Button>
         </div>

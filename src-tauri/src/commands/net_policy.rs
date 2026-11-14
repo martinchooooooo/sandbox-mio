@@ -64,15 +64,12 @@ pub fn net_policy_unstamped_bindings(
     Ok(net_policy::unstamped_bindings(&current, &applied))
 }
 
-/// Validates `policy` and saves it as `name`'s workspace file, then applies it to the sandbox's
-/// iron-proxy sidecar without a recreate. `policy: None` applies the workspace file as it stands,
-/// so a secret-value change never overwrites the file with a stale copy. Podman only
+/// Applies `name`'s workspace policy file to its iron-proxy sidecar without a recreate. Podman only
 /// (`docs/features/podman-egress-boundary/02_dev.md`, Phase D).
 #[tauri::command]
 pub async fn apply_sandbox_policy(
     name: String,
     workspace_path: String,
-    policy: Option<NetPolicy>,
     registry: State<'_, Arc<ProviderRegistry>>,
     app: tauri::AppHandle,
 ) -> Result<crate::proxy::iron::ApplyReport, AppError> {
@@ -84,16 +81,9 @@ pub async fn apply_sandbox_policy(
         ))
         .into());
     }
-    let edited = policy.is_some();
-    let policy = match policy {
-        Some(policy) => policy,
-        None => net_policy::load(&workspace_path).map_err(BackendError::from)?,
-    };
+    let policy = net_policy::load(&workspace_path).map_err(BackendError::from)?;
     net_policy::validate(&policy, registry.local(provider).capabilities())
         .map_err(BackendError::from)?;
-    if edited {
-        net_policy::save(&workspace_path, &policy).map_err(BackendError::from)?;
-    }
     Ok(crate::proxy::iron::apply_policy(&app, &registry, &name, policy)
         .await
         .map_err(BackendError::from)?)

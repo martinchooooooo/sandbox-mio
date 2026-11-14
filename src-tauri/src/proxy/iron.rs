@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use tauri::AppHandle;
 
-use super::iron_config::{self, IronListen, SecretFile};
 use super::types::ProxyError;
+use super::{io_err, iron_config, write_atomic};
 use crate::net_policy::{self, NetPolicy};
 use crate::provider::types::{ExecOpts, MachineProvider, ProviderId};
 use crate::provider::ProviderRegistry;
@@ -19,18 +19,11 @@ use crate::provider::ProviderRegistry;
 /// spikes first (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 10).
 pub const IRON_PROXY_IMAGE_DEFAULT: &str = "docker.io/ironsh/iron-proxy:0.56.0";
 
-/// The management listener's port on the sidecar's loopback.
-pub const IRON_MGMT_PORT: u16 = 9092;
-
 /// Caps the sidecar's `k8s-file` log, which is truncated to zero at the cap, so it must hold far
 /// more than one poll's worth of audit rows (about 1 KB each; Resolved Decision 4).
 pub const SIDECAR_LOG_MAX_SIZE: &str = "4mb";
 
-/// The mount point of the state directory's `config/`, which holds `config.yaml`.
 pub const CONTAINER_CONFIG_DIR: &str = "/etc/iron-proxy/config";
-
-/// The sidecar-reported reason for a rejected reload; busybox `wget` hides the 422 body.
-const RELOAD_REJECTED_MSG: &str = "management reload rejected invalid config";
 
 pub fn iron_proxy_image() -> String {
     std::env::var("MIO_IRON_PROXY_IMAGE")
@@ -46,19 +39,6 @@ pub fn iron_proxy_image() -> String {
 pub struct ApplyReport {
     /// The `envVar` of each binding without a stored value.
     pub missing_secrets: Vec<String>,
-}
-
-fn io_err(path: &Path, e: std::io::Error) -> ProxyError {
-    ProxyError::Io { path: path.to_string_lossy().to_string(), error: e.to_string() }
-}
-
-/// Writes `bytes` beside `path` and renames over it, so the sidecar never reads a partial file
-/// through the directory mount.
-fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), ProxyError> {
-    let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-    let tmp = path.with_file_name(format!(".{name}.tmp"));
-    std::fs::write(&tmp, bytes).map_err(|e| io_err(&tmp, e))?;
-    std::fs::rename(&tmp, path).map_err(|e| io_err(path, e))
 }
 
 /// A fresh ECDSA P-256 CA with ten-year validity, as `ca.pem` and `ca-key.pem` in `certs_dir`
@@ -92,36 +72,36 @@ pub fn generate_ca(certs_dir: &Path) -> Result<(), ProxyError> {
 
 /// Writes one file per binding whose secret has a stored value into `dir`, holding the value's
 /// exact bytes: a `file` source sends the content verbatim, so a trailing newline would reach the
-/// upstream (Resolved Decision 15). Returns the files written and the variables left out.
+/// upstream (Resolved Decision 15). Returns the variables written and the variables left out.
 pub fn materialise_secret_files(
     dir: &Path,
     policy: &NetPolicy,
     values: &HashMap<String, String>,
-) -> Result<(Vec<SecretFile>, Vec<String>), ProxyError> {
+) -> Result<(Vec<String>, Vec<String>), ProxyError> {
     std::fs::create_dir_all(dir).map_err(|e| io_err(dir, e))?;
-    let mut files = Vec::new();
+    let mut written = Vec::new();
     let mut missing = Vec::new();
     for binding in &policy.secrets {
         match values.get(&binding.secret_id) {
             Some(value) => {
                 write_atomic(&dir.join(&binding.env_var), value.as_bytes())?;
-                files.push(SecretFile::new(&binding.env_var));
+                written.push(binding.env_var.clone());
             }
             None => missing.push(binding.env_var.clone()),
         }
     }
-    Ok((files, missing))
+    Ok((written, missing))
 }
 
 /// Deletes secret files no rendered binding names, so an unbound value does not stay on disk.
 /// Runs only after a successful reload: the previous pipeline may still read them until then.
-fn remove_stale_secret_files(dir: &Path, keep: &[SecretFile]) {
+fn remove_stale_secret_files(dir: &Path, keep: &[String]) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
-        if !keep.iter().any(|f| f.env_var == name) {
+        if !keep.contains(&name) {
             if let Err(e) = std::fs::remove_file(entry.path()) {
                 tracing::warn!(target: "proxy", file = %name, error = %e, "failed to remove a stale secret file");
             }
@@ -138,10 +118,10 @@ pub fn secrets_dir(state: &Path) -> PathBuf {
 }
 
 /// Writes the bootstrap config the sidecar boots with (Resolved Decision 18).
-pub fn write_bootstrap(state: &Path, listen: &IronListen) -> Result<(), ProxyError> {
+pub fn write_bootstrap(state: &Path, proxy_ip: &str) -> Result<(), ProxyError> {
     let dir = config_dir(state);
     std::fs::create_dir_all(&dir).map_err(|e| io_err(&dir, e))?;
-    write_config(&dir.join("config.yaml"), &iron_config::bootstrap(listen))
+    write_config(&dir.join("config.yaml"), &iron_config::bootstrap(proxy_ip))
 }
 
 /// JSON in a `.yaml` file: YAML 1.2 is a superset of JSON (Resolved Decision 12).
@@ -156,29 +136,18 @@ fn write_config(path: &Path, config: &serde_json::Value) -> Result<(), ProxyErro
 async fn reload(provider: &Arc<dyn MachineProvider>, sidecar: &str) -> Result<(), ProxyError> {
     let script = format!(
         "wget -q -O - --header \"Authorization: Bearer ${env}\" --post-data= \
-         http://127.0.0.1:{IRON_MGMT_PORT}/v1/reload",
+         http://127.0.0.1:{port}/v1/reload",
         env = iron_config::MGMT_API_KEY_ENV,
+        port = iron_config::IRON_MGMT_PORT,
     );
     let out = provider.exec(sidecar, &["sh", "-c", &script], ExecOpts::default()).await?;
     if out.status.success() {
         return Ok(());
     }
-    let wget_err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-    let reason = rejection_reason(provider, sidecar).await;
-    Err(ProxyError::CommandFailed(match reason {
-        Some(reason) => format!("the proxy rejected the new config: {reason}"),
-        None => format!("the proxy reload failed: {wget_err}"),
-    }))
-}
-
-/// The `error` of the newest rejected-reload line in the sidecar log.
-async fn rejection_reason(provider: &Arc<dyn MachineProvider>, sidecar: &str) -> Option<String> {
-    let lines = provider.sidecar_logs(sidecar, None, Some(50)).await.ok()?;
-    lines.iter().rev().filter(|l| l.contains(RELOAD_REJECTED_MSG)).find_map(|line| {
-        let json = &line[line.find('{')?..];
-        let record: serde_json::Value = serde_json::from_str(json).ok()?;
-        record["error"].as_str().map(str::to_string)
-    })
+    Err(ProxyError::CommandFailed(format!(
+        "the proxy reload failed: {}",
+        String::from_utf8_lossy(&out.stderr).trim()
+    )))
 }
 
 async fn is_running(
@@ -188,10 +157,9 @@ async fn is_running(
     Ok(provider.list_instances().await?.iter().any(|s| s.name == sidecar && s.status == "running"))
 }
 
-/// Renders `policy`, already validated by the caller, into the sidecar's config and makes the
-/// sidecar run it: reload when running, start when stopped (Resolved Decision 13). A rejected
-/// reload restores `config.prev.yaml` and never restarts, so the file on disk always matches the
-/// running pipeline. `applied.json` is rewritten only once the sidecar runs the new policy.
+/// Makes the sidecar run `policy`, already validated: reload when running, start when stopped
+/// (Resolved Decision 13). A failed reload restores `config.prev.yaml` and never restarts, so disk
+/// matches the running pipeline; `applied.json` is rewritten only once the new policy runs.
 pub async fn apply_policy(
     app: &AppHandle,
     registry: &Arc<ProviderRegistry>,
@@ -214,14 +182,13 @@ pub async fn apply_policy(
     let guest_env = net_policy::read_applied(app, sandbox).map_err(policy_err)?.and_then(|a| a.guest_env);
 
     let secrets = secrets_dir(&state);
-    let (files, missing_secrets) =
+    let (written, missing_secrets) =
         materialise_secret_files(&secrets, &policy, &super::load_secrets(app)?)?;
-    let listen = IronListen { proxy_ip, tunnel_port: super::PROXY_PORT, mgmt_port: IRON_MGMT_PORT };
     let dir = config_dir(&state);
     let current = dir.join("config.yaml");
     let prev = dir.join("config.prev.yaml");
     std::fs::copy(&current, &prev).map_err(|e| io_err(&current, e))?;
-    write_config(&current, &iron_config::render(&policy, &listen, &files))?;
+    write_config(&current, &iron_config::render(&policy, &proxy_ip, &written))?;
 
     let sidecar = super::proxy_container_name(sandbox);
     let outcome = if is_running(&provider, &sidecar).await? {
@@ -235,7 +202,7 @@ pub async fn apply_policy(
         }
         return Err(e);
     }
-    remove_stale_secret_files(&secrets, &files);
+    remove_stale_secret_files(&secrets, &written);
     let applied = net_policy::AppliedPolicy { policy, chained_proxy: false, guest_env };
     net_policy::write_applied(app, sandbox, &applied).map_err(policy_err)?;
     if !missing_secrets.is_empty() {
@@ -258,9 +225,9 @@ mod tests {
         )
         .unwrap();
         let values = HashMap::from([("a".to_string(), "sk-123".to_string())]);
-        let (files, missing) = materialise_secret_files(&dir, &policy, &values).unwrap();
+        let (written, missing) = materialise_secret_files(&dir, &policy, &values).unwrap();
         assert_eq!(std::fs::read(dir.join("A_KEY")).unwrap(), b"sk-123");
-        assert_eq!(files, [SecretFile::new("A_KEY")]);
+        assert_eq!(written, ["A_KEY"]);
         assert_eq!(missing, ["B_KEY"]);
         assert!(!dir.join("B_KEY").exists());
         std::fs::remove_dir_all(&dir).unwrap();
