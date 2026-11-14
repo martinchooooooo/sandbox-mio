@@ -484,6 +484,6 @@
     {/if}
 
     {#if editorError}
-        <span class="text-xs text-red-500">{editorError}</span>
+        <span class="text-xs text-red-500" data-net-policy-error>{editorError}</span>
     {/if}
 </div>

@@ -195,7 +195,12 @@ describe("Podman egress boundary — bounded sandbox on a real machine", functio
 
     await workspaceDashboard.addAllowRule("example.com");
     await workspaceDashboard.saveNetPolicy();
-    assert(!(await workspaceDashboard.netPolicyDrift.isExisting()), "drift must clear after a successful apply");
+    // The report renders before the editor's refresh clears the drift flag.
+    await workspaceDashboard.netPolicyDrift.waitForExist({
+      reverse: true,
+      timeout: COMMAND,
+      timeoutMsg: "drift must clear after a successful apply",
+    });
 
     const r = guestCurl(name, "https://example.com/");
     assert.equal(r.code, "200", `${r.status} ${r.stderr}`);
