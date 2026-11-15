@@ -288,6 +288,13 @@ fn validate_sidecar_dialect(policy: &NetPolicy) -> Result<(), NetPolicyError> {
             "violation actions are not available for Podman sandboxes".to_string(),
         ));
     }
+    // iron-proxy answers a blocked request with its own fixed response. `strictHostnames` stays
+    // accepted: the boundary lets no connection out without a hostname, stricter than either value.
+    if policy.deny_message.is_some() {
+        return Err(NetPolicyError(
+            "a custom deny message is not available for Podman sandboxes".to_string(),
+        ));
+    }
     for rule in &policy.rules {
         let what = match (rule.action, rule.target()?) {
             (RuleAction::Allow, EgressTarget::Host(_))
@@ -641,6 +648,11 @@ mod tests {
             let p = NetPolicy { violation_action: action, ..NetPolicy::default() };
             assert!(validate(&p, PODMAN).is_err(), "{action:?} must be refused for Podman");
         }
+        let p = NetPolicy { deny_message: Some("blocked by IT".to_string()), ..NetPolicy::default() };
+        assert!(validate(&p, PODMAN).is_err(), "a deny message must be refused for Podman");
+        validate(&p, MSB).unwrap();
+        let p = NetPolicy { strict_hostnames: false, ..NetPolicy::default() };
+        validate(&p, PODMAN).unwrap();
     }
 
     #[test]
