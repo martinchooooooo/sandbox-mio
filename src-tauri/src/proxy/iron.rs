@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use tauri::AppHandle;
@@ -227,8 +227,28 @@ async fn start_and_confirm(
 /// Makes the sidecar run `policy`, already validated: reload when running, start when stopped
 /// (Resolved Decision 13). A failed reload or start restores `config.prev.yaml` and never restarts,
 /// so disk matches what the sidecar last ran; `applied.json` is rewritten only once the new policy
-/// runs.
+/// runs. Applies to the same sandbox run one at a time.
 pub async fn apply_policy(
+    app: &AppHandle,
+    registry: &Arc<ProviderRegistry>,
+    sandbox: &str,
+    policy: NetPolicy,
+) -> Result<ApplyReport, ProxyError> {
+    let lock = apply_lock(sandbox);
+    let _guard = lock.lock().await;
+    apply_policy_locked(app, registry, sandbox, policy).await
+}
+
+/// One lock per sandbox name. Every apply shares one `config.prev.yaml` and one secrets directory,
+/// so two overlapping applies (two windows, or a Save racing a secret-value save) would back up each
+/// other's unconfirmed config and delete each other's secret files.
+fn apply_lock(sandbox: &str) -> Arc<tokio::sync::Mutex<()>> {
+    static LOCKS: LazyLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
+        LazyLock::new(Default::default);
+    LOCKS.lock().unwrap().entry(sandbox.to_string()).or_default().clone()
+}
+
+async fn apply_policy_locked(
     app: &AppHandle,
     registry: &Arc<ProviderRegistry>,
     sandbox: &str,
