@@ -110,6 +110,41 @@ fn remove_stale_secret_files(dir: &Path, keep: &[String]) {
     }
 }
 
+/// The secret files in `dir` with their bytes, taken before an apply writes any, so a failed apply
+/// can put back exactly what the running pipeline was started or reloaded with.
+fn snapshot_secret_files(dir: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>, ProxyError> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(io_err(dir, e)),
+    };
+    let mut files = Vec::new();
+    for entry in entries {
+        let path = entry.map_err(|e| io_err(dir, e))?.path();
+        let bytes = std::fs::read(&path).map_err(|e| io_err(&path, e))?;
+        files.push((path, bytes));
+    }
+    Ok(files)
+}
+
+/// Rolls `dir` back to `snapshot`: removes files the failed apply added and rewrites the rest.
+fn restore_secret_files(dir: &Path, snapshot: &[(PathBuf, Vec<u8>)]) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for path in entries.flatten().map(|e| e.path()) {
+            if !snapshot.iter().any(|(p, _)| *p == path) {
+                if let Err(e) = std::fs::remove_file(&path) {
+                    tracing::error!(target: "proxy", file = %path.display(), error = %e, "failed to remove an unapplied secret file");
+                }
+            }
+        }
+    }
+    for (path, bytes) in snapshot {
+        if let Err(e) = write_atomic(path, bytes) {
+            tracing::error!(target: "proxy", file = %path.display(), error = %e, "failed to restore a secret file");
+        }
+    }
+}
+
 fn config_dir(state: &Path) -> PathBuf {
     state.join("config")
 }
@@ -215,13 +250,21 @@ pub async fn apply_policy(
     let guest_env = net_policy::read_applied(app, sandbox).map_err(policy_err)?.and_then(|a| a.guest_env);
 
     let secrets = secrets_dir(&state);
+    let values = super::load_secrets(app)?;
+    let snapshot = snapshot_secret_files(&secrets)?;
+    // Every failure from here on puts the secret files back, so a value from a policy that never ran
+    // neither stays on disk nor reaches the pipeline at its next restart.
+    let fail = |e: ProxyError| {
+        restore_secret_files(&secrets, &snapshot);
+        e
+    };
     let (written, missing_secrets) =
-        materialise_secret_files(&secrets, &policy, &super::load_secrets(app)?)?;
+        materialise_secret_files(&secrets, &policy, &values).map_err(fail)?;
     let dir = config_dir(&state);
     let current = dir.join("config.yaml");
     let prev = dir.join("config.prev.yaml");
-    std::fs::copy(&current, &prev).map_err(|e| io_err(&current, e))?;
-    write_config(&current, &iron_config::render(&policy, &proxy_ip, &written))?;
+    std::fs::copy(&current, &prev).map_err(|e| fail(io_err(&current, e)))?;
+    write_config(&current, &iron_config::render(&policy, &proxy_ip, &written)).map_err(fail)?;
 
     let sidecar = super::proxy_container_name(sandbox);
     let outcome = if is_running(&provider, &sidecar).await? {
@@ -233,7 +276,7 @@ pub async fn apply_policy(
         if let Err(restore) = std::fs::rename(&prev, &current) {
             tracing::error!(target: "proxy", %sandbox, error = %restore, "failed to restore the previous proxy config");
         }
-        return Err(e);
+        return Err(fail(e));
     }
     remove_stale_secret_files(&secrets, &written);
     let applied = net_policy::AppliedPolicy { policy, chained_proxy: false, guest_env };
@@ -262,6 +305,26 @@ mod tests {
         assert_eq!(std::fs::read(dir.join("A_KEY")).unwrap(), b"sk-123");
         assert_eq!(written, ["A_KEY"]);
         assert_eq!(missing, ["B_KEY"]);
+        assert!(!dir.join("B_KEY").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A failed apply must leave the files the running pipeline was started with.
+    #[test]
+    fn restore_undoes_a_rotated_value_and_an_added_binding() {
+        let dir = std::env::temp_dir().join(format!("mio-iron-test-{}", uuid::Uuid::new_v4()));
+        let policy: NetPolicy = serde_json::from_str(
+            r#"{"secrets":[{"secretId":"a","envVar":"A_KEY","hosts":["a.example.com"]},
+                           {"secretId":"b","envVar":"B_KEY","hosts":["b.example.com"]}]}"#,
+        )
+        .unwrap();
+        let old = HashMap::from([("a".to_string(), "old".to_string())]);
+        materialise_secret_files(&dir, &policy, &old).unwrap();
+        let snapshot = snapshot_secret_files(&dir).unwrap();
+        let new = HashMap::from([("a".to_string(), "new".to_string()), ("b".to_string(), "b".to_string())]);
+        materialise_secret_files(&dir, &policy, &new).unwrap();
+        restore_secret_files(&dir, &snapshot);
+        assert_eq!(std::fs::read(dir.join("A_KEY")).unwrap(), b"old");
         assert!(!dir.join("B_KEY").exists());
         std::fs::remove_dir_all(&dir).unwrap();
     }
