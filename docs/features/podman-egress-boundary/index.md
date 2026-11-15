@@ -3,4 +3,5 @@
 * [Podman Egress Boundary: Build Plan](02_dev.md) - build plan: phases and resolved decisions
 * [E2E Test Plan — Podman Egress Boundary](03_e2e.md) - end-to-end test plan
 * [Podman Egress Boundary: Deferred Improvements](04_improvements.md) - deferred work and known limitations
+* [Podman Egress Boundary: Code Review](05_dev_review.md) - post-implementation review findings
 * [spike/](spike/index.md) - spike records and scripts

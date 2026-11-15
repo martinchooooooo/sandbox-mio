@@ -1,0 +1,21 @@
+---
+type: review
+title: "Podman Egress Boundary: Code Review"
+feature: podman-egress-boundary
+---
+# Podman Egress Boundary: Code Review
+
+Findings from the code review of `feat/podman-egress-boundary` against `main` on 2026-11-15, ranked most severe first, with the resolution recorded against each. The reviewer read the code and ran nothing. Each fix is its own commit. After the fixes, `cargo test` and the `light` e2e tier pass.
+
+## Findings
+
+1. **The sandbox can rewrite its own egress policy.** The sidecar dialect applies `.mio/net-policy.json` from the workspace, which is bind-mounted into the sandbox. A process inside the sandbox can widen its own boundary, and the policy editor applies the rewritten file when the user stores a secret value or saves from the drift banner. *Deferred by the user to a separate feature.* The choice there is between keeping the applied policy outside the workspace and requiring the user to confirm a change made on disk. microsandbox probably has the same exposure.
+2. **A bare IP address in a deny rule broke the apply.** Validation accepts an address with no prefix, but iron-proxy parses every `upstream_deny_cidrs` entry as a CIDR and refuses the config, so the apply failed and, at create, the sandbox was rolled back. *Fixed:* the renderer writes a bare address as a single-host range (`/32` or `/128`).
+3. **A started sidecar was assumed to be running the new policy.** For a stopped sidecar the apply ran `podman start` and treated its success as applied, but `podman start` succeeds even when iron-proxy exits at once on a refused config. *Fixed:* the start is followed by a reload, which fails if the process has exited, so the apply restores `config.prev.yaml` and reports the failure. Resolved Decision 13 in [02_dev.md](02_dev.md) is amended to match.
+4. **Create could fail on timing alone.** `create_podman_proxy` started the sidecar without waiting for it to become ready, so the first apply could reach the management listener before it was bound, and the new sandbox was destroyed. *Fixed:* the reload retries a refused connection for up to ten seconds. Any HTTP response still fails at once.
+5. **A failed apply left the new secret files on disk.** Only `config.yaml` was restored, so a rotated or newly bound value stayed on disk and reached the pipeline at its next restart. *Fixed:* the apply snapshots the secrets directory and puts it back on any failure.
+6. **`denyMessage` and `strictHostnames: false` passed Podman validation.** *Fixed for `denyMessage`:* the sidecar dialect now refuses it, because iron-proxy answers a blocked request with its own fixed response. *No change for `strictHostnames`:* Resolved Decision 6 accepts either value, because the boundary is stricter than both.
+7. **A wildcard did not cover its apex in the binding-host check.** iron-proxy's `*.example.com` also matches `example.com` (Resolved Decision 6), but the check used microsandbox's suffix semantics and refused a binding to the apex. *Fixed:* the check follows the enforcer, so the apex is covered only in the sidecar dialect.
+8. **The flow poll task never stopped.** For an iron-proxy sidecar, every tick spawns a `podman logs` process, which kept running for the rest of the app session for each sandbox whose Traffic section had ever been opened. *Fixed:* watches are counted per sandbox, a new `unwatch_proxy_flows` command releases one, and the traffic panel releases its watch on unmount. The frontend store keeps its rows, and the next watch replays the log.
+9. **Podman `exec_piped` bypassed the process-runner seam.** The method spawned Podman directly and relied on a mock-backend branch in production code. *Fixed:* the process-runner trait gained a stdin-carrying call. The real Podman runner feeds the payload from a temp file through the same guard, breaker, timeout and logging as every other call, and the scripted runner scripts and journals the call as `podman.exec`.
+10. **Policy applies to one sandbox could overlap.** Every apply shares one `config.prev.yaml` and one secrets directory, so overlapping applies could corrupt each other's backup and secret files. *Fixed:* applies to the same sandbox run one at a time under a per-sandbox lock.
