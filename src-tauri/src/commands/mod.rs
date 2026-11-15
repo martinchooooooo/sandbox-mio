@@ -113,6 +113,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         proxy::delete_proxy_secret,
         proxy::restart_proxy,
         proxy::watch_proxy_flows,
+        proxy::unwatch_proxy_flows,
         net_policy::get_net_policy,
         net_policy::set_net_policy,
         net_policy::net_policy_drift,

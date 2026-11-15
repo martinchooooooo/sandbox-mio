@@ -55,13 +55,19 @@ pub struct FlowEntry {
     pub would_block: bool,
 }
 
-/// One poll task per watched sandbox, so a repeated `watch_proxy_flows` call is a no-op.
+/// One poll task per watched sandbox, counted by the panels watching it, so a repeated
+/// `watch_proxy_flows` call shares the task and the last `unwatch_proxy_flows` stops it.
 #[derive(Default)]
-pub struct FlowWatchRegistry(Mutex<HashMap<String, tauri::async_runtime::JoinHandle<()>>>);
+pub struct FlowWatchRegistry(Mutex<HashMap<String, Watch>>);
 
-/// Starts `sandbox`'s poll task unless a live one is already registered; returns whether a new task
-/// was spawned. Check and insert happen under one lock — two rapid calls would otherwise both spawn
-/// and double every row.
+struct Watch {
+    handle: tauri::async_runtime::JoinHandle<()>,
+    watchers: usize,
+}
+
+/// Counts one more watcher of `sandbox`, starting its poll task unless a live one is registered;
+/// returns whether a new task was spawned. Check and insert happen under one lock — two rapid calls
+/// would otherwise both spawn and double every row.
 ///
 /// Spawns through `tauri::async_runtime`, not `tokio::spawn`: a caller on the IPC thread has no
 /// Tokio runtime entered, and `tokio::spawn`'s panic there cannot unwind across the webview's FFI
@@ -73,20 +79,41 @@ pub fn start_watch(
     sandbox: &str,
 ) -> bool {
     let mut tasks = registry.0.lock().unwrap();
-    if tasks.get(sandbox).is_some_and(|handle| !handle.inner().is_finished()) {
-        return false;
-    }
+    let watchers = match tasks.get_mut(sandbox) {
+        Some(watch) if !watch.handle.inner().is_finished() => {
+            watch.watchers += 1;
+            return false;
+        }
+        // A task that ended (its log disappeared) keeps the count of panels still mounted.
+        Some(watch) => watch.watchers + 1,
+        None => 1,
+    };
     let handle = tauri::async_runtime::spawn(watch_flows(
         app.clone(),
         providers.clone(),
         sandbox.to_string(),
     ));
-    tasks.insert(sandbox.to_string(), handle);
+    tasks.insert(sandbox.to_string(), Watch { handle, watchers });
     true
 }
 
+/// Counts one watcher of `sandbox` gone and stops its poll task with the last one: for an iron-proxy
+/// sidecar every tick spawns a `podman logs` process, which must not outlive every open panel.
+/// Rows written meanwhile stay in the log, and the next watch replays them.
+pub fn stop_watch(registry: &FlowWatchRegistry, sandbox: &str) {
+    let mut tasks = registry.0.lock().unwrap();
+    let Some(watch) = tasks.get_mut(sandbox) else {
+        return;
+    };
+    watch.watchers = watch.watchers.saturating_sub(1);
+    if watch.watchers == 0 {
+        watch.handle.abort();
+        tasks.remove(sandbox);
+    }
+}
+
 /// Emits every newly appended flow until the log disappears, which is how proxy teardown is noticed
-/// — there is no explicit cancel (`02_dev.md`, Teardown).
+/// (`02_dev.md`, Teardown), or until [`stop_watch`] aborts it.
 async fn watch_flows(app: AppHandle, providers: Arc<ProviderRegistry>, sandbox: String) {
     let Ok(path) = super::flows_path(&app, &sandbox) else {
         return;

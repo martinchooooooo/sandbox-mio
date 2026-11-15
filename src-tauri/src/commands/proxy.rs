@@ -36,8 +36,8 @@ pub async fn delete_proxy_secret(secret_id: String, app: tauri::AppHandle) -> Re
     Ok(proxy::delete_secret(&app, &secret_id)?)
 }
 
-/// Starts the flow-log poll task behind `proxy://flows-changed` for `name`. Idempotent: a second
-/// call while the task is live is a no-op, not an error.
+/// Starts the flow-log poll task behind `proxy://flows-changed` for `name`, or counts one more
+/// watcher of the live one. Each call is released by one `unwatch_proxy_flows`.
 #[tauri::command]
 pub async fn watch_proxy_flows(
     name: String,
@@ -46,6 +46,16 @@ pub async fn watch_proxy_flows(
     app: tauri::AppHandle,
 ) -> Result<(), AppError> {
     proxy::flowlog::start_watch(&app, &registry, &providers, &name);
+    Ok(())
+}
+
+/// Releases one `watch_proxy_flows` call for `name`; the poll task stops with the last one.
+#[tauri::command]
+pub async fn unwatch_proxy_flows(
+    name: String,
+    registry: State<'_, FlowWatchRegistry>,
+) -> Result<(), AppError> {
+    proxy::flowlog::stop_watch(&registry, &name);
     Ok(())
 }
 

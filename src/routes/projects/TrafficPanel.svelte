@@ -2,7 +2,7 @@
     import { invoke } from "@tauri-apps/api/core";
     import Button from "$lib/components/ui/button/button.svelte";
     import { parseError } from "$lib/errors";
-    import { ensureTrafficState, flowsFor, watchFlows, type FlowEntry } from "$lib/proxy/traffic.svelte";
+    import { ensureTrafficState, flowsFor, unwatchFlows, watchFlows, type FlowEntry } from "$lib/proxy/traffic.svelte";
     import { ensureProxyStatus, proxyStatusFor, refreshProxyStatus } from "$lib/proxy/status.svelte";
     import type { createActionRunner } from "$lib/actions.svelte";
     import type { ProviderId } from "$lib/providers";
@@ -33,7 +33,8 @@
     let statusFilter = $state<string | null>(null);
     let expandedId = $state<number | null>(null);
     let restarting = $state(false);
-    let watching = "";
+    // A boolean, so a status refresh that keeps `exists` does not re-run the watch effect.
+    const exists = $derived(!!status?.exists);
 
     // Newest first: this is a live log, and the store appends.
     const flows = $derived(flowsFor(sandboxName).filter(matches).slice().reverse());
@@ -60,17 +61,14 @@
         return new Date(ts * 1000).toISOString();
     }
 
-    async function startWatching() {
-        // Watched even when stopped, since the log still holds the history.
-        // The backend call is idempotent; `watching` only avoids re-invoking on every effect run.
-        if (!status?.exists || watching === sandboxName) return;
-        watching = sandboxName;
+    async function startWatching(name: string): Promise<boolean> {
         try {
             await ensureTrafficState();
-            await watchFlows(sandboxName);
+            await watchFlows(name);
+            return true;
         } catch (e) {
-            watching = "";
             panelError = parseError(e).message;
+            return false;
         }
     }
 
@@ -92,8 +90,15 @@
         ensureProxyStatus(sandboxName);
     });
 
+    // Watched even when stopped, since the log still holds the history. The cleanup releases the
+    // watch only after it was taken, so a quick unmount cannot reach the backend first and leak it.
     $effect(() => {
-        if (status?.exists) startWatching();
+        if (!exists) return;
+        const name = sandboxName;
+        const started = startWatching(name);
+        return () => {
+            void started.then((ok) => (ok ? unwatchFlows(name) : undefined)).catch(() => {});
+        };
     });
 </script>
 
