@@ -170,9 +170,29 @@ async fn is_running(
     Ok(provider.list_instances().await?.iter().any(|s| s.name == sidecar && s.status == "running"))
 }
 
+/// Starts a stopped sidecar and confirms it stays up. `podman start` succeeds even when iron-proxy
+/// exits at once on a config it refuses, so the start is followed by a reload: it answers only
+/// once the process has booted with the config, and fails if the process has exited.
+async fn start_and_confirm(
+    provider: &Arc<dyn MachineProvider>,
+    sidecar: &str,
+) -> Result<(), ProxyError> {
+    provider.start(sidecar).await?;
+    match reload(provider, sidecar).await {
+        Ok(()) => Ok(()),
+        Err(_) if !is_running(provider, sidecar).await.unwrap_or(true) => {
+            Err(ProxyError::CommandFailed(
+                "the proxy exited right after starting, so it refused the new config".to_string(),
+            ))
+        }
+        Err(e) => Err(e),
+    }
+}
+
 /// Makes the sidecar run `policy`, already validated: reload when running, start when stopped
-/// (Resolved Decision 13). A failed reload restores `config.prev.yaml` and never restarts, so disk
-/// matches the running pipeline; `applied.json` is rewritten only once the new policy runs.
+/// (Resolved Decision 13). A failed reload or start restores `config.prev.yaml` and never restarts,
+/// so disk matches what the sidecar last ran; `applied.json` is rewritten only once the new policy
+/// runs.
 pub async fn apply_policy(
     app: &AppHandle,
     registry: &Arc<ProviderRegistry>,
@@ -207,7 +227,7 @@ pub async fn apply_policy(
     let outcome = if is_running(&provider, &sidecar).await? {
         reload(&provider, &sidecar).await
     } else {
-        provider.start(&sidecar).await.map_err(ProxyError::from)
+        start_and_confirm(&provider, &sidecar).await
     };
     if let Err(e) = outcome {
         if let Err(restore) = std::fs::rename(&prev, &current) {
