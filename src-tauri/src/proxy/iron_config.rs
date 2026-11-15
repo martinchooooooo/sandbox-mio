@@ -59,7 +59,7 @@ pub fn render(policy: &NetPolicy, proxy_ip: &str, with_value: &[String]) -> Valu
             (RuleAction::Allow, Some(host), _) => {
                 push_unique(&mut domains, host.to_ascii_lowercase())
             }
-            (RuleAction::Deny, _, Some(cidr)) => push_unique(&mut deny, cidr.clone()),
+            (RuleAction::Deny, _, Some(cidr)) => push_unique(&mut deny, with_prefix(cidr)),
             _ => {}
         }
     }
@@ -90,6 +90,16 @@ pub fn render(policy: &NetPolicy, proxy_ip: &str, with_value: &[String]) -> Valu
         transforms.push(json!({ "name": "secrets", "config": { "secrets": secrets } }));
     }
     config(proxy_ip, deny, transforms)
+}
+
+/// A bare address as a single-host range: `validate` accepts one, but iron-proxy parses every
+/// `upstream_deny_cidrs` entry as a CIDR and refuses the whole config on a missing prefix.
+fn with_prefix(cidr: &str) -> String {
+    if cidr.contains('/') {
+        return cidr.to_string();
+    }
+    let max = if cidr.contains(':') { 128 } else { 32 };
+    format!("{cidr}/{max}")
 }
 
 fn push_unique(list: &mut Vec<String>, value: String) {
@@ -244,5 +254,21 @@ mod tests {
             let unknown: Vec<_> = rendered.difference(&known).collect();
             assert!(unknown.is_empty(), "keys never run against iron-proxy: {unknown:?}");
         }
+    }
+
+    #[test]
+    fn a_bare_deny_address_gets_a_single_host_prefix() {
+        let p = NetPolicy {
+            rules: vec![deny_cidr("203.0.113.5"), deny_cidr("2001:db8::1"), deny_cidr("198.51.100.0/24")],
+            ..NetPolicy::default()
+        };
+        let config = render(&p, "10.90.7.2", &[]);
+        let deny: Vec<&str> = config["proxy"]["upstream_deny_cidrs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert!(deny.ends_with(&["203.0.113.5/32", "2001:db8::1/128", "198.51.100.0/24"]), "{deny:?}");
     }
 }
