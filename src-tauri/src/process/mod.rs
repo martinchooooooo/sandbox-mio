@@ -552,7 +552,7 @@ async fn run_capturing_via_files(
 #[async_trait::async_trait]
 impl ProcessRunner for SystemPodmanRunner {
     async fn run(&self, args: &[&str]) -> std::io::Result<Output> {
-        self.run_with_env(args, &[]).await
+        self.run_podman(args, &[], None).await
     }
 
     /// `env` lands in the child's environment only, never in `args`, so the argv logged below
@@ -561,6 +561,22 @@ impl ProcessRunner for SystemPodmanRunner {
         &self,
         args: &[&str],
         env: &[(String, String)],
+    ) -> std::io::Result<Output> {
+        self.run_podman(args, env, None).await
+    }
+
+    async fn run_with_stdin(&self, args: &[&str], stdin: &[u8]) -> std::io::Result<Output> {
+        self.run_podman(args, &[], Some(stdin)).await
+    }
+}
+
+impl SystemPodmanRunner {
+    /// The one body behind every trait method, so the guard, breaker and logging below cover each.
+    async fn run_podman(
+        &self,
+        args: &[&str],
+        env: &[(String, String)],
+        stdin: Option<&[u8]>,
     ) -> std::io::Result<Output> {
         // Every connection-scoped call (`image exists`, `create`, `exec`, `info`, ...) passes
         // through here — the one seam behind `PodmanProvider::run` and `PodmanMachineManager`'s
@@ -615,7 +631,10 @@ impl ProcessRunner for SystemPodmanRunner {
             // timeout even on a bare `podman machine list` under `cargo tauri dev`.
             let mut cmd = crate::backends::podman_command_std();
             cmd.envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
-            run_via_blocking_process(cmd, args, "podman", timeout_dur).await
+            match stdin {
+                Some(bytes) => run_with_stdin_file(cmd, args, bytes, timeout_dur).await,
+                None => run_via_blocking_process(cmd, args, "podman", timeout_dur).await,
+            }
         };
         let result = result.map_err(|e| {
             if e.kind() == std::io::ErrorKind::TimedOut {
@@ -652,6 +671,28 @@ impl ProcessRunner for SystemPodmanRunner {
         }
         result
     }
+}
+
+/// [`run_via_blocking_process`] with `stdin` fed from a temp file, which suits its file-captured
+/// blocking spawn: the child reads the file to EOF with no writer thread to coordinate.
+async fn run_with_stdin_file(
+    mut cmd: std::process::Command,
+    args: &[&str],
+    stdin: &[u8],
+    timeout: Duration,
+) -> std::io::Result<Output> {
+    let id = CAPTURE_CALL_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!("sandbox-mio-podman-{}-{id}.stdin", std::process::id()));
+    std::fs::write(&path, stdin)?;
+    let result = match std::fs::File::open(&path) {
+        Ok(file) => {
+            cmd.stdin(std::process::Stdio::from(file));
+            run_via_blocking_process(cmd, args, "podman", timeout).await
+        }
+        Err(e) => Err(e),
+    };
+    let _ = std::fs::remove_file(&path);
+    result
 }
 
 static MSB_RESOURCE_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();

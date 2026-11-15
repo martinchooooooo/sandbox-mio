@@ -3,10 +3,9 @@ pub mod msb_policy;
 pub mod probe;
 pub mod types;
 
-use std::process::{Output, Stdio};
+use std::process::Output;
 use std::sync::Arc;
 
-use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 use crate::backends::{base_image, podman_command};
@@ -153,6 +152,13 @@ fn check(out: Output) -> Result<String, ProviderError> {
     }
 }
 
+fn runner_error(e: std::io::Error) -> ProviderError {
+    match e.kind() {
+        std::io::ErrorKind::TimedOut => ProviderError::Unresponsive(e.to_string()),
+        _ => ProviderError::CommandFailed(e.to_string()),
+    }
+}
+
 fn parse_image_version(image: &str) -> Option<u32> {
     image.rsplit(':').next()?.parse().ok()
 }
@@ -175,10 +181,7 @@ impl PodmanProvider {
     ) -> Result<Output, ProviderError> {
         let mut full = vec!["--connection", &self.connection];
         full.extend_from_slice(argv);
-        self.runner.run_with_env(&full, env).await.map_err(|e| match e.kind() {
-            std::io::ErrorKind::TimedOut => ProviderError::Unresponsive(e.to_string()),
-            _ => ProviderError::CommandFailed(e.to_string()),
-        })
+        self.runner.run_with_env(&full, env).await.map_err(runner_error)
     }
 
     async fn image_exists(&self) -> Result<bool, ProviderError> {
@@ -476,30 +479,9 @@ impl MachineProvider for PodmanProvider {
         argv: &[&str],
         stdin: &[u8],
     ) -> Result<Output, ProviderError> {
-        if crate::backends::mock_backend_enabled() {
-            // Spawns `podman_command()` directly, so the scripted runner cannot divert it; under
-            // mock it is recorded as `podman.exec` and the payload is dropped, as `MsbProvider` does.
-            return self.exec(name, argv, ExecOpts::default()).await;
-        }
-        let mut child = self
-            .exec_command_inner(name, argv, &ExecOpts::default())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| ProviderError::CommandFailed(e.to_string()))?;
-        let mut sink = child
-            .stdin
-            .take()
-            .ok_or_else(|| ProviderError::CommandFailed("no stdin".to_string()))?;
-        sink.write_all(stdin)
-            .await
-            .map_err(|e| ProviderError::CommandFailed(e.to_string()))?;
-        drop(sink);
-        child
-            .wait_with_output()
-            .await
-            .map_err(|e| ProviderError::CommandFailed(e.to_string()))
+        let mut full = vec!["--connection", &self.connection, "exec", "-i", name];
+        full.extend_from_slice(argv);
+        self.runner.run_with_stdin(&full, stdin).await.map_err(runner_error)
     }
 
     fn exec_command(&self, name: &str, argv: &[&str], opts: ExecOpts) -> Command {

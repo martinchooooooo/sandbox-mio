@@ -26,6 +26,19 @@ pub trait ProcessRunner: Send + Sync {
             "this process runner cannot pass environment variables",
         ))
     }
+
+    /// [`Self::run`] with `stdin` fed to the child, for a payload too large or too sensitive for
+    /// argv (the proxy CA piped into a sandbox). A runner that does not override this refuses
+    /// non-empty `stdin` rather than dropping it.
+    async fn run_with_stdin(&self, args: &[&str], stdin: &[u8]) -> std::io::Result<Output> {
+        if stdin.is_empty() {
+            return self.run(args).await;
+        }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "this process runner cannot feed stdin",
+        ))
+    }
 }
 
 /// Real `podman` invocations: wraps `podman_command_std()` (`src-tauri/src/backends/mod.rs`),

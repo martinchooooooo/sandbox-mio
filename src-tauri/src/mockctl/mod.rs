@@ -355,6 +355,11 @@ impl ProcessRunner for ScriptedPodmanRunner {
         };
         Ok(to_output(scripted))
     }
+
+    /// Scripted and journalled like any other call; the payload itself is not journalled.
+    async fn run_with_stdin(&self, args: &[&str], _stdin: &[u8]) -> std::io::Result<Output> {
+        self.run_with_env(args, &[]).await
+    }
 }
 
 impl ScriptedMsbRunner {
