@@ -266,14 +266,18 @@ fn valid_env_var(name: &str) -> bool {
         && chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
 }
 
-/// Whether an allow rule covers `host` (exactly, or through a `*.suffix` rule).
-fn allowed_by_rule(policy: &NetPolicy, host: &str) -> bool {
+/// Whether an allow rule covers `host` (exactly, or through a `*.suffix` rule). `wildcard_apex`
+/// follows the enforcer: iron-proxy's `*.example.com` also matches `example.com`, microsandbox's
+/// does not (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 6).
+fn allowed_by_rule(policy: &NetPolicy, host: &str, wildcard_apex: bool) -> bool {
     policy.rules.iter().any(|r| {
         r.action == RuleAction::Allow
             && r.host.as_deref().is_some_and(|h| {
                 let h = h.to_ascii_lowercase();
                 match h.strip_prefix("*.") {
-                    Some(suffix) => host.ends_with(&format!(".{suffix}")),
+                    Some(suffix) => {
+                        host.ends_with(&format!(".{suffix}")) || (wildcard_apex && host == suffix)
+                    }
                     None => h == host,
                 }
             })
@@ -370,7 +374,7 @@ pub fn validate(policy: &NetPolicy, caps: ProviderCapabilities) -> Result<(), Ne
                 )));
             }
             if policy.egress == EgressMode::Allowlist
-                && !allowed_by_rule(policy, &host.to_ascii_lowercase())
+                && !allowed_by_rule(policy, &host.to_ascii_lowercase(), caps.sidecar_egress)
             {
                 return Err(NetPolicyError(format!(
                     "secret binding {var:?}: {host:?} is not allowed by any rule"
@@ -653,6 +657,18 @@ mod tests {
         validate(&p, MSB).unwrap();
         let p = NetPolicy { strict_hostnames: false, ..NetPolicy::default() };
         validate(&p, PODMAN).unwrap();
+    }
+
+    #[test]
+    fn a_wildcard_covers_its_apex_only_for_the_sidecar() {
+        let p = NetPolicy {
+            egress: EgressMode::Allowlist,
+            rules: vec![NetRule { host: Some("*.example.com".to_string()), ..rule(RuleAction::Allow) }],
+            secrets: vec![binding("example.com")],
+            ..NetPolicy::default()
+        };
+        validate(&p, PODMAN).unwrap();
+        assert!(validate(&p, MSB).is_err(), "microsandbox's suffix rule does not cover the apex");
     }
 
     #[test]
