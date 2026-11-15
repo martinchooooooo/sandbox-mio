@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use tauri::AppHandle;
 
@@ -131,8 +132,14 @@ fn write_config(path: &Path, config: &serde_json::Value) -> Result<(), ProxyErro
     write_atomic(path, &body)
 }
 
-/// Asks the running sidecar to reload `config.yaml`. The bearer token is read from the sidecar's
-/// own `IRON_MANAGEMENT_API_KEY`, so it never enters a command line.
+/// How long a reload keeps retrying while the management listener is not yet bound: a sidecar
+/// started moments ago (the first apply at create) may not have bound it yet.
+const MGMT_READY_BUDGET: Duration = Duration::from_secs(10);
+const MGMT_READY_STEP: Duration = Duration::from_millis(250);
+
+/// Asks the running sidecar to reload `config.yaml`, retrying while its management listener is not
+/// yet bound. The bearer token is read from the sidecar's own `IRON_MANAGEMENT_API_KEY`, so it
+/// never enters a command line.
 async fn reload(provider: &Arc<dyn MachineProvider>, sidecar: &str) -> Result<(), ProxyError> {
     let script = format!(
         "wget -q -O - --header \"Authorization: Bearer ${env}\" --post-data= \
@@ -140,14 +147,20 @@ async fn reload(provider: &Arc<dyn MachineProvider>, sidecar: &str) -> Result<()
         env = iron_config::MGMT_API_KEY_ENV,
         port = iron_config::IRON_MGMT_PORT,
     );
-    let out = provider.exec(sidecar, &["sh", "-c", &script], ExecOpts::default()).await?;
-    if out.status.success() {
-        return Ok(());
+    let deadline = Instant::now() + MGMT_READY_BUDGET;
+    loop {
+        let out = provider.exec(sidecar, &["sh", "-c", &script], ExecOpts::default()).await?;
+        if out.status.success() {
+            return Ok(());
+        }
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        // busybox wget's wording for a refused connection; any HTTP status means the listener is up.
+        let not_bound = stderr.contains("can't connect") || stderr.contains("Connection refused");
+        if !not_bound || Instant::now() >= deadline {
+            return Err(ProxyError::CommandFailed(format!("the proxy reload failed: {stderr}")));
+        }
+        tokio::time::sleep(MGMT_READY_STEP).await;
     }
-    Err(ProxyError::CommandFailed(format!(
-        "the proxy reload failed: {}",
-        String::from_utf8_lossy(&out.stderr).trim()
-    )))
 }
 
 async fn is_running(
