@@ -22,7 +22,8 @@ use crate::provider::ProviderRegistry;
 use sessions::SessionTable;
 use types::{AttachRequest, TerminalError, TerminalEvent, TerminalHost};
 
-/// The working directory of every pane a new zellij session opens.
+/// The working directory of every pane a new zellij session opens. Must equal `WORKSPACE_MOUNT`
+/// in `src-tauri/src/provider/mod.rs`, which is private there.
 const WORKDIR: &str = "/root/work";
 /// Bounds the exec spawn, handshake and session creation together; a remote Podman exec is the
 /// slowest of them.
@@ -41,13 +42,16 @@ pub fn default_terminal_host(registry: Arc<ProviderRegistry>) -> Arc<dyn Termina
     Arc::new(SshTerminalHost { registry, sessions: Arc::default() })
 }
 
-/// The in-sandbox commands of one attach: the engine-exec argv that creates or resurrects the
-/// zellij session, and the client command run over SSH. The session is never created over SSH,
-/// because `sshd` drops the container's environment
+/// The engine-exec argv that creates or resurrects the zellij session. The session is never
+/// created over SSH, because `sshd` drops the container's environment
 /// (`docs/features/native-terminal/02_dev.md`, Resolved Decision 7).
-fn session_commands(name: &str) -> (Vec<String>, String) {
-    let create = ["zellij", "attach", "--create-background", name].map(String::from).to_vec();
-    (create, format!("zellij attach {}", shell_quote(name)))
+fn create_argv(name: &str) -> Vec<String> {
+    ["zellij", "attach", "--create-background", name].map(String::from).to_vec()
+}
+
+/// The client command run over SSH, attaching to the session `create_argv` made.
+fn client_command(name: &str) -> String {
+    format!("zellij attach {}", shell_quote(name))
 }
 
 /// Quotes `word` for the remote shell `sshd` runs the client command through; plain words stay
@@ -97,7 +101,7 @@ impl Session {
 
 impl SshTerminalHost {
     async fn create_session(&self, provider: &Arc<dyn MachineProvider>, name: &str) -> Result<(), TerminalError> {
-        let (argv, _) = session_commands(name);
+        let argv = create_argv(name);
         let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
         let opts = ExecOpts { workdir: Some(WORKDIR.to_string()), ..Default::default() };
         let out = provider.exec(name, &argv, opts).await?;
@@ -132,7 +136,7 @@ impl SshTerminalHost {
             req.rows,
         );
         let ((handle, mut channel), ()) = tokio::try_join!(handshake, self.create_session(&provider, &req.name))?;
-        let (_, client) = session_commands(&req.name);
+        let client = client_command(&req.name);
         channel.exec(true, client).await.map_err(|e| TerminalError::Handshake(e.to_string()))?;
         // `exec` only sends the request; `attach` must not report success before `sshd` accepts it.
         let early = ssh::await_reply(&mut channel, "the sandbox refused the terminal command").await?;
@@ -276,7 +280,7 @@ async fn shut(handle: Handle<ssh::Client>, mut child: Child) {
 
 #[cfg(test)]
 mod tests {
-    use super::{session_already_running, session_commands, shell_quote};
+    use super::{session_already_running, client_command, create_argv, shell_quote};
 
     #[test]
     fn a_running_session_is_not_a_create_failure() {
@@ -288,9 +292,8 @@ mod tests {
 
     #[test]
     fn the_session_is_created_by_exec_and_only_attached_over_ssh() {
-        let (create, client) = session_commands("demo");
-        assert_eq!(create, ["zellij", "attach", "--create-background", "demo"]);
-        assert_eq!(client, "zellij attach demo");
+        assert_eq!(create_argv("demo"), ["zellij", "attach", "--create-background", "demo"]);
+        assert_eq!(client_command("demo"), "zellij attach demo");
     }
 
     #[test]
@@ -300,6 +303,6 @@ mod tests {
         assert_eq!(shell_quote("x;rm -rf /"), "'x;rm -rf /'");
         assert_eq!(shell_quote("it's"), "'it'\\''s'");
         assert_eq!(shell_quote(""), "''");
-        assert_eq!(session_commands("a$b").1, "zellij attach 'a$b'");
+        assert_eq!(client_command("a$b"), "zellij attach 'a$b'");
     }
 }

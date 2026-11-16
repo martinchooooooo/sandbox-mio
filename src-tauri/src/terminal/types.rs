@@ -20,7 +20,8 @@ pub struct AttachRequest {
     pub rows: u32,
 }
 
-/// A session-level event on an attach's JSON channel. Terminal bytes never travel here.
+/// A session-level event on an attach's JSON channel. Terminal bytes never travel here. Mirrored
+/// by `TerminalEvent` in `src/lib/terminal/TerminalView.svelte`.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum TerminalEvent {

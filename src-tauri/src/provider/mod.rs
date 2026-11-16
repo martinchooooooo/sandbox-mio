@@ -15,7 +15,8 @@ use types::{
     ProviderId, SidecarSpec,
 };
 
-/// Spelled literally because `podman -v` rejects a bare `~` and does not expand `$HOME`.
+/// Spelled literally because `podman -v` rejects a bare `~` and does not expand `$HOME`. Mirrored
+/// by `WORKDIR` in `src-tauri/src/terminal/mod.rs`.
 const WORKSPACE_MOUNT: &str = "/root/work";
 
 const CONTAINERFILE: &str = include_str!("../../resources/Containerfile");
