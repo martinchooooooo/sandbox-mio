@@ -58,6 +58,9 @@ base64 = "0.22"
 # (docs/features/podman-egress-boundary/02_dev.md, Resolved Decision 11).
 rcgen = { version = "0.13", default-features = false, features = ["crypto", "pem", "ring"] }
 time = { version = "0.3", features = ["parsing"] }
+# The native terminal's in-process SSH client. `ring`, not the default aws-lc-rs, whose Windows build
+# needs NASM (docs/features/native-terminal/02_dev.md, Resolved Decision 6).
+russh = { version = "0.65.1", default-features = false, features = ["ring", "flate2", "rsa"] }
 
 [features]
 default = []

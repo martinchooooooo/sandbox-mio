@@ -19,6 +19,9 @@
     "@tauri-apps/plugin-opener": "2",
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-updater": "^2.10.1",
+    "@wterm/dom": "0.5.10",
+    "@wterm/ghostty": "0.5.10",
+    "@wterm/svelte": "0.5.10",
     "gsap": "3.15.0",
     "mode-watcher": "1.1.0",
     "tailwindcss": "4.3.0"
@@ -44,7 +47,7 @@
     "clsx": "2.1.1",
     "shadcn-svelte": "1.8.0",
     "shiki": "3.23.0",
-    "svelte": "5.55.0",
+    "svelte": "5.57.3",
     "svelte-check": "4.0.0",
     "svelte-sonner": "^1.1.1",
     "svelte-streamdown": "5.0.0",
