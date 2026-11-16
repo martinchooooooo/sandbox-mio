@@ -51,6 +51,9 @@ pub enum TerminalError {
     /// No live session exists for the sandbox.
     #[error("the terminal is not connected")]
     NotAttached,
+    /// The attach was ended by a detach or replaced by a newer attach before it finished.
+    #[error("the terminal attach was cancelled")]
+    Cancelled,
     /// An engine call (start, exec) failed.
     #[error("{0}")]
     Provider(String),
@@ -67,7 +70,8 @@ impl From<crate::provider::types::ProviderError> for TerminalError {
 /// exec; `MockTerminalHost` echoes input under `MIO_MOCK_BACKEND=1`.
 #[async_trait::async_trait]
 pub trait TerminalHost: Send + Sync {
-    /// Opens a session for `req.name`, replacing any earlier one. Raw output bytes go to
+    /// Opens a session for `req.name`, replacing any earlier one. A detach or newer attach while
+    /// this one is opening cancels it with [`TerminalError::Cancelled`]. Raw output bytes go to
     /// `on_output`; the final [`TerminalEvent::Exited`] goes to `on_event`. Returns once zellij's
     /// client is running.
     async fn attach(

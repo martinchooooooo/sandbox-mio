@@ -3,12 +3,11 @@
 //! (`docs/features/native-terminal/02_dev.md`).
 
 mod mock;
+mod sessions;
 mod ssh;
 pub mod types;
 
-use std::collections::HashMap;
 use std::process::Stdio;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -20,6 +19,7 @@ use tokio::sync::{mpsc, Mutex};
 
 use crate::provider::types::{ExecOpts, MachineProvider};
 use crate::provider::ProviderRegistry;
+use sessions::SessionTable;
 use types::{AttachRequest, TerminalError, TerminalEvent, TerminalHost};
 
 /// The working directory of every pane a new zellij session opens.
@@ -36,7 +36,7 @@ pub fn default_terminal_host(registry: Arc<ProviderRegistry>) -> Arc<dyn Termina
     if crate::backends::mock_backend_enabled() {
         return Arc::new(mock::MockTerminalHost::default());
     }
-    Arc::new(SshTerminalHost { registry, sessions: Arc::default(), next_id: AtomicU64::new(1) })
+    Arc::new(SshTerminalHost { registry, sessions: Arc::default() })
 }
 
 /// The in-sandbox commands of one attach: the engine-exec argv that creates or resurrects the
@@ -60,18 +60,11 @@ enum SessionCommand {
     Resize(u32, u32),
 }
 
-/// One live session's handle. Dropping it closes the command queue, which ends the session task.
-struct LiveSession {
-    id: u64,
-    commands: mpsc::Sender<SessionCommand>,
-}
-
-type SessionMap = Arc<Mutex<HashMap<String, LiveSession>>>;
+type SessionMap = Arc<Mutex<SessionTable>>;
 
 struct SshTerminalHost {
     registry: Arc<ProviderRegistry>,
     sessions: SessionMap,
-    next_id: AtomicU64,
 }
 
 /// Everything the session task owns. The exec child is killed when the task drops it.
@@ -79,6 +72,13 @@ struct Session {
     handle: Handle<ssh::Client>,
     channel: SshChannel<Msg>,
     child: Child,
+}
+
+impl Session {
+    /// Ends a session that never ran: disconnects it and kills its exec child.
+    async fn shut(self) {
+        shut(self.handle, self.child).await;
+    }
 }
 
 impl SshTerminalHost {
@@ -124,7 +124,7 @@ impl SshTerminalHost {
     }
 
     async fn live_sender(&self, name: &str) -> Result<mpsc::Sender<SessionCommand>, TerminalError> {
-        self.sessions.lock().await.get(name).map(|s| s.commands.clone()).ok_or(TerminalError::NotAttached)
+        self.sessions.lock().await.sender(name).ok_or(TerminalError::NotAttached)
     }
 }
 
@@ -136,14 +136,28 @@ impl TerminalHost for SshTerminalHost {
         on_output: Channel<InvokeResponseBody>,
         on_event: Channel<TerminalEvent>,
     ) -> Result<(), TerminalError> {
-        self.detach(&req.name).await;
-        let session = tokio::time::timeout(ATTACH_TIMEOUT, self.open(&req))
+        // Registering before `open()` is what lets a detach or a newer attach cancel this one.
+        let id = self.sessions.lock().await.begin(&req.name);
+        let opened = tokio::time::timeout(ATTACH_TIMEOUT, self.open(&req))
             .await
-            .map_err(|_| TerminalError::Handshake("timed out connecting to the sandbox".into()))??;
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+            .map_err(|_| TerminalError::Handshake("timed out connecting to the sandbox".into()))
+            .and_then(|r| r);
+        let session = match opened {
+            Ok(session) => session,
+            Err(e) => {
+                self.sessions.lock().await.abandon(&req.name, id);
+                return Err(e);
+            }
+        };
         let (tx, rx) = mpsc::channel(COMMAND_QUEUE);
-        self.sessions.lock().await.insert(req.name.clone(), LiveSession { id, commands: tx });
-        tokio::spawn(run_session(session, rx, on_output, on_event, self.sessions.clone(), req.name, id));
+        let mut table = self.sessions.lock().await;
+        if !table.promote(&req.name, id, tx) {
+            drop(table);
+            session.shut().await;
+            return Err(TerminalError::Cancelled);
+        }
+        let task = tokio::spawn(run_session(session, rx, on_output, on_event, self.sessions.clone(), req.name.clone(), id));
+        table.set_task(&req.name, id, task);
         Ok(())
     }
 
@@ -158,11 +172,11 @@ impl TerminalHost for SshTerminalHost {
     }
 
     async fn detach(&self, name: &str) {
-        self.sessions.lock().await.remove(name);
+        self.sessions.lock().await.detach(name);
     }
 
     async fn detach_all(&self) {
-        self.sessions.lock().await.clear();
+        self.sessions.lock().await.drain();
     }
 }
 
@@ -210,12 +224,14 @@ async fn run_session(
     };
     tracing::info!(target: "terminal", sandbox = %name, reason, ?exit_status, "terminal session ended");
     let _ = on_event.send(TerminalEvent::Exited { reason: reason.to_string(), exit_status });
+    shut(handle, child).await;
+    sessions.lock().await.finish(&name, id);
+}
+
+/// Disconnects the transport and kills the exec child.
+async fn shut(handle: Handle<ssh::Client>, mut child: Child) {
     let _ = handle.disconnect(Disconnect::ByApplication, "", "en").await;
-    drop(child);
-    let mut map = sessions.lock().await;
-    if map.get(&name).is_some_and(|s| s.id == id) {
-        map.remove(&name);
-    }
+    let _ = child.start_kill();
 }
 
 #[cfg(test)]
