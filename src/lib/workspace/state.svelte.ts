@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 // Module-scoped store; owns the single `workspace://state` subscription shared by the shell.
 
 export type AppKind = "terminal" | "dashboard" | "agentweb" | "agentchat";
-/** Mirrors Rust `AppPane`; a native pane (`agentchat`) has no forward and no URL. */
+/** Mirrors Rust `AppPane`; a native pane (`terminal`, `agentchat`) has no forward and no URL. */
 export type AppPane = {
     label: string;
     sandbox: string;
@@ -13,16 +13,20 @@ export type AppPane = {
     kind: AppKind;
     url: string | null;
 };
+/** Mirrors Rust `Rect`: a logical, DPI-independent window rectangle. */
+export type Rect = { x: number; y: number; width: number; height: number };
 /** Mirrors Rust `WorkspaceState`; `collapsed` is the app sidebar's rail state. */
 type WorkspaceState = {
     apps: AppPane[];
     active_app: string | null;
     collapsed: boolean;
+    overlay: Rect;
     sandbox_last_pane?: Record<string, string>;
 };
 
 let apps = $state<AppPane[]>([]);
 let collapsed = $state(false);
+let overlay = $state<Rect>({ x: 0, y: 0, width: 0, height: 0 });
 let activeApp = $state<string | null>(null);
 let lastPane = $state<Record<string, string>>({});
 // The sandbox whose Manage dashboard shows when no pane is active (client-side only). Visibility
@@ -38,6 +42,7 @@ function applyState(s: WorkspaceState) {
     const previous = activeApp;
     apps = s.apps;
     collapsed = s.collapsed;
+    overlay = s.overlay;
     activeApp = s.active_app;
     lastPane = s.sandbox_last_pane ?? {};
     // Only a transition moves the view: re-applying on every event would race a page click
@@ -57,6 +62,11 @@ export function workspaceApps(): AppPane[] {
 
 export function isCollapsed(): boolean {
     return collapsed;
+}
+
+/** The pane area Rust lays native panes out in, below the sandbox header and beside the sidebar. */
+export function overlayRect(): Rect {
+    return overlay;
 }
 
 export function activeAppLabel(): string | null {

@@ -7,8 +7,8 @@
     let { sandbox }: { sandbox: string } = $props();
 
     // Manage shows only once Rust reports no active pane (docs/features/consolidate-app-container/
-    // 02_dev.md, Resolved Decision 2). A webview pane draws itself over the empty region below the
-    // header; the native chat has no webview, so it renders here.
+    // 02_dev.md, Resolved Decision 2). A webview pane and the layout-level terminal layer draw over
+    // the empty region below the header; the native chat renders here.
     const pane = $derived(activePane());
 </script>
 

@@ -10,6 +10,7 @@
     import { ensureWorkspaceState, viewSandboxName } from "$lib/workspace/state.svelte";
     import AppSidebar from "$lib/workspace/AppSidebar.svelte";
     import SandboxView from "$lib/workspace/SandboxView.svelte";
+    import TerminalLayer from "$lib/terminal/TerminalLayer.svelte";
     import { ensureNetworkState } from "$lib/network/state.svelte";
     import { ensureOnboardingState, onboardingCompleted } from "$lib/settings/onboarding.svelte";
     import { reprovisionInstalledAgents } from "$lib/agents/reprovision";
@@ -110,6 +111,10 @@
             <div data-route-outlet class="@container min-w-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
                 {@render children?.()}
             </div>
+        {/if}
+        <!-- Outside the sandbox key block, so switching sandboxes never remounts a terminal. -->
+        {#if isNavigationPanel}
+            <TerminalLayer />
         {/if}
     {:else}
         <div data-route-outlet class="@container flex-1 overflow-y-auto">
