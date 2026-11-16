@@ -5,6 +5,10 @@ Records feature status changes only: creation (`Create`), reaching `implemented`
 history with at most one `Create` and one `Implement` entry per feature, so seeded dates are
 approximate. New entries go on top.
 
+## 2026-11-17
+
+* **Supersede** [proxy-non-http-capture](proxy-non-http-capture/index.md): replaced by [podman-egress-boundary](podman-egress-boundary/index.md); a bounded Podman sandbox has no route around the sidecar, so there is no bypass left to count
+
 ## 2026-11-16
 
 * **Create** [native-terminal](native-terminal/index.md): ideation drafted, gating spike not yet run

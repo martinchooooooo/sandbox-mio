@@ -5,6 +5,8 @@ feature: proxy-toggle-management
 ---
 # Proxy Toggle Management: Build Plan
 
+> **Partly stale (2026-11-17):** Phase A stands; Phases B and C predate `podman-egress-boundary` and must be refreshed before implementing (see [feature.md](feature.md)).
+
 This document is the build plan for the app-global proxy default and the sandbox-recreate primitive
 scoped in `docs/features/proxy-toggle-management/01_ideas.md`, and supersedes it wherever the two
 disagree. Nothing is implemented yet — every phase below is `Remaining`.

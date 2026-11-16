@@ -5,6 +5,8 @@ feature: proxy-remote-deploy
 ---
 # Proxy Remote Deploy: Build Plan
 
+> **Stale (2026-11-17):** this plan targets the mitmproxy sidecar that `podman-egress-boundary` removed from Podman. Read it as history only; the feature is back at `idea` (see [feature.md](feature.md)).
+
 This document is the build plan for letting a proxy-enabled sandbox survive `CliBackend::deploy`
 (`src-tauri/src/backends/mod.rs`), scoped in `docs/features/proxy-remote-deploy/01_ideas.md`, and
 supersedes it wherever the two disagree. Nothing is implemented yet — every phase below is

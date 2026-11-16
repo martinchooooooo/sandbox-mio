@@ -5,6 +5,8 @@ feature: proxy-credential-secrets
 ---
 # Proxy Credential Secrets: Build Plan
 
+> **Stale (2026-11-17):** this plan hooks into the mitmproxy injection rules that `podman-egress-boundary` deleted. Rewrite it with `feature-dev` before implementing (see [feature.md](feature.md)).
+
 This document is the build plan for sourcing network-proxy secret-injection values from the
 host-side credential store, scoped in `docs/features/proxy-credential-secrets/01_ideas.md`, and
 supersedes it wherever the two disagree. Nothing is implemented yet — every phase below is
