@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use russh::client::{self, Handle, Handler, Msg};
 use russh::keys::{load_secret_key, PrivateKeyWithHashAlg, PublicKeyOrCertificate};
-use russh::Channel;
+use russh::{Channel, ChannelMsg};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::process::{ChildStdin, ChildStdout};
 
@@ -123,10 +123,29 @@ pub async fn connect(
     if !auth.success() {
         return Err(TerminalError::Auth("public key rejected".into()));
     }
-    let channel = session.channel_open_session().await.map_err(|e| TerminalError::Handshake(e.to_string()))?;
+    let mut channel = session.channel_open_session().await.map_err(|e| TerminalError::Handshake(e.to_string()))?;
     channel
         .request_pty(true, TERM, cols, rows, 0, 0, &[])
         .await
         .map_err(|e| TerminalError::Handshake(e.to_string()))?;
+    // Consumed here so the reply to the later exec request is the next one on the channel.
+    await_reply(&mut channel, "the sandbox refused the pseudo-terminal").await?;
     Ok((session, channel))
+}
+
+/// Waits for the reply to the channel's last want-reply request. Output that arrives before the
+/// reply is returned so the caller can forward it first. The caller bounds the wait.
+pub async fn await_reply(channel: &mut Channel<Msg>, refused: &str) -> Result<Vec<Vec<u8>>, TerminalError> {
+    let mut early = Vec::new();
+    loop {
+        match channel.wait().await {
+            Some(ChannelMsg::Success) => return Ok(early),
+            Some(ChannelMsg::Failure) => return Err(TerminalError::Handshake(refused.to_string())),
+            Some(ChannelMsg::Data { data }) | Some(ChannelMsg::ExtendedData { data, .. }) => early.push(data.to_vec()),
+            Some(ChannelMsg::Close) | None => {
+                return Err(TerminalError::Handshake("the connection closed before the terminal started".into()))
+            }
+            Some(_) => {}
+        }
+    }
 }

@@ -72,8 +72,8 @@ impl From<crate::provider::types::ProviderError> for TerminalError {
 pub trait TerminalHost: Send + Sync {
     /// Opens a session for `req.name`, replacing any earlier one. A detach or newer attach while
     /// this one is opening cancels it with [`TerminalError::Cancelled`]. Raw output bytes go to
-    /// `on_output`; the final [`TerminalEvent::Exited`] goes to `on_event`. Returns once zellij's
-    /// client is running.
+    /// `on_output`; the final [`TerminalEvent::Exited`] goes to `on_event`. Returns once `sshd` has
+    /// accepted the zellij client command.
     async fn attach(
         &self,
         req: AttachRequest,

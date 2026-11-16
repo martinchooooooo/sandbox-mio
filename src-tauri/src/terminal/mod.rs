@@ -72,6 +72,8 @@ struct Session {
     handle: Handle<ssh::Client>,
     channel: SshChannel<Msg>,
     child: Child,
+    /// Output that arrived before `sshd` accepted the command, forwarded first.
+    early: Vec<Vec<u8>>,
 }
 
 impl Session {
@@ -117,10 +119,12 @@ impl SshTerminalHost {
             req.cols,
             req.rows,
         );
-        let ((handle, channel), ()) = tokio::try_join!(handshake, self.create_session(&provider, &req.name))?;
+        let ((handle, mut channel), ()) = tokio::try_join!(handshake, self.create_session(&provider, &req.name))?;
         let (_, client) = session_commands(&req.name);
         channel.exec(true, client).await.map_err(|e| TerminalError::Handshake(e.to_string()))?;
-        Ok(Session { handle, channel, child })
+        // `exec` only sends the request; `attach` must not report success before `sshd` accepts it.
+        let early = ssh::await_reply(&mut channel, "the sandbox refused the terminal command").await?;
+        Ok(Session { handle, channel, child, early })
     }
 
     async fn live_sender(&self, name: &str) -> Result<mpsc::Sender<SessionCommand>, TerminalError> {
@@ -191,8 +195,15 @@ async fn run_session(
     name: String,
     id: u64,
 ) {
-    let Session { handle, channel, child } = session;
+    let Session { handle, channel, child, early } = session;
     let (mut reader, writer) = channel.split();
+    for data in early {
+        if on_output.send(InvokeResponseBody::Raw(data)).is_err() {
+            shut(handle, child).await;
+            sessions.lock().await.finish(&name, id);
+            return;
+        }
+    }
     let (reason, exit_status) = loop {
         tokio::select! {
             msg = reader.wait() => match msg {
