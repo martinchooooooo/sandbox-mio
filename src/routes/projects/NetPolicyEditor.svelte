@@ -4,6 +4,7 @@
     import { parseError } from "$lib/errors";
     import type { ProviderId } from "$lib/providers";
     import { Switch } from "$lib/components/ui/switch";
+    import PencilIcon from "@lucide/svelte/icons/pencil";
     import { workspaceApps } from "$lib/workspace/state.svelte";
     import { m } from "$lib/paraglide/messages.js";
 
@@ -137,10 +138,16 @@
     let newTarget = $state("");
     let newPorts = $state("443");
 
-    let newSecretId = $state("");
-    let newEnvVar = $state("");
-    let newSecretHosts = $state("");
-    let secretValue = $state("");
+    // One form serves adding and editing; `editingVar` names the binding being edited, if any.
+    let editingVar = $state<string | null>(null);
+    let formEnvVar = $state("");
+    let formHosts = $state("");
+    let formValue = $state("");
+    let showValue = $state(false);
+    const formHostList = $derived(formHosts.split(",").map((h) => h.trim().toLowerCase()).filter(Boolean));
+    const formReady = $derived(
+        formEnvVar.trim() !== "" && formHostList.length > 0 && (editingVar !== null || formValue.trim() !== ""),
+    );
 
     async function refresh() {
         try {
@@ -224,38 +231,111 @@
         });
     }
 
-    function addBinding() {
-        const secretId = newSecretId.trim();
-        const envVar = newEnvVar.trim();
-        const hosts = newSecretHosts.split(",").map((h) => h.trim()).filter(Boolean);
-        if (!secretId || !envVar || hosts.length === 0) return;
-        mutate((p) =>
-            p.secrets.push({ secretId, envVar, hosts, headers: ["authorization"], query: false, body: false }),
-        );
-        newEnvVar = "";
-        newSecretHosts = "";
+    function resetSecretForm() {
+        editingVar = null;
+        formEnvVar = "";
+        formHosts = "";
+        formValue = "";
+        showValue = false;
     }
 
-    async function saveSecretValue() {
-        const id = newSecretId.trim();
-        const value = secretValue.trim();
-        if (!id || !value) return;
+    function startEdit(binding: SecretBinding) {
+        resetSecretForm();
+        editingVar = binding.envVar;
+        formEnvVar = binding.envVar;
+        formHosts = binding.hosts.join(", ");
+    }
+
+    /** Mirrors `allowed_by_rule` in `src-tauri/src/net_policy.rs`, which rejects an unreachable secret host. */
+    function allowedByRule(p: NetPolicy, host: string): boolean {
+        return p.rules.some((r) => {
+            if (r.action !== "allow" || !r.host) return false;
+            const h = r.host.toLowerCase();
+            return h.startsWith("*.") ? host.endsWith(h.slice(1)) : h === host;
+        });
+    }
+
+    /** Mirrors `NetRule::starter_allow` in `src-tauri/src/net_policy.rs`. */
+    function allowRule(host: string): NetRule {
+        return sidecar ? { action: "allow", host } : { action: "allow", host, protocol: "tcp", ports: [443] };
+    }
+
+    /**
+     * Saves a secret change at once, with any other unsaved edits, then applies it on the sidecar.
+     * The policy is written first, so a rejected binding never replaces or deletes a stored value.
+     */
+    async function commitSecretChange(
+        edit: (p: NetPolicy) => void,
+        { store, removedId }: { store?: { secretId: string; value: string }; removedId?: string } = {},
+    ): Promise<boolean> {
+        if (!policy) return false;
+        const before = $state.snapshot(policy) as NetPolicy;
+        const wasDirty = dirty;
+        let written = false;
         busy = true;
         editorError = null;
         try {
-            await invoke("set_proxy_secret", { secretId: id, value });
-            secretValue = "";
-            // The sidecar reads values only at an apply; unsaved edits wait for the next save
+            mutate(edit);
+            await invoke("set_net_policy", { workspacePath, policy, provider });
+            written = true;
+            if (store) await invoke("set_proxy_secret", store);
+            // The sidecar reads values only at an apply
             // (docs/features/podman-egress-boundary/02_dev.md, Resolved Decision 15).
-            if (sidecar && !dirty) {
-                report = await invoke<ApplyReport>("apply_sandbox_policy", { name: sandboxName, workspacePath });
-                await refresh();
-            }
+            if (sidecar) report = await invoke<ApplyReport>("apply_sandbox_policy", { name: sandboxName, workspacePath });
+            // A microsandbox keeps starting from its applied policy until re-applied, and a start
+            // refuses a binding without a value, so only the sidecar drops a removed value.
+            if (removedId && sidecar) await invoke("delete_proxy_secret", { secretId: removedId });
+            await refresh();
+            return true;
         } catch (e) {
             editorError = parseError(e).message;
+            if (written) {
+                await refresh();
+            } else {
+                policy = before;
+                dirty = wasDirty;
+            }
+            return false;
         } finally {
             busy = false;
         }
+    }
+
+    async function saveSecret() {
+        if (!policy || !formReady) return;
+        const envVar = formEnvVar.trim();
+        const hosts = formHostList;
+        const value = formValue.trim();
+        const existing = editingVar === null ? undefined : policy.secrets.find((b) => b.envVar === editingVar);
+        if (!existing && policy.secrets.some((b) => b.envVar === envVar)) {
+            editorError = m.netpolicy_secret_exists({ envVar });
+            return;
+        }
+        // Scoped to the sandbox: the value store is app-wide, and an id shared across sandboxes
+        // would let an edit here silently change another sandbox's secret.
+        const secretId = existing?.secretId ?? `${sandboxName}-${envVar.toLowerCase()}`;
+        const ok = await commitSecretChange(
+            (p) => {
+                const target = existing && p.secrets.find((b) => b.envVar === existing.envVar);
+                if (target) target.hosts = hosts;
+                else p.secrets.push({ secretId, envVar, hosts, headers: ["authorization"], query: false, body: false });
+                if (p.egress === "allowlist") {
+                    for (const host of hosts) if (!allowedByRule(p, host)) p.rules.push(allowRule(host));
+                }
+            },
+            { store: value ? { secretId, value } : undefined },
+        );
+        if (ok) resetSecretForm();
+    }
+
+    async function removeSecret(binding: SecretBinding) {
+        if (!policy) return;
+        const stillUsed = policy.secrets.some((b) => b.envVar !== binding.envVar && b.secretId === binding.secretId);
+        const ok = await commitSecretChange(
+            (p) => p.secrets.splice(p.secrets.findIndex((b) => b.envVar === binding.envVar), 1),
+            { removedId: stillUsed ? undefined : binding.secretId },
+        );
+        if (ok && editingVar === binding.envVar) resetSecretForm();
     }
 
     const echoWarning = $derived.by(() => {
@@ -271,6 +351,40 @@
         refresh();
     });
 </script>
+
+{#snippet secretForm()}
+    {@const editing = editingVar !== null}
+    <div class="flex flex-col gap-1.5 rounded border px-2 py-1.5" data-secret-form={editing ? "edit" : "add"}>
+        <div class="flex flex-wrap items-center gap-2">
+            <input class="w-36 rounded border bg-background px-2 py-1 font-mono text-xs disabled:opacity-50"
+                placeholder={m.netpolicy_env_var_placeholder()} bind:value={formEnvVar}
+                disabled={busy || editing} data-secret-env-var />
+            <input class="min-w-40 flex-1 rounded border bg-background px-2 py-1 text-xs disabled:opacity-50"
+                placeholder={m.netpolicy_secret_hosts_placeholder()} bind:value={formHosts}
+                disabled={busy} data-secret-hosts />
+        </div>
+        <div class="flex items-center gap-2">
+            <input class="flex-1 rounded border bg-background px-2 py-1 font-mono text-xs disabled:opacity-50"
+                type={showValue ? "text" : "password"} autocomplete="off" spellcheck="false"
+                placeholder={editing ? m.netpolicy_secret_replace_placeholder() : m.netpolicy_secret_value_placeholder()}
+                bind:value={formValue} disabled={busy} data-secret-value />
+            <label class="text-muted-foreground flex shrink-0 items-center gap-1.5 text-xs">
+                <Switch checked={showValue} disabled={busy} onCheckedChange={(v) => (showValue = v)} data-secret-show />
+                {m.netpolicy_secret_show()}
+            </label>
+        </div>
+        <div class="flex items-center gap-2">
+            <Button size="sm" disabled={busy || !formReady} onclick={saveSecret} data-secret-save>
+                {editing ? m.netpolicy_secret_save() : m.netpolicy_secret_add()}
+            </Button>
+            {#if editing}
+                <Button size="sm" variant="ghost" disabled={busy} onclick={resetSecretForm} data-secret-cancel>
+                    {m.projects_cancel()}
+                </Button>
+            {/if}
+        </div>
+    </div>
+{/snippet}
 
 <div class="flex flex-col gap-1.5 border-t pt-2" data-net-policy-editor>
     <span class="text-muted-foreground text-xs shrink-0">{m.netpolicy_title()}</span>
@@ -355,15 +469,21 @@
         <span class="text-muted-foreground mt-2 border-t pt-2 text-xs shrink-0" data-secrets-heading>
             {m.dashboard_secrets_title()}
         </span>
-        <span class="text-muted-foreground text-xs">{m.netpolicy_secret_bindings()}</span>
-        {#each policy.secrets as binding, i (binding.envVar)}
-            <div class="flex items-center gap-2 rounded bg-muted px-2 py-1 text-xs" data-net-policy-secret>
-                <span class="flex-1 truncate font-mono">
-                    ${binding.envVar} ← {binding.secretId} → {binding.hosts.join(", ")}
-                </span>
-                <Button variant="ghost" size="icon" disabled={busy}
-                    onclick={() => mutate((p) => p.secrets.splice(i, 1))}>✕</Button>
-            </div>
+        <span class="text-muted-foreground text-xs">
+            {m.netpolicy_secrets_hint()}
+        </span>
+        {#each policy.secrets as binding (binding.envVar)}
+            {#if editingVar === binding.envVar}
+                {@render secretForm()}
+            {:else}
+                <div class="flex items-center gap-2 rounded bg-muted px-2 py-1 text-xs" data-net-policy-secret={binding.envVar}>
+                    <span class="flex-1 truncate font-mono">${binding.envVar} → {binding.hosts.join(", ")}</span>
+                    <Button variant="ghost" size="icon" disabled={busy} aria-label={m.netpolicy_secret_edit()}
+                        onclick={() => startEdit(binding)} data-secret-edit><PencilIcon class="size-3.5" /></Button>
+                    <Button variant="ghost" size="icon" disabled={busy} aria-label={m.netpolicy_secret_remove()}
+                        onclick={() => removeSecret(binding)} data-secret-remove>✕</Button>
+                </div>
+            {/if}
             {#if unstampedByVar.has(binding.envVar)}
                 <span class="text-xs text-amber-700 dark:text-amber-300" data-net-policy-unstamped={binding.envVar}>
                     Added after this sandbox was created, so ${binding.envVar} is unset inside it. Export it by hand: <!-- TODO(i18n) -->
@@ -371,26 +491,9 @@
                 </span>
             {/if}
         {/each}
-        <div class="flex flex-wrap items-center gap-2">
-            <input class="w-24 rounded border bg-background px-2 py-1 text-xs disabled:opacity-50"
-                placeholder={m.secret_id_placeholder()} bind:value={newSecretId} disabled={busy} data-secret-id />
-            <input class="w-28 rounded border bg-background px-2 py-1 text-xs disabled:opacity-50"
-                placeholder={m.netpolicy_env_var_placeholder()} bind:value={newEnvVar} disabled={busy} />
-            <input class="w-40 rounded border bg-background px-2 py-1 text-xs disabled:opacity-50"
-                placeholder={m.netpolicy_secret_hosts_placeholder()} bind:value={newSecretHosts} disabled={busy} />
-            <Button size="sm" disabled={busy} onclick={addBinding}>
-                {m.netpolicy_bind()}
-            </Button>
-        </div>
-        <div class="flex items-center gap-2">
-            <span class="text-muted-foreground text-xs shrink-0">{m.secret_set_value()}</span>
-            <input class="flex-1 rounded border bg-background px-2 py-1 text-xs disabled:opacity-50"
-                type="password" placeholder={m.secret_value_placeholder()} bind:value={secretValue}
-                disabled={busy} data-secret-value />
-            <Button size="sm" disabled={busy || !newSecretId.trim() || !secretValue.trim()} onclick={saveSecretValue} data-secret-value-save>
-                {m.settings_save()}
-            </Button>
-        </div>
+        {#if editingVar === null}
+            {@render secretForm()}
+        {/if}
         {#if echoWarning}
             <span class="text-xs text-amber-700 dark:text-amber-300" data-net-policy-echo-warning>
                 {m.netpolicy_echo_warning({ hosts: echoWarning })}

@@ -88,6 +88,42 @@ describe("Podman egress boundary — editor gating and failure paths (mock backe
     await workspaceDashboard.netPolicyDrift.waitForExist({ reverse: true, timeout: COMMAND, timeoutMsg: "drift must clear after the apply" });
   });
 
+  it("adds, edits and removes a secret from one form, saving each change at once", async () => {
+    const secretsFile = path.join(APP_DATA_ROOT, "proxy", "secrets.json");
+    const storedValues = (): Record<string, string> => JSON.parse(fs.readFileSync(secretsFile, "utf8"));
+    const onDisk = () => JSON.parse(fs.readFileSync(policyFile, "utf8"));
+    const newId = `${name}-pebui_new`;
+
+    await openNetwork(name);
+    // Replacing the value of the binding written to disk above keeps its own secret id.
+    await workspaceDashboard.editSecret("PEBUI_KEY", { value: `first-${stamp}` });
+    assert.equal(storedValues()[`pebui-${stamp}`], `first-${stamp}`);
+    assert.doesNotMatch(await workspaceDashboard.applyReportText(), /\$PEBUI_KEY/);
+
+    const value = $("[data-secret-form='add'] [data-secret-value]");
+    assert.equal(await value.getAttribute("type"), "password");
+    await $("[data-secret-form='add'] [data-secret-show]").click();
+    assert.equal(await value.getAttribute("type"), "text");
+
+    // An allowlist policy gains an allow rule for a secret host no rule covers.
+    await workspaceDashboard.addSecret("PEBUI_NEW", "new.example.com", `second-${stamp}`);
+    assert.equal(storedValues()[newId], `second-${stamp}`);
+    assert(onDisk().rules.some((r: { host?: string }) => r.host === "new.example.com"), "no allow rule was added");
+    assert.equal(fs.readFileSync(path.join(stateDir, "secrets", "PEBUI_NEW"), "utf8"), `second-${stamp}`);
+    assert.equal(await value.getAttribute("type"), "password", "the value must be masked again after a save");
+
+    // A blank value on edit keeps the stored one.
+    await workspaceDashboard.editSecret("PEBUI_NEW", { hosts: "new.example.com, other.example.com" });
+    const edited = onDisk().secrets.find((b: { envVar: string }) => b.envVar === "PEBUI_NEW");
+    assert.deepEqual(edited.hosts, ["new.example.com", "other.example.com"]);
+    assert.equal(storedValues()[newId], `second-${stamp}`);
+
+    await workspaceDashboard.removeSecret("PEBUI_NEW");
+    assert(!onDisk().secrets.some((b: { envVar: string }) => b.envVar === "PEBUI_NEW"), "the binding is still on disk");
+    assert(!(newId in storedValues()), "the removed secret's value is still stored");
+    assert(!fs.existsSync(path.join(stateDir, "secrets", "PEBUI_NEW")), "the sidecar's secret file outlived the binding");
+  });
+
   it("surfaces a rejected reload and keeps the running config on disk", async () => {
     const configFile = path.join(stateDir, "config", "config.yaml");
     const before = fs.readFileSync(configFile);

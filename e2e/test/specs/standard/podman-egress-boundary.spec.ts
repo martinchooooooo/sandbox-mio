@@ -177,7 +177,7 @@ describe("Podman egress boundary — bounded sandbox on a real machine", functio
     });
     assert(!(await $("[data-proxy-legacy]").isExisting()), "a new sandbox must not show the legacy notice");
 
-    await workspaceDashboard.storeSecretValue(secretId, secretValue);
+    await workspaceDashboard.editSecret(ENV_VAR, { value: secretValue });
     await workspaceDashboard.netPolicyApplyReport.waitForExist({ timeout: SUBPROCESS });
     const report = await workspaceDashboard.applyReportText();
     assert(!report.includes(`$${ENV_VAR}`), `the apply report still lists a missing value: ${report}`);

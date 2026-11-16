@@ -338,11 +338,48 @@ class WorkspaceDashboardPage {
     });
   }
 
-  /** Stores a secret's value; the editor re-applies the policy when it holds no unsaved edits. */
-  async storeSecretValue(secretId: string, value: string): Promise<void> {
-    await this.#typeInto($("[data-secret-id]"), secretId);
-    await this.#typeInto($("[data-secret-value]"), value);
-    await $("[data-secret-value-save]").click();
+  secretRow(envVar: string): Element {
+    return $(`[data-net-policy-secret='${envVar}']`);
+  }
+
+  /** Waits until a secret save or removal settles, failing with the editor's error if one appears. */
+  async #awaitSecretCommit(done: () => Promise<boolean>, what: string): Promise<void> {
+    const error = $("[data-net-policy-error]");
+    await browser.waitUntil(async () => (await error.isExisting()) || (await done()), {
+      timeout: SUBPROCESS,
+      timeoutMsg: `${what} never settled`,
+    });
+    if (await error.isExisting()) throw new Error(`${what} failed: ${await error.getText()}`);
+  }
+
+  /** Adds a secret from the add form; this saves the whole policy and applies it on the sidecar. */
+  async addSecret(envVar: string, hosts: string, value: string): Promise<void> {
+    const form = $("[data-secret-form='add']");
+    await this.#typeInto(form.$("[data-secret-env-var]"), envVar);
+    await this.#typeInto(form.$("[data-secret-hosts]"), hosts);
+    await this.#typeInto(form.$("[data-secret-value]"), value);
+    await form.$("[data-secret-save]").click();
+    // The row renders a tick before the form resets, so wait for both.
+    await this.#awaitSecretCommit(
+      async () => (await this.secretRow(envVar).isExisting()) && (await form.$("[data-secret-env-var]").getValue()) === "",
+      `adding $${envVar}`,
+    );
+  }
+
+  /** Edits a secret's hosts and/or replaces its value; an omitted field keeps its current content. */
+  async editSecret(envVar: string, change: { hosts?: string; value?: string }): Promise<void> {
+    await this.#clickButton(this.secretRow(envVar).$("[data-secret-edit]"));
+    const form = $("[data-secret-form='edit']");
+    await form.waitForExist({ timeout: COMMAND });
+    if (change.hosts !== undefined) await this.#typeInto(form.$("[data-secret-hosts]"), change.hosts);
+    if (change.value !== undefined) await this.#typeInto(form.$("[data-secret-value]"), change.value);
+    await form.$("[data-secret-save]").click();
+    await this.#awaitSecretCommit(async () => !(await form.isExisting()), `editing $${envVar}`);
+  }
+
+  async removeSecret(envVar: string): Promise<void> {
+    await this.#clickButton(this.secretRow(envVar).$("[data-secret-remove]"));
+    await this.#awaitSecretCommit(async () => !(await this.secretRow(envVar).isExisting()), `removing $${envVar}`);
   }
 
   async applyReportText(): Promise<string> {
