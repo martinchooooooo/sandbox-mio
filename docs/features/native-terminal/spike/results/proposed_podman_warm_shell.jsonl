@@ -1,0 +1,8 @@
+{"mode":"shell","spawn":4.0,"kex":324.2,"auth":387.3,"chan":388.5,"pty":388.5,"exec_sent":388.5,"first_byte":390.4,"frame":null,"prompt":416.2,"exit":null,"total":416.3}
+{"mode":"shell","spawn":2.0,"kex":366.1,"auth":429.8,"chan":431.7,"pty":431.7,"exec_sent":431.7,"first_byte":434.4,"frame":null,"prompt":483.4,"exit":null,"total":483.4}
+{"mode":"shell","spawn":1.7,"kex":314.2,"auth":379.6,"chan":380.4,"pty":380.4,"exec_sent":380.4,"first_byte":382.2,"frame":null,"prompt":420.3,"exit":null,"total":420.3}
+{"mode":"shell","spawn":2.2,"kex":342.4,"auth":400.9,"chan":401.8,"pty":401.8,"exec_sent":401.8,"first_byte":403.3,"frame":null,"prompt":430.5,"exit":null,"total":430.5}
+{"mode":"shell","spawn":4.2,"kex":522.7,"auth":602.6,"chan":605.7,"pty":605.7,"exec_sent":605.7,"first_byte":607.5,"frame":null,"prompt":633.8,"exit":null,"total":633.8}
+{"mode":"shell","spawn":1.7,"kex":495.1,"auth":731.4,"chan":756.8,"pty":756.8,"exec_sent":756.8,"first_byte":795.7,"frame":null,"prompt":829.9,"exit":null,"total":829.9}
+{"mode":"shell","spawn":1.6,"kex":354.7,"auth":418.8,"chan":420.1,"pty":420.1,"exec_sent":420.1,"first_byte":422.9,"frame":null,"prompt":450.3,"exit":null,"total":450.3}
+{"mode":"shell","spawn":1.7,"kex":290.4,"auth":351.1,"chan":353.6,"pty":353.6,"exec_sent":353.6,"first_byte":358.7,"frame":null,"prompt":396.1,"exit":null,"total":396.1}

@@ -5,6 +5,10 @@ Records feature status changes only: creation (`Create`), reaching `implemented`
 history with at most one `Create` and one `Implement` entry per feature, so seeded dates are
 approximate. New entries go on top.
 
+## 2026-11-16
+
+* **Create** [native-terminal](native-terminal/index.md): ideation drafted, gating spike not yet run
+
 ## 2026-11-15
 
 * **Implement** [podman-egress-boundary](podman-egress-boundary/index.md): bounded Podman sandboxes behind an iron-proxy sidecar, with live policy apply and audit-fed traffic; Paraglide pass pending user approval

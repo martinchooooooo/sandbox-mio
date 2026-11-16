@@ -11,6 +11,7 @@
 ## In-flight plans
 
 * [native-agent-ui](../features/native-agent-ui/index.md) - in-progress, changes agents.md, workspace-ui.md, inference.md: Built-in chat UI in the app's own frontend, driving pi inside the sandbox over its RPC mode, kept alive by an in-sandbox supervisor.
+* [native-terminal](../features/native-terminal/index.md) - in-progress, changes workspace-ui.md, transport.md: Faster terminal startup: render the sandbox terminal in the main webview over a Rust-owned SSH session that attaches zellij, replacing the zellij web child webview.
 * [onboarding-story](../features/onboarding-story/index.md) - in-progress, changes workspace-ui.md: Illustrated onboarding book inside the welcome flow, extensible by chapter, with first-run setup running in the background and reported through the activity center.
 * [unified-sidebar-nav](../features/unified-sidebar-nav/index.md) - in-progress, changes workspace-ui.md: One persistent left sidebar replaces the top page tabs and the multi-sandbox switcher bar, pages use the full content area, and navigation labels speak plain language.
 * [host-tool-ssh-access](../features/host-tool-ssh-access/index.md) - planned, changes transport.md: Let host SSH clients (e.g. the Claude Code desktop app) attach to a sandbox over the existing exec transport.

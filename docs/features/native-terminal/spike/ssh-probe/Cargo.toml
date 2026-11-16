@@ -1,0 +1,12 @@
+[package]
+name = "ssh-probe"
+version = "0.0.0"
+edition = "2021"
+
+# Standalone on purpose: not a member of any workspace, nothing in src-tauri depends on it.
+[workspace]
+
+[dependencies]
+# `ring` instead of the default aws-lc-rs: aws-lc-sys needs NASM on Windows, which this host lacks.
+russh = { version = "0.65.1", default-features = false, features = ["ring", "flate2", "rsa"] }
+tokio = { version = "1", features = ["full"] }

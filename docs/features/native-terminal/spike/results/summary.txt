@@ -1,0 +1,32 @@
+## current_cold.json  n=7
+  start=391 (377-437)  status=477 (387-581)  daemonize=448 (417-608)  token=416 (367-609)  forward=647 (560-751)  first200=8 (4-30)  chainToFirst200=2486 (2181-2817)  load1=574 (531-976)  assetBytes=478354 (478354-478354)  login=81 (62-92)  load2htmlOnly=47 (43-52)  total=3199 (2890-3586)
+## current_warm.json  n=7
+  start=291 (238-315)  status=426 (382-503)  daemonize=0 (0-0)  token=381 (321-522)  forward=585 (505-667)  first200=7 (4-33)  chainToFirst200=1767 (1564-1941)  load1=593 (564-672)  assetBytes=478354 (478354-478354)  login=66 (53-86)  load2htmlOnly=46 (44-48)  total=2428 (2266-2641)
+## msb_exec_true_ms.txt  n=8
+  ms=87 (73-98)
+## openssh_true_ms.txt  n=8
+  ms=546 (502-624)
+## podman_exec_true_ms.txt  n=8
+  ms=421 (387-576)
+## proposed_msb_cold_start_ms.txt  n=8
+  ms=656 (542-751)
+## proposed_msb_cold_zellij.jsonl  n=8
+  mode=zellij  spawn=6 (4-8)  kex=114 (85-128)  auth=132 (103-146)  chan=135 (106-150)  pty=135 (106-150)  exec_sent=135 (106-150)  first_byte=523 (446-690)  frame=985 (910-1195)  prompt=  exit=  total=2027 (1940-2221)  frame1_max_row=40 (40-40)  frame1_max_col=120 (120-120)  resize_first_byte_ms=23 (16-35)  resize_bytes=23513 (23406-24733)  frame2_max_row=50 (50-50)  frame2_max_col=160 (160-160)
+## proposed_msb_warm_shell.jsonl  n=8
+  mode=shell  spawn=2 (2-4)  kex=68 (45-107)  auth=86 (64-124)  chan=89 (65-125)  pty=89 (65-125)  exec_sent=89 (65-125)  first_byte=194 (154-215)  frame=  prompt=228 (198-248)  exit=  total=228 (198-248)
+## proposed_msb_warm_true.jsonl  n=8
+  mode=true  spawn=2 (2-6)  kex=66 (57-102)  auth=84 (75-121)  chan=86 (77-123)  pty=86 (77-123)  exec_sent=86 (77-123)  first_byte=  frame=  prompt=  exit=218 (167-248)  total=218 (167-248)
+## proposed_msb_warm_zellij.jsonl  n=8
+  mode=zellij  spawn=3 (2-4)  kex=61 (53-71)  auth=80 (71-88)  chan=81 (73-89)  pty=81 (73-89)  exec_sent=81 (73-89)  first_byte=306 (265-388)  frame=403 (340-919)  prompt=  exit=  total=1436 (1370-1953)  frame1_max_row=40 (40-40)  frame1_max_col=120 (120-120)  resize_first_byte_ms=21 (18-25)  resize_bytes=23695 (23693-23699)  frame2_max_row=50 (50-50)  frame2_max_col=160 (160-160)
+## proposed_podman_cold_start_ms.txt  n=8
+  ms=402 (369-527)
+## proposed_podman_cold_zellij-new.jsonl  n=8
+  mode=zellij-new  spawn=5 (3-7)  kex=301 (276-395)  auth=366 (338-477)  chan=368 (339-500)  pty=368 (339-500)  exec_sent=368 (339-500)  first_byte=490 (449-653)  frame=706 (624-854)  prompt=  exit=  total=1742 (1649-1883)  frame1_max_row=40 (40-40)  frame1_max_col=120 (120-120)  resize_first_byte_ms=20 (17-67)  resize_bytes=23535 (23406-23756)  frame2_max_row=50 (50-50)  frame2_max_col=160 (160-160)
+## proposed_podman_warm_shell.jsonl  n=8
+  mode=shell  spawn=2 (2-4)  kex=349 (290-523)  auth=410 (351-731)  chan=411 (354-757)  pty=411 (354-757)  exec_sent=411 (354-757)  first_byte=413 (359-796)  frame=  prompt=440 (396-830)  exit=  total=440 (396-830)
+## proposed_podman_warm_true.jsonl  n=8
+  mode=true  spawn=2 (2-4)  kex=318 (280-343)  auth=379 (342-406)  chan=380 (343-407)  pty=380 (343-407)  exec_sent=380 (343-407)  first_byte=  frame=  prompt=  exit=402 (365-440)  total=402 (365-440)
+## proposed_podman_warm_zellij-new.jsonl  n=8
+  mode=zellij-new  spawn=2 (1-5)  kex=344 (303-353)  auth=405 (362-415)  chan=406 (363-416)  pty=406 (363-416)  exec_sent=406 (363-416)  first_byte=521 (471-556)  frame=712 (669-742)  prompt=  exit=  total=1741 (1700-1783)  frame1_max_row=40 (40-40)  frame1_max_col=120 (120-120)  resize_first_byte_ms=24 (19-31)  resize_bytes=23485 (23460-30386)  frame2_max_row=50 (50-50)  frame2_max_col=160 (160-160)
+## proposed_podman_warm_zellij.jsonl  n=8
+  mode=zellij  spawn=3 (2-4)  kex=372 (300-413)  auth=433 (359-475)  chan=434 (360-476)  pty=434 (360-476)  exec_sent=434 (360-476)  first_byte=540 (465-591)  frame=636 (540-722)  prompt=  exit=  total=1660 (1564-1767)  frame1_max_row=40 (40-40)  frame1_max_col=120 (120-120)  resize_first_byte_ms=22 (19-30)  resize_bytes=23695 (23693-23695)  frame2_max_row=50 (50-50)  frame2_max_col=160 (160-160)

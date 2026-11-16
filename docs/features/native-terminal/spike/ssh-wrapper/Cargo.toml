@@ -1,0 +1,10 @@
+[package]
+name = "ssh-wrapper"
+version = "0.0.0"
+edition = "2021"
+
+[workspace]
+
+[[bin]]
+name = "ssh"
+path = "src/main.rs"
