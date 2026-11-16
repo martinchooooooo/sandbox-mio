@@ -5,7 +5,7 @@ feature: native-agent-ui
 ---
 # Native Agent UI Build Plan
 
-This document is the build plan for a chat view, rendered in the app's main webview, that drives the pi coding agent running inside a sandbox in pi's JSON-lines RPC mode. It continues `docs/features/native-agent-ui/01_ideas.md` and supersedes it wherever the two differ; the most important difference is the host-to-sandbox transport (Resolved Decision 1). Spike 01 (`docs/features/native-agent-ui/spike/01_pi-rpc-supervisor.md`) validated the in-sandbox supervisor this plan productionises. Status: Phases A to F are implemented; Phase G (translations and architecture documents) remains. Phase B's hand verification is covered on Podman by the standard spec `e2e/test/specs/standard/agent-chat.spec.ts` and remains outstanding on microsandbox.
+This document is the build plan for a chat view, rendered in the app's main webview, that drives the pi coding agent running inside a sandbox in pi's JSON-lines RPC mode. It continues `docs/features/native-agent-ui/01_ideas.md` and supersedes it wherever the two differ; the most important difference is the host-to-sandbox transport (Resolved Decision 1). Spike 01 (`docs/features/native-agent-ui/spike/01_pi-rpc-supervisor.md`) validated the in-sandbox supervisor this plan productionises. Status: Phases A to G are implemented. Phase B's hand verification is covered on Podman by the standard spec `e2e/test/specs/standard/agent-chat.spec.ts` and remains outstanding on microsandbox.
 
 ## The Concrete Model
 
@@ -146,7 +146,7 @@ The hand verification in the bullet at the end of this section passed on Podman 
 - `src/lib/components/ai-elements/`: the AI Elements building blocks, installed and restyled by hand (`border-2`, `shadow-md`, `rounded-md`). The prompt input is the existing `input-group`; Reasoning and Tool are composed from `trace` and `code-block` in `src/lib/agent-chat/`. Markdown renders through `svelte-streamdown` (Resolved Decision 10).
 - `src/lib/agent-chat/pi-events.ts` mutates the store's state in place and returns effects (`notify`, `setEditorText`, `settled`) for the store to perform, so it stays IO-free while streaming deltas stay cheap. `response` records bypass the per-frame batch so request latency does not depend on rendering.
 - `src/lib/agent-chat/ChatView.svelte`, `MessageList.svelte`, `ToolPart.svelte`, `ReasoningPart.svelte`, `Markdown.svelte`: render by part type; tool rendering is keyed by tool name, with `bash` using a terminal-style output block and file edits a removed/added code block. `Markdown.svelte` opens links with the system browser, because a followed link would navigate the main webview away.
-- User-facing strings are English literals until the user approves the working feature (feature-implement skill); Phase G moves them into Paraglide.
+- User-facing strings are English literals until the user approves the working feature (feature-implement skill); Phase G moved them into Paraglide under the `agent_chat_` key prefix.
 
 ## Implemented: Phase F — Chat features
 
@@ -165,12 +165,12 @@ The hand verification in the bullet at the end of this section passed on Podman 
 - **Update pi** reruns `install_agent` for the pinned spec and provisioning, then stops the supervisor and attaches fresh, so the new binary runs.
 - The composer keeps a right gutter, because the activity bell is fixed in the window's bottom-right corner and covered the Send button.
 
-## Remaining: Phase G — Translations and architecture
+## Implemented: Phase G — Translations and architecture
 
-- Move every chat string into `messages/en.json`, `messages/de.json` and `messages/ru.json` after the user approves the working feature.
-- `docs/architecture/agents.md`: the native chat, the in-sandbox supervisor and its own session directory.
-- `docs/architecture/workspace-ui.md`: a pane kind with no webview and no forward; the invariant that every pane is backed by a Mutagen forward no longer holds.
-- `docs/architecture/inference.md`: the llama server always runs with an explicit context size.
+- Every chat string moved into `messages/en.json`, `messages/de.json` and `messages/ru.json` after the user approved the working feature; no `TODO(i18n)` marker remains under `src/lib/agent-chat/`.
+- `docs/architecture/agents.md` gained a Native Chat section: the native chat, the in-sandbox supervisor and its own session directory.
+- `docs/architecture/workspace-ui.md` now records a pane kind with no webview and no forward, replacing the invariant that every pane is backed by a Mutagen forward.
+- `docs/architecture/inference.md` now records that the llama server always runs with an explicit context size.
 
 ## Lifecycle and Cross-Cutting Concerns
 

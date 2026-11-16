@@ -4,6 +4,7 @@
     import { Input } from "$lib/components/ui/input/index.js";
     import { Textarea } from "$lib/components/ui/textarea/index.js";
     import type { PendingDialog } from "./types";
+    import { m } from "$lib/paraglide/messages.js";
 
     /** An extension dialog pi is blocked on, rendered in the AI Elements Confirmation pattern.
      * `answer` receives the `extension_ui_response` payload. */
@@ -40,14 +41,14 @@
     {/if}
     <Item.Actions class="flex flex-wrap justify-end gap-2">
         <Button size="sm" variant="ghost" {disabled} onclick={() => answer({ cancelled: true })} data-dialog-cancel>
-            Dismiss <!-- TODO(i18n) -->
+            {m.agent_chat_dismiss()}
         </Button>
         {#if dialog.method === "confirm"}
             <Button size="sm" variant="outline" {disabled} onclick={() => answer({ confirmed: false })} data-dialog-no>
-                No <!-- TODO(i18n) -->
+                {m.agent_chat_no()}
             </Button>
             <Button size="sm" {disabled} onclick={() => answer({ confirmed: true })} data-dialog-yes>
-                Yes <!-- TODO(i18n) -->
+                {m.agent_chat_yes()}
             </Button>
         {:else if dialog.method === "select"}
             {#each dialog.options as option (option)}
@@ -57,7 +58,7 @@
             {/each}
         {:else}
             <Button size="sm" {disabled} onclick={() => answer({ value: text })} data-dialog-submit>
-                Submit <!-- TODO(i18n) -->
+                {m.agent_chat_submit()}
             </Button>
         {/if}
     </Item.Actions>

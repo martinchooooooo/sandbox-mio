@@ -3,6 +3,7 @@ import { toast } from "svelte-sonner";
 import { parseError } from "$lib/errors";
 import { AGENTS, onboardingSeed } from "$lib/agents/catalogue";
 import { PI_PINNED_VERSION } from "$lib/agents/pi";
+import { m } from "$lib/paraglide/messages.js";
 import { provisionAgent } from "$lib/agents/provision";
 import type { InferenceStatus } from "$lib/models/types";
 import { applyPiRecord, emptyChatState, messagesFromHistory, resolveDialog, toPendingDialog } from "./pi-events";
@@ -137,7 +138,7 @@ export class ChatStore {
     async detach(): Promise<void> {
         this.#channel = null;
         this.connection = "idle";
-        this.#rejectAll("detached"); // TODO(i18n)
+        this.#rejectAll(m.agent_chat_error_detached());
         try {
             await invoke("agent_chat_detach", { name: this.sandbox });
         } catch (e) {
@@ -152,7 +153,7 @@ export class ChatStore {
         const response = new Promise<unknown>((resolve, reject) => {
             const timer = setTimeout(() => {
                 this.#pending.delete(id);
-                reject(new Error(`${String(command.type)} timed out`)); // TODO(i18n)
+                reject(new Error(m.agent_chat_error_timeout({ command: String(command.type) })));
             }, REQUEST_TIMEOUT_MS);
             this.#pending.set(id, { resolve, reject, timer });
         });
@@ -262,7 +263,7 @@ export class ChatStore {
         await this.#act("stop", async () => {
             this.#channel = null;
             await invoke("agent_chat_stop", { name: this.sandbox });
-            this.#rejectAll("stopped"); // TODO(i18n)
+            this.#rejectAll(m.agent_chat_error_stopped());
             this.chat.run = "idle";
             this.connection = "stopped";
         });
@@ -332,7 +333,7 @@ export class ChatStore {
         if (record.type === "mio_detached") {
             this.#channel = null;
             this.connection = "disconnected";
-            this.#rejectAll("disconnected"); // TODO(i18n)
+            this.#rejectAll(m.agent_chat_error_disconnected());
             return;
         }
         if (event.end !== null && this.#cursor) this.#cursor.offset = event.end;
@@ -377,7 +378,7 @@ export class ChatStore {
         if (!pending) return;
         clearTimeout(pending.timer);
         this.#pending.delete(id);
-        if (record.success === false) pending.reject(new Error(String(record.error ?? "command failed"))); // TODO(i18n)
+        if (record.success === false) pending.reject(new Error(String(record.error ?? m.agent_chat_error_command_failed())));
         else pending.resolve(record.data);
     }
 

@@ -6,14 +6,12 @@
 * [Remote Deploy and Sync](remote.md) - Moving a Podman sandbox to a remote Podman host while its workspace stays editable on the laptop: hosts, deploy, deployment state, undeploy and destroy.
 * [Testing](testing.md) - The verification layers, the process-level mock seam behind the fast e2e tier, and how concurrent e2e runs stay isolated; spec-writing rules are in e2e/AGENTS.md.
 * [Transport: SSH Aliases, Mutagen and Ports](transport.md) - How the app reaches services inside a sandbox: per-sandbox SSH aliases tunnelled through the engine's exec, Mutagen sync sessions and forwards, and port exposure.
-* [Workspace UI: Window, Panes and Tabs](workspace-ui.md) - The single app window, the Rust-owned registry of embedded terminal and agent panes, the Manage tab and launchable apps, and terminal auto-login.
+* [Workspace UI: Window, Panes and Tabs](workspace-ui.md) - The single app window, the Rust-owned registry of embedded terminal, agent web UI and native chat panes, the Manage tab and launchable apps, and terminal auto-login.
 
 ## In-flight plans
 
-* [native-agent-ui](../features/native-agent-ui/index.md) - in-progress, changes agents.md, workspace-ui.md, inference.md: Built-in chat UI in the app's own frontend, driving pi inside the sandbox over its RPC mode, kept alive by an in-sandbox supervisor.
 * [native-terminal](../features/native-terminal/index.md) - in-progress, changes workspace-ui.md, transport.md: Faster terminal startup: render the sandbox terminal in the main webview over a Rust-owned SSH session that attaches zellij, replacing the zellij web child webview.
 * [onboarding-story](../features/onboarding-story/index.md) - in-progress, changes workspace-ui.md: Illustrated onboarding book inside the welcome flow, extensible by chapter, with first-run setup running in the background and reported through the activity center.
-* [unified-sidebar-nav](../features/unified-sidebar-nav/index.md) - in-progress, changes workspace-ui.md: One persistent left sidebar replaces the top page tabs and the multi-sandbox switcher bar, pages use the full content area, and navigation labels speak plain language.
 * [host-tool-ssh-access](../features/host-tool-ssh-access/index.md) - planned, changes transport.md: Let host SSH clients (e.g. the Claude Code desktop app) attach to a sandbox over the existing exec transport.
 * [proxy-credential-secrets](../features/proxy-credential-secrets/index.md) - planned, changes network.md, agents.md: Source proxy secret-injection values from the credential store instead of hand-entered values.
 * [proxy-toggle-management](../features/proxy-toggle-management/index.md) - planned, changes network.md, providers.md: App-global proxy default and turning the proxy on or off for an existing sandbox by recreating it.

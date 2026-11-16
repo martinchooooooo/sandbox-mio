@@ -1,5 +1,6 @@
 <script lang="ts">
     import * as Trace from "$lib/components/ai-elements/trace/index.js";
+    import { m } from "$lib/paraglide/messages.js";
 
     let { text, streaming }: { text: string; streaming: boolean } = $props();
 </script>
@@ -8,7 +9,7 @@
     <Trace.Collapsible>
         <Trace.CollapsibleTrigger>
             <Trace.Line status={streaming ? "running" : undefined}>
-                <Trace.Title>{streaming ? "Thinking…" : "Thought"}</Trace.Title><!-- TODO(i18n) -->
+                <Trace.Title>{streaming ? m.agent_chat_thinking_active() : m.agent_chat_thought()}</Trace.Title>
             </Trace.Line>
         </Trace.CollapsibleTrigger>
         <Trace.CollapsibleContent>

@@ -3,9 +3,9 @@ type: architecture
 title: "Local Inference"
 description: "Running a language model on the host (hardware probe, recommendation, downloads, the llama.cpp and Foundry Local engines) and offering it to sandboxes."
 generated:
-  by: claude-code/opus-5-5
-  at: 2026-11-10T18:00:00+11:00
-stale_after: 2027-02-05T00:00:00+11:00
+  by: claude-code/sonnet-5-5
+  at: 2026-11-17T12:00:00+11:00
+stale_after: 2027-02-17T00:00:00+11:00
 code:
   - src-tauri/src/inference/
   - src-tauri/src/commands/inference.rs
@@ -16,6 +16,7 @@ sources:
   - resource: docs/features/local-llm/02_dev.md
   - resource: docs/features/models-page-caching/02_dev.md
   - resource: docs/features/local-llm-reachability/02_dev.md
+  - resource: docs/features/native-agent-ui/02_dev.md
 ---
 # Local Inference
 
@@ -31,10 +32,11 @@ The app can run a language model on the user's machine and offer it to sandboxes
 
 | Engine | How it ships | Notes |
 |---|---|---|
-| llama.cpp (Vulkan) | Bundled `llama-server`, staged as a resource directory | Tuning knobs come from app settings |
+| llama.cpp (Vulkan) | Bundled `llama-server`, staged as a resource directory | Tuning knobs come from app settings; always started with an explicit context size |
 | Foundry Local | Microsoft's `foundry` CLI, installed through winget on request | Picks an NPU, GPU or CPU variant per device; loads models non-interactively |
 
 - Each engine declares its setup steps as data, so the UI can show the whole plan before running it.
+- Agents learn each model's context window from the catalogue, capped at the engine's context size.
 - Starting picks a free host loopback port, starts the engine, and returns once the server's health check passes. One server runs at a time.
 
 ## Reaching the Server from Sandboxes

@@ -6,6 +6,7 @@
     import { Progress } from "$lib/components/ui/progress/index.js";
     import { Button } from "$lib/components/ui/button/index.js";
     import type { ChatStore } from "./chat.svelte";
+    import { m } from "$lib/paraglide/messages.js";
 
     let { store }: { store: ChatStore } = $props();
 
@@ -16,7 +17,7 @@
     const disabled = $derived(store.connection !== "attached" || !store.writer || store.chat.run === "running");
 
     function sessionLabel(s: (typeof store.sessions)[number]): string {
-        return s.name ?? s.firstMessage ?? "Empty session"; // TODO(i18n)
+        return s.name ?? s.firstMessage ?? m.agent_chat_session_empty();
     }
 </script>
 
@@ -25,7 +26,7 @@
         <DropdownMenu.Trigger>
             {#snippet child({ props })}
                 <Button {...props} size="sm" variant="outline" {disabled} data-chat-model={model?.id ?? ""}>
-                    {model?.name ?? "No model"} <!-- TODO(i18n) -->
+                    {model?.name ?? m.agent_chat_no_model()}
                     <HugeiconsIcon icon={ArrowDown01Icon} />
                 </Button>
             {/snippet}
@@ -50,7 +51,7 @@
             <DropdownMenu.Trigger>
                 {#snippet child({ props })}
                     <Button {...props} size="sm" variant="ghost" {disabled} data-chat-thinking={thinkingLevel}>
-                        Thinking: {thinkingLevel} <!-- TODO(i18n) -->
+                        {m.agent_chat_thinking({ level: thinkingLevel })}
                     </Button>
                 {/snippet}
             </DropdownMenu.Trigger>
@@ -73,11 +74,10 @@
                 {percent}%
             </HoverCard.Trigger>
             <HoverCard.Content class="w-64 text-xs">
-                <p class="font-medium">Context window</p> <!-- TODO(i18n) -->
+                <p class="font-medium">{m.agent_chat_context_title()}</p>
                 <p class="text-muted-foreground">
-                    {context.used.toLocaleString()} of {context.window.toLocaleString()} tokens used. pi compacts
-                    the conversation when it nears the limit.
-                </p><!-- TODO(i18n) -->
+                    {m.agent_chat_context_usage({ used: context.used.toLocaleString(), window: context.window.toLocaleString() })}
+                </p>
             </HoverCard.Content>
         </HoverCard.Root>
     {/if}
@@ -85,14 +85,14 @@
     <DropdownMenu.Root onOpenChange={(open: boolean) => open && store.loadSessions()}>
         <DropdownMenu.Trigger>
             {#snippet child({ props })}
-                <Button {...props} size="icon" variant="ghost" aria-label="Sessions" data-chat-sessions><!-- TODO(i18n) -->
+                <Button {...props} size="icon" variant="ghost" aria-label={m.agent_chat_sessions()} data-chat-sessions>
                     <HugeiconsIcon icon={Clock01Icon} />
                 </Button>
             {/snippet}
         </DropdownMenu.Trigger>
         <DropdownMenu.Content align="end" class="max-h-96 w-72 overflow-y-auto">
             <DropdownMenu.Item {disabled} onSelect={() => store.newSession()} data-chat-new-session>
-                New session <!-- TODO(i18n) -->
+                {m.agent_chat_new_session()}
             </DropdownMenu.Item>
             {#if store.sessions.length > 0}
                 <DropdownMenu.Separator />
@@ -105,8 +105,8 @@
                         <div class="flex min-w-0 flex-col">
                             <span class="truncate">{sessionLabel(session)}</span>
                             <span class="text-xs text-muted-foreground">
-                                {new Date(session.modifiedMs).toLocaleString()} · {session.messageCount} messages
-                            </span><!-- TODO(i18n) -->
+                                {m.agent_chat_session_meta({ date: new Date(session.modifiedMs).toLocaleString(), count: session.messageCount })}
+                            </span>
                         </div>
                     </DropdownMenu.Item>
                 {/each}
@@ -117,7 +117,7 @@
     <DropdownMenu.Root>
         <DropdownMenu.Trigger>
             {#snippet child({ props })}
-                <Button {...props} size="icon" variant="ghost" aria-label="Chat menu" data-chat-menu><!-- TODO(i18n) -->
+                <Button {...props} size="icon" variant="ghost" aria-label={m.agent_chat_menu()} data-chat-menu>
                     <HugeiconsIcon icon={MoreHorizontalIcon} />
                 </Button>
             {/snippet}
@@ -128,7 +128,7 @@
                 onSelect={() => store.stopAgent()}
                 data-chat-stop-agent
             >
-                Stop agent <!-- TODO(i18n) -->
+                {m.agent_chat_stop_agent()}
             </DropdownMenu.Item>
         </DropdownMenu.Content>
     </DropdownMenu.Root>

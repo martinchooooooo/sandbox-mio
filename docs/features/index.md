@@ -3,11 +3,9 @@
 
 ## in-progress
 
-* [native-agent-ui](native-agent-ui/index.md) - Built-in chat UI in the app's own frontend, driving pi inside the sandbox over its RPC mode, kept alive by an in-sandbox supervisor.
 * [native-terminal](native-terminal/index.md) - Faster terminal startup: render the sandbox terminal in the main webview over a Rust-owned SSH session that attaches zellij, replacing the zellij web child webview.
 * [onboarding-story](onboarding-story/index.md) - Illustrated onboarding book inside the welcome flow, extensible by chapter, with first-run setup running in the background and reported through the activity center.
 * [retro-ui-migration](retro-ui-migration/index.md) - Re-skin the UI primitives with the retro-ui-svelte registry (Sunset Orange, rounded).
-* [unified-sidebar-nav](unified-sidebar-nav/index.md) - One persistent left sidebar replaces the top page tabs and the multi-sandbox switcher bar, pages use the full content area, and navigation labels speak plain language.
 
 ## planned
 
@@ -41,6 +39,7 @@
 * [microsandbox-provider](microsandbox-provider/index.md) - microsandbox (libkrun microVMs via the msb CLI) as a second machine provider alongside Podman.
 * [models-page-caching](models-page-caching/index.md) - Make the /models route instant on repeat visits by caching the host-spec probe.
 * [mutagen-transport](mutagen-transport/index.md) - Provider-neutral port forwarding and workspace transport over the Mutagen sidecar.
+* [native-agent-ui](native-agent-ui/index.md) - Built-in chat UI in the app's own frontend, driving pi inside the sandbox over its RPC mode, kept alive by an in-sandbox supervisor.
 * [nav-responsive](nav-responsive/index.md) - Responsive layout for the NavigationColumn's collapsed rail and expanded sidebar.
 * [network-proxy](network-proxy/index.md) - Per-sandbox mitmproxy sidecar for outbound traffic inspection and secret injection.
 * [opencode-agent](opencode-agent/index.md) - OpenCode as an installable agent, pre-wired to the host local-LLM inference server.
@@ -61,6 +60,7 @@
 * [scriptable-mock-backend](scriptable-mock-backend/index.md) - Runtime-scriptable mocks so light e2e specs can simulate failures and non-happy states.
 * [shared-agent-auth](shared-agent-auth/index.md) - Host-side credential store so an agent login is done once and reused across sandboxes.
 * [techdebt-sweep](techdebt-sweep/index.md) - Resolve the open tech debt found by the 2026-11-07 audit: msb build locks, duplicated Podman bring-up, the legacy relay path, secrets on disk and in logs, unbounded calls.
+* [unified-sidebar-nav](unified-sidebar-nav/index.md) - One persistent left sidebar replaces the top page tabs and the multi-sandbox switcher bar, pages use the full content area, and navigation labels speak plain language.
 * [web-terminal](web-terminal/index.md) - Interactive Zellij web terminal for each sandbox, shown inside the app.
 * [welcome-onboarding](welcome-onboarding/index.md) - First-run hero and onboarding flow that sets up the VM and base image.
 * [workspace-app-tabs](workspace-app-tabs/index.md) - Open a sandbox on a Manage launcher tab and let the user open app tabs from it.

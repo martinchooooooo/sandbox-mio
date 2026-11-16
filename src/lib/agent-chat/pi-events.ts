@@ -9,6 +9,7 @@ import type {
     PiRecord,
     Usage,
 } from "./types";
+import { m } from "$lib/paraglide/messages.js";
 
 /** The adapter from pi RPC records to chat state. Deterministic and IO-free: it mutates `state`
  * in place (cheap for streaming deltas) and returns effects for the store to perform. Written
@@ -101,9 +102,9 @@ function assistantParts(content: unknown, previous: ChatPart[]): ChatPart[] {
 
 function errorNotice(message: Obj): ChatPart | null {
     const reason = str(message.stopReason);
-    if (reason === "aborted") return { type: "notice", kind: "aborted", text: "Stopped" }; // TODO(i18n)
+    if (reason === "aborted") return { type: "notice", kind: "aborted", text: m.agent_chat_notice_stopped() };
     if (reason === "error") {
-        return { type: "notice", kind: "error", text: str(message.errorMessage) || "The model request failed" }; // TODO(i18n)
+        return { type: "notice", kind: "error", text: str(message.errorMessage) || m.agent_chat_notice_request_failed() };
     }
     return null;
 }
@@ -333,16 +334,16 @@ export function applyPiRecord(state: ChatState, record: PiRecord): PiEffect[] {
             };
             return [];
         case "compaction_start":
-            pushNotice(state, "compaction", "Compacting the conversation to fit the context window…"); // TODO(i18n)
+            pushNotice(state, "compaction", m.agent_chat_notice_compacting());
             return [];
         case "compaction_end": {
             const result = obj(record.result);
             const text =
                 record.aborted === true
-                    ? "Compaction was cancelled" // TODO(i18n)
+                    ? m.agent_chat_notice_compaction_cancelled()
                     : record.result
-                      ? `Compacted ${num(result.tokensBefore).toLocaleString()} tokens into a summary` // TODO(i18n)
-                      : `Compaction failed: ${str(record.errorMessage)}`; // TODO(i18n)
+                      ? m.agent_chat_notice_compacted({ tokens: num(result.tokensBefore).toLocaleString() })
+                      : m.agent_chat_notice_compaction_failed({ error: str(record.errorMessage) });
             pushNotice(state, record.result ? "compaction" : "error", text);
             return [];
         }
@@ -350,16 +351,20 @@ export function applyPiRecord(state: ChatState, record: PiRecord): PiEffect[] {
             pushNotice(
                 state,
                 "retry",
-                `Retrying (attempt ${num(record.attempt)} of ${num(record.maxAttempts)}): ${str(record.errorMessage)}`, // TODO(i18n)
+                m.agent_chat_notice_retrying({
+                    attempt: num(record.attempt),
+                    max: num(record.maxAttempts),
+                    error: str(record.errorMessage),
+                }),
             );
             return [];
         case "auto_retry_end":
             if (record.success !== true) {
-                pushNotice(state, "error", `Retries exhausted: ${str(record.finalError)}`); // TODO(i18n)
+                pushNotice(state, "error", m.agent_chat_notice_retries_exhausted({ error: str(record.finalError) }));
             }
             return [];
         case "extension_error":
-            pushNotice(state, "error", `Extension error: ${str(record.error)}`); // TODO(i18n)
+            pushNotice(state, "error", m.agent_chat_notice_extension_error({ error: str(record.error) }));
             return [];
         case "extension_ui_request":
             return applyUiRequest(state, record);

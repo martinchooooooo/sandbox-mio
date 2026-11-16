@@ -1,4 +1,4 @@
-* [Feature status](feature.md) - in-progress: Built-in chat UI in the app's own frontend, driving pi inside the sandbox over its RPC mode, kept alive by an in-sandbox supervisor.
+* [Feature status](feature.md) - implemented: Built-in chat UI in the app's own frontend, driving pi inside the sandbox over its RPC mode, kept alive by an in-sandbox supervisor.
 * [Native Agent UI Ideas](01_ideas.md) - ideation and scope
 * [Native Agent UI Build Plan](02_dev.md) - build plan: phases and resolved decisions
 * [Native Agent UI E2E](03_e2e.md) - end-to-end test plan
