@@ -47,7 +47,17 @@ pub fn default_terminal_host(registry: Arc<ProviderRegistry>) -> Arc<dyn Termina
 /// (`docs/features/native-terminal/02_dev.md`, Resolved Decision 7).
 fn session_commands(name: &str) -> (Vec<String>, String) {
     let create = ["zellij", "attach", "--create-background", name].map(String::from).to_vec();
-    (create, format!("zellij attach {name}"))
+    (create, format!("zellij attach {}", shell_quote(name)))
+}
+
+/// Quotes `word` for the remote shell `sshd` runs the client command through; plain words stay
+/// bare.
+fn shell_quote(word: &str) -> String {
+    let plain = !word.is_empty() && word.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'));
+    if plain {
+        return word.to_string();
+    }
+    format!("'{}'", word.replace('\'', "'\\''"))
 }
 
 /// Whether a failed `--create-background` failed only because the session is already running.
@@ -266,7 +276,7 @@ async fn shut(handle: Handle<ssh::Client>, mut child: Child) {
 
 #[cfg(test)]
 mod tests {
-    use super::{session_already_running, session_commands};
+    use super::{session_already_running, session_commands, shell_quote};
 
     #[test]
     fn a_running_session_is_not_a_create_failure() {
@@ -281,5 +291,15 @@ mod tests {
         let (create, client) = session_commands("demo");
         assert_eq!(create, ["zellij", "attach", "--create-background", "demo"]);
         assert_eq!(client, "zellij attach demo");
+    }
+
+    #[test]
+    fn the_client_command_quotes_a_name_for_the_shell() {
+        assert_eq!(shell_quote("demo-1.x_y"), "demo-1.x_y");
+        assert_eq!(shell_quote("a b"), "'a b'");
+        assert_eq!(shell_quote("x;rm -rf /"), "'x;rm -rf /'");
+        assert_eq!(shell_quote("it's"), "'it'\\''s'");
+        assert_eq!(shell_quote(""), "''");
+        assert_eq!(session_commands("a$b").1, "zellij attach 'a$b'");
     }
 }

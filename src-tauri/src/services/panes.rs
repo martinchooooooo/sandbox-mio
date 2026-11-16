@@ -26,6 +26,8 @@ pub async fn attach_terminal_session(
     terminal: &Arc<dyn TerminalHost>,
     app: &tauri::AppHandle,
 ) -> Result<(), AppError> {
+    // Before any key is created: the name reaches a remote shell and names files on the host.
+    crate::backends::validate_name(name)?;
     let route = router.locate(name).await?;
     let identity_path = crate::backends::ensure_sandbox_identity(app, name)?;
     let known_hosts_path = crate::backends::sandbox_known_hosts_path(&identity_path);
