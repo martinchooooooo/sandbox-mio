@@ -27,6 +27,8 @@ const WORKDIR: &str = "/root/work";
 /// Bounds the exec spawn, handshake and session creation together; a remote Podman exec is the
 /// slowest of them.
 const ATTACH_TIMEOUT: Duration = Duration::from_secs(60);
+/// Total time `detach_all` waits for session tasks to end on app exit.
+const EXIT_TIMEOUT: Duration = Duration::from_secs(3);
 /// Input and resize commands queued per session before a sender waits.
 const COMMAND_QUEUE: usize = 256;
 
@@ -179,8 +181,25 @@ impl TerminalHost for SshTerminalHost {
         self.sessions.lock().await.detach(name);
     }
 
+    // Dropping the senders ends the tasks, which kill their exec children; the process may exit
+    // before a detached task ever runs, and Windows does not kill children with their parent, so
+    // the tasks are awaited here. On timeout, aborting drops each task's `kill_on_drop` child.
     async fn detach_all(&self) {
-        self.sessions.lock().await.drain();
+        let mut tasks = self.sessions.lock().await.drain();
+        let wait = async {
+            for task in tasks.iter_mut() {
+                let _ = task.await;
+            }
+        };
+        if tokio::time::timeout(EXIT_TIMEOUT, wait).await.is_err() {
+            tasks.iter().for_each(|t| t.abort());
+            let _ = tokio::time::timeout(Duration::from_millis(500), async {
+                for task in tasks.iter_mut() {
+                    let _ = task.await;
+                }
+            })
+            .await;
+        }
     }
 }
 

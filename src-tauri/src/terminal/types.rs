@@ -86,6 +86,7 @@ pub trait TerminalHost: Send + Sync {
     async fn resize(&self, name: &str, cols: u32, rows: u32) -> Result<(), TerminalError>;
     /// Ends the live session for `name`, if any. The zellij session keeps running.
     async fn detach(&self, name: &str);
-    /// Ends every live session; called on app exit.
+    /// Ends every live session and waits (bounded) for each to release its exec child; called on
+    /// app exit.
     async fn detach_all(&self);
 }

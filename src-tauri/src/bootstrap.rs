@@ -154,6 +154,7 @@ pub fn on_run_event(app_handle: &tauri::AppHandle, event: tauri::RunEvent) {
     if let tauri::RunEvent::Exit = event {
         let agent_host = app_handle.state::<Arc<dyn crate::agent_host::types::AgentHost>>().inner().clone();
         tauri::async_runtime::block_on(agent_host.detach_all());
+        // Blocks until every session's exec child is killed; see `SshTerminalHost::detach_all`.
         let terminal = app_handle.state::<Arc<dyn crate::terminal::types::TerminalHost>>().inner().clone();
         tauri::async_runtime::block_on(terminal.detach_all());
         let active = app_handle.state::<ActiveServer>();
