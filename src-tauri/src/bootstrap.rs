@@ -111,7 +111,7 @@ impl Bootstrap {
             registry.clone(),
         ));
         app.manage(crate::agent_host::default_agent_host(registry.clone()));
-        app.manage(crate::terminal::default_terminal_host(registry.clone()));
+        app.manage(crate::terminal::default_terminal_host(registry.clone(), self.mock_director.clone()));
         app.manage(WorkspaceRegistry::default());
         app.manage(crate::proxy::flowlog::FlowWatchRegistry::default());
         app.manage(AuthSessionMap::default());

@@ -2,6 +2,7 @@
 //! the engine's streamed exec and attaches it to the sandbox's zellij session
 //! (`docs/features/native-terminal/02_dev.md`).
 
+mod host;
 mod mock;
 mod sessions;
 mod ssh;
@@ -9,37 +10,31 @@ pub mod types;
 
 use std::process::Stdio;
 use std::sync::Arc;
-use std::time::Duration;
 
 use russh::client::{Handle, Msg};
 use russh::{Channel as SshChannel, ChannelMsg, Disconnect};
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tokio::process::Child;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::mpsc;
 
+use crate::mockctl::types::MockDirector;
 use crate::provider::types::{ExecOpts, MachineProvider};
 use crate::provider::ProviderRegistry;
-use sessions::SessionTable;
-use types::{AttachRequest, TerminalError, TerminalEvent, TerminalHost};
+use host::{Ended, LifecycleHost, Link, SessionCommand, Transport};
+use types::{AttachRequest, TerminalError, TerminalHost};
 
 /// The working directory of every pane a new zellij session opens. Must equal `WORKSPACE_MOUNT`
 /// in `src-tauri/src/provider/mod.rs`, which is private there.
 const WORKDIR: &str = "/root/work";
-/// Bounds the exec spawn, handshake and session creation together; a remote Podman exec is the
-/// slowest of them.
-const ATTACH_TIMEOUT: Duration = Duration::from_secs(60);
-/// Total time `detach_all` waits for session tasks to end on app exit.
-const EXIT_TIMEOUT: Duration = Duration::from_secs(3);
-/// Input and resize commands queued per session before a sender waits.
-const COMMAND_QUEUE: usize = 256;
 
-/// Constructs the terminal host: the echo mock under `MIO_MOCK_BACKEND=1`, because the session's
-/// exec child bypasses the scripted `ProcessRunner` and would reach a real engine.
-pub fn default_terminal_host(registry: Arc<ProviderRegistry>) -> Arc<dyn TerminalHost> {
+/// Constructs the terminal host: the scriptable echo transport under `MIO_MOCK_BACKEND=1`, because
+/// the session's exec child bypasses the scripted `ProcessRunner` and would reach a real engine.
+/// Both transports run the same session lifecycle.
+pub fn default_terminal_host(registry: Arc<ProviderRegistry>, director: Arc<MockDirector>) -> Arc<dyn TerminalHost> {
     if crate::backends::mock_backend_enabled() {
-        return Arc::new(mock::MockTerminalHost::default());
+        return Arc::new(LifecycleHost::new(mock::MockTransport::new(director)));
     }
-    Arc::new(SshTerminalHost { registry, sessions: Arc::default() })
+    Arc::new(LifecycleHost::new(SshTransport { registry }))
 }
 
 /// The engine-exec argv that creates or resurrects the zellij session. The session is never
@@ -71,35 +66,21 @@ fn session_already_running(stderr: &str) -> bool {
     stderr.to_ascii_lowercase().contains("session already exists")
 }
 
-enum SessionCommand {
-    Input(Vec<u8>),
-    Resize(u32, u32),
-}
-
-type SessionMap = Arc<Mutex<SessionTable>>;
-
-struct SshTerminalHost {
+struct SshTransport {
     registry: Arc<ProviderRegistry>,
-    sessions: SessionMap,
 }
 
-/// Everything the session task owns. The exec child is killed when the task drops it.
+/// Everything an opened SSH session owns. The exec child is killed when it drops.
 struct Session {
     handle: Handle<ssh::Client>,
-    channel: SshChannel<Msg>,
+    /// Taken by `pump`, which splits it.
+    channel: Option<SshChannel<Msg>>,
     child: Child,
     /// Output that arrived before `sshd` accepted the command, forwarded first.
     early: Vec<Vec<u8>>,
 }
 
-impl Session {
-    /// Ends a session that never ran: disconnects it and kills its exec child.
-    async fn shut(self) {
-        shut(self.handle, self.child).await;
-    }
-}
-
-impl SshTerminalHost {
+impl SshTransport {
     async fn create_session(&self, provider: &Arc<dyn MachineProvider>, name: &str) -> Result<(), TerminalError> {
         let argv = create_argv(name);
         let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
@@ -114,6 +95,11 @@ impl SshTerminalHost {
         }
         Ok(())
     }
+}
+
+#[async_trait::async_trait]
+impl Transport for SshTransport {
+    type Link = Session;
 
     async fn open(&self, req: &AttachRequest) -> Result<Session, TerminalError> {
         let provider = self.registry.provider_for(&req.machine);
@@ -140,142 +126,60 @@ impl SshTerminalHost {
         channel.exec(true, client).await.map_err(|e| TerminalError::Handshake(e.to_string()))?;
         // `exec` only sends the request; `attach` must not report success before `sshd` accepts it.
         let early = ssh::await_reply(&mut channel, "the sandbox refused the terminal command").await?;
-        Ok(Session { handle, channel, child, early })
-    }
-
-    async fn live_sender(&self, name: &str) -> Result<mpsc::Sender<SessionCommand>, TerminalError> {
-        self.sessions.lock().await.sender(name).ok_or(TerminalError::NotAttached)
+        Ok(Session { handle, channel: Some(channel), child, early })
     }
 }
 
 #[async_trait::async_trait]
-impl TerminalHost for SshTerminalHost {
-    async fn attach(
-        &self,
-        req: AttachRequest,
-        on_output: Channel<InvokeResponseBody>,
-        on_event: Channel<TerminalEvent>,
-    ) -> Result<(), TerminalError> {
-        // Registering before `open()` is what lets a detach or a newer attach cancel this one.
-        let id = self.sessions.lock().await.begin(&req.name);
-        let opened = tokio::time::timeout(ATTACH_TIMEOUT, self.open(&req))
-            .await
-            .map_err(|_| TerminalError::Handshake("timed out connecting to the sandbox".into()))
-            .and_then(|r| r);
-        let session = match opened {
-            Ok(session) => session,
-            Err(e) => {
-                self.sessions.lock().await.abandon(&req.name, id);
-                return Err(e);
+impl Link for Session {
+    async fn pump(&mut self, commands: &mut mpsc::Receiver<SessionCommand>, output: &Channel<InvokeResponseBody>) -> Ended {
+        let Some(channel) = self.channel.take() else {
+            return Ended { reason: "connection closed", exit_status: None };
+        };
+        let (mut reader, writer) = channel.split();
+        for data in std::mem::take(&mut self.early) {
+            if output.send(InvokeResponseBody::Raw(data)).is_err() {
+                return Ended { reason: "window closed", exit_status: None };
+            }
+        }
+        let (reason, exit_status) = loop {
+            tokio::select! {
+                msg = reader.wait() => match msg {
+                    Some(ChannelMsg::Data { data }) | Some(ChannelMsg::ExtendedData { data, .. }) => {
+                        if output.send(InvokeResponseBody::Raw(data.to_vec())).is_err() {
+                            break ("window closed", None);
+                        }
+                    }
+                    Some(ChannelMsg::ExitStatus { exit_status }) => break ("exited", Some(exit_status)),
+                    Some(ChannelMsg::Failure) => break ("the session command was refused", None),
+                    // `sshd` sends end-of-file before the exit status, so only a close ends the loop.
+                    Some(ChannelMsg::Close) | None => break ("connection closed", None),
+                    Some(_) => {}
+                },
+                cmd = commands.recv() => match cmd {
+                    Some(SessionCommand::Input(bytes)) => {
+                        if writer.data_bytes(bytes).await.is_err() {
+                            break ("connection closed", None);
+                        }
+                    }
+                    Some(SessionCommand::Resize(cols, rows)) => {
+                        if writer.window_change(cols, rows, 0, 0).await.is_err() {
+                            break ("connection closed", None);
+                        }
+                    }
+                    None => break ("detached", None),
+                },
             }
         };
-        let (tx, rx) = mpsc::channel(COMMAND_QUEUE);
-        let mut table = self.sessions.lock().await;
-        if !table.promote(&req.name, id, tx) {
-            drop(table);
-            session.shut().await;
-            return Err(TerminalError::Cancelled);
-        }
-        let task = tokio::spawn(run_session(session, rx, on_output, on_event, self.sessions.clone(), req.name.clone(), id));
-        table.set_task(&req.name, id, task);
-        Ok(())
+        Ended { reason, exit_status }
     }
 
-    async fn input(&self, name: &str, bytes: Vec<u8>) -> Result<(), TerminalError> {
-        let sender = self.live_sender(name).await?;
-        sender.send(SessionCommand::Input(bytes)).await.map_err(|_| TerminalError::NotAttached)
+    /// Disconnects the transport and kills the exec child.
+    async fn shut(self) {
+        let _ = self.handle.disconnect(Disconnect::ByApplication, "", "en").await;
+        let mut child = self.child;
+        let _ = child.start_kill();
     }
-
-    async fn resize(&self, name: &str, cols: u32, rows: u32) -> Result<(), TerminalError> {
-        let sender = self.live_sender(name).await?;
-        sender.send(SessionCommand::Resize(cols, rows)).await.map_err(|_| TerminalError::NotAttached)
-    }
-
-    async fn detach(&self, name: &str) {
-        self.sessions.lock().await.detach(name);
-    }
-
-    // Dropping the senders ends the tasks, which kill their exec children; the process may exit
-    // before a detached task ever runs, and Windows does not kill children with their parent, so
-    // the tasks are awaited here. On timeout, aborting drops each task's `kill_on_drop` child.
-    async fn detach_all(&self) {
-        let mut tasks = self.sessions.lock().await.drain();
-        let wait = async {
-            for task in tasks.iter_mut() {
-                let _ = task.await;
-            }
-        };
-        if tokio::time::timeout(EXIT_TIMEOUT, wait).await.is_err() {
-            tasks.iter().for_each(|t| t.abort());
-            let _ = tokio::time::timeout(Duration::from_millis(500), async {
-                for task in tasks.iter_mut() {
-                    let _ = task.await;
-                }
-            })
-            .await;
-        }
-    }
-}
-
-/// Pumps output to the frontend and commands to the channel until either side ends, then reports
-/// the exit and drops the map entry unless a newer session has replaced it.
-async fn run_session(
-    session: Session,
-    mut commands: mpsc::Receiver<SessionCommand>,
-    on_output: Channel<InvokeResponseBody>,
-    on_event: Channel<TerminalEvent>,
-    sessions: SessionMap,
-    name: String,
-    id: u64,
-) {
-    let Session { handle, channel, child, early } = session;
-    let (mut reader, writer) = channel.split();
-    for data in early {
-        if on_output.send(InvokeResponseBody::Raw(data)).is_err() {
-            shut(handle, child).await;
-            sessions.lock().await.finish(&name, id);
-            return;
-        }
-    }
-    let (reason, exit_status) = loop {
-        tokio::select! {
-            msg = reader.wait() => match msg {
-                Some(ChannelMsg::Data { data }) | Some(ChannelMsg::ExtendedData { data, .. }) => {
-                    if on_output.send(InvokeResponseBody::Raw(data.to_vec())).is_err() {
-                        break ("window closed", None);
-                    }
-                }
-                Some(ChannelMsg::ExitStatus { exit_status }) => break ("exited", Some(exit_status)),
-                Some(ChannelMsg::Failure) => break ("the session command was refused", None),
-                // `sshd` sends end-of-file before the exit status, so only a close ends the loop.
-                Some(ChannelMsg::Close) | None => break ("connection closed", None),
-                Some(_) => {}
-            },
-            cmd = commands.recv() => match cmd {
-                Some(SessionCommand::Input(bytes)) => {
-                    if writer.data_bytes(bytes).await.is_err() {
-                        break ("connection closed", None);
-                    }
-                }
-                Some(SessionCommand::Resize(cols, rows)) => {
-                    if writer.window_change(cols, rows, 0, 0).await.is_err() {
-                        break ("connection closed", None);
-                    }
-                }
-                None => break ("detached", None),
-            },
-        }
-    };
-    tracing::info!(target: "terminal", sandbox = %name, reason, ?exit_status, "terminal session ended");
-    let _ = on_event.send(TerminalEvent::Exited { reason: reason.to_string(), exit_status });
-    shut(handle, child).await;
-    sessions.lock().await.finish(&name, id);
-}
-
-/// Disconnects the transport and kills the exec child.
-async fn shut(handle: Handle<ssh::Client>, mut child: Child) {
-    let _ = handle.disconnect(Disconnect::ByApplication, "", "en").await;
-    let _ = child.start_kill();
 }
 
 #[cfg(test)]

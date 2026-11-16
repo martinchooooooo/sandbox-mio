@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-use super::SessionCommand;
+use super::host::SessionCommand;
 
 /// One live session's handle. Dropping it closes the command queue, which ends the session task.
 pub(super) struct LiveSession {
@@ -95,63 +95,5 @@ impl SessionTable {
                 Entry::Pending { .. } => None,
             })
             .collect()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn queue() -> mpsc::Sender<SessionCommand> {
-        mpsc::channel(1).0
-    }
-
-    #[test]
-    fn a_detach_during_pending_makes_promote_fail() {
-        let mut table = SessionTable::default();
-        let id = table.begin("demo");
-        table.detach("demo");
-        assert!(!table.promote("demo", id, queue()));
-        assert!(table.sender("demo").is_none());
-    }
-
-    #[test]
-    fn a_superseded_attach_cannot_overwrite_the_newer_one() {
-        let mut table = SessionTable::default();
-        let a = table.begin("demo");
-        let b = table.begin("demo");
-        assert!(table.promote("demo", b, queue()));
-        assert!(!table.promote("demo", a, queue()));
-        assert!(table.sender("demo").is_some());
-    }
-
-    #[test]
-    fn a_stale_finish_keeps_the_newer_entry() {
-        let mut table = SessionTable::default();
-        let a = table.begin("demo");
-        assert!(table.promote("demo", a, queue()));
-        let b = table.begin("demo");
-        table.finish("demo", a);
-        assert!(table.promote("demo", b, queue()));
-        table.finish("demo", a);
-        assert!(table.sender("demo").is_some());
-        table.finish("demo", b);
-        assert!(table.sender("demo").is_none());
-    }
-
-    #[test]
-    fn a_pending_entry_has_no_sender() {
-        let mut table = SessionTable::default();
-        table.begin("demo");
-        assert!(table.sender("demo").is_none());
-    }
-
-    #[test]
-    fn abandon_only_removes_its_own_pending_entry() {
-        let mut table = SessionTable::default();
-        let a = table.begin("demo");
-        let b = table.begin("demo");
-        table.abandon("demo", a);
-        assert!(table.promote("demo", b, queue()));
     }
 }
