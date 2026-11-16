@@ -19,6 +19,9 @@
     let size = { cols: 0, rows: 0 };
     let sent = { cols: 0, rows: 0 };
     let frame: number | null = null;
+    // Bumped by the renderer-failure Retry to remount `WtermRenderer`, since `onReady` fires once.
+    let renderKey = $state(0);
+    let rendererFailed = $state(false);
 
     async function attach() {
         if (size.cols === 0) return;
@@ -54,12 +57,31 @@
         }
     }
 
-    function send(command: string, args: Record<string, unknown>) {
-        invoke(command, { name: sandbox, ...args }).catch((e) => console.error(parseError(e).message));
+    // Tauri runs async commands concurrently, so independent invokes can reorder keystrokes. One
+    // chain per view serialises every input and resize send; queued input coalesces into one send.
+    let chain: Promise<unknown> = Promise.resolve();
+    let queuedInput = "";
+
+    function enqueue(command: string, args: Record<string, unknown>) {
+        chain = chain
+            .then(() => invoke(command, { name: sandbox, ...args }))
+            .catch((e) => console.error(parseError(e).message));
     }
 
     function onInput(data: string) {
-        if (status === "attached") send("terminal_input", { data });
+        if (status !== "attached") return;
+        if (queuedInput !== "") {
+            queuedInput += data;
+            return;
+        }
+        queuedInput = data;
+        chain = chain
+            .then(() => {
+                const batch = queuedInput;
+                queuedInput = "";
+                return invoke("terminal_input", { name: sandbox, data: batch });
+            })
+            .catch((e) => console.error(parseError(e).message));
     }
 
     // A hidden terminal's size is never sent, so zellij keeps the visible layout
@@ -71,7 +93,7 @@
             if (!active || status !== "attached") return;
             if (size.cols === sent.cols && size.rows === sent.rows) return;
             sent = { ...size };
-            send("terminal_resize", { cols: size.cols, rows: size.rows });
+            enqueue("terminal_resize", { cols: size.cols, rows: size.rows });
         });
     }
 
@@ -89,7 +111,15 @@
         navigator.clipboard.writeText(text).catch((e) => console.error(e));
     }
 
+    function retryRenderer() {
+        rendererFailed = false;
+        status = "loading";
+        error = null;
+        renderKey += 1;
+    }
+
     function onError(e: unknown) {
+        rendererFailed = true;
         status = "failed";
         error = e instanceof Error ? e.message : String(e);
     }
@@ -108,7 +138,9 @@
 </script>
 
 <div class="relative h-full w-full bg-[#1e1e1e]" data-terminal={sandbox} data-status={status}>
-    <WtermRenderer bind:this={renderer} paused={!active} {onInput} {onResize} {onReady} {onClipboardWrite} {onError} />
+    {#key renderKey}
+        <WtermRenderer bind:this={renderer} paused={!active} {onInput} {onResize} {onReady} {onClipboardWrite} {onError} />
+    {/key}
     {#if status === "loading" || status === "connecting"}
         <div class="absolute inset-0 flex items-center justify-center gap-2 bg-[#1e1e1e] text-sm text-neutral-300">
             <Spinner /> Connecting to the terminal… <!-- TODO(i18n) -->
@@ -122,7 +154,7 @@
         <div class="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[#1e1e1e] p-6 text-center text-sm text-neutral-300">
             <p>Could not connect to the terminal. <!-- TODO(i18n) --></p>
             {#if error}<p class="max-w-xl break-words text-neutral-400" data-terminal-error>{error}</p>{/if}
-            <Button size="sm" onclick={attach} data-terminal-retry>Retry</Button> <!-- TODO(i18n) -->
+            <Button size="sm" onclick={rendererFailed ? retryRenderer : attach} data-terminal-retry>Retry</Button> <!-- TODO(i18n) -->
         </div>
     {/if}
 </div>
