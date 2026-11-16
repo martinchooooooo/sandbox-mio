@@ -23,6 +23,7 @@ mod services;
 mod settings;
 mod ssh;
 mod sync;
+mod terminal;
 mod workspace;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

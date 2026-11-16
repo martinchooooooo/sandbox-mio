@@ -422,13 +422,16 @@ pub async fn close_pane<R: Runtime>(app: &AppHandle<R>, name: &str, kind: AppKin
     emit_state(app);
 }
 
-/// Ends what backs each closed pane: a forward, or the native chat's attach stream (pi keeps
-/// running inside the sandbox).
+/// Ends what backs each closed pane: a forward, the native chat's attach stream (pi keeps running
+/// inside the sandbox), or the terminal's SSH session (the zellij session keeps running).
 async fn teardown_forwards<R: Runtime>(app: &AppHandle<R>, name: &str, panes: &[AppPane]) {
     let network = app.state::<std::sync::Arc<dyn crate::network::types::NetworkManager>>();
     for pane in panes {
         let kind = match pane.kind {
-            AppKind::Terminal => crate::network::types::ServiceKind::Terminal,
+            AppKind::Terminal => {
+                app.state::<std::sync::Arc<dyn crate::terminal::types::TerminalHost>>().detach(name).await;
+                continue;
+            }
             AppKind::AgentWeb => crate::network::types::ServiceKind::AgentWeb,
             AppKind::AgentChat => {
                 app.state::<std::sync::Arc<dyn crate::agent_host::types::AgentHost>>().detach(name).await;

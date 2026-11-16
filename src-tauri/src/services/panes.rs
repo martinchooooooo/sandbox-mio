@@ -9,7 +9,37 @@ use crate::mio_files;
 use crate::network::types::{NetworkManager, ServiceKind};
 use crate::runtime::types::{RuntimeError, RuntimeManager};
 use crate::services::routing::SandboxRouter;
+use crate::terminal::types::{AttachRequest, TerminalEvent, TerminalHost};
 use crate::workspace::types::TerminalPane;
+
+/// Opens the native terminal's SSH session for `name`. Uses `locate`, not `resolve`: the session
+/// spawns the engine exec itself and needs no `~/.ssh` alias
+/// (`docs/features/native-terminal/02_dev.md`, Resolved Decision 8).
+#[allow(clippy::too_many_arguments)]
+pub async fn attach_terminal_session(
+    name: &str,
+    cols: u32,
+    rows: u32,
+    on_output: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
+    on_event: tauri::ipc::Channel<TerminalEvent>,
+    router: &SandboxRouter,
+    terminal: &Arc<dyn TerminalHost>,
+    app: &tauri::AppHandle,
+) -> Result<(), AppError> {
+    let route = router.locate(name).await?;
+    let identity_path = crate::backends::ensure_sandbox_identity(app, name)?;
+    let known_hosts_path = crate::backends::sandbox_known_hosts_path(&identity_path);
+    let req = AttachRequest {
+        name: name.to_string(),
+        machine: route.machine,
+        start: !route.running,
+        identity_path,
+        known_hosts_path,
+        cols,
+        rows,
+    };
+    Ok(terminal.attach(req, on_output, on_event).await?)
+}
 
 pub async fn prepare_terminal_webview(
     name: &str,

@@ -7,6 +7,7 @@ use crate::network::types::NetworkError;
 use crate::runtime::types::RuntimeError;
 use crate::settings::types::SettingsError;
 use crate::sync::types::SyncError;
+use crate::terminal::types::TerminalError;
 use crate::workspace::types::WorkspaceError;
 
 /// Top-level error type for Tauri commands (the only type crossing IPC boundary).
@@ -74,6 +75,10 @@ pub enum AppError {
     /// show its empty state (`docs/features/native-agent-ui/02_dev.md`, Resolved Decision 11).
     #[error("{0}")]
     AgentChatDeployed(String),
+    /// Transparent: native terminal session error
+    /// (`docs/features/native-terminal/02_dev.md`, Resolved Decision 15).
+    #[error(transparent)]
+    Terminal(#[from] TerminalError),
 }
 
 /// Hand-written for the same reason as the `BackendError` impl: `Deployed` keeps its own kind.
@@ -131,6 +136,7 @@ impl AppError {
             AppError::ProxyDeployUnsupported(_) => "ProxyDeployUnsupported",
             AppError::AgentHost(_) => "AgentHost",
             AppError::AgentChatDeployed(_) => "AgentChatDeployed",
+            AppError::Terminal(_) => "Terminal",
         }
     }
 }

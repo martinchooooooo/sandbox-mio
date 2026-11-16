@@ -16,6 +16,7 @@ pub mod packages;
 pub mod panes;
 pub mod proxy;
 pub mod sandbox;
+pub mod terminal;
 
 /// The whole `#[tauri::command]` inventory, registered once by `run()`. A command that compiles but
 /// is missing here is rejected at `invoke()` with "command not found".
@@ -44,6 +45,10 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         agent_chat::agent_chat_takeover,
         agent_chat::agent_chat_stop,
         agent_chat::agent_chat_sessions,
+        terminal::terminal_attach,
+        terminal::terminal_input,
+        terminal::terminal_resize,
+        terminal::terminal_detach,
         panes::switch_app,
         panes::switch_pane,
         panes::hide_active_pane,

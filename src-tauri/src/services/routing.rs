@@ -19,6 +19,10 @@ pub struct SandboxRoute {
     /// The SSH alias the sandbox's Mutagen forwards tunnel over. Naming it does not create it —
     /// only [`SandboxRouter::resolve`] writes `~/.ssh`.
     pub forward_alias: String,
+    /// Whether the sandbox is known to be running: the backend lists it as `running` and the
+    /// machine is its provider's local machine. A deployed sandbox is never `running` by this rule
+    /// (`docs/features/native-terminal/02_dev.md`, Resolved Decision 11).
+    pub running: bool,
 }
 
 /// Resolves a sandbox name to a [`SandboxRoute`]. Registered once as Tauri state, so a command
@@ -45,10 +49,11 @@ impl SandboxRouter {
     /// Resolves a route without touching `~/.ssh`. For callers that need the machine or the
     /// provider but open no forward of their own.
     pub async fn locate(&self, name: &str) -> Result<SandboxRoute, AppError> {
-        let provider = sandbox_provider(&self.store, name).await?;
+        let (provider, listed_running) = sandbox_provider(&self.store, name).await?;
         let machine = resolve_machine(name, provider, &self.engine, &self.registry).await?;
+        let running = listed_running && self.is_local(&machine);
         // Every sandbox is reached through an alias named after itself.
-        Ok(SandboxRoute { machine, forward_alias: name.to_string() })
+        Ok(SandboxRoute { machine, forward_alias: name.to_string(), running })
     }
 
     /// Whether `machine` is its provider's local machine, i.e. not a deploy target.
@@ -70,17 +75,18 @@ impl SandboxRouter {
     }
 }
 
-/// The provider running `name`. A sandbox the backend no longer lists is treated as a Podman one.
+/// The provider running `name` and whether the backend lists it as running. A sandbox the backend
+/// no longer lists is treated as a stopped Podman one.
 async fn sandbox_provider(
     store: &Arc<dyn SandboxBackend>,
     name: &str,
-) -> Result<ProviderId, AppError> {
+) -> Result<(ProviderId, bool), AppError> {
     Ok(store
         .list()
         .await?
         .into_iter()
         .find(|s| s.name == name)
-        .map_or(ProviderId::Podman, |s| s.provider))
+        .map_or((ProviderId::Podman, false), |s| (s.provider, s.status == "running")))
 }
 
 /// The machine a sandbox's operations address: its deploy target when one exists, else the local

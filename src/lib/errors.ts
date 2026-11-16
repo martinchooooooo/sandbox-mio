@@ -17,7 +17,8 @@ export type AppErrorKind =
     | "MockControl"
     | "ProxyDeployUnsupported"
     | "AgentHost"
-    | "AgentChatDeployed";
+    | "AgentChatDeployed"
+    | "Terminal";
 
 /** Structured error sent over the Tauri IPC boundary from every `#[tauri::command]`. */
 export interface AppError {

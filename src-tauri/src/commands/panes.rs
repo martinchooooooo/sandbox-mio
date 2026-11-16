@@ -7,7 +7,7 @@ use tauri::State;
 use crate::error::AppError;
 use crate::network::types::NetworkManager;
 use crate::runtime::types::RuntimeManager;
-use crate::services::panes::{prepare_agent_web_pane, prepare_terminal_webview};
+use crate::services::panes::prepare_agent_web_pane;
 use crate::services::routing::SandboxRouter;
 use crate::workspace;
 use crate::workspace::types::{AppKind, WorkspaceRegistry, WorkspaceState};
@@ -33,14 +33,12 @@ pub async fn watch_workspace_ports(
     Ok(())
 }
 
-/// Open sandbox's embedded Terminal pane (lazily on first call).
+/// Open sandbox's native Terminal pane, or switch to it when it is already open. The pane has no
+/// webview: the main webview's terminal layer attaches its session when the pane appears.
 #[tauri::command]
-pub async fn open_terminal_pane(
+pub fn open_terminal_pane(
     name: String,
     workspace_path: String,
-    router: State<'_, SandboxRouter>,
-    runtime: State<'_, Arc<dyn RuntimeManager>>,
-    network: State<'_, Arc<dyn NetworkManager>>,
     workspaces: State<'_, WorkspaceRegistry>,
     app: tauri::AppHandle,
 ) -> Result<(), AppError> {
@@ -53,11 +51,7 @@ pub async fn open_terminal_pane(
     if exists {
         return workspace::switch_pane(&app, &name, AppKind::Terminal).map_err(Into::into);
     }
-
-    let pane =
-        prepare_terminal_webview(&name, &workspace_path, &router, &runtime, &network, &app).await?;
-    workspace::embed_terminal(&app, &name, &workspace_path, pane)?;
-    Ok(())
+    Ok(workspace::open_native_pane(&app, &name, &workspace_path, AppKind::Terminal)?)
 }
 
 /// Open sandbox's embedded Agents pane (lazily on first call, unlike Terminal/Dashboard).

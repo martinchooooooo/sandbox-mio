@@ -1039,7 +1039,7 @@ pub fn msb_sync_session(name: &str) -> String {
 }
 
 /// The `UserKnownHostsFile` [`ensure_sandbox_alias`] pins, kept next to the sandbox's own identity.
-fn sandbox_known_hosts_path(identity_path: &str) -> String {
+pub(crate) fn sandbox_known_hosts_path(identity_path: &str) -> String {
     match identity_path.rsplit_once('/') {
         Some((dir, _)) => format!("{dir}/known_hosts"),
         None => "known_hosts".to_string(),
