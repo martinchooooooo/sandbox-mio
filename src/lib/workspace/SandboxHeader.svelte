@@ -15,6 +15,7 @@
     import { HOME_APP, LAUNCHABLE_APPS } from "$lib/workspace/apps";
     import { activeAppLabel, panesOf } from "$lib/workspace/state.svelte";
     import { activatePane, closePane, closeSandbox, showManage } from "$lib/workspace/navigation.svelte";
+    import HealthChip from "$lib/sandbox/HealthChip.svelte";
     import StatusRow from "../../routes/projects/StatusRow.svelte";
 
     let { sandbox }: { sandbox: string } = $props();
@@ -45,12 +46,18 @@
         }
     }
 
-    async function stop() {
-        if (await action.run("stop", () => invoke("stop_sandbox", { name: sandbox }), {
+    async function stop(): Promise<boolean> {
+        const stopped = await action.run("stop", () => invoke("stop_sandbox", { name: sandbox }), {
             message: m.projects_status_stopping(),
-        })) {
-            await refreshSandboxState();
-        }
+        });
+        if (stopped) await refreshSandboxState();
+        return stopped;
+    }
+
+    // Stop then Start, never a backend restart, so a stop's pane teardown still runs
+    // (docs/features/sandbox-resource-monitor/02_dev.md, Resolved Decision 12).
+    async function restart() {
+        if (await stop()) await start();
     }
 
     async function openFolder() {
@@ -80,6 +87,10 @@
             </div>
         </div>
     </div>
+
+    {#if status === "running"}
+        <HealthChip {sandbox} restarting={action.busy !== null} onRestart={restart} />
+    {/if}
 
     <div
         role="group"

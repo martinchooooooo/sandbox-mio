@@ -40,3 +40,9 @@ pub fn app_config_root<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, tauri:
         None => app.path().app_config_dir(),
     }
 }
+
+/// Per-sandbox resource usage history, one JSON-lines file per sandbox
+/// (`docs/features/sandbox-resource-monitor/02_dev.md`, Resolved Decision 16).
+pub fn resource_history_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, tauri::Error> {
+    Ok(app_data_root(app)?.join("resources"))
+}

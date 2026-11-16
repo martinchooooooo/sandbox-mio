@@ -8,8 +8,8 @@ use crate::backends::types::Sandbox;
 use crate::process::types::ProcessRunner;
 
 use super::types::{
-    ExecOpts, InstanceSpec, MachineProvider, ProviderCapabilities, ProviderError, ProviderId,
-    SidecarSpec, StartEnvSource,
+    EnginePool, ExecOpts, InstanceSpec, InstanceStats, MachineProvider, ProviderCapabilities,
+    ProviderError, ProviderId, SidecarSpec, StartEnvSource,
 };
 use super::{check, parse_image_version, WORKSPACE_LABEL, WORKSPACE_MOUNT};
 
@@ -209,6 +209,48 @@ fn for_log(bytes: &[u8]) -> String {
     }
 }
 
+/// One entry of `msb metrics --format json`; the field mapping is in
+/// `docs/features/sandbox-resource-monitor/spike/engine-output.md`.
+#[derive(serde::Deserialize)]
+struct MsbMetric {
+    name: String,
+    vcpu_time_ns: u64,
+    timestamp: String,
+    cpus: u32,
+    memory_bytes: u64,
+    memory_limit_bytes: u64,
+}
+
+/// Parses `msb metrics --format json` with no name: an array of every running sandbox, `[]` when
+/// none runs. Empty output (an unscripted `light`-tier call) is no instances too.
+fn parse_msb_metrics(stdout: &str) -> Result<Vec<InstanceStats>, ProviderError> {
+    let stdout = stdout.trim();
+    if stdout.is_empty() {
+        return Ok(Vec::new());
+    }
+    let metrics: Vec<MsbMetric> = serde_json::from_str(stdout)
+        .map_err(|e| ProviderError::ParseError(format!("msb metrics: {e}")))?;
+    metrics
+        .into_iter()
+        .map(|m| {
+            let at = time::OffsetDateTime::parse(
+                &m.timestamp,
+                &time::format_description::well_known::Rfc3339,
+            )
+            .map_err(|e| ProviderError::ParseError(format!("msb metrics timestamp: {e}")))?;
+            Ok(InstanceStats {
+                name: m.name,
+                cpu_time_ns: m.vcpu_time_ns,
+                sampled_at_ns: u64::try_from(at.unix_timestamp_nanos()).unwrap_or_default(),
+                allotted_cpus: Some(m.cpus),
+                memory_used: m.memory_bytes,
+                memory_limit: m.memory_limit_bytes,
+                memory_includes_cache: false,
+            })
+        })
+        .collect()
+}
+
 impl MsbProvider {
     async fn run(&self, argv: &[&str]) -> Result<Output, ProviderError> {
         self.run_env(argv, &[]).await
@@ -233,6 +275,9 @@ impl MsbProvider {
             // Non-zero exit is logged but not returned as an error here: several callers
             // deliberately tolerate one (`ensure_volume`'s `already exists`, `start`'s `already
             // running`), so the log is the only place the distinction is visible.
+            Ok(out) if out.status.success() && crate::process::is_monitor_call(argv) => {
+                tracing::debug!(target: "msb", argv = %argv.join(" "), ms, "msb ok")
+            }
             Ok(out) if out.status.success() => {
                 tracing::info!(target: "msb", argv = %argv.join(" "), ms, "msb ok")
             }
@@ -714,6 +759,15 @@ impl MachineProvider for MsbProvider {
             "a microsandbox sidecar writes its traffic record to a file, not its log".to_string(),
         ))
     }
+
+    async fn instance_stats(&self) -> Result<Vec<InstanceStats>, ProviderError> {
+        parse_msb_metrics(&check(self.run(&crate::process::MSB_METRICS_ARGV).await?)?)
+    }
+
+    /// Each microVM has its own fixed memory, so there is no shared pool to run out.
+    async fn engine_pool(&self) -> Result<Option<EnginePool>, ProviderError> {
+        Ok(None)
+    }
 }
 
 #[cfg(test)]
@@ -722,6 +776,32 @@ mod tests {
     use crate::mockctl::types::{
         Behaviour, MockDirector, ScriptedMsbRunner, ScriptedPodmanRunner,
     };
+
+    #[test]
+    fn metrics_parse_cumulative_vcpu_time_against_the_engine_clock() {
+        let a = &parse_msb_metrics(include_str!("fixtures/msb-metrics-cpu-1.json")).unwrap()[0];
+        let b = &parse_msb_metrics(include_str!("fixtures/msb-metrics-cpu-2.json")).unwrap()[0];
+        assert_eq!(a.name, "resmon-spike-msb");
+        assert_eq!(a.allotted_cpus, Some(1));
+        assert_eq!(a.memory_limit, 536870912);
+        // One busy loop on the one vCPU.
+        let used = (b.cpu_time_ns - a.cpu_time_ns) as f64 / (b.sampled_at_ns - a.sampled_at_ns) as f64;
+        assert!((0.9..1.0).contains(&used), "{used}");
+    }
+
+    #[test]
+    fn metrics_memory_excludes_page_cache() {
+        let m = &parse_msb_metrics(include_str!("fixtures/msb-metrics-mem.json")).unwrap()[0];
+        assert_eq!(m.memory_used, 386412544);
+        assert!(!m.memory_includes_cache);
+    }
+
+    #[test]
+    fn metrics_parse_none_running_and_empty_output_as_no_instances() {
+        assert!(parse_msb_metrics(include_str!("fixtures/msb-metrics-none.json")).unwrap().is_empty());
+        assert!(parse_msb_metrics("").unwrap().is_empty());
+        assert!(parse_msb_metrics("not json").is_err());
+    }
 
     #[test]
     fn map_status_normalizes_pascal_case_states() {

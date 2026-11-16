@@ -7,6 +7,7 @@ approximate. New entries go on top.
 
 ## 2026-11-17
 
+* **Create** [sandbox-resource-monitor](sandbox-resource-monitor/index.md): per-sandbox CPU and memory sampling, a health indicator with a restart hint, and a local usage history for sizing the default sandbox memory
 * **Implement** [unified-sidebar-nav](unified-sidebar-nav/index.md): one persistent sidebar replaces the top tabs and switcher bar; the user approved the new shell, and the `heavy` tier was not run before closing
 * **Implement** [native-agent-ui](native-agent-ui/index.md): built-in pi chat pane over an in-sandbox supervisor, translated into all locales; the microsandbox hand check was skipped by the user
 * **Supersede** [proxy-non-http-capture](proxy-non-http-capture/index.md): replaced by [podman-egress-boundary](podman-egress-boundary/index.md); a bounded Podman sandbox has no route around the sidecar, so there is no bypass left to count

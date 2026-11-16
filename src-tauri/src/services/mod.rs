@@ -4,6 +4,7 @@
 
 pub mod inference_reach;
 pub mod panes;
+pub mod resources;
 pub mod routing;
 pub mod sandbox;
 pub mod start_env;

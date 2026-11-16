@@ -106,6 +106,10 @@ static KNOWN_CALLS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         // `MsbProvider::ensure_base_image` builds the image with Podman before handing it to
         // `msb load` (docs/features/microsandbox-provider/02_dev.md, Phase G).
         "podman.save",
+        // The resource monitor's samples (docs/features/sandbox-resource-monitor/02_dev.md,
+        // Resolved Decision 15). Unscripted, both read back as no running instances.
+        "podman.stats",
+        "msb.metrics",
         // The native terminal's open step under the mock `Transport`
         // (`src-tauri/src/terminal/mock.rs`, docs/features/native-terminal/02_dev.md).
         "terminal.open",
@@ -325,6 +329,7 @@ fn default_output(key: &str) -> ScriptedOutput {
         "msb.doctor" => "Host setup is ready".to_string(),
         // Must satisfy `MIN_MSB_VERSION` (`src-tauri/src/machine/msb.rs`) for the same reason.
         "msb.--version" => "msb 0.7.12".to_string(),
+        "msb.metrics" => "[]".to_string(),
         _ => String::new(),
     };
     ScriptedOutput { exit_code: 0, stdout, stderr: String::new() }

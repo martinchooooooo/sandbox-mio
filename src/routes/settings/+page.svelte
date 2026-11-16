@@ -16,6 +16,7 @@
     import { locales, getLocale, setLocale } from "$lib/paraglide/runtime.js";
     import { PROVIDERS, providerLabel, type ProviderId } from "$lib/providers";
     import AdvancedSection from "$lib/components/AdvancedSection.svelte";
+    import ResourceUsageCard from "$lib/settings/ResourceUsageCard.svelte";
 
     function cycleLocale() {
         const current = getLocale();
@@ -257,6 +258,10 @@
         {#if saved}<span class="text-sm text-emerald-600 dark:text-emerald-400" data-saved>{m.settings_saved()}</span>{/if}
     </div>
     {#if action.error}<p class="text-destructive mt-3 text-sm">{action.error}</p>{/if}
+
+    <section class="mt-8">
+        <ResourceUsageCard />
+    </section>
 
     <section class="mt-8 border-t pt-6">
         <Text as="h2" class="mb-3">{m.settings_runtime_explainer()}</Text>

@@ -29,6 +29,12 @@ fn cleanup_host_state(name: &str, app: &tauri::AppHandle) {
     }
     remove_dir_best_effort(name, "ssh identity", crate::paths::sandbox_key_dir(app, name));
     remove_dir_best_effort(name, "pane state", crate::paths::sandbox_pane_dir(app, name));
+    // A sandbox recreated under the same name must not inherit this one's usage history.
+    if let Some(monitor) =
+        tauri::Manager::try_state::<Arc<crate::services::resources::ResourceMonitor>>(app)
+    {
+        monitor.forget(app, name);
+    }
 }
 
 fn remove_dir_best_effort(name: &str, what: &str, dir: Result<std::path::PathBuf, tauri::Error>) {

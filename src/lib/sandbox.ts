@@ -53,3 +53,22 @@ export function statusDotClass(status: string | undefined, deployment: Deploymen
            status === "exited"  ? "bg-red-400" :
            "bg-muted-foreground/40";
 }
+
+const BYTE_UNITS = ["B", "KB", "MB", "GB", "TB"];
+
+/** A byte count in binary units with at most one decimal, e.g. `1.2 GB`. */
+export function formatBytes(bytes: number): string {
+    let value = bytes;
+    let unit = 0;
+    while (value >= 1024 && unit < BYTE_UNITS.length - 1) {
+        value /= 1024;
+        unit++;
+    }
+    const digits = unit === 0 || value >= 100 ? 0 : 1;
+    return `${Number(value.toFixed(digits))} ${BYTE_UNITS[unit]}`;
+}
+
+/** A CPU fraction (0 to 1) as a whole percentage, e.g. `12 %`. */
+export function formatCpu(fraction: number): string {
+    return `${Math.round(fraction * 100)} %`;
+}

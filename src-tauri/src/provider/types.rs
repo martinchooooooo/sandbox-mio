@@ -410,6 +410,39 @@ impl StartEnvSource for NoStartEnv {
     }
 }
 
+/// One running instance's CPU and memory, read in a single engine call for every running instance
+/// (`docs/features/sandbox-resource-monitor/02_dev.md`, Resolved Decision 1). The field mapping per
+/// engine is recorded in `docs/features/sandbox-resource-monitor/spike/engine-output.md`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InstanceStats {
+    pub name: String,
+    /// Cumulative CPU time since the instance started, in nanoseconds. A live CPU fraction is the
+    /// difference between two samples divided by the difference of their `sampled_at_ns`.
+    pub cpu_time_ns: u64,
+    /// The engine's own clock at sampling time, in nanoseconds since the Unix epoch.
+    pub sampled_at_ns: u64,
+    /// The CPUs the instance may use; `None` when the engine reports none per instance (Podman,
+    /// whose containers share the machine's CPUs — see [`EnginePool::cpus`]).
+    pub allotted_cpus: Option<u32>,
+    pub memory_used: u64,
+    /// The memory the instance may use. For a Podman container without a limit this is the whole
+    /// machine.
+    pub memory_limit: u64,
+    /// Whether `memory_used` counts reclaimable file cache. Both engines exclude it today.
+    pub memory_includes_cache: bool,
+}
+
+/// The shared machine a provider's instances run in, when there is one (the Podman machine).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnginePool {
+    pub cpus: u32,
+    pub memory_total: u64,
+    /// The kernel's free memory. Counts reclaimable page cache as used, so it understates what
+    /// the machine can still give out (`docs/features/sandbox-resource-monitor/spike/engine-output.md`).
+    pub memory_free: u64,
+}
+
 /// The container-or-VM primitive seam shared by every subsystem that drives one instance engine.
 /// Declares only operations that generalise across a container engine and a microVM engine; all
 /// engine-specific argv lives in the implementation.
@@ -491,4 +524,9 @@ pub trait MachineProvider: Send + Sync {
         name: &str,
         since: Option<&str>,
     ) -> Result<Vec<String>, ProviderError>;
+    /// CPU and memory of every running instance, sidecars included, from one engine call. The
+    /// call is a quiet, breaker-exempt monitor shape in `src-tauri/src/process/mod.rs`.
+    async fn instance_stats(&self) -> Result<Vec<InstanceStats>, ProviderError>;
+    /// The shared machine's size and free memory, or `None` for an engine without one.
+    async fn engine_pool(&self) -> Result<Option<EnginePool>, ProviderError>;
 }

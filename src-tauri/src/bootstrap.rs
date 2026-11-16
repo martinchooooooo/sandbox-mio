@@ -118,6 +118,10 @@ impl Bootstrap {
         app.manage(ActiveServer::default());
         app.manage(TaskRegistry::default());
         app.manage(MachineSpecsCache::default());
+        // After the registry, which the monitor samples through.
+        let monitor = Arc::new(crate::services::resources::ResourceMonitor::default());
+        monitor.start(app.handle().clone(), registry.clone());
+        app.manage(monitor);
         workspace::create_main_window(app.handle())?;
         if !backends::mock_backend_enabled() {
             let handle = app.handle().clone();
@@ -152,6 +156,8 @@ fn staged_msb_dir(app: &tauri::AppHandle, bundled: std::path::PathBuf) -> std::p
 /// terminal session, and shuts the sync engine down on exit.
 pub fn on_run_event(app_handle: &tauri::AppHandle, event: tauri::RunEvent) {
     if let tauri::RunEvent::Exit = event {
+        // First, so no stats call is in flight while the rest of the process layer winds down.
+        app_handle.state::<Arc<crate::services::resources::ResourceMonitor>>().stop();
         let agent_host = app_handle.state::<Arc<dyn crate::agent_host::types::AgentHost>>().inner().clone();
         tauri::async_runtime::block_on(agent_host.detach_all());
         // Blocks until every session's exec child is killed; see `SshTerminalHost::detach_all`.

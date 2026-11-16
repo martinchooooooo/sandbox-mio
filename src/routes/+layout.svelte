@@ -12,6 +12,7 @@
     import SandboxView from "$lib/workspace/SandboxView.svelte";
     import TerminalLayer from "$lib/terminal/TerminalLayer.svelte";
     import { ensureNetworkState } from "$lib/network/state.svelte";
+    import { ensureResources } from "$lib/sandbox/resources.svelte";
     import { ensureOnboardingState, onboardingCompleted } from "$lib/settings/onboarding.svelte";
     import { reprovisionInstalledAgents } from "$lib/agents/reprovision";
     import type { InferenceStatus } from "$lib/models/types";
@@ -83,6 +84,7 @@
             }
             await ensureWorkspaceState();
             await ensureNetworkState();
+            await ensureResources();
             await ensureOnboardingState();
             if (isNavigationPanel) {
                 checkForUpdate();

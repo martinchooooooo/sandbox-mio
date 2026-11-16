@@ -214,6 +214,9 @@ const BUILD_TIMEOUT: Duration = Duration::from_secs(180);
 /// other subcommands, gets the tight default. Connection-stripped so a remote `--connection <c>
 /// build ...` still matches.
 fn call_timeout(args: &[&str]) -> Duration {
+    if is_monitor_call(args) {
+        return MONITOR_CALL_TIMEOUT;
+    }
     match strip_connection(args) {
         ["machine", "start", ..] => MACHINE_START_TIMEOUT,
         ["build", ..] => BUILD_TIMEOUT,
@@ -236,6 +239,33 @@ fn is_package_install(args: &[&str]) -> bool {
         ["node", script] => script.ends_with("/install.cjs"),
         _ => false,
     })
+}
+
+/// The resource monitor's `podman stats` call (`src-tauri/src/provider/mod.rs`).
+pub(crate) const PODMAN_STATS_ARGV: [&str; 4] = ["stats", "--no-stream", "--format", "{{json .}}"];
+
+/// The resource monitor's machine-size call. A template distinct from the `info --format json`
+/// other callers use, so only the monitor's call takes the quiet, breaker-exempt path.
+pub(crate) const PODMAN_POOL_ARGV: [&str; 3] = ["info", "--format", "{{json .Host}}"];
+
+/// The resource monitor's `msb metrics` call (`src-tauri/src/provider/msb.rs`).
+pub(crate) const MSB_METRICS_ARGV: [&str; 3] = ["metrics", "--format", "json"];
+
+/// Shorter than the default bound: the monitor samples every 10 s and a missed sample is harmless.
+const MONITOR_CALL_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Whether `args` is one of the resource monitor's call shapes, which log a success at `debug` and
+/// never trip or close the podman breaker
+/// (`docs/features/sandbox-resource-monitor/02_dev.md`, Resolved Decisions 7 and 8).
+pub(crate) fn is_monitor_call(args: &[&str]) -> bool {
+    let stripped = strip_connection(args);
+    stripped == PODMAN_STATS_ARGV || stripped == PODMAN_POOL_ARGV || stripped == MSB_METRICS_ARGV
+}
+
+/// Whether the podman breaker is open, so the resource monitor can skip Podman rather than fail
+/// fast on every tick.
+pub(crate) fn podman_breaker_open() -> bool {
+    PODMAN_UNRESPONSIVE.load(Ordering::Acquire)
 }
 
 /// Strips a leading `--connection <name>` pair (present on most `backends`/`runtime` calls,
@@ -578,6 +608,7 @@ impl SystemPodmanRunner {
         env: &[(String, String)],
         stdin: Option<&[u8]>,
     ) -> std::io::Result<Output> {
+        let quiet = is_monitor_call(args);
         // Every connection-scoped call (`image exists`, `create`, `exec`, `info`, ...) passes
         // through here — the one seam behind `PodmanProvider::run` and `PodmanMachineManager`'s
         // `podman`/`verify_host` alike — so a guard installed here covers every current and future
@@ -593,13 +624,22 @@ impl SystemPodmanRunner {
                         args.join(" ")
                     ),
                 );
-                tracing::warn!(target: "podman", argv = %args.join(" "), error = %e, "podman guard rejected: machine not running");
+                if quiet {
+                    tracing::debug!(target: "podman", argv = %args.join(" "), error = %e, "podman guard rejected: machine not running");
+                } else {
+                    tracing::warn!(target: "podman", argv = %args.join(" "), error = %e, "podman guard rejected: machine not running");
+                }
                 return Err(e);
             }
         }
 
         // While the breaker is tripped only the half-open probe proceeds; everyone else is failed
         // now rather than each paying another full timeout for the same broken seam.
+        // A monitor call never takes the probe slot: a user's call should be the one to find out.
+        if quiet && PODMAN_UNRESPONSIVE.load(Ordering::Acquire) {
+            tracing::debug!(target: "podman", argv = %args.join(" "), "podman breaker open: monitor call not attempted");
+            return Err(unresponsive_error(args));
+        }
         let _probe = if PODMAN_UNRESPONSIVE.load(Ordering::Acquire) {
             match PODMAN_PROBE_SLOT.try_acquire() {
                 Ok(permit) => Some(permit),
@@ -619,7 +659,11 @@ impl SystemPodmanRunner {
         // invisible in `mio.log`: nothing on the call path ever wrote a line, so a genuine hang and
         // a call that simply hadn't been invoked yet looked identical from the log alone.
         let started = std::time::Instant::now();
-        tracing::info!(target: "podman", argv = %args.join(" "), "podman starting");
+        if quiet {
+            tracing::debug!(target: "podman", argv = %args.join(" "), "podman starting");
+        } else {
+            tracing::info!(target: "podman", argv = %args.join(" "), "podman starting");
+        }
         let timeout_dur = call_timeout(args);
         let result = if strip_connection(args) == MACHINE_LIST_ARGV {
             // The one call several callers fire at once (the welcome flow's cards, the projects-page
@@ -649,11 +693,20 @@ impl SystemPodmanRunner {
 
         // A timeout is the only outcome that trips the breaker; any answer at all — including a
         // non-zero exit or a failed spawn — proves the binary still responds and closes it.
-        let timed_out = result.as_ref().err().is_some_and(|e| e.kind() == std::io::ErrorKind::TimedOut);
-        PODMAN_UNRESPONSIVE.store(timed_out, Ordering::Release);
+        // A monitor call is exempt both ways: a slow stats call on a struggling sandbox must not
+        // fail-fast the user's Stop (`docs/features/sandbox-resource-monitor/02_dev.md`, Resolved
+        // Decision 8).
+        if !quiet {
+            let timed_out =
+                result.as_ref().err().is_some_and(|e| e.kind() == std::io::ErrorKind::TimedOut);
+            PODMAN_UNRESPONSIVE.store(timed_out, Ordering::Release);
+        }
 
         let ms = started.elapsed().as_millis();
         match &result {
+            Ok(out) if out.status.success() && quiet => {
+                tracing::debug!(target: "podman", argv = %args.join(" "), ms, "podman ok")
+            }
             Ok(out) if out.status.success() => {
                 tracing::info!(target: "podman", argv = %args.join(" "), ms, "podman ok")
             }
@@ -876,6 +929,9 @@ const MUTAGEN_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 /// and package-install `exec`s get longer allowances (`docs/features/techdebt-sweep/02_dev.md`,
 /// Resolved Decision 2 and its Common Gotchas row on package installs).
 fn msb_call_timeout(args: &[&str]) -> Duration {
+    if is_monitor_call(args) {
+        return MONITOR_CALL_TIMEOUT;
+    }
     match args {
         ["create", ..] => MSB_CREATE_TIMEOUT,
         ["exec", ..] if is_package_install(args) => PACKAGE_INSTALL_TIMEOUT,
@@ -890,6 +946,9 @@ macro_rules! log_call_outcome {
         let argv = $args.join(" ");
         let ms = $started.elapsed().as_millis();
         match $result {
+            Ok(out) if out.status.success() && is_monitor_call($args) => {
+                tracing::debug!(target: $tool, argv = %argv, ms, concat!($tool, " call ok"))
+            }
             Ok(out) if out.status.success() => {
                 tracing::info!(target: $tool, argv = %argv, ms, concat!($tool, " call ok"))
             }
@@ -911,7 +970,11 @@ macro_rules! log_call_outcome {
 /// Runs one `msb` call under [`msb_call_timeout`], logging its start and outcome.
 async fn run_msb_logged(cmd: tokio::process::Command, args: &[&str]) -> std::io::Result<Output> {
     let started = std::time::Instant::now();
-    tracing::info!(target: "msb", argv = %args.join(" "), "msb call starting");
+    if is_monitor_call(args) {
+        tracing::debug!(target: "msb", argv = %args.join(" "), "msb call starting");
+    } else {
+        tracing::info!(target: "msb", argv = %args.join(" "), "msb call starting");
+    }
     let result = run_capturing_via_files(cmd, args, "msb", msb_call_timeout(args)).await;
     log_call_outcome!("msb", args, started, &result);
     result
@@ -1028,6 +1091,19 @@ mod tests {
             assert_eq!(super::msb_call_timeout(args), super::PACKAGE_INSTALL_TIMEOUT, "{args:?}");
         }
         assert!(super::MSB_CREATE_TIMEOUT > super::MSB_CALL_TIMEOUT);
+    }
+
+    #[test]
+    fn monitor_calls_get_the_short_bound_and_nothing_else_does() {
+        let stats = ["--connection", "c", "stats", "--no-stream", "--format", "{{json .}}"];
+        assert!(super::is_monitor_call(&stats));
+        assert_eq!(super::call_timeout(&stats), super::MONITOR_CALL_TIMEOUT);
+        let pool = ["--connection", "c", "info", "--format", "{{json .Host}}"];
+        assert_eq!(super::call_timeout(&pool), super::MONITOR_CALL_TIMEOUT);
+        assert_eq!(super::msb_call_timeout(&super::MSB_METRICS_ARGV), super::MONITOR_CALL_TIMEOUT);
+        let info = ["--connection", "c", "info", "--format", "json"];
+        assert!(!super::is_monitor_call(&info), "the readiness probe keeps its breaker-tripping shape");
+        assert_eq!(super::call_timeout(&info), super::PODMAN_CALL_TIMEOUT);
     }
 
     #[test]

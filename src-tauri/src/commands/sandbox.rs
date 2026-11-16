@@ -101,3 +101,23 @@ pub async fn destroy_sandbox(
 pub async fn listen_events(on_event: Channel<serde_json::Value>, store: State<'_, Arc<dyn SandboxBackend>>) -> Result<(), AppError> {
     Ok(store.listen_events(on_event).await?)
 }
+
+/// The latest resource snapshot, so a reloaded frontend hydrates without waiting for a tick
+/// (`docs/features/sandbox-resource-monitor/02_dev.md`).
+#[tauri::command]
+pub fn get_resource_snapshot(
+    monitor: State<'_, Arc<services::resources::ResourceMonitor>>,
+) -> Result<services::resources::ResourceSnapshot, AppError> {
+    Ok(monitor.snapshot())
+}
+
+/// One sandbox's minute rollups over `window`, or every sandbox's and the Podman machine's when
+/// `name` is absent.
+#[tauri::command]
+pub fn get_resource_history(
+    name: Option<String>,
+    window: services::resources::HistoryWindow,
+    app: tauri::AppHandle,
+) -> Result<services::resources::ResourceHistory, AppError> {
+    services::resources::history(&app, name.as_deref(), window)
+}

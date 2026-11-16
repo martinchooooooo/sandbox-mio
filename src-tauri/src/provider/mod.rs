@@ -11,8 +11,8 @@ use tokio::process::Command;
 use crate::backends::{base_image, podman_command};
 use crate::process::types::ProcessRunner;
 use types::{
-    ExecOpts, InstanceSpec, MachineProvider, MachineRef, ProviderCapabilities, ProviderError,
-    ProviderId, SidecarSpec,
+    EnginePool, ExecOpts, InstanceSpec, InstanceStats, MachineProvider, MachineRef,
+    ProviderCapabilities, ProviderError, ProviderId, SidecarSpec,
 };
 
 /// Spelled literally because `podman -v` rejects a bare `~` and does not expand `$HOME`. Mirrored
@@ -243,6 +243,60 @@ impl PodmanProvider {
         }
         cmd
     }
+}
+
+/// One line of `podman stats --no-stream --format '{{json .}}'`; the field mapping is in
+/// `docs/features/sandbox-resource-monitor/spike/engine-output.md`.
+#[derive(serde::Deserialize)]
+struct PodmanStatsLine {
+    #[serde(rename = "Name")]
+    name: String,
+    #[serde(rename = "CPUNano")]
+    cpu_nano: u64,
+    #[serde(rename = "SystemNano")]
+    system_nano: u64,
+    #[serde(rename = "MemUsage")]
+    mem_usage: u64,
+    #[serde(rename = "MemLimit")]
+    mem_limit: u64,
+}
+
+/// Parses the raw-struct stats template: one JSON object per running container per line, and no
+/// output at all when none runs.
+fn parse_podman_stats(stdout: &str) -> Result<Vec<InstanceStats>, ProviderError> {
+    stdout
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(|line| {
+            let s: PodmanStatsLine = serde_json::from_str(line)
+                .map_err(|e| ProviderError::ParseError(format!("podman stats: {e}")))?;
+            Ok(InstanceStats {
+                name: s.name,
+                cpu_time_ns: s.cpu_nano,
+                sampled_at_ns: s.system_nano,
+                allotted_cpus: None,
+                memory_used: s.mem_usage,
+                memory_limit: s.mem_limit,
+                memory_includes_cache: false,
+            })
+        })
+        .collect()
+}
+
+/// The `host` object `podman info --format '{{json .Host}}'` prints.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PodmanHostInfo {
+    cpus: u32,
+    mem_total: u64,
+    mem_free: u64,
+}
+
+fn parse_podman_pool(stdout: &str) -> Result<EnginePool, ProviderError> {
+    let host: PodmanHostInfo = serde_json::from_str(stdout.trim())
+        .map_err(|e| ProviderError::ParseError(format!("podman info: {e}")))?;
+    Ok(EnginePool { cpus: host.cpus, memory_total: host.mem_total, memory_free: host.mem_free })
 }
 
 /// The `podman exec` arguments (after `--connection`) for one one-shot exec. Each secret is a
@@ -547,6 +601,14 @@ impl MachineProvider for PodmanProvider {
         }
         check(self.run(&["pull", image]).await?).map(|_| ())
     }
+
+    async fn instance_stats(&self) -> Result<Vec<InstanceStats>, ProviderError> {
+        parse_podman_stats(&check(self.run(&crate::process::PODMAN_STATS_ARGV).await?)?)
+    }
+
+    async fn engine_pool(&self) -> Result<Option<EnginePool>, ProviderError> {
+        parse_podman_pool(&check(self.run(&crate::process::PODMAN_POOL_ARGV).await?)?).map(Some)
+    }
 }
 
 #[cfg(test)]
@@ -671,6 +733,46 @@ mod tests {
         let argv = director.calls("podman.create")[0].argv.clone();
         assert!(has_pair(&argv, "--network", "mio-proxy-s"));
         assert!(has_pair(&argv, "--dns", "10.90.3.2"));
+    }
+
+    #[test]
+    fn stats_parse_every_running_container_with_cumulative_cpu() {
+        let idle = parse_podman_stats(include_str!("fixtures/podman-stats-idle.jsonl")).unwrap();
+        let names: Vec<&str> = idle.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["ggggg", "resmon-spike-podman"]);
+        assert_eq!(idle[1].memory_used, 565248);
+        assert_eq!(idle[1].memory_limit, 16529981440);
+        assert_eq!(idle[1].allotted_cpus, None);
+        assert!(!idle[1].memory_includes_cache);
+
+        // Two busy loops: about two CPUs' worth of time between the samples.
+        let a = &parse_podman_stats(include_str!("fixtures/podman-stats-cpu-1.jsonl")).unwrap()[0];
+        let b = &parse_podman_stats(include_str!("fixtures/podman-stats-cpu-2.jsonl")).unwrap()[0];
+        let cpus = (b.cpu_time_ns - a.cpu_time_ns) as f64 / (b.sampled_at_ns - a.sampled_at_ns) as f64;
+        assert!((1.9..2.1).contains(&cpus), "{cpus}");
+    }
+
+    #[test]
+    fn stats_parse_empty_output_as_no_instances() {
+        assert!(parse_podman_stats("").unwrap().is_empty());
+        assert!(parse_podman_stats("
+").unwrap().is_empty());
+    }
+
+    #[test]
+    fn pool_parses_the_host_object() {
+        let pool = parse_podman_pool(include_str!("fixtures/podman-info-host.json")).unwrap();
+        assert_eq!(pool, EnginePool { cpus: 8, memory_total: 16529981440, memory_free: 15666995200 });
+        assert!(parse_podman_pool("").is_err());
+    }
+
+    #[tokio::test]
+    async fn monitor_calls_render_the_quiet_shapes() {
+        let (director, provider) = scripted();
+        assert!(provider.instance_stats().await.unwrap().is_empty(), "unscripted stats is empty");
+        assert_eq!(director.calls("podman.stats")[0].argv, crate::process::PODMAN_STATS_ARGV);
+        let _ = provider.engine_pool().await;
+        assert_eq!(director.calls("podman.info")[0].argv, crate::process::PODMAN_POOL_ARGV);
     }
 
     #[tokio::test]

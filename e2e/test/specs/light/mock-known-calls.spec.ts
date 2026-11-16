@@ -20,6 +20,8 @@ const KNOWN_CALLS = [
   "podman.image-exists",
   "podman.build",
   "podman.info",
+  "podman.stats",
+  "msb.metrics",
   "mutagen.sync-create",
   "mutagen.sync-pause",
   "mutagen.sync-resume",

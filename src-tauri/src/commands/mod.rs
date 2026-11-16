@@ -63,6 +63,8 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         deploy::deploy_sandbox,
         deploy::undeploy_sandbox,
         sandbox::destroy_sandbox,
+        sandbox::get_resource_snapshot,
+        sandbox::get_resource_history,
         deploy::sandbox_deployments,
         network::list_open_forwards,
         network::expose_port,

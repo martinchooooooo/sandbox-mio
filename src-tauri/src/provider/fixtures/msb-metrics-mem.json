@@ -1,0 +1,22 @@
+[
+  {
+    "cpu_percent": 0.0,
+    "cpus": 1,
+    "disk_read_bytes": 4948992,
+    "disk_write_bytes": 91639808,
+    "memory_available_bytes": 150458368,
+    "memory_bytes": 386412544,
+    "memory_host_resident_bytes": 481046528,
+    "memory_limit_bytes": 536870912,
+    "name": "resmon-spike-msb",
+    "net_rx_bytes": 0,
+    "net_tx_bytes": 876,
+    "state": "running",
+    "timestamp": "2026-11-16T22:37:23.928+00:00",
+    "upper_free_bytes": 4030337024,
+    "upper_host_allocated_bytes": 13369344,
+    "upper_used_bytes": 104919040,
+    "uptime_secs": 81.095,
+    "vcpu_time_ns": 33984375000
+  }
+]
