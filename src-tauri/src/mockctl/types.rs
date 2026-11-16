@@ -20,6 +20,14 @@ pub enum Behaviour {
     },
     /// Each matching call consumes one entry; once exhausted, the default (no-override) path resumes.
     ReturnSequence { values: Vec<ReturnPayload> },
+    /// Holds each matching call for `ms` milliseconds, then lets it take its default path. With
+    /// `calls`, only that many calls are held and the override is then consumed. Mirrored by
+    /// `Behaviour` in `e2e/lib/mock.ts`.
+    Delay {
+        ms: u64,
+        #[serde(default)]
+        calls: Option<u32>,
+    },
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -30,10 +38,10 @@ pub struct ReturnPayload {
 }
 
 /// A scripted call's raw result, converted to a real [`Output`] by each runner.
-pub(super) struct ScriptedOutput {
-    pub(super) exit_code: i32,
-    pub(super) stdout: String,
-    pub(super) stderr: String,
+pub(crate) struct ScriptedOutput {
+    pub(crate) exit_code: i32,
+    pub(crate) stdout: String,
+    pub(crate) stderr: String,
 }
 
 /// Mutex-guarded override registry, shared as `Arc<MockDirector>` Tauri state and handed into

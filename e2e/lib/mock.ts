@@ -12,7 +12,9 @@ export type Behaviour =
   | { kind: "fail-once"; exit_code: number; stderr: string }
   | { kind: "fail-always"; exit_code: number; stderr: string }
   | { kind: "return-value"; stdout: string; exit_code?: number }
-  | { kind: "return-sequence"; values: { stdout: string; exit_code?: number }[] };
+  | { kind: "return-sequence"; values: { stdout: string; exit_code?: number }[] }
+  /** Holds each call for `ms`; with `calls`, only that many, so a later call runs undelayed. */
+  | { kind: "delay"; ms: number; calls?: number };
 
 /**
  * Invokes any Tauri command from the running webview. Rejects with the command's raw `AppError`

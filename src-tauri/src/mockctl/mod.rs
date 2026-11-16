@@ -12,6 +12,7 @@ pub mod types;
 
 use std::collections::HashSet;
 use std::process::Output;
+use std::time::Duration;
 use std::sync::{Arc, LazyLock};
 
 use crate::process::{exit_status, strip_connection};
@@ -22,11 +23,22 @@ use types::{
     TrackedMsbInstance,
 };
 
+/// The longest scripted delay, so a typo cannot hang a spec past its own timeout.
+const MAX_DELAY_MS: u64 = 30_000;
+
 fn validate_behaviour(behaviour: &Behaviour) -> Result<(), String> {
     match behaviour {
         Behaviour::FailOnce { exit_code, .. } | Behaviour::FailAlways { exit_code, .. } => {
             if *exit_code == 0 {
                 return Err("a fail behaviour must set a non-zero exit_code".to_string());
+            }
+        }
+        Behaviour::Delay { ms, calls } => {
+            if *ms == 0 || *ms > MAX_DELAY_MS {
+                return Err(format!("a delay must be between 1 and {MAX_DELAY_MS} ms"));
+            }
+            if *calls == Some(0) {
+                return Err("a delay's calls must be at least 1".to_string());
             }
         }
         Behaviour::ReturnValue { .. } | Behaviour::ReturnSequence { .. } => {}
@@ -94,6 +106,9 @@ static KNOWN_CALLS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         // `MsbProvider::ensure_base_image` builds the image with Podman before handing it to
         // `msb load` (docs/features/microsandbox-provider/02_dev.md, Phase G).
         "podman.save",
+        // The native terminal's open step under the mock `Transport`
+        // (`src-tauri/src/terminal/mock.rs`, docs/features/native-terminal/02_dev.md).
+        "terminal.open",
     ])
 });
 
@@ -124,12 +139,41 @@ impl MockDirector {
         self.calls.lock().unwrap().iter().filter(|c| c.key == key).cloned().collect()
     }
 
-    fn record(&self, key: &str, args: &[&str], env: &[(String, String)]) {
+    pub(crate) fn record(&self, key: &str, args: &[&str], env: &[(String, String)]) {
         self.calls.lock().unwrap().push(RecordedCall {
             key: key.to_string(),
             argv: args.iter().map(|a| a.to_string()).collect(),
             env_names: env.iter().map(|(k, _)| k.clone()).collect(),
         });
+    }
+
+    /// Serves a scripted call: holds it for an installed `Delay`, then returns the scripted result
+    /// of any other override. Every runner goes through here, so a delay applies to every key.
+    pub(crate) async fn script(&self, key: &str) -> Option<ScriptedOutput> {
+        if let Some(hold) = self.take_delay(key) {
+            tokio::time::sleep(hold).await;
+        }
+        self.consult(key)
+    }
+
+    /// The hold of an installed `Delay` for `key`, consuming one of its `calls`.
+    fn take_delay(&self, key: &str) -> Option<Duration> {
+        let mut overrides = self.overrides.lock().unwrap();
+        let Some(Behaviour::Delay { ms, calls }) = overrides.get_mut(key) else {
+            return None;
+        };
+        let hold = Duration::from_millis(*ms);
+        let exhausted = match calls {
+            Some(n) => {
+                *n -= 1;
+                *n == 0
+            }
+            None => false,
+        };
+        if exhausted {
+            overrides.remove(key);
+        }
+        Some(hold)
     }
 
     /// Consult the override for `key`, if any. Consumes a `FailOnce` override on the call that
@@ -138,6 +182,7 @@ impl MockDirector {
         let mut overrides = self.overrides.lock().unwrap();
         let behaviour = overrides.get_mut(key)?;
         match behaviour {
+            Behaviour::Delay { .. } => None,
             Behaviour::FailOnce { exit_code, stderr } => {
                 let out = ScriptedOutput { exit_code: *exit_code, stdout: String::new(), stderr: stderr.clone() };
                 overrides.remove(key);
@@ -321,7 +366,8 @@ impl ProcessRunner for ScriptedMutagenRunner {
         let key = derive_mutagen_key(args);
         let scripted = self
             .director
-            .consult(&key)
+            .script(&key)
+            .await
             .unwrap_or_else(|| default_mutagen_output(&key));
         Ok(to_output(scripted))
     }
@@ -342,7 +388,7 @@ impl ProcessRunner for ScriptedPodmanRunner {
         let stripped = strip_connection(args);
         let key = derive_podman_key(stripped);
         self.director.record(&key, stripped, env);
-        if let Some(scripted) = self.director.consult(&key) {
+        if let Some(scripted) = self.director.script(&key).await {
             return Ok(to_output(scripted));
         }
         let scripted = match key.as_str() {
@@ -568,7 +614,7 @@ impl ProcessRunner for ScriptedMsbRunner {
     ) -> std::io::Result<Output> {
         let key = derive_msb_key(args);
         self.director.record(&key, args, env);
-        if let Some(scripted) = self.director.consult(&key) {
+        if let Some(scripted) = self.director.script(&key).await {
             // Real `msb` 0.7.12 inserts the sandbox record before the step a failing `msb create`
             // dies on, so a scripted failure has to leave that record behind too — it is what
             // `MsbProvider::create_instance`'s rollback exists to remove.
