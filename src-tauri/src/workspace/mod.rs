@@ -6,7 +6,7 @@ use std::sync::mpsc;
 
 use tauri::{AppHandle, Emitter, Manager, Runtime, WindowEvent};
 
-use types::{AppKind, AppPane, Rect, TerminalPane, WorkspaceError, WorkspaceRegistry, WorkspaceState};
+use types::{AppKind, AppPane, Rect, WebviewPane, WorkspaceError, WorkspaceRegistry, WorkspaceState};
 
 pub const MAIN_WINDOW: &str = "main";
 pub const NAVIGATION_PANEL_LABEL: &str = "main-navigation-panel";
@@ -72,33 +72,22 @@ pub fn create_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), Workspac
     Ok(())
 }
 
-/// Embed sandbox `name`'s terminal as a new content pane and make it the active tab. Caller
-/// guarantees no Terminal pane exists yet for `name` (the switch-or-embed guard in `open_terminal_pane`).
-pub fn embed_terminal<R: Runtime>(
-    app: &AppHandle<R>,
-    name: &str,
-    workspace_path: &str,
-    terminal: TerminalPane,
-) -> Result<(), WorkspaceError> {
-    embed_external(app, name, workspace_path, terminal, AppKind::Terminal)
-}
-
 pub fn embed_agent_web<R: Runtime>(
     app: &AppHandle<R>,
     name: &str,
     workspace_path: &str,
-    pane: TerminalPane,
+    pane: WebviewPane,
 ) -> Result<(), WorkspaceError> {
     embed_external(app, name, workspace_path, pane, AppKind::AgentWeb)
 }
 
-/// Shared embedder for the externally-served panes (Terminal, AgentWeb): a content child webview
-/// over a Mutagen-forwarded URL that becomes the active tab on creation.
+/// Embedder for an externally-served pane (AgentWeb): a content child webview over a
+/// Mutagen-forwarded URL that becomes the active tab on creation.
 fn embed_external<R: Runtime>(
     app: &AppHandle<R>,
     name: &str,
     workspace_path: &str,
-    pane: TerminalPane,
+    pane: WebviewPane,
     kind: AppKind,
 ) -> Result<(), WorkspaceError> {
     let app_in = app.clone();
@@ -113,7 +102,7 @@ fn embed_external_on_main<R: Runtime>(
     app: &AppHandle<R>,
     name: &str,
     workspace_path: &str,
-    pane: TerminalPane,
+    pane: WebviewPane,
     kind: AppKind,
 ) -> Result<(), WorkspaceError> {
     let win = |e: tauri::Error| WorkspaceError::Window(e.to_string());
@@ -249,7 +238,7 @@ fn switch_app_on_main<R: Runtime>(app: &AppHandle<R>, name: &str) -> Result<(), 
     Ok(())
 }
 
-/// Hide whichever Terminal/AgentWeb overlay is currently shown and clear `active_app`, with no
+/// Hide whichever pane is currently shown and clear `active_app`, with no
 /// replacement pane activated. Called when the client-side view navigates to a sandbox's
 /// Dashboard (or away from any sandbox) while an overlay is still visible — the merged webview's
 /// own DOM change is not enough by itself, since the overlay is a native sibling surface stacked on
@@ -542,7 +531,7 @@ fn logical_size<R: Runtime>(
     Ok(window.inner_size().map_err(win)?.to_logical::<f64>(scale))
 }
 
-/// `set_bounds` every Terminal/AgentWeb overlay pane to `overlay`. Hidden panes are re-bounded too
+/// `set_bounds` every child-webview pane (AgentWeb) to `overlay`. Hidden panes are re-bounded too
 /// so they reappear at the right geometry when a later `switch_app`/`switch_pane` shows them.
 fn apply_layout<R: Runtime>(
     window: &tauri::window::Window<R>,

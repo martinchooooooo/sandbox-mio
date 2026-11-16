@@ -20,21 +20,11 @@ pub enum RuntimeError {
     ManifestRead { path: String, error: String },
     #[error("failed to parse mise manifest: {0}")]
     ManifestParse(String),
-    /// The web terminal could not be reached: token parsing failed, or the
-    /// server did not come online. Distinct from [`RuntimeError::CommandFailed`] so the message
-    /// names the terminal-specific cause.
-    #[error("terminal unavailable: {0}")]
-    TerminalUnavailable(String),
     #[error("agents UI unavailable: {0}")]
     AgentWebUnavailable(String),
 }
 
 impl RuntimeError {
-    /// [`RuntimeError::TerminalUnavailable`] from any displayable cause.
-    pub fn terminal_unavailable(cause: impl std::fmt::Display) -> Self {
-        RuntimeError::TerminalUnavailable(cause.to_string())
-    }
-
     /// [`RuntimeError::AgentWebUnavailable`] from any displayable cause.
     pub fn agent_web_unavailable(cause: impl std::fmt::Display) -> Self {
         RuntimeError::AgentWebUnavailable(cause.to_string())
@@ -85,15 +75,6 @@ pub trait RuntimeManager: Send + Sync {
         workspace_host_path: &str,
     ) -> Result<(), RuntimeError>;
 
-    /// Start zellij web server in sandbox, mint login token, return `(token, container_port)`.
-    /// Caller bridges container_port to Windows loopback via Mutagen forward.
-    async fn prepare_terminal(
-        &self,
-        name: &str,
-        machine: &crate::provider::types::MachineRef,
-        workspace_host_path: &str,
-    ) -> Result<(String, u16), RuntimeError>;
-
     /// Start paseo agent-web daemon in sandbox, return its container port.
     async fn prepare_agent_web(
         &self,
@@ -124,7 +105,7 @@ pub trait ToolchainSecrets: Send + Sync {
 
 /// Drives `mise` through whichever [`crate::provider::types::MachineProvider`] owns the sandbox.
 /// The methods that take a [`crate::provider::types::MachineRef`] (`reproduce_remote`,
-/// `prepare_terminal`, `prepare_agent_web`) resolve it directly; the name-only methods resolve the
+/// `prepare_agent_web`) resolve it directly; the name-only methods resolve the
 /// sandbox's owner through `ProviderRegistry::provider_of`.
 pub struct MiseRuntime {
     /// Resolves each call to the provider running the sandbox

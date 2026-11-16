@@ -1,5 +1,5 @@
-//! Preparation of the embedded panes: resolve a route, start the service inside the sandbox, open a
-//! Mutagen forward to it, and build the webview descriptor the pane is mounted from.
+//! Preparation of the embedded panes: the native terminal's SSH session, and for the agent web UI a
+//! route, the service inside the sandbox, a Mutagen forward to it and the webview descriptor.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -10,7 +10,7 @@ use crate::network::types::{NetworkManager, ServiceKind};
 use crate::runtime::types::{RuntimeError, RuntimeManager};
 use crate::services::routing::SandboxRouter;
 use crate::terminal::types::{AttachRequest, TerminalEvent, TerminalHost};
-use crate::workspace::types::TerminalPane;
+use crate::workspace::types::WebviewPane;
 
 /// Opens the native terminal's SSH session for `name`. Uses `locate`, not `resolve`: the session
 /// spawns the engine exec itself and needs no `~/.ssh` alias
@@ -39,56 +39,6 @@ pub async fn attach_terminal_session(
         rows,
     };
     Ok(terminal.attach(req, on_output, on_event).await?)
-}
-
-pub async fn prepare_terminal_webview(
-    name: &str,
-    workspace_path: &str,
-    router: &SandboxRouter,
-    runtime: &Arc<dyn RuntimeManager>,
-    network: &Arc<dyn NetworkManager>,
-    app: &tauri::AppHandle,
-) -> Result<TerminalPane, AppError> {
-    let route = router.resolve(name, app).await?;
-
-    let (token, container_port) = runtime
-        .prepare_terminal(name, &route.machine, workspace_path)
-        .await?;
-
-    let forward_name = format!("terminal-{name}");
-    let windows_port = network
-        .open_forward(name, ServiceKind::Terminal, &route.forward_alias, container_port)
-        .await
-        .map_err(RuntimeError::terminal_unavailable)?;
-    let mut url = tauri::Url::parse(&format!("http://127.0.0.1:{windows_port}/"))
-        .map_err(RuntimeError::terminal_unavailable)?;
-    url.path_segments_mut()
-        .map_err(|_| RuntimeError::terminal_unavailable("cannot-be-a-base URL"))?
-        .push(name);
-    let url = url.to_string();
-
-    let token_json = serde_json::to_string(&token)
-        .map_err(RuntimeError::terminal_unavailable)?;
-    let init_script = format!(
-        r#"(async () => {{
-    if (sessionStorage.getItem('__mio_terminal_logged_in')) return;
-    try {{
-        const r = await fetch('/command/login', {{
-            method: 'POST',
-            headers: {{ 'Content-Type': 'application/json' }},
-            body: JSON.stringify({{ auth_token: {token_json}, remember_me: true }})
-        }});
-        if (r.ok) {{
-            sessionStorage.setItem('__mio_terminal_logged_in', '1');
-            location.replace(location.pathname + location.search);
-        }}
-    }} catch (_) {{}}
-}})();"#
-    );
-    let parsed_url = url
-        .parse::<tauri::Url>()
-        .map_err(RuntimeError::terminal_unavailable)?;
-    Ok(TerminalPane { url: parsed_url, init_script, forward_name })
 }
 
 fn paseo_password_path(app: &tauri::AppHandle, name: &str) -> Result<PathBuf, tauri::Error> {
@@ -170,7 +120,7 @@ pub async fn prepare_agent_web_pane(
     runtime: &Arc<dyn RuntimeManager>,
     network: &Arc<dyn NetworkManager>,
     app: &tauri::AppHandle,
-) -> Result<TerminalPane, AppError> {
+) -> Result<WebviewPane, AppError> {
     let route = router.resolve(name, app).await?;
 
     let password = read_paseo_password(app, name, workspace_path)
@@ -220,7 +170,7 @@ pub async fn prepare_agent_web_pane(
     let init_script = format!("window.localStorage.setItem('@paseo:daemon-registry', {registry_json});");
 
     let parsed_url = url.parse::<tauri::Url>().map_err(RuntimeError::agent_web_unavailable)?;
-    Ok(TerminalPane { url: parsed_url, init_script, forward_name })
+    Ok(WebviewPane { url: parsed_url, init_script, forward_name })
 }
 
 #[cfg(test)]

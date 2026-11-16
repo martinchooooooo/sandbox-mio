@@ -69,15 +69,6 @@ impl RuntimeManager for MockRuntime {
         Ok(())
     }
 
-    async fn prepare_terminal(
-        &self,
-        _name: &str,
-        _machine: &crate::provider::types::MachineRef,
-        _workspace_host_path: &str,
-    ) -> Result<(String, u16), RuntimeError> {
-        Ok(("mock-host".to_string(), 0))
-    }
-
     async fn prepare_agent_web(
         &self,
         _name: &str,

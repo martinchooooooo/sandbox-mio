@@ -4,7 +4,6 @@ import { listen } from "@tauri-apps/api/event";
 // Module-scoped store; owns the single `network://forwards-changed` subscription.
 
 export type ServiceKind =
-    | { kind: "terminal" }
     | { kind: "agent-web" }
     | { kind: "exposed"; targetPort: number }
     | { kind: "inference" };

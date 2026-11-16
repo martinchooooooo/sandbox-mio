@@ -11,7 +11,7 @@ use super::types::{ForwardInfo, NetworkError, NetworkManager, ServiceKind, EVENT
 use super::{allocate_ephemeral_port, ensure_ports_file};
 
 /// Fabricates plausible host ports and records them in-memory; never touches podman or Mutagen.
-/// The light tier never opens a terminal/agent-web pane or exposes a port today, but this keeps
+/// The light tier never opens an agent-web pane or exposes a port today, but this keeps
 /// the mock behaviorally consistent (list/close round-trip correctly, `EVENT_NAME` emitted on every
 /// mutation) if that changes.
 pub(super) struct MockNetworkManager {

@@ -1,5 +1,6 @@
 // Drives the AppContainer workspace registry (src-tauri/src/workspace/mod.rs) through its Tauri
-// commands. Terminal/AgentWeb panes are the only native surface besides `main-navigation-panel`.
+// commands. AgentWeb panes are the only child webview besides `main-navigation-panel`; Terminal and
+// AgentChat panes are drawn by the main webview.
 
 export type AppKind = "terminal" | "agentweb" | "agentchat";
 

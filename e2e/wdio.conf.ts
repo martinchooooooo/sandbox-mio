@@ -20,6 +20,7 @@ import {
   forwardCreate,
   listMutagenDaemons,
   SWEEP_ORPHAN_SESSION,
+  SWEEP_LEGACY_TERMINAL_SESSION,
   SWEEP_KEEP_SESSION,
 } from "./lib/mutagen.js";
 import {
@@ -388,11 +389,12 @@ export const config: WebdriverIO.Config = {
     // hands MIO_MOCK_BACKEND to the app, so a light spec must never reach a real podman.
     const isLightSession = specs.length > 0 && specs.every(isLightSpec);
     // Seeds forward-sweep's preconditions before the app spawns (its startup sweep is what's under
-    // test): an orphan and a bystander session in the app's own Mutagen daemon. Local tcp endpoints
+    // test): an orphan, a legacy web-terminal forward and a bystander session in the app's own Mutagen daemon. Local tcp endpoints
     // keep session creation instant and SSH-free — the sweep matches by name only.
     if (!isLightSession && specs.some((s) => s.includes("forward-sweep"))) {
       ensureMutagen();
       forwardCreate(SWEEP_ORPHAN_SESSION, "tcp:127.0.0.1:38471", "tcp:127.0.0.1:1");
+      forwardCreate(SWEEP_LEGACY_TERMINAL_SESSION, "tcp:127.0.0.1:38472", "tcp:127.0.0.1:1");
       forwardCreate(SWEEP_KEEP_SESSION, "tcp:127.0.0.1:38473", "tcp:127.0.0.1:1");
     }
     // This spec's hooks depend on the probe and the sandbox backend resolving different machines.

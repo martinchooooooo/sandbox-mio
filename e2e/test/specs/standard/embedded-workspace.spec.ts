@@ -30,27 +30,47 @@ const SWITCHER_H = 64;
 
 const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
 
-// Zellij's own view of the sandbox: whether the web server runs and whether a login token exists.
-// `--status` exits non-zero when offline, hence `check: false`; "online" is not a substring of
-// "offline". Token lines read `token_<n>: ...`, unlike the "no tokens" notice.
-function zellijWebState(name: string): { online: boolean; tokens: boolean } {
-  const status = podman(LOCAL_CONNECTION, ["exec", name, "zellij", "web", "--status"], { check: false });
-  const list = podman(LOCAL_CONNECTION, ["exec", name, "zellij", "web", "--list-tokens"], { check: false });
-  return { online: status.includes("online"), tokens: /^token_\d+/m.test(list) };
+// The live (not exited) zellij sessions inside the sandbox. `list-sessions` exits non-zero when
+// there are none, hence `check: false`; a resurrectable session's line carries "EXITED".
+function liveZellijSessions(name: string): string[] {
+  const out = podman(LOCAL_CONNECTION, ["exec", name, "zellij", "list-sessions", "--no-formatting"], {
+    check: false,
+  });
+  return out
+    .split(/\r?\n/)
+    .filter((line) => line.trim() !== "" && !line.includes("EXITED") && !line.startsWith("No active"))
+    .map((line) => line.trim().split(/\s+/)[0]);
 }
 
-// Proves prepare_terminal's daemonize + token mint ran, without any token file in the workspace.
-async function waitForZellijLogin(name: string): Promise<void> {
+// The native terminal's view of sandbox `name` (src/lib/terminal/TerminalView.svelte).
+function terminalView(name: string) {
+  return $(`[data-terminal='${name}']`);
+}
+
+// Proves the native pane's SSH session attached and the zellij session named after the sandbox runs
+// (docs/features/native-terminal/02_dev.md, Resolved Decision 7).
+async function waitForTerminalAttached(name: string): Promise<void> {
   await browser.waitUntil(
-    () => {
-      const state = zellijWebState(name);
-      return state.online && state.tokens;
+    async () => {
+      const view = await terminalView(name);
+      if (!(await view.isExisting())) return false;
+      return (await view.getAttribute("data-status")) === "attached" && liveZellijSessions(name).includes(name);
     },
     {
       timeout: 60000,
       interval: 1000,
-      timeoutMsg: `zellij web in "${name}" never reported online with a minted token after open_terminal_pane`,
+      timeoutMsg: `the terminal of "${name}" never attached to a live zellij session "${name}" after open_terminal_pane`,
     },
+  );
+}
+
+// The retired web terminal's forward must never be created again
+// (docs/features/native-terminal/02_dev.md, Resolved Decision 3).
+function assertNoTerminalForward(name: string): void {
+  const out = forwardList(`terminal-${name}`);
+  assert(
+    !out.includes("Identifier:"),
+    `A terminal-${name} Mutagen forward exists; the native terminal opens no forward. Output:\n${out}`,
   );
 }
 
@@ -122,12 +142,12 @@ describe("Embedded workspace (app sidebar, sandbox header and Dashboard in one w
       null,
       "active_app must stay null while the client-side view is Dashboard for any sandbox.",
     );
-    const zellij = zellijWebState(nameA);
-    assert(
-      !zellij.online && !zellij.tokens,
-      `zellij web in "${nameA}" is online or holds a token before any Terminal pane was requested ` +
-        `(${JSON.stringify(zellij)}) — prepare_terminal ran eagerly during watch_workspace_ports, ` +
-        "defeating the lazy-Terminal goal.",
+    const sessions = liveZellijSessions(nameA);
+    assert.deepStrictEqual(
+      sessions,
+      [],
+      `zellij runs sessions in "${nameA}" before any Terminal pane was requested ` +
+        `(${JSON.stringify(sessions)}) — the terminal attached eagerly, defeating the lazy-Terminal goal.`,
     );
 
     // Structural layout proof (mirrors the Rust unit tests in workspace/mod.rs): the overlay rect is
@@ -137,9 +157,9 @@ describe("Embedded workspace (app sidebar, sandbox header and Dashboard in one w
     assert.strictEqual(state.overlay.y, SWITCHER_H);
   });
 
-  it("open_terminal_pane lazily embeds the Terminal pane and makes it active", async () => {
+  it("open_terminal_pane lazily opens the native Terminal pane and makes it active", async () => {
     await openTerminalPane(nameA, workspaceDirA);
-    await waitForZellijLogin(nameA);
+    await waitForTerminalAttached(nameA);
 
     const state = await workspaceState();
     const panes = panesFor(state, nameA);
@@ -151,23 +171,13 @@ describe("Embedded workspace (app sidebar, sandbox header and Dashboard in one w
 
     const pane = paneFor(state, nameA, "terminal")!;
     assert.strictEqual(pane.kind, "terminal");
-    assert(
-      pane.url!.startsWith("http://127.0.0.1:"),
-      `Pane url "${pane.url}" is not a loopback forward — embed_terminal must use the ` +
-        "Mutagen-forwarded Windows-host url, not the container-side address.",
-    );
-    // Phase C: the URL path pins a stable per-sandbox session name (the sandbox name itself) so a
-    // later close+reopen reattaches to the same Zellij session instead of spawning a new one.
-    assert.strictEqual(
-      new URL(pane.url!).pathname,
-      `/${nameA}`,
-      `Terminal pane url "${pane.url}" does not carry "/${nameA}" as its session path — ` +
-        "prepare_terminal_webview must build the url as http://127.0.0.1:<port>/<sandbox-name>.",
-    );
+    assert.strictEqual(pane.url, null, "The native Terminal pane must carry no webview url.");
+    assert.strictEqual(pane.forward_name, null, "The native Terminal pane must carry no forward.");
+    assertNoTerminalForward(nameA);
     assert.strictEqual(
       state.active_app,
       pane.label,
-      "The freshly embedded Terminal pane must become the active tab.",
+      "The freshly opened Terminal pane must become the active tab.",
     );
   });
 
@@ -200,7 +210,7 @@ describe("Embedded workspace (app sidebar, sandbox header and Dashboard in one w
 
     // Bring the Terminal pane back so the switch_app assertion below keeps its meaning.
     await sandboxHeader.clickTab(nameA, "terminal");
-    await waitForZellijLogin(nameA);
+    await waitForTerminalAttached(nameA);
     assert.strictEqual((await workspaceState()).active_app, terminal.label);
   });
 
@@ -211,9 +221,10 @@ describe("Embedded workspace (app sidebar, sandbox header and Dashboard in one w
     const onHome = await workspaceState();
     assert.strictEqual(onHome.active_app, null, "Showing Home must hide the active pane (hide_active_pane).");
     assert(paneFor(onHome, nameA, "terminal"), "Showing Home closed sandbox A's Terminal pane instead of hiding it.");
-    assert(
-      forwardList(`terminal-${nameA}`).includes("Connected"),
-      "Sandbox A's terminal forward must stay connected while Home shows.",
+    assert.strictEqual(
+      await (await terminalView(nameA)).getAttribute("data-status"),
+      "attached",
+      "Sandbox A's terminal session must stay attached while Home shows.",
     );
 
     // Home cards never carry inline package or agent management (it lives in the Dashboard), and
@@ -241,33 +252,19 @@ describe("Embedded workspace (app sidebar, sandbox header and Dashboard in one w
     });
   });
 
-  it("the embedded terminal actually serves (server online, forward connected, HTTP 200)", async () => {
-    const status = podman(LOCAL_CONNECTION, ["exec", nameA, "zellij", "web", "--status"], {
-      check: false,
+  it("the native terminal renders zellij from the sandbox's session, with no forward", async () => {
+    await waitForTerminalAttached(nameA);
+    await browser.waitUntil(async () => ((await (await terminalView(nameA)).getText()) ?? "").trim() !== "", {
+      timeout: 30000,
+      interval: 1000,
+      timeoutMsg: `the terminal of "${nameA}" attached but never rendered any zellij output.`,
     });
-    assert(status.includes("online"), `zellij web --status reported "${status}", expected "online".`);
-
-    const fwdOut = forwardList(`terminal-${nameA}`);
-    assert(
-      fwdOut.includes("Connected"),
-      `mutagen forward list terminal-${nameA} did not show Connected. Output:\n${fwdOut}`,
+    assert.deepStrictEqual(
+      liveZellijSessions(nameA),
+      [nameA],
+      `Expected exactly one live zellij session, named "${nameA}", inside the sandbox.`,
     );
-
-    const state = await workspaceState();
-    const pane = paneFor(state, nameA, "terminal")!;
-    let status200 = false;
-    await browser.waitUntil(
-      async () => {
-        try {
-          status200 = (await fetch(pane.url!)).status === 200;
-          return status200;
-        } catch {
-          return false;
-        }
-      },
-      { timeout: 30000, interval: 1000, timeoutMsg: `${pane.url} never returned HTTP 200 from the host.` },
-    );
-    assert(status200, `${pane.url} did not serve HTTP 200`);
+    assertNoTerminalForward(nameA);
   });
 
   it("collapsing and expanding the app sidebar moves the overlay rect to the rail and back", async () => {
@@ -304,14 +301,11 @@ describe("Embedded workspace (app sidebar, sandbox header and Dashboard in one w
 
     await closePane(nameA, "terminal");
 
-    await browser.waitUntil(
-      async () => !forwardList(`terminal-${nameA}`).includes("Connected"),
-      {
-        timeout: 30000,
-        interval: 1000,
-        timeoutMsg: `terminal-${nameA} forward still shows Connected after close_pane.`,
-      },
-    );
+    await browser.waitUntil(async () => !(await (await terminalView(nameA)).isExisting()), {
+      timeout: 30000,
+      interval: 1000,
+      timeoutMsg: `the terminal view of "${nameA}" stayed mounted after close_pane.`,
+    });
 
     const state = await workspaceState();
     const panes = panesFor(state, nameA);
@@ -329,14 +323,21 @@ describe("Embedded workspace (app sidebar, sandbox header and Dashboard in one w
     );
     await assertDashboardVisible(nameA);
 
-    // Reopening reattaches to the same Zellij session: the URL's stable session-name path
-    // (Phase C) is unchanged across close + reopen.
+    // Closing the tab only detaches: the zellij session keeps running, and reopening reattaches to
+    // it under the same pane label instead of creating a second session.
+    assert.deepStrictEqual(
+      liveZellijSessions(nameA),
+      [nameA],
+      "Closing the Terminal tab must leave the sandbox's zellij session running.",
+    );
     await openTerminalPane(nameA, workspaceDirA);
+    await waitForTerminalAttached(nameA);
     const reopened = paneFor(await workspaceState(), nameA, "terminal")!;
-    assert.strictEqual(
-      new URL(reopened.url!).pathname,
-      new URL(terminalBefore.url!).pathname,
-      "Reopening the Terminal pane must reuse the same session-name URL path as before closing it.",
+    assert.strictEqual(reopened.label, terminalBefore.label);
+    assert.deepStrictEqual(
+      liveZellijSessions(nameA),
+      [nameA],
+      "Reopening the Terminal pane must reattach to the existing zellij session, not create another.",
     );
   });
 
@@ -348,11 +349,8 @@ describe("Embedded workspace (app sidebar, sandbox header and Dashboard in one w
       1,
       "Re-opening must not push additional panes for the same sandbox (still exactly one Terminal pane).",
     );
-    const fwdOut = forwardList(`terminal-${nameA}`);
-    assert(
-      (fwdOut.match(/^Status: Forwarding$/gm) ?? []).length === 1,
-      `Expected exactly one Connected terminal-${nameA} forward after re-open. Output:\n${fwdOut}`,
-    );
+    const views = await $$(`[data-terminal='${nameA}']`);
+    assert.strictEqual(views.length, 1, `Expected exactly one terminal view for "${nameA}" after re-open.`);
   });
 
   it("a second sandbox's workspace coexists with the first", async () => {
@@ -374,12 +372,13 @@ describe("Embedded workspace (app sidebar, sandbox header and Dashboard in one w
       state.active_app,
       null,
       "Opening B's workspace shows its Dashboard (client-side view state, no Rust pane), so " +
-        "active_app must be null, leaving A's Terminal pane embedded but hidden underneath.",
+        "active_app must be null, leaving A's Terminal pane open but hidden.",
     );
     await assertDashboardVisible(nameB);
-    assert(
-      forwardList(`terminal-${nameA}`).includes("Connected"),
-      "Sandbox A's forward must stay connected while B's workspace opens.",
+    assert.strictEqual(
+      await (await terminalView(nameA)).getAttribute("data-status"),
+      "attached",
+      "Sandbox A's terminal session must stay attached while B's workspace opens.",
     );
   });
 
@@ -392,7 +391,7 @@ describe("Embedded workspace (app sidebar, sandbox header and Dashboard in one w
     assert.strictEqual(after.active_app, paneA.label);
   });
 
-  it("destroying one sandbox tears down every one of its panes and its forward", async () => {
+  it("destroying one sandbox tears down every one of its panes and its terminal view", async () => {
     await rowA.destroy();
 
     assert(!podmanOk(LOCAL_CONNECTION, ["inspect", nameA]), `Local container "${nameA}" still exists after destroy.`);
@@ -409,9 +408,10 @@ describe("Embedded workspace (app sidebar, sandbox header and Dashboard in one w
       undefined,
       `sandbox_last_pane still has an entry for "${nameA}" after destroy — close_app must clear it.`,
     );
-    assert(
-      !forwardList(`terminal-${nameA}`).includes("Connected"),
-      `terminal-${nameA} forward still shows Connected after destroy.`,
+    assert.strictEqual(
+      await (await terminalView(nameA)).isExisting(),
+      false,
+      `The terminal view of "${nameA}" is still mounted after destroy.`,
     );
 
     // Sandbox B's workspace must be untouched: it never had a Rust-tracked pane to begin with, so

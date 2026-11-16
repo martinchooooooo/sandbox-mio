@@ -63,24 +63,24 @@ ENV MISE_DATA_DIR=/root/.local/share/mise \
     MISE_YES=1 \
     SHELL=/bin/bash
 
-# Bake the in-app web terminal engine (zellij) and symlink it onto the global PATH so the terminal
-# runs plain `zellij` over `podman exec`, NOT through mise. Pinned to an exact version so the install
-# skips the rate-limited GitHub releases-list API; zellij >= 0.43.0 is required for the `zellij web`
-# subcommand the terminal depends on. Bump ZELLIJ_VERSION (verify >= 0.43.0) to upgrade zellij.
+# Bake the in-app terminal's multiplexer (zellij) and symlink it onto the global PATH so the terminal
+# runs plain `zellij` over the engine exec and SSH, NOT through mise. Pinned to an exact version so
+# the install skips the rate-limited GitHub releases-list API. The terminal relies on
+# `zellij attach --create-background`; verify it still behaves before bumping ZELLIJ_VERSION.
 ARG ZELLIJ_VERSION=0.44.3
 RUN mise install "zellij@${ZELLIJ_VERSION}" \
  && ln -sf "$(mise where zellij@${ZELLIJ_VERSION})/zellij" /usr/local/bin/zellij \
  && zellij --version
 
-# The web server aborts with "Failed to find default config file path" unless a config exists, so
-# dump the default config into the location zellij resolves at startup.
+# Dump the default config into the location zellij resolves at startup, so every session starts
+# from a known config file.
 RUN mkdir -p /root/.config/zellij \
  && zellij setup --dump-config > /root/.config/zellij/config.kdl
 
 # Activate mise in interactive bash sessions so zellij terminal panes have installed tools on PATH.
 RUN echo 'eval "$(mise activate bash)"' > /root/.bashrc
 
-# Default to the workspace directory so the zellij daemon (and the panes it spawns) start where
+# Default to the workspace directory so the zellij server (and the panes it spawns) start where
 # mise.toml lives, letting mise resolve the right tool versions without an explicit `cd`.
 WORKDIR /root/work
 

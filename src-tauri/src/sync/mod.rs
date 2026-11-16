@@ -178,14 +178,17 @@ pub async fn sweep_stale_forwards<R: Runtime>(app: &AppHandle<R>, live_sandboxes
             .and_then(|v| v.as_str());
         let Some(name) = name else { continue };
         // No server runs at startup, so every `inference-` session is stale, legacy `inference-reverse`
-        // included (`docs/features/local-llm-reachability/02_dev.md`, Resolved Decision 9).
-        let orphaned = if name.starts_with("expose-") || name.starts_with("inference-") {
+        // included (`docs/features/local-llm-reachability/02_dev.md`, Resolved Decision 9). A
+        // `terminal-` session is left by the retired web terminal
+        // (`docs/features/native-terminal/02_dev.md`, Resolved Decision 13).
+        let orphaned = if name.starts_with("expose-")
+            || name.starts_with("inference-")
+            || name.starts_with("terminal-")
+        {
             true
         } else {
-            let sandbox = name
-                .strip_prefix("terminal-")
-                .or_else(|| name.strip_prefix("agentweb-"));
-            sandbox.is_some_and(|s| !live_sandboxes.iter().any(|live| live == s))
+            name.strip_prefix("agentweb-")
+                .is_some_and(|s| !live_sandboxes.iter().any(|live| live == s))
         };
         if orphaned {
             tracing::info!(target: "sync", session = name, "sweeping stale forward");

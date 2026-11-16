@@ -119,9 +119,11 @@ export function forwardList(name: string): string {
   return ((out.stdout ?? "") + (out.stderr ?? "")).trim();
 }
 
-// Names are load-bearing: the startup sweep must terminate the orphan's prefix and leave the
-// other alone (docs/features/agent-web-ui/03_e2e.md).
+// Names are load-bearing: the startup sweep must terminate the orphan's prefix and every legacy
+// `terminal-` session, and leave the other alone (docs/features/agent-web-ui/03_e2e.md,
+// docs/features/native-terminal/02_dev.md, Resolved Decision 13).
 export const SWEEP_ORPHAN_SESSION = "agentweb-e2e-orphan-sweep";
+export const SWEEP_LEGACY_TERMINAL_SESSION = "terminal-e2e-legacy-sweep";
 export const SWEEP_KEEP_SESSION = "mio-e2e-keep-sweep";
 
 /** Seam for planting sessions in the app's private daemon before the app process spawns. */

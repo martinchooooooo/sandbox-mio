@@ -59,7 +59,7 @@
 </script>
 
 <!-- h-16 = 64px must equal SWITCHER_H (src-tauri/src/workspace/mod.rs): Rust places the
-     Terminal/Agents pane webviews that far from the top, so a drift leaves a strip or cuts into
+     Agents pane webview and the terminal layer that far from the top, so a drift leaves a strip or cuts into
      this header. The root stays a `div`: e2e page objects key on `div[data-sandbox]`. -->
 <div
     data-sandbox={sandbox}

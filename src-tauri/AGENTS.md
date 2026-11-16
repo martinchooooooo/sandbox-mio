@@ -19,7 +19,7 @@ Every subsystem that touches external processes is a trait injected into Tauri s
 | Trait | Declared in | Real impl (drives) | Under `MIO_MOCK_BACKEND=1` | Constructor |
 |---|---|---|---|---|
 | `SandboxBackend` | `backends/types.rs` | `CliBackend` (podman CLI over a named connection, dispatching instance lifecycle through the provider registry) | same struct, `ScriptedPodmanRunner` | `default_backend()` in `backends/mod.rs` |
-| `RuntimeManager` | `runtime/types.rs` | `PodmanMiseRuntime` (mise + zellij inside the container) | `runtime/mock.rs` | `default_runtime()` in `runtime/mod.rs` |
+| `RuntimeManager` | `runtime/types.rs` | `PodmanMiseRuntime` (mise and the paseo agent web UI inside the container) | `runtime/mock.rs` | `default_runtime()` in `runtime/mod.rs` |
 | `SyncEngine` | `sync/types.rs` | `MutagenCli` (bundled Mutagen sidecar) | same struct, `ScriptedMutagenRunner` | `default_sync_engine()` in `sync/mod.rs` |
 | `MachineManager` | `machine/types.rs` | podman machine / WSL lifecycle | same struct, `ScriptedPodmanRunner` | `default_machine_manager()` in `machine/mod.rs` |
 | `NetworkManager` | `network/types.rs` | `MutagenNetworkManager` (forward lifecycle, port exposure) | `network/mock.rs` | `default_network_manager()` in `network/mod.rs` |
@@ -33,9 +33,9 @@ Cross-subsystem orchestration lives in `services/` (e.g. the deploy teardown ord
 Modules follow one layout: `types.rs` declares the public types/trait, `mod.rs` implements.
 
 - `backends/` — sandbox (container) lifecycle via podman; owns the base image (`BASE_IMAGE_VERSION`, embedded Containerfile from `src-tauri/resources/Containerfile`) and workspace-path derivation.
-- `runtime/` — in-container tooling: mise package install/uninstall, zellij web terminal preparation, agent web UI (paseo).
+- `runtime/` — in-container tooling: mise package install/uninstall, agent web UI (paseo).
 - `sync/` — Mutagen file-sync and low-level port-forwarding primitives (`forward_create`/`forward_terminate`/`sweep_stale_forwards`) for remote deploys and embedded panes.
-- `network/` — owns forward lifecycle/registry on top of `sync`'s primitives: terminal/agent-web forwards, and exposing an arbitrary user-chosen sandbox port to the host over the sandbox's SSH alias, without recreating the container.
+- `network/` — owns forward lifecycle/registry on top of `sync`'s primitives: agent-web and inference forwards, and exposing an arbitrary user-chosen sandbox port to the host over the sandbox's SSH alias, without recreating the container.
 - `machine/` — podman machine readiness/startup on the host (WSL on Windows).
 - `process/` — the production process layer: the `ProcessRunner` trait, the real
   `SystemPodmanRunner`/`SystemMsbRunner`/`SystemMutagenRunner`, the detached-command constructors
@@ -61,9 +61,9 @@ Modules follow one layout: `types.rs` declares the public types/trait, `mod.rs` 
 - `inference/` — local LLM serving: machine-spec probing, model downloads, llama.cpp (`inference/llama.rs`) and Foundry Local (`inference/foundry.rs`) engines.
 - `settings/` — persisted `AppSettings`.
 - `ssh/` — SSH config manipulation for remote hosts.
-- `workspace/` — embedded-pane registry (`WorkspaceRegistry`): which Terminal/Dashboard/agent-web panes are open per sandbox; emits `workspace://state`.
+- `workspace/` — embedded-pane registry (`WorkspaceRegistry`): which Terminal/agent-web/agent-chat panes are open per sandbox; emits `workspace://state`.
 - `commands/` — the `#[tauri::command]` surface, one file per domain (`panes`, `agent_chat`, `inference`, `machine`, `agents`, `sandbox`, `deploy`, `image`, `credentials`, `packages`, `hosts`, `app`, `network`, `proxy`, `net_policy`, `mockctl`), plus the `tauri::generate_handler!` inventory in `commands/mod.rs`.
-- `services/` — cross-subsystem orchestration: `routing.rs` (`SandboxRouter`, resolving a sandbox to its provider, machine, and SSH alias), `panes.rs` (terminal and agent-web pane preparation), `sandbox.rs` (create, network re-apply, and teardown sequencing), `start_env.rs` (`AppStartEnv`, the per-sandbox environment microsandbox start calls receive, including secret values).
+- `services/` — cross-subsystem orchestration: `routing.rs` (`SandboxRouter`, resolving a sandbox to its provider, machine, and SSH alias), `panes.rs` (the terminal session attach and agent-web pane preparation), `sandbox.rs` (create, network re-apply, and teardown sequencing), `start_env.rs` (`AppStartEnv`, the per-sandbox environment microsandbox start calls receive, including secret values).
 - `bootstrap.rs` — startup wiring: process-runner construction, every `manage` call, and the exit handler.
 - `logging.rs` — `init_logging`. Returns a `WorkerGuard` whose `Drop` is the only thing that drains the log file's non-blocking writer, so it must be handed to `manage`.
 - `mio_files.rs` — reads and writes for the JSON documents under a workspace's `.mio` directory, formatting the path into the failure message in one place.

@@ -1,4 +1,4 @@
-//! Mutagen-forward lifecycle and port allocation for terminal/agent-web, inference and user-exposed ports.
+//! Mutagen-forward lifecycle and port allocation for agent-web, inference and user-exposed ports.
 
 pub mod types;
 
@@ -20,7 +20,6 @@ pub use types::EVENT_NAME;
 
 fn forward_name(sandbox: &str, kind: ServiceKind) -> String {
     match kind {
-        ServiceKind::Terminal => format!("terminal-{sandbox}"),
         ServiceKind::AgentWeb => format!("agentweb-{sandbox}"),
         ServiceKind::Exposed(port) => format!("expose-{sandbox}-{port}"),
         ServiceKind::Inference => format!("inference-{sandbox}"),
@@ -391,13 +390,13 @@ async fn poll_ports_file(
                     _ => None,
                 })
                 .collect();
-            // A pane's own server (zellij, paseo) and the inference forward's guest listener sit
+            // A pane's own server (paseo) and the inference forward's guest listener sit
             // in the sandbox too and must not be auto-exposed as user ports.
             let exclude = exposed_for_sandbox
                 .iter()
                 .map(|f| match f.kind {
                     ServiceKind::Exposed(p) => p,
-                    ServiceKind::Terminal | ServiceKind::AgentWeb | ServiceKind::Inference => {
+                    ServiceKind::AgentWeb | ServiceKind::Inference => {
                         f.remote_port
                     }
                 })

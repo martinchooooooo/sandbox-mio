@@ -42,9 +42,9 @@ pub struct AppPane {
     pub url: Option<String>,
 }
 
-/// Inputs for embedding the terminal as a content child webview. Produced by
-/// `prepare_terminal_webview` in `src-tauri/src/services/panes.rs`, which authors the auto-login init script.
-pub struct TerminalPane {
+/// Inputs for embedding the agent web UI as a content child webview. Produced by
+/// `prepare_agent_web_pane` in `src-tauri/src/services/panes.rs`, which authors the init script.
+pub struct WebviewPane {
     pub url: tauri::Url,
     pub init_script: String,
     pub forward_name: String,
@@ -59,8 +59,9 @@ pub struct Rect {
     pub height: f64,
 }
 
-/// AppContainer window state. `overlay` is the last-applied logical rectangle for Terminal/AgentWeb
-/// overlay (deterministic for e2e tests). Broadcast to merged webview as `workspace://state` event.
+/// AppContainer window state. `overlay` is the last-applied logical rectangle of the pane area, where
+/// the AgentWeb webview and the terminal layer draw (deterministic for e2e tests). Broadcast to merged
+/// webview as `workspace://state` event.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct WorkspaceState {
     pub apps: Vec<AppPane>,

@@ -23,8 +23,8 @@
 
     // The store (src/lib/network/state.svelte.ts) is kept live by `network://forwards-changed`, so
     // this list updates as soon as the backend's own mutation completes, without a manual refetch.
-    // Only user-exposed ports belong in this section: every open sandbox also carries the internal
-    // `terminal`/`agent-web` bridges, which the user neither opened here nor can manage here, so
+    // Only user-exposed ports belong in this section: an open sandbox can also carry the internal
+    // `agent-web` and `inference` bridges, which the user neither opened here nor can manage here, so
     // they're filtered out (otherwise "No ports open." would never show for a fresh sandbox).
     const forwards = $derived(openForwardsFor(sandboxName).filter((f) => f.kind.kind === "exposed"));
     let newPort = $state("");
@@ -34,7 +34,6 @@
     function kindLabel(fwd: ForwardInfo): string {
         if (fwd.label) return fwd.label;
         switch (fwd.kind.kind) {
-            case "terminal": return "Terminal";
             case "agent-web": return "Agents";
             case "inference": return m.ports_kind_local_model();
             case "exposed": return fwd.autoDetected ? `Auto :${fwd.kind.targetPort}` : `Exposed :${fwd.kind.targetPort}`;

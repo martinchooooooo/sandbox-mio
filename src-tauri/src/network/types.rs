@@ -7,7 +7,6 @@ pub const EVENT_NAME: &str = "network://forwards-changed";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, std::hash::Hash, Serialize)]
 #[serde(rename_all = "kebab-case", tag = "kind", content = "targetPort")]
 pub enum ServiceKind {
-    Terminal,
     AgentWeb,
     /// User-exposed port (the value is the target port inside sandbox).
     Exposed(u16),
@@ -47,7 +46,7 @@ pub struct ForwardInfo {
     /// The sandbox-side port the forward's far end dials: the alias lands inside the sandbox, so
     /// no host-side mapping is involved.
     pub remote_port: u16,
-    /// Mutagen session name (e.g., `terminal-<sandbox>`, `expose-<sandbox>-<port>`).
+    /// Mutagen session name (e.g., `agentweb-<sandbox>`, `expose-<sandbox>-<port>`).
     pub forward_name: String,
     /// Short name from `.mio/ports.json` (container-declared) or frontend UI (user-exposed).
     /// `None` for auto-detected ports. Guides whether frontend shows manual close button.
@@ -57,8 +56,7 @@ pub struct ForwardInfo {
     pub auto_detected: bool,
 }
 
-/// Mutagen-forward lifecycle and port allocation for terminal, agent-web, inference and user-exposed
-/// ports.
+/// Mutagen-forward lifecycle and port allocation for agent-web, inference and user-exposed ports.
 #[async_trait::async_trait]
 pub trait NetworkManager: Send + Sync {
     /// Allocate a fresh host loopback port, create/replace a Mutagen forward to the remote port,
@@ -88,7 +86,7 @@ pub trait NetworkManager: Send + Sync {
     /// Tear down the forward for (`sandbox`, `kind`). Best-effort.
     async fn close_forward(&self, sandbox: &str, kind: ServiceKind);
 
-    /// Tear down every forward for `sandbox` (Terminal, AgentWeb, Inference, and Exposed ports).
+    /// Tear down every forward for `sandbox` (AgentWeb, Inference, and Exposed ports).
     async fn close_sandbox(&self, sandbox: &str);
 
     /// Return snapshot of all tracked forwards for the frontend's open-ports view.

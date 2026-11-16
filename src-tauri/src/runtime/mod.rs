@@ -20,8 +20,6 @@ const MANIFEST_REL: &str = "mise.toml";
 
 const LOCKFILE_REL: &str = "mise.lock";
 
-const ZELLIJ_WEB_PORT: u16 = 8082;
-
 const PASEO_WEB_PORT: u16 = 6767;
 
 const PASEO_PROJECTS_DIR: &str = "/root/.paseo/projects";
@@ -78,14 +76,6 @@ fn parse_installed(manifest: &str) -> Result<Vec<String>, RuntimeError> {
         return Ok(Vec::new());
     };
     Ok(tools.keys().cloned().collect())
-}
-
-fn parse_token(stdout: &str) -> Option<String> {
-    stdout
-        .lines()
-        .filter(|l| l.trim_start().starts_with("token"))
-        .find_map(|l| l.split_once(':').map(|(_, v)| v.trim().to_string()))
-        .filter(|t| !t.is_empty())
 }
 
 /// Options that exec `mise` from the workspace directory: `WORKSPACE_MOUNT` as `--workdir`, no env,
@@ -255,42 +245,6 @@ impl RuntimeManager for MiseRuntime {
         // Install the lock-pinned tools from the upstream release hosts. Resolving from `mise.lock`
         // (not tool names) is what makes the remote reproduce the identical builds the laptop locked.
         check(provider.exec(name, &["mise", "install"], self.network_opts()).await?).map(|_| ())
-    }
-
-    async fn prepare_terminal(
-        &self,
-        name: &str,
-        machine: &MachineRef,
-        _workspace_host_path: &str,
-    ) -> Result<(String, u16), RuntimeError> {
-        let provider = self.provider_on(machine);
-        // The container must be running before any `podman exec`.
-        provider.start(name).await?;
-
-        // Ensure the web server is up, idempotently: start it only when `--status` reports offline.
-        // `--status` exits non-zero when offline, so inspect the combined output instead of `check`.
-        // "online" is not a substring of "offline", so the contains-check does not false-positive.
-        let status = provider.exec(name, &["zellij", "web", "--status"], ExecOpts::default()).await?;
-        let status_text = format!(
-            "{}{}",
-            String::from_utf8_lossy(&status.stdout),
-            String::from_utf8_lossy(&status.stderr)
-        );
-        if !status_text.contains("online") {
-            check(provider.exec(name, &["zellij", "web", "--daemonize"], ExecOpts::default()).await?)?;
-        }
-
-        // Mint a one-time token; its plaintext is emitted only here and can never be re-read.
-        let token_out = check(provider.exec(name, &["zellij", "web", "--create-token"], ExecOpts::default()).await?)?;
-        let token = parse_token(&token_out).ok_or_else(|| {
-            RuntimeError::TerminalUnavailable(format!(
-                "could not parse a token from `zellij web --create-token` output:\n{token_out}"
-            ))
-        })?;
-
-        // Nothing is published: the Mutagen forward dials the container's own port through the
-        // exec transport (docs/architecture/transport.md).
-        Ok((token, ZELLIJ_WEB_PORT))
     }
 
     async fn prepare_agent_web(
