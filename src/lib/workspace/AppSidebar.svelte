@@ -17,11 +17,10 @@
     import Button from "$lib/components/ui/button/button.svelte";
     import * as NavList from "$lib/components/ui/nav-list";
     import ActivityCenter from "$lib/activity/ActivityCenter.svelte";
-    import { containerStatusFor } from "$lib/activity/activity.svelte";
-    import { m } from "$lib/paraglide/messages.js";
+        import { m } from "$lib/paraglide/messages.js";
     import { parseError } from "$lib/errors";
     import { statusDotClass, type Project } from "$lib/sandbox";
-    import { deploymentFor, ensureSandboxRemoteState, sandboxesList } from "$lib/sandbox/state.svelte";
+    import { deploymentFor, ensureSandboxRemoteState, liveStatus, sandboxesList } from "$lib/sandbox/state.svelte";
     import { activePane, isCollapsed, viewSandboxName } from "$lib/workspace/state.svelte";
     import { newSandbox, openSandbox, showPage } from "$lib/workspace/navigation.svelte";
 
@@ -39,11 +38,6 @@
 
     function pageActive(href: string): boolean {
         return viewing === null && page.url.pathname === href;
-    }
-
-    // Container events land between the store's 3 s polls, so the dot prefers the latest event.
-    function statusOf(project: Project): string {
-        return containerStatusFor(project.name) ?? project.status;
     }
 
     async function open(project: Project) {
@@ -114,7 +108,7 @@
 
         <NavList.Group label={m.sidebar_sandboxes()} class="min-h-0 flex-1 overflow-y-auto" data-sidebar-sandboxes>
             {#each sandboxesList() as project (project.id)}
-                {@const dot = statusDotClass(statusOf(project), deploymentFor(project.name))}
+                {@const dot = statusDotClass(liveStatus(project), deploymentFor(project.name))}
                 <NavList.Item
                     data-nav-sandbox={project.name}
                     label={project.name}

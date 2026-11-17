@@ -7,14 +7,10 @@
     import { podmanRebootRequired } from "$lib/podman/setup.svelte";
     import { imageRun, probeImage, runImageDownload } from "$lib/onboarding/setup.svelte";
 
-    let { ondone }: { ondone?: (done: boolean) => void } = $props();
-
     // The run lives in the shared store: the background setup may already be building the image
     // when this card mounts, and a second build from here would race it.
     const run = $derived(imageRun());
     const done = $derived(!run.probing && run.ready);
-
-    $effect(() => ondone?.(done));
 
     onMount(() => {
         if (!run.busy) probeImage();

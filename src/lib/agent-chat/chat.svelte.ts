@@ -68,8 +68,8 @@ export class ChatStore {
     /** The `get_state` payload: model, thinking level, session file. */
     piState = $state<Record<string, unknown> | null>(null);
     deliveryMode = $state<DeliveryMode>("steer");
-    /** Text an extension asked to place in the prompt input (`set_editor_text`). */
-    editorText = $state<string | null>(null);
+    /** The prompt input's text. Lives here so it survives tab switches; an extension can replace it (`set_editor_text`). */
+    draft = $state("");
     models = $state<PiModel[]>([]);
     /** Id the running inference server serves, or null when none runs. */
     servedModelId = $state<string | null>(null);
@@ -395,7 +395,7 @@ export class ChatStore {
                 else toast.info(effect.message);
                 return;
             case "setEditorText":
-                this.editorText = effect.text;
+                this.draft = effect.text;
                 return;
             case "settled":
                 void this.#checkInference();

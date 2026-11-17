@@ -99,11 +99,9 @@
     });
 
     // Re-apply recreates the VM (docs/features/microsandbox-network-policy/02_dev.md, Phase G).
-    let wantViewer = $state(false);
+    // Writable derived: follows the prop, and the switch overrides it until the prop changes.
+    let wantViewer = $derived(viewerOn);
     let confirming = $state(false);
-    $effect(() => {
-        wantViewer = viewerOn;
-    });
     const openPanes = $derived(workspaceApps().filter((a) => a.sandbox === sandboxName).map((a) => a.label));
     const viewerChange = $derived(wantViewer !== viewerOn);
 

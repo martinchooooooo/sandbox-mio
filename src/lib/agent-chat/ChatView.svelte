@@ -19,33 +19,25 @@
     // +layout.svelte keys the sandbox view by sandbox, so `sandbox` is fixed for this instance.
     // svelte-ignore state_referenced_locally
     const store = ensureChat(sandbox, workspacePath);
-    let draft = $state("");
     let sending = $state(false);
 
     // Once per mount, not reactively: a stream that ends while the view is open shows Reconnect
     // rather than reattaching in a loop.
     if (store.connection === "idle" || store.connection === "disconnected") void store.attach();
 
-    $effect(() => {
-        if (store.editorText !== null) {
-            draft = store.editorText;
-            store.editorText = null;
-        }
-    });
-
     const running = $derived(store.chat.run === "running");
     const canWrite = $derived(store.connection === "attached" && store.writer);
-    const canSend = $derived(canWrite && draft.trim() !== "" && !sending);
+    const canSend = $derived(canWrite && store.draft.trim() !== "" && !sending);
     const statusLine = $derived(Object.values(store.chat.statuses).join(" · "));
     const widgets = $derived(Object.entries(store.chat.widgets));
 
     async function send() {
         if (!canSend) return;
-        const text = draft.trim();
+        const text = store.draft.trim();
         sending = true;
         try {
             await store.sendMessage(text);
-            draft = "";
+            store.draft = "";
         } catch (e) {
             toast.error(e instanceof Error ? e.message : String(e));
         } finally {
@@ -160,8 +152,8 @@
             {/each}
             <InputGroup.Root>
                 <InputGroup.Textarea
-                    value={draft}
-                    oninput={(e) => (draft = e.currentTarget.value)}
+                    value={store.draft}
+                    oninput={(e) => (store.draft = e.currentTarget.value)}
                     {onkeydown}
                     placeholder={running ? m.agent_chat_placeholder_running() : m.agent_chat_placeholder()}
                     disabled={!canWrite}

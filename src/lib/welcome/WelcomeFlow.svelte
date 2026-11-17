@@ -7,7 +7,7 @@
     import ActivityCenter from "$lib/activity/ActivityCenter.svelte";
     import type { ActivityHeadline } from "$lib/activity/types";
     import OnboardingBook from "$lib/onboarding/OnboardingBook.svelte";
-    import { setupHeadline, startBackgroundSetup } from "$lib/onboarding/setup.svelte";
+    import { setupComplete, setupHeadline, startBackgroundSetup } from "$lib/onboarding/setup.svelte";
     import { completeOnboarding } from "$lib/settings/onboarding.svelte";
     import { m } from "$lib/paraglide/messages.js";
 
@@ -16,9 +16,6 @@
     // Component-local on purpose: a step machine that should reset when the route is left
     // (src/AGENTS.md's rune-store convention).
     let step = $state<"hero" | "welcome" | "story" | "actions">("hero");
-
-    let vmDone = $state(false);
-    let imageDone = $state(false);
 
     let finishing = $state(false);
 
@@ -101,15 +98,15 @@
         <div class="w-full max-w-3xl space-y-6 pb-16">
             <Text as="h1" class="text-center">{m.welcome_first_stops()}</Text>
             <div class="grid gap-4 @max-[720px]:grid-cols-1 grid-cols-2">
-                <CreateVmStep ondone={(done) => (vmDone = done)} />
-                <DownloadNecessitiesStep ondone={(done) => (imageDone = done)} />
+                <CreateVmStep />
+                <DownloadNecessitiesStep />
             </div>
             <div class="flex items-center justify-center gap-3">
                 <!-- TODO(i18n) -->
                 <Button variant="outline" onclick={() => (step = "story")} data-welcome-back-to-story>← Back to the tour</Button>
                 {#if variant === "onboarding"}
                     <Button
-                        disabled={!vmDone || !imageDone || finishing}
+                        disabled={!setupComplete() || finishing}
                         loading={finishing}
                         onclick={finish}
                         data-welcome-finish

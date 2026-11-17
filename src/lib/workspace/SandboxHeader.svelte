@@ -9,9 +9,8 @@
     import { m } from "$lib/paraglide/messages.js";
     import { cn } from "$lib/utils";
     import { createActionRunner } from "$lib/actions.svelte";
-    import { containerStatusFor } from "$lib/activity/activity.svelte";
-    import { statusDotClass, translateStatus } from "$lib/sandbox";
-    import { deploymentFor, refreshSandboxState, sandboxesList } from "$lib/sandbox/state.svelte";
+        import { statusDotClass, translateStatus } from "$lib/sandbox";
+    import { deploymentFor, liveStatus, refreshSandboxState, sandboxesList } from "$lib/sandbox/state.svelte";
     import { HOME_APP, LAUNCHABLE_APPS } from "$lib/workspace/apps";
     import { activeAppLabel, panesOf } from "$lib/workspace/state.svelte";
     import { activatePane, closePane, closeSandbox, showManage } from "$lib/workspace/navigation.svelte";
@@ -24,7 +23,7 @@
     // only the name, tabs and close.
     const entry = $derived(sandboxesList().find((p) => p.name === sandbox));
     const deployment = $derived(deploymentFor(sandbox));
-    const status = $derived(entry ? (containerStatusFor(sandbox) ?? entry.status) : undefined);
+    const status = $derived(entry ? liveStatus(entry) : undefined);
     const panes = $derived(panesOf(sandbox));
     const tabs = $derived(
         LAUNCHABLE_APPS.flatMap((app) => {

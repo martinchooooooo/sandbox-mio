@@ -11,10 +11,7 @@
 
     // `provider` has no picker yet — Phase J (docs/features/microsandbox-provider/02_dev.md) adds
     // the frontend selector that will pass something other than the default here.
-    let { provider = "podman" as ProviderId, ondone }: {
-        provider?: ProviderId;
-        ondone?: (done: boolean) => void;
-    } = $props();
+    let { provider = "podman" as ProviderId }: { provider?: ProviderId } = $props();
 
     // The run lives in the shared store: the background setup may have started it before this
     // card mounted, and a second run from here would race it.
@@ -24,8 +21,6 @@
     // The probe runs in both variants, so a user who already has a machine sees the completed state
     // on first run too, not just on replay.
     const done = $derived(!status.probing && status.readiness.ready);
-
-    $effect(() => ondone?.(done));
 
     onMount(() => ensureMachineReadiness(provider));
 

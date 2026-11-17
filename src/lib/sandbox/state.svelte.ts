@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { checkPodman, podmanUnavailable } from "$lib/podman/setup.svelte";
 import { parseError } from "$lib/errors";
 import type { Project, Deployment } from "$lib/sandbox";
+import { containerStatusFor } from "$lib/activity/activity.svelte";
 import { allCapabilities, type ProviderCapabilities, type ProviderId } from "$lib/providers";
 
 // Module-scoped store (mirrors src/lib/workspace/state.svelte.ts): the shared sandbox-list,
@@ -55,6 +56,15 @@ async function loadCapabilities() {
 
 export function sandboxesList(): Project[] {
     return projects;
+}
+
+/**
+ * The sandbox's status with the latest container event (src/lib/activity/activity.svelte.ts)
+ * overriding the polled one, so a state change shows between the store's poll ticks. Reads
+ * reactive state per name, so callers in a `$derived` or template track it without further wiring.
+ */
+export function liveStatus(project: Project): string {
+    return containerStatusFor(project.name) ?? project.status;
 }
 
 export function deploymentFor(name: string): Deployment | undefined {

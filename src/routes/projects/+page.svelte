@@ -19,30 +19,21 @@
     } from "$lib/podman/setup.svelte";
     import SandboxItem from "./SandboxItem.svelte";
     import CreateSandboxItem from "./CreateSandboxItem.svelte";
-    import { activityEvents, containerStatusFor } from "$lib/activity/activity.svelte";
-    import type { Project } from "$lib/sandbox";
     import {
         ensureSandboxRemoteState,
         sandboxesList,
         deploymentFor,
         sandboxLoadError,
         refreshSandboxState,
+        liveStatus,
     } from "$lib/sandbox/state.svelte";
 
     let error = $state("");
     let currentImageVersion = $state<number | undefined>(undefined);
 
     // The store's raw list, overlaid with the latest container status from the activity store's
-    // event stream (src/lib/activity/activity.svelte.ts) for responsiveness between the store's 3 s
-    // poll ticks. Reading activityEvents() makes this effect re-run on each container event.
-    let projects = $state<Project[]>([]);
-    $effect(() => {
-        activityEvents();
-        projects = sandboxesList().map((p) => {
-            const status = containerStatusFor(p.name);
-            return status && status !== p.status ? { ...p, status } : p;
-        });
-    });
+    // event stream for responsiveness between the store's 3 s poll ticks.
+    const projects = $derived(sandboxesList().map((p) => ({ ...p, status: liveStatus(p) })));
 
     onMount(async () => {
         // Probe Podman before anything else: a stopped machine after a host restart should show the
