@@ -1,3 +1,4 @@
+import { untrack } from "svelte";
 import { parseError, type AppErrorKind } from "$lib/errors";
 import { fetchMachineReadiness, fetchMachineSetupSteps } from "./readiness";
 import type { MachineReadiness, ProviderId, SetupStep } from "./types";
@@ -43,6 +44,11 @@ export function machineReadiness(provider: ProviderId): ReadinessState {
  * run both need.
  */
 export function ensureMachineReadiness(provider: ProviderId, force = false): Promise<void> {
+    // Untracked so a caller's `$effect` depends only on its arguments, not on the cached state.
+    return untrack(() => probeMachineReadiness(provider, force));
+}
+
+function probeMachineReadiness(provider: ProviderId, force: boolean): Promise<void> {
     const running = inFlight.get(provider);
     if (running) return running;
     if (!force && byProvider[provider] && !byProvider[provider].probing) return Promise.resolve();

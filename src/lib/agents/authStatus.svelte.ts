@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { untrack } from "svelte";
 import type { AgentAuthStatus, AgentDescriptor } from "$lib/agents/types";
 
 // Module-scoped per-sandbox cache so a remounted Overview shows the last known login state at once
@@ -39,7 +40,8 @@ async function checkAgent(sandboxName: string, agent: AgentDescriptor): Promise<
 
 /** Checks every agent concurrently, writing each agent's entry as its own call settles. */
 export async function refreshAgentAuth(sandboxName: string, agents: AgentDescriptor[]): Promise<void> {
-    await Promise.all(agents.map((agent) => checkAgent(sandboxName, agent)));
+    // Untracked so a caller's `$effect` does not subscribe to the cache the checks write.
+    await untrack(() => Promise.all(agents.map((agent) => checkAgent(sandboxName, agent))));
 }
 
 export function forgetAgentAuth(sandboxName: string): void {

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { untrack } from "svelte";
 import { parseError } from "$lib/errors";
 
 // Module-scoped per-sandbox cache: each `proxy_status` call lists every instance of the provider,
@@ -35,35 +36,41 @@ export function proxyStatusFor(sandboxName: string): Entry {
 
 /** Always fetches `sandboxName`'s status; concurrent callers share one call. */
 export function refreshProxyStatus(sandboxName: string): Promise<void> {
-    const pending = inFlight.get(sandboxName);
-    if (pending) return pending;
-    const previous = entries[sandboxName] ?? EMPTY;
-    entries[sandboxName] = { ...previous, loading: true };
-    const promise = (async () => {
-        try {
-            const value = await invoke<ProxyStatus>("proxy_status", { name: sandboxName });
-            entries[sandboxName] = { value, error: null, fetchedAt: Date.now(), loading: false };
-        } catch (e) {
-            // A failed call keeps the last value; the error alone marks the answer unknown.
-            entries[sandboxName] = {
-                value: previous.value,
-                error: parseError(e).message,
-                fetchedAt: 0,
-                loading: false,
-            };
-        }
-    })().finally(() => inFlight.delete(sandboxName));
-    inFlight.set(sandboxName, promise);
-    return promise;
+    // Untracked so a caller's `$effect` depends only on its arguments, not on this store's entries.
+    return untrack(() => {
+        const pending = inFlight.get(sandboxName);
+        if (pending) return pending;
+        const previous = entries[sandboxName] ?? EMPTY;
+        entries[sandboxName] = { ...previous, loading: true };
+        const promise = (async () => {
+            try {
+                const value = await invoke<ProxyStatus>("proxy_status", { name: sandboxName });
+                entries[sandboxName] = { value, error: null, fetchedAt: Date.now(), loading: false };
+            } catch (e) {
+                // A failed call keeps the last value; the error alone marks the answer unknown.
+                entries[sandboxName] = {
+                    value: previous.value,
+                    error: parseError(e).message,
+                    fetchedAt: 0,
+                    loading: false,
+                };
+            }
+        })().finally(() => inFlight.delete(sandboxName));
+        inFlight.set(sandboxName, promise);
+        return promise;
+    });
 }
 
 /** Fetches unless a value younger than `PROXY_STATUS_MAX_AGE_MS` is cached. */
 export function ensureProxyStatus(sandboxName: string): Promise<void> {
-    const entry = entries[sandboxName];
-    if (entry && entry.value && Date.now() - entry.fetchedAt < PROXY_STATUS_MAX_AGE_MS) {
-        return Promise.resolve();
-    }
-    return refreshProxyStatus(sandboxName);
+    // Untracked like `refreshProxyStatus`, so a failed fetch cannot re-run the calling effect.
+    return untrack(() => {
+        const entry = entries[sandboxName];
+        if (entry && entry.value && Date.now() - entry.fetchedAt < PROXY_STATUS_MAX_AGE_MS) {
+            return Promise.resolve();
+        }
+        return refreshProxyStatus(sandboxName);
+    });
 }
 
 export function forgetProxyStatus(sandboxName: string): void {
