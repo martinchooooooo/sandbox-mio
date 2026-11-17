@@ -349,6 +349,7 @@
   "agent_chat_no": "No",
   "agent_chat_submit": "Submit",
   "agent_chat_no_model": "No model",
+  "agent_chat_local_llm": "Local LLM",
   "agent_chat_thinking": "Thinking: {level}",
   "agent_chat_context_title": "Context window",
   "agent_chat_context_usage": "{used} of {window} tokens used. pi compacts the conversation when it nears the limit.",

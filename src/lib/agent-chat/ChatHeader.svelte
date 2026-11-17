@@ -7,6 +7,7 @@
     import { Button } from "$lib/components/ui/button/index.js";
     import type { ChatStore } from "./chat.svelte";
     import { m } from "$lib/paraglide/messages.js";
+    import { LOCAL_LLM_PROVIDER_ID } from "$lib/agents/local-llm";
 
     let { store }: { store: ChatStore } = $props();
 
@@ -16,17 +17,22 @@
     const percent = $derived(context ? Math.min(100, Math.round((context.used / context.window) * 100)) : 0);
     const disabled = $derived(store.connection !== "attached" || !store.writer || store.chat.run === "running");
 
+    /** The local provider holds the one served model, so it is labelled by role, not by name. */
+    function modelLabel(entry: { name?: string; provider?: string }): string {
+        return entry.provider === LOCAL_LLM_PROVIDER_ID ? m.agent_chat_local_llm() : (entry.name ?? "");
+    }
+
     function sessionLabel(s: (typeof store.sessions)[number]): string {
         return s.name ?? s.firstMessage ?? m.agent_chat_session_empty();
     }
 </script>
 
 <div class="flex items-center gap-2 border-b-2 px-4 py-2" data-chat-header>
-    <DropdownMenu.Root onOpenChange={(open: boolean) => open && store.models.length === 0 && store.loadModels()}>
+    <DropdownMenu.Root onOpenChange={(open: boolean) => open && store.loadModels()}>
         <DropdownMenu.Trigger>
             {#snippet child({ props })}
                 <Button {...props} size="sm" variant="outline" {disabled} data-chat-model={model?.id ?? ""}>
-                    {model?.name ?? m.agent_chat_no_model()}
+                    {model ? modelLabel(model) : m.agent_chat_no_model()}
                     <HugeiconsIcon icon={ArrowDown01Icon} />
                 </Button>
             {/snippet}
@@ -35,12 +41,12 @@
             <DropdownMenu.RadioGroup
                 value={model ? `${model.provider}/${model.id}` : ""}
                 onValueChange={(v) => {
-                    const next = store.models.find((m) => `${m.provider}/${m.id}` === v);
+                    const next = store.selectableModels.find((entry) => `${entry.provider}/${entry.id}` === v);
                     if (next) void store.setModel(next);
                 }}
             >
-                {#each store.models as m (`${m.provider}/${m.id}`)}
-                    <DropdownMenu.RadioItem value={`${m.provider}/${m.id}`} data-model-option={m.id}>{m.name}</DropdownMenu.RadioItem>
+                {#each store.selectableModels as entry (`${entry.provider}/${entry.id}`)}
+                    <DropdownMenu.RadioItem value={`${entry.provider}/${entry.id}`} data-model-option={entry.id} title={entry.id}>{modelLabel(entry)}</DropdownMenu.RadioItem>
                 {/each}
             </DropdownMenu.RadioGroup>
         </DropdownMenu.Content>

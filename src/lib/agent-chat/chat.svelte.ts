@@ -3,6 +3,7 @@ import { toast } from "svelte-sonner";
 import { parseError } from "$lib/errors";
 import { AGENTS, onboardingSeed } from "$lib/agents/catalogue";
 import { PI_PINNED_VERSION } from "$lib/agents/pi";
+import { LOCAL_LLM_PROVIDER_ID } from "$lib/agents/local-llm";
 import { m } from "$lib/paraglide/messages.js";
 import { provisionAgent } from "$lib/agents/provision";
 import type { InferenceStatus } from "$lib/models/types";
@@ -70,6 +71,8 @@ export class ChatStore {
     /** Text an extension asked to place in the prompt input (`set_editor_text`). */
     editorText = $state<string | null>(null);
     models = $state<PiModel[]>([]);
+    /** Id the running inference server serves, or null when none runs. */
+    servedModelId = $state<string | null>(null);
     thinkingLevels = $state<string[]>(DEFAULT_THINKING_LEVELS);
     sessions = $state<ChatSession[]>([]);
     /** Set when a run failed and no inference server is running. */
@@ -206,6 +209,13 @@ export class ChatStore {
             console.error(e);
         }
         try {
+            const status = await invoke<InferenceStatus>("inference_status");
+            this.servedModelId = status.running ? status.modelId : null;
+        } catch {
+            this.servedModelId = null;
+        }
+        await this.#followServedModel();
+        try {
             const data = (await this.request({ type: "get_available_thinking_levels" })) as { levels?: string[] };
             this.thinkingLevels = data?.levels?.length ? data.levels : DEFAULT_THINKING_LEVELS;
         } catch {
@@ -218,6 +228,27 @@ export class ChatStore {
             await this.request({ type: "set_model", provider: model.provider, modelId: model.id });
             this.piState = (await this.request({ type: "get_state" })) as Record<string, unknown>;
         });
+    }
+
+    /** Other providers' models plus one local model: a pi that outlived a re-provision still lists the
+     * old catalogue, so local entries collapse to the served one, else pi's current, else the first. */
+    get selectableModels(): PiModel[] {
+        const isLocal = (model: PiModel) => model.provider === LOCAL_LLM_PROVIDER_ID;
+        const local = this.models.filter(isLocal);
+        const current = this.piState?.model as { id?: string; provider?: string } | null | undefined;
+        const pick =
+            local.find((model) => model.id === this.servedModelId) ??
+            local.find((model) => current?.provider === LOCAL_LLM_PROVIDER_ID && model.id === current.id) ??
+            local[0];
+        return [...(pick ? [pick] : []), ...this.models.filter((model) => !isLocal(model))];
+    }
+
+    /** Moves pi onto the served local model when it still holds one the server no longer runs. */
+    async #followServedModel(): Promise<void> {
+        const current = this.piState?.model as { id?: string; provider?: string } | null | undefined;
+        if (current?.provider !== LOCAL_LLM_PROVIDER_ID || !this.servedModelId || current.id === this.servedModelId) return;
+        const served = this.models.find((model) => model.provider === LOCAL_LLM_PROVIDER_ID && model.id === this.servedModelId);
+        if (served) await this.setModel(served);
     }
 
     async setThinkingLevel(level: string): Promise<void> {

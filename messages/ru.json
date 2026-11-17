@@ -349,6 +349,7 @@
   "agent_chat_no": "Нет",
   "agent_chat_submit": "Отправить",
   "agent_chat_no_model": "Нет модели",
+  "agent_chat_local_llm": "Локальная LLM",
   "agent_chat_thinking": "Размышление: {level}",
   "agent_chat_context_title": "Контекстное окно",
   "agent_chat_context_usage": "Использовано {used} из {window} токенов. pi сжимает беседу, когда лимит близок.",

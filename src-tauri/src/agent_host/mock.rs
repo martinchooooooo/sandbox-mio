@@ -42,15 +42,14 @@ fn records(fixture: &str) -> Vec<Value> {
     fixture.lines().filter_map(|l| serde_json::from_str(l).ok()).collect()
 }
 
+/// Provisioning writes one local model, named after its role and keyed by the served id
+/// (`buildPiLocalLlmProvider` in `src/lib/agents/pi.ts`).
 fn models() -> Value {
-    let model = |id: &str, name: &str| {
-        json!({
-            "id": id, "name": name, "api": "openai-completions", "provider": "local-llm",
-            "baseUrl": "http://127.0.0.1:51199/v1", "reasoning": true, "input": ["text"],
-            "contextWindow": 32768, "maxTokens": 16384
-        })
-    };
-    json!([model("qwen3.5-2b", "Qwen3.5 2B"), model("qwen3.5-4b", "Qwen3.5 4B")])
+    json!([{
+        "id": "qwen3.5-2b", "name": "Local LLM", "api": "openai-completions", "provider": "local-llm",
+        "baseUrl": "http://127.0.0.1:51199/v1", "reasoning": true, "input": ["text"],
+        "contextWindow": 32768, "maxTokens": 16384
+    }])
 }
 
 impl Sandbox {

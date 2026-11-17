@@ -61,6 +61,7 @@ The app installs coding agents (Claude Code, OpenCode, pi) into a sandbox, lets 
 - OpenCode and pi are provisioned to use the host inference server as a model provider ([Local Inference](inference.md)). Provisioning writes their configuration into the workspace from the host, so it works while the sandbox is stopped. OpenCode's configuration is merged into existing user settings; pi's lives in its own file under `.mio/`.
 - Every provisioned agent is re-provisioned, best-effort, at app startup and after each server start, keeping the model list and server address current.
 - An agent's default model follows the running server, unless the user picked a model from another provider in the agent itself.
+- pi gets one local model, "Local LLM", keyed by the served id; the Models page switches it.
 
 ## Agent Web UI (Paseo)
 

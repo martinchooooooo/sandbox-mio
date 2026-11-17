@@ -1,5 +1,8 @@
 import { MODELS } from "$lib/models/catalogue";
-import { LOCAL_LLM_BASE_URL, LOCAL_LLM_PROVIDER_ID } from "./local-llm";
+import { FALLBACK_MODEL_ID, LOCAL_LLM_BASE_URL, LOCAL_LLM_PROVIDER_ID } from "./local-llm";
+
+/** Name pi reports for the local model; the chat header shows a translated label instead. */
+export const LOCAL_LLM_MODEL_NAME = "Local LLM";
 
 export const PI_CONFIG_DIR_CONTAINER = "/root/work/.mio/pi-agent";
 export const PI_CONFIG_ENV = "PI_CODING_AGENT_DIR";
@@ -13,29 +16,40 @@ export const PI_PINNED_VERSION = "1.5.0";
 /** Mirrors `DEFAULT_LLAMA_CTX_SIZE` in `src-tauri/src/inference/llama.rs`; keep the two equal. */
 export const DEFAULT_LLAMA_CTX_SIZE = 32_768;
 
-/** Generates the provider config to keep pi's model map in sync with the inference server.
- * The dummy `apiKey` is required — OpenAI-compatible clients always send an Authorization
- * header; llama-server ignores its value. pi wants `models` as an array, not a map.
- * `servedContext` caps each model's `contextWindow` at the server's context size; `null` (the
- * Foundry engine, whose served size is not probed) writes the catalogue value. */
-export function buildPiLocalLlmProvider(defaultModelId: string, servedContext: number | null): {
+/** The catalogue entry behind a served id; Foundry serves a device-specific id prefixed by the alias. */
+function catalogueEntry(servedId: string) {
+  return (
+    MODELS.find((model) => model.id === servedId) ??
+    MODELS.find((model) => model.foundryAlias !== null && servedId.startsWith(model.foundryAlias)) ??
+    MODELS.find((model) => model.id === FALLBACK_MODEL_ID)
+  );
+}
+
+/** pi's provider block: one "Local LLM" entry keyed by the served id, since only one model is served.
+ * The dummy `apiKey` is required because OpenAI-compatible clients always send an Authorization header.
+ * `servedContext` caps `contextWindow`; `null` (Foundry, not probed) keeps the catalogue value. */
+export function buildPiLocalLlmProvider(servedModelId: string, servedContext: number | null): {
   providerId: string;
   providerJson: unknown;
   defaultModel: string;
 } {
+  const entry = catalogueEntry(servedModelId);
+  const catalogueContext = entry?.contextWindow ?? DEFAULT_LLAMA_CTX_SIZE;
   return {
     providerId: LOCAL_LLM_PROVIDER_ID,
     providerJson: {
       baseUrl: LOCAL_LLM_BASE_URL,
       api: "openai-completions",
       apiKey: "sk-local",
-      models: MODELS.map((model) => ({
-        id: model.id,
-        name: model.label,
-        contextWindow: servedContext === null ? model.contextWindow : Math.min(model.contextWindow, servedContext),
-        reasoning: model.reasoning,
-      })),
+      models: [
+        {
+          id: servedModelId,
+          name: LOCAL_LLM_MODEL_NAME,
+          contextWindow: servedContext === null ? catalogueContext : Math.min(catalogueContext, servedContext),
+          reasoning: entry?.reasoning ?? true,
+        },
+      ],
     },
-    defaultModel: defaultModelId,
+    defaultModel: servedModelId,
   };
 }
