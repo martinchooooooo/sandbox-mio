@@ -8,6 +8,7 @@
     import { Spinner } from "$lib/components/ui/spinner/index.js";
     import { PI_PINNED_VERSION } from "$lib/agents/pi";
     import { m } from "$lib/paraglide/messages.js";
+    import { parseError } from "$lib/errors";
     import { ensureChat } from "./chat.svelte";
     import ChatHeader from "./ChatHeader.svelte";
     import ConfirmationDialog from "./ConfirmationDialog.svelte";
@@ -39,7 +40,7 @@
             await store.sendMessage(text);
             store.draft = "";
         } catch (e) {
-            toast.error(e instanceof Error ? e.message : String(e));
+            toast.error(parseError(e).message);
         } finally {
             sending = false;
         }
@@ -49,7 +50,7 @@
         try {
             await store.abort();
         } catch (e) {
-            toast.error(e instanceof Error ? e.message : String(e));
+            toast.error(parseError(e).message);
         }
     }
 
@@ -57,7 +58,7 @@
         try {
             await store.answerDialog(id, payload);
         } catch (e) {
-            toast.error(e instanceof Error ? e.message : String(e));
+            toast.error(parseError(e).message);
         }
     }
 

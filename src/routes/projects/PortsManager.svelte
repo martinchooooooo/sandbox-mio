@@ -34,9 +34,9 @@
     function kindLabel(fwd: ForwardInfo): string {
         if (fwd.label) return fwd.label;
         switch (fwd.kind.kind) {
-            case "agent-web": return "Agents";
+            case "agent-web": return m.projects_agents();
             case "inference": return m.ports_kind_local_model();
-            case "exposed": return fwd.autoDetected ? `Auto :${fwd.kind.targetPort}` : `Exposed :${fwd.kind.targetPort}`;
+            case "exposed": return fwd.autoDetected ? `Auto :${fwd.kind.targetPort}` : `Exposed :${fwd.kind.targetPort}`; // TODO(i18n)
         }
     }
 
@@ -74,7 +74,7 @@
 </script>
 
 <div class="flex flex-col gap-1.5">
-    <span class="text-muted-foreground text-xs shrink-0">Ports</span>
+    <span class="text-muted-foreground text-xs shrink-0">{m.dashboard_section_ports()}</span>
     {#if forwards.length > 0}
         <div class="flex flex-col gap-1">
             {#each forwards as fwd (fwd.forwardName)}
@@ -91,6 +91,7 @@
                         http://127.0.0.1:{fwd.hostPort}/
                     </button>
                     {#if fwd.kind.kind === "exposed" && !isManaged(fwd)}
+                        <!-- TODO(i18n) -->
                         <Button variant="ghost" size="icon" disabled={portBusy} title="Stop exposing"
                             onclick={() => removeExposedPort(fwd.kind.kind === "exposed" ? fwd.kind.targetPort : 0)}>
                             ✕
@@ -100,6 +101,7 @@
             {/each}
         </div>
     {:else}
+        <!-- TODO(i18n) -->
         <span class="text-muted-foreground text-xs">No ports open.</span>
     {/if}
     <div class="flex items-center gap-2">
@@ -114,6 +116,7 @@
             onkeydown={(e) => e.key === "Enter" && addExposedPort()}
         />
         <Button size="sm" disabled={portBusy || !newPort} onclick={addExposedPort}>
+            <!-- TODO(i18n) -->
             Expose
         </Button>
     </div>

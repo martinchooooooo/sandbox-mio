@@ -92,6 +92,7 @@
                 finishLabel="Finish the tour →"
                 class="max-h-[calc(100vh-9.5rem)] min-h-[420px]"
             />
+            <!-- TODO(i18n) -->
             <Button variant="link" size="sm" onclick={() => (step = "actions")} data-welcome-skip>Skip the tour</Button>
         </div>
     {:else}

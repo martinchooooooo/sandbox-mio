@@ -328,7 +328,7 @@ export class ChatStore {
         try {
             await body();
         } catch (e) {
-            toast.error(e instanceof Error ? e.message : parseError(e).message);
+            toast.error(parseError(e).message);
         } finally {
             this.busy = null;
         }
@@ -354,7 +354,7 @@ export class ChatStore {
         try {
             await this.refresh();
         } catch (e) {
-            this.error = e instanceof Error ? e.message : String(e);
+            this.error = parseError(e).message;
         }
         void this.loadModels();
     }

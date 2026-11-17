@@ -38,11 +38,11 @@
 
     function formatInstallEvent(e: AgentInstallEvent): string {
         switch (e.kind) {
-            case "PackageStart": return `Installing ${e.package}…`;
+            case "PackageStart": return `Installing ${e.package}…`; // TODO(i18n)
             case "PackageDone": return `✓ ${e.package}`;
-            case "PostInstallStart": return `Running ${e.step}…`;
+            case "PostInstallStart": return `Running ${e.step}…`; // TODO(i18n)
             case "PostInstallDone": return `✓ ${e.step}`;
-            case "Done": return "Done.";
+            case "Done": return "Done."; // TODO(i18n)
         }
     }
 
@@ -108,7 +108,7 @@
             });
             new WebviewWindow(label, {
                 url: `/agent-auth?sandbox=${encodeURIComponent(sandboxName)}&agent=${encodeURIComponent(descriptor.id)}&session=${encodeURIComponent(sessionId)}`,
-                title: `${descriptor.label} — authenticate`,
+                title: `${descriptor.label} — authenticate`, // TODO(i18n)
                 width: 540,
                 height: 460,
             });
@@ -175,6 +175,7 @@
             <span class="font-medium">{agent.label}</span>
             {#if agent.auth}
                 {#if status?.authenticated}
+                    <!-- TODO(i18n) -->
                     <span class="text-muted-foreground">{status.accountEmail ?? "authenticated"}</span>
                     <Button size="sm" variant="ghost"
                         onclick={() => openAgentAuth(agent)}

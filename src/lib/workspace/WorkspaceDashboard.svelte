@@ -56,6 +56,7 @@
                 const err = parseError(e);
                 // The guard refuses to discard unsynced remote work; confirm, then force.
                 if (err.kind === "UnsyncedChanges") {
+                    // TODO(i18n)
                     if (!confirm(`${err.message}\n\nDestroy anyway and discard them?`)) return;
                     await invoke("destroy_sandbox", { name: sandboxName, force: true });
                 } else {

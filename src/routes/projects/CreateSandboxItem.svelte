@@ -142,6 +142,7 @@
                             <Button variant="outline" onclick={chooseFolder}>
                                 {m.projects_choose_folder()}
                             </Button>
+                            <!-- TODO(i18n) -->
                             <Button variant="ghost" size="sm" aria-label="Back" onclick={backToName}>x</Button>
                         </div>
                     {:else}
@@ -153,6 +154,7 @@
                                 disabled={action.busy !== null}
                                 onclick={createProject}
                             >{m.projects_create()}</Button>
+                            <!-- TODO(i18n) -->
                             <Button variant="ghost" size="sm" aria-label="Back" onclick={backToName}>x</Button>
                         </div>
                     {/if}

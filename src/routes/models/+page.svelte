@@ -9,6 +9,7 @@
     import { HugeiconsIcon } from "@hugeicons/svelte";
     import { LoaderPinwheelIcon, RefreshIcon } from "@hugeicons/core-free-icons";
     import { m } from "$lib/paraglide/messages.js";
+    import { parseError } from "$lib/errors";
     import { createActionRunner } from "$lib/actions.svelte";
     import RuntimeSteps from "$lib/models/RuntimeSteps.svelte";
     import AdvancedSection from "$lib/components/AdvancedSection.svelte";
@@ -205,7 +206,7 @@
             const body = await res.json();
             reply = body?.choices?.[0]?.message?.content?.trim() || m.models_test_empty();
         } catch (e) {
-            reply = String(e);
+            reply = parseError(e).message;
         }
         chatting = false;
     }
@@ -295,6 +296,7 @@
             <p class="text-xs text-amber-600 dark:text-amber-400 mt-2">{m.models_memory_warning()}</p>
         {/if}
         {#if engine === "foundry" && descriptor.foundryAlias === null}
+            <!-- TODO(i18n) -->
             <p class="text-xs text-muted-foreground mt-1">— (llama only)</p>
         {/if}
 
@@ -336,6 +338,7 @@
 
     {#if action.error}<p class="text-destructive mt-4 text-sm">{action.error}</p>{/if}
 
+    <!-- TODO(i18n) -->
     <AdvancedSection label="Choose a different model" data-model-advanced class="mt-4">
         <Card.Root class="mb-4 gap-2 p-4" data-specs>
             <div class="flex items-center justify-between">

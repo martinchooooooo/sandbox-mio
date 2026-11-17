@@ -121,7 +121,7 @@
     function onError(e: unknown) {
         rendererFailed = true;
         status = "failed";
-        error = e instanceof Error ? e.message : String(e);
+        error = parseError(e).message;
     }
 
     $effect(() => {

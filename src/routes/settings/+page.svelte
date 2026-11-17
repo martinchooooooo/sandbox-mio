@@ -219,10 +219,12 @@
             {#if engine === "llama"}
                 <Field.Field>
                     <Field.Label>{m.settings_llama_gpu_layers()}</Field.Label>
+                    <!-- TODO(i18n) -->
                     <Input type="number" min="0" bind:value={gpuLayers} placeholder="auto" />
                 </Field.Field>
                 <Field.Field>
                     <Field.Label>{m.settings_llama_ctx_size()}</Field.Label>
+                    <!-- TODO(i18n) -->
                     <Input type="number" min="0" bind:value={ctxSize} placeholder="default" />
                 </Field.Field>
             {/if}

@@ -30,7 +30,7 @@ export interface AppError {
  * Parse the value thrown by a failed `invoke()` call into an `AppError`.
  *
  * Tauri serialises `Err(AppError)` as `{ kind, message }`. Any other shape (e.g. a network
- * error before the IPC reaches Rust) falls back to `kind: "Backend"` with a string message so
+ * error before the IPC reaches Rust, or a thrown `Error`) falls back to `kind: "Backend"` with a string message so
  * callers can always treat the result uniformly.
  */
 export function parseError(e: unknown): AppError {
@@ -43,6 +43,9 @@ export function parseError(e: unknown): AppError {
         typeof (e as Record<string, unknown>).message === "string"
     ) {
         return e as AppError;
+    }
+    if (e instanceof Error) {
+        return { kind: "Backend", message: e.message };
     }
     return { kind: "Backend", message: String(e) };
 }
