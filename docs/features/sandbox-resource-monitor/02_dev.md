@@ -12,7 +12,7 @@ This document is the build plan for sampling the CPU and memory of every local s
 ```mermaid
 flowchart LR
   subgraph backend["Rust backend"]
-    mon["ResourceMonitor<br/>services/resources.rs<br/>10 s tick"]
+    mon["ResourceMonitor<br/>services/resources.rs<br/>30 s tick"]
     pp["PodmanProvider::instance_stats<br/>podman stats --no-stream"]
     mp["MsbProvider::instance_stats<br/>msb metrics --format json"]
     pool["PodmanProvider::engine_pool<br/>podman info (once a minute)"]
@@ -43,7 +43,7 @@ flowchart LR
 ### Sampling (Rust)
 
 - `MachineProvider` (`src-tauri/src/provider/types.rs`) gains `instance_stats()`, returning one `InstanceStats` per running instance from a single engine call, and `engine_pool()`, returning an optional `EnginePool`. `PodmanProvider` (`src-tauri/src/provider/mod.rs`) runs `podman stats --no-stream` for every running container and `podman info` for the pool. `MsbProvider` (`src-tauri/src/provider/msb.rs`) runs `msb metrics --format json` with no name, which reports every running sandbox, and returns no pool.
-- `ResourceMonitor` (`src-tauri/src/services/resources.rs`, new) owns one background task started from `src-tauri/src/bootstrap.rs` through `tauri::async_runtime::spawn`, as the flow-log poller in `src-tauri/src/proxy/flowlog.rs` does. Every tick (10 s) it asks each engine that has at least one running sandbox for `instance_stats()`, derives CPU fractions, folds the result into a ring of the last six samples per sandbox, and emits one `resources://snapshot` event. Once a minute it also calls `engine_pool()` and appends one rollup line per sandbox to the history files.
+- `ResourceMonitor` (`src-tauri/src/services/resources.rs`, new) owns one background task started from `src-tauri/src/bootstrap.rs` through `tauri::async_runtime::spawn`, as the flow-log poller in `src-tauri/src/proxy/flowlog.rs` does. Every tick (30 s) it asks each engine that has at least one running sandbox for `instance_stats()`, derives CPU fractions, folds the result into a ring of the last six samples per sandbox, and emits one `resources://snapshot` event. Once a minute it also calls `engine_pool()` and appends one rollup line per sandbox to the history files.
 - The monitor holds the latest `ResourceSnapshot` in memory; the `get_resource_snapshot` command returns it so a reloaded frontend hydrates without waiting for a tick.
 
 ### Health (frontend)
@@ -57,7 +57,7 @@ flowchart LR
 ### Usage history and the sizing report
 
 - History lives under `paths::app_data_root()` (`src-tauri/src/paths.rs`) in a `resources/` directory, one JSON-lines file per sandbox named after the sandbox, plus `_podman-machine.jsonl` for the Podman pool. A leading underscore cannot collide with a sandbox name, because `validate_name()` in `src-tauri/src/backends/mod.rs` requires an ASCII-alphanumeric first character.
-- Each line is a one-minute rollup: timestamp, provider, CPU mean and max, memory mean and max, memory limit, and the count of samples in the minute that were at or above 90 % of the limit. Lines older than 14 days are dropped when the monitor starts and when a file passes 512 KiB.
+- Each line is a compact one-minute rollup of about 110 bytes: `ts` (Unix seconds), `provider`, `cpu` and `cpuMax` (fractions rounded to four places, omitted when the minute had no CPU reading), `mem`, `memMax` and `limit` in MiB, `high` (samples in the minute at or above 90 % of the limit), and `includesCache` only when true. A Podman machine line holds `ts`, `cpus`, `total` and `free` in MiB. The first build wrote bytes, long key names, a sample count and an always-false cache flag (about 215 bytes a line); lines in that older format are skipped when read. Lines older than 14 days are dropped when the monitor starts and when a file passes 512 KiB.
 - `get_resource_history` (new command) returns the rollups for one sandbox, or for every sandbox and the pool, over a window of 24 hours or 7 days.
 - `src/lib/settings/ResourceUsageCard.svelte` (new), mounted on `src/routes/settings/+page.svelte`, shows one row per sandbox and one for the Podman machine: provider, memory limit, 7-day peak memory, 95th-percentile memory, minutes spent at or above 90 % of the limit, and mean CPU. A "Copy report" button copies the same table as plain text, so other users can send their numbers to the maintainer. Nothing leaves the machine unless a user pastes the report somewhere.
 
@@ -72,7 +72,7 @@ flowchart LR
 7. **Does polling flood `mio.log`?** No. The process layer (`src-tauri/src/process/mod.rs`) treats `stats`, `info` and `metrics` calls issued by the monitor as quiet call shapes: a successful call logs at `debug` instead of `info`; non-zero exits and failures still log at `warn` and `error`.
 8. **Can a slow stats call block the user?** No. A timed-out monitor call neither trips nor closes the Podman breaker (`PODMAN_UNRESPONSIVE` in `src-tauri/src/process/mod.rs`), and the monitor skips Podman while the breaker is open or the machine is not running. A struggling sandbox is exactly when stats are slowest, and a breaker tripped by the monitor would fail-fast the user's Stop or Restart. Monitor calls use a 10 s timeout, shorter than the 30 s default.
 9. **Poll or push to the frontend?** Push: one backend task samples for every consumer and emits `resources://snapshot`, because the history must be recorded whether or not any view is open. Frontend polling, as `src/lib/proxy/status.svelte.ts` does, was rejected for that reason.
-10. **How often to sample?** Every 10 s for live samples and once a minute for rollups and the pool. An engine with no running sandbox is not called at all. Slowing down while the window is hidden is deferred to [04_improvements.md](04_improvements.md).
+10. **How often to sample?** Every 30 s for live samples (two per rollup) and once a minute for rollups and the pool. The first plan sampled every 10 s; the user moved it to 30 s to halve the process spawns, accepting that the health chip reacts in about one to one and a half minutes instead of 30 s. An engine with no running sandbox is not called at all. Slowing down while the window is hidden is deferred to [04_improvements.md](04_improvements.md).
 11. **Where is the indicator shown?** In the sandbox header (always visible while a sandbox is open) and the Overview status summary. The Home page sandbox cards do not show it in this feature; the cards are deferred to [04_improvements.md](04_improvements.md) to keep the first version discrete.
 12. **What does Restart do?** Stop then start through the existing commands, never a new backend command, so every pane and session cleanup a stop performs still runs.
 13. **How does the maintainer get data from other users?** Through the Settings card's "Copy report" button, which copies plain text. Automatic telemetry was rejected: the app has none today, and adding a network upload needs its own consent design.
@@ -102,7 +102,7 @@ flowchart LR
 - `src-tauri/src/services/resources.rs` (new): `ResourceMonitor`, `ResourceSnapshot`, `SandboxResources`, `ResourceSample`, the history line shapes `Rollup` and `PoolRollup`, the tick loop, the name-set refresh, CPU fraction derivation (`cpu_fraction`), the six-sample ring, minute rollups (`MinuteAcc`) and history file writes and pruning. Pure parts have unit tests.
 - The name set is built by asking each provider's `list_instances` separately and dropping sidecars and auth containers (the same filter as `services::sandbox::list_user`), rather than through `SandboxBackend::list`, whose Podman failure would also hide every microsandbox sandbox while the Podman machine is stopped.
 - A sandbox missing from a successful engine reading leaves the snapshot at once; one whose engine call failed keeps its last samples for up to three ticks; a Podman sandbox's CPU fraction is relative to the pool's CPU count and stays empty until the first pool reading. Each sample's CPU is `None` for the first reading after start.
-- A Podman rollup carries the pool only while a Podman sandbox ran in that minute. Each rollup records `memIncludesCache` (false for both engines today).
+- A Podman rollup carries the pool only while a Podman sandbox ran in that minute. A rollup writes `includesCache` only when true, which neither engine is today.
 - Pruning runs at monitor start and whenever a file has grown by 512 KiB since its last prune. A sandbox running around the clock writes more than 512 KiB in about two days, so a file-size trigger alone would rewrite the file every minute once past it.
 - `src-tauri/src/paths.rs`: `resource_history_dir()` derives `resources/` from `app_data_root()`.
 - `src-tauri/src/bootstrap.rs`: constructs, starts and manages the monitor after the provider registry; the exit handler stops it first.

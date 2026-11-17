@@ -16,10 +16,10 @@ use crate::provider::ProviderRegistry;
 
 pub const SNAPSHOT_EVENT: &str = "resources://snapshot";
 
-const TICK: Duration = Duration::from_secs(10);
+const TICK: Duration = Duration::from_secs(30);
 
 /// Ticks per one-minute rollup and pool reading.
-const TICKS_PER_ROLLUP: u32 = 6;
+const TICKS_PER_ROLLUP: u32 = 2;
 
 const NAME_REFRESH: Duration = Duration::from_secs(60);
 
@@ -75,34 +75,50 @@ pub struct ResourceSnapshot {
     pub podman_pool: Option<EnginePool>,
 }
 
-/// One minute of one sandbox, as written to its history file.
+/// One minute of one sandbox, as written to its history file. Memory is in MiB and CPU is rounded
+/// to [`CPU_DECIMALS`] places, which keeps a line near 110 bytes.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Rollup {
     /// Unix seconds at the end of the minute.
     pub ts: u64,
     pub provider: ProviderId,
-    pub cpu_mean: Option<f64>,
+    /// Mean CPU fraction; absent when no sample in the minute had a CPU reading.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cpu_max: Option<f64>,
-    pub mem_mean: u64,
+    /// Mean memory in use.
+    pub mem: u64,
     pub mem_max: u64,
-    pub mem_limit: u64,
-    pub samples: u32,
-    /// Samples at or above [`PRESSURE_FRACTION`] of `mem_limit`.
-    pub samples_high: u32,
-    /// Which memory definition the provider reported (Resolved Decision 5).
-    pub mem_includes_cache: bool,
+    pub limit: u64,
+    /// Samples at or above [`PRESSURE_FRACTION`] of the limit.
+    pub high: u32,
+    /// Which memory definition the provider reported (Resolved Decision 5); written only when true.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub includes_cache: bool,
 }
 
-/// One minute of the Podman machine, as written to `_podman-machine.jsonl`.
+/// One minute of the Podman machine, as written to `_podman-machine.jsonl`, memory in MiB.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PoolRollup {
     pub ts: u64,
     pub cpus: u32,
-    pub memory_total: u64,
+    pub total: u64,
     /// The kernel's free memory, which counts page cache as used.
-    pub memory_free: u64,
+    pub free: u64,
+}
+
+const CPU_DECIMALS: i32 = 4;
+
+fn round_cpu(fraction: f64) -> f64 {
+    let scale = 10f64.powi(CPU_DECIMALS);
+    (fraction * scale).round() / scale
+}
+
+fn mib(bytes: u64) -> u64 {
+    (bytes + (1 << 19)) >> 20
 }
 
 #[derive(Debug, Clone, Copy, serde::Deserialize)]
@@ -171,14 +187,13 @@ impl MinuteAcc {
         (acc.n > 0).then(|| Rollup {
             ts,
             provider,
-            cpu_mean: (acc.cpu_n > 0).then(|| acc.cpu_sum / acc.cpu_n as f64),
-            cpu_max: (acc.cpu_n > 0).then_some(acc.cpu_max),
-            mem_mean: acc.mem_sum / acc.n as u64,
-            mem_max: acc.mem_max,
-            mem_limit: acc.mem_limit,
-            samples: acc.n,
-            samples_high: acc.high,
-            mem_includes_cache: includes_cache,
+            cpu: (acc.cpu_n > 0).then(|| round_cpu(acc.cpu_sum / acc.cpu_n as f64)),
+            cpu_max: (acc.cpu_n > 0).then(|| round_cpu(acc.cpu_max)),
+            mem: mib(acc.mem_sum / acc.n as u64),
+            mem_max: mib(acc.mem_max),
+            limit: mib(acc.mem_limit),
+            high: acc.high,
+            includes_cache,
         })
     }
 }
@@ -416,8 +431,8 @@ impl ResourceMonitor {
                     pool_rollup = state.pool.map(|p| PoolRollup {
                         ts,
                         cpus: p.cpus,
-                        memory_total: p.memory_total,
-                        memory_free: p.memory_free,
+                        total: mib(p.memory_total),
+                        free: mib(p.memory_free),
                     });
                 }
             }
@@ -623,8 +638,10 @@ mod tests {
         assert_eq!(cpu_fraction((0, 0), (20, 10), 1), Some(1.0), "clamped to the allotment");
     }
 
-    fn sample(cpu: Option<f64>, used: u64) -> ResourceSample {
-        ResourceSample { at_ms: 0, cpu, memory_used: used, memory_limit: 100 }
+    const MIB: u64 = 1 << 20;
+
+    fn sample(cpu: Option<f64>, used_mib: u64) -> ResourceSample {
+        ResourceSample { at_ms: 0, cpu, memory_used: used_mib * MIB, memory_limit: 100 * MIB }
     }
 
     #[test]
@@ -634,11 +651,11 @@ mod tests {
         acc.add(&sample(Some(0.2), 90));
         acc.add(&sample(Some(0.4), 95));
         let r = acc.take(60, ProviderId::Microsandbox, false).unwrap();
-        assert_eq!(r.samples, 3);
-        assert_eq!(r.samples_high, 2);
-        assert_eq!(r.mem_mean, 78);
+        assert_eq!(r.high, 2);
+        assert_eq!(r.mem, 78);
         assert_eq!(r.mem_max, 95);
-        assert!((r.cpu_mean.unwrap() - 0.3).abs() < 1e-9);
+        assert_eq!(r.limit, 100);
+        assert_eq!(r.cpu, Some(0.3));
         assert_eq!(r.cpu_max, Some(0.4));
         assert!(acc.take(120, ProviderId::Microsandbox, false).is_none(), "the accumulator resets");
     }
@@ -654,16 +671,16 @@ mod tests {
         let r = Rollup {
             ts: 1,
             provider: ProviderId::Podman,
-            cpu_mean: None,
+            cpu: None,
             cpu_max: None,
-            mem_mean: 2,
+            mem: 2,
             mem_max: 3,
-            mem_limit: 4,
-            samples: 6,
-            samples_high: 0,
-            mem_includes_cache: false,
+            limit: 4,
+            high: 0,
+            includes_cache: false,
         };
         let line = serde_json::to_string(&r).unwrap();
+        assert_eq!(line, r#"{"ts":1,"provider":"podman","mem":2,"memMax":3,"limit":4,"high":0}"#);
         assert_eq!(serde_json::from_str::<Rollup>(&line).unwrap(), r);
     }
 }

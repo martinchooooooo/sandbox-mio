@@ -4,27 +4,28 @@ import { STRAINED_MEMORY } from "$lib/sandbox/health";
 // The sizing report's arithmetic over `get_resource_history` rollups
 // (docs/features/sandbox-resource-monitor/02_dev.md, Usage history and the sizing report).
 
-/** Mirrors Rust `services::resources::Rollup`. */
+/** Mirrors Rust `services::resources::Rollup`; memory in MiB, absent CPU fields omitted. */
 export interface Rollup {
     ts: number;
     provider: ProviderId;
-    cpuMean: number | null;
-    cpuMax: number | null;
-    memMean: number;
+    cpu?: number;
+    cpuMax?: number;
+    mem: number;
     memMax: number;
-    memLimit: number;
-    samples: number;
-    samplesHigh: number;
-    memIncludesCache: boolean;
+    limit: number;
+    high: number;
+    includesCache?: boolean;
 }
 
-/** Mirrors Rust `services::resources::PoolRollup`. */
+/** Mirrors Rust `services::resources::PoolRollup`; memory in MiB. */
 export interface PoolRollup {
     ts: number;
     cpus: number;
-    memoryTotal: number;
-    memoryFree: number;
+    total: number;
+    free: number;
 }
+
+const MIB = 1024 * 1024;
 
 /** Mirrors Rust `services::resources::ResourceHistory`. */
 export interface ResourceHistory {
@@ -57,16 +58,16 @@ export function percentile(values: number[], p: number): number {
 export function sandboxRow(name: string, rollups: Rollup[]): UsageRow | null {
     if (rollups.length === 0) return null;
     const latest = rollups.reduce((a, b) => (b.ts > a.ts ? b : a));
-    const peaks = rollups.map((r) => r.memMax);
-    const cpu = rollups.filter((r) => r.cpuMean !== null);
+    const peaks = rollups.map((r) => r.memMax * MIB);
+    const cpu = rollups.flatMap((r) => (r.cpu === undefined ? [] : [r.cpu]));
     return {
         name,
         provider: latest.provider,
-        memoryLimit: latest.memLimit,
+        memoryLimit: latest.limit * MIB,
         peakMemory: Math.max(...peaks),
         p95Memory: percentile(peaks, 95),
-        minutesHigh: rollups.filter((r) => r.samplesHigh > 0).length,
-        meanCpu: cpu.length === 0 ? null : cpu.reduce((sum, r) => sum + (r.cpuMean ?? 0), 0) / cpu.length,
+        minutesHigh: rollups.filter((r) => r.high > 0).length,
+        meanCpu: cpu.length === 0 ? null : cpu.reduce((sum, c) => sum + c, 0) / cpu.length,
         minutes: rollups.length,
     };
 }
@@ -74,15 +75,15 @@ export function sandboxRow(name: string, rollups: Rollup[]): UsageRow | null {
 /** The Podman machine's row. Its "used" is total minus free, which counts page cache as used. */
 export function poolRow(name: string, pool: PoolRollup[]): UsageRow | null {
     if (pool.length === 0) return null;
-    const used = pool.map((p) => p.memoryTotal - p.memoryFree);
+    const used = pool.map((p) => (p.total - p.free) * MIB);
     const latest = pool.reduce((a, b) => (b.ts > a.ts ? b : a));
     return {
         name,
         provider: null,
-        memoryLimit: latest.memoryTotal,
+        memoryLimit: latest.total * MIB,
         peakMemory: Math.max(...used),
         p95Memory: percentile(used, 95),
-        minutesHigh: pool.filter((p) => p.memoryTotal - p.memoryFree >= STRAINED_MEMORY * p.memoryTotal).length,
+        minutesHigh: pool.filter((p) => p.total - p.free >= STRAINED_MEMORY * p.total).length,
         meanCpu: null,
         minutes: pool.length,
     };
