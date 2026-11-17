@@ -3,14 +3,15 @@ type: architecture
 title: "Coding Agents and Credentials"
 description: "The agent catalogue, installing agents into sandboxes, logging in once and reusing the login everywhere, local-model wiring, and the Paseo agent web UI."
 generated:
-  by: claude-code/sonnet-5-5
-  at: 2026-11-17T12:00:00+11:00
+  by: claude-code/opus-5-5
+  at: 2026-11-17T18:30:00+11:00
 stale_after: 2027-02-17T00:00:00+11:00
 code:
   - src/lib/agents/
   - src-tauri/src/agents/
   - src-tauri/src/agent_host/
   - src-tauri/resources/agent-host/
+  - src-tauri/resources/agent-web/
   - src/lib/agent-chat/
   - src-tauri/src/commands/agent_chat.rs
   - src-tauri/src/credentials/
@@ -45,7 +46,7 @@ The app installs coding agents (Claude Code, OpenCode, pi) into a sandbox, lets 
 
 ## Login and the Credential Store
 
-- Login runs in a short-lived auth container, hidden from the sandbox list, so logging in needs no sandbox.
+- Login runs in a short-lived, hidden auth container, so logging in needs no sandbox.
 - The login command's output streams to an inline card on the Credentials page, where the user pastes the returned code.
 - After login, the app captures the agent's whole config directory, which carries onboarding state as well as the token, into a credential store in the app-data root.
 - Any sandbox can then receive that bundle; injection also marks first-run onboarding complete. Auth status is read from the agent's credential file and expiry.
@@ -65,8 +66,8 @@ The app installs coding agents (Claude Code, OpenCode, pi) into a sandbox, lets 
 
 ## Agent Web UI (Paseo)
 
-- Paseo runs inside the sandbox as a pinned mise tool and is reached through a forward, like the terminal ([Workspace UI](workspace-ui.md)).
-- Before Paseo starts, the app registers the sandbox workspace as a Paseo project.
+- Paseo runs in-sandbox as a pinned mise tool behind a forward ([Workspace UI](workspace-ui.md)); the workspace is its project, named after the sandbox.
+- The daemon restarts only when `mise.toml` or the password changes; starting a Paseo-using sandbox pre-starts it.
 
 ## Native Chat (pi)
 

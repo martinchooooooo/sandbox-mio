@@ -236,6 +236,60 @@ needs it typed in by hand, so no UI consumer remains.
   `prepare_agent_web`, so the environment-refresh restart never changes the password the user
   was shown.
 
+## Revision: Paseo 0.16
+
+Paseo 0.16 removed the `--foreground`, `--listen`, `--web-ui` and `--hostnames` launch flags (the
+CLI rejects them with "was removed"), so the Phase B start command fails on any Paseo newer than
+the previously pinned 0.4.0. Opening the Agents tab was also slow: every open ran `mise use`,
+stopped and restarted the daemon, and waited for it, in separate `podman exec` calls. This revision
+pins `npm:@getpaseo/cli@0.16.1` (`PASEO_CLI_TOOL` in `src-tauri/src/runtime/mod.rs`) and replaces
+the Phase B sequence with one re-entrant launch script, `src-tauri/resources/agent-web/paseo-up.sh`,
+which `prepare_agent_web` runs with `sh -c`. It supersedes Phase B's always-restart decision and
+the hand-written `projects.json` seeding.
+
+Resolved decisions:
+
+1. **Launch through `paseo daemon run` with `PASEO_*` environment settings.** `paseo daemon start`
+   strips `PASEO_*` settings from the environment ("managed" mode), so only `paseo daemon run`
+   honours `PASEO_LISTEN`, `PASEO_WEB_UI_ENABLED`, `PASEO_HOSTNAMES` and `PASEO_RELAY_ENABLED`.
+   `paseo-up.sh` backgrounds the daemon with `setsid -f`, which outlives the exec on both the
+   Podman and the microsandbox provider.
+2. **Dictation is disabled** (`PASEO_DICTATION_ENABLED=false`): a daemon with dictation enabled
+   downloads local speech models on its first start.
+3. **Restart only when the launch inputs change.** `paseo-up.sh` stores a SHA-256 of `mise.toml`,
+   the Paseo version, the password and a `launch_rev` constant in `/root/.paseo/mio-launch`. A
+   running daemon with a matching stamp is reused; any mismatch stops and relaunches the daemon.
+   The stamp covers `mise.toml` because its tools form the daemon's PATH and its `[env]` reaches
+   every spawned agent. Bump `launch_rev` in `paseo-up.sh` whenever the launch environment changes.
+4. **Install only when missing.** `paseo-up.sh` exits 10 when `mise current` or `mise where` shows
+   the pinned node or Paseo missing; `prepare_agent_web` then runs `mise use` (with the toolchain
+   secrets and the long package-install timeout) and runs the script again. The toolchain secrets
+   therefore never reach the daemon's environment.
+5. **Re-entrant waiting.** Each script run waits at most about 15 seconds for `/api/status`, so one
+   run fits the 30-second exec bound in `src-tauri/src/process/mod.rs`; exit 11 means "still
+   starting" and `prepare_agent_web` re-runs the script up to `PASEO_UP_ATTEMPTS` times. `/api/status`
+   requires the password as a bearer token in Paseo 0.16, so readiness probes send it.
+6. **Projects are registered through the Paseo CLI.** After the first successful start,
+   `paseo-up.sh` runs `paseo project create` and `paseo project rename` to the sandbox name, then
+   writes the marker `/root/.paseo/mio-project` so a later user rename is never overwritten.
+   Sandboxes created before this revision are not migrated; re-create them.
+7. **A `flock` on `/root/.paseo/mio-up.lock` serialises script runs**, because `start_sandbox`
+   (`src-tauri/src/commands/sandbox.rs`) now pre-warms the daemon through
+   `spawn_prewarm_agent_web` (`src-tauri/src/services/panes.rs`) for sandboxes with a saved Paseo
+   password, which can race the user opening the Agents tab.
+8. **The seeded login moves the password onto the host profile.** Paseo 0.16's web client keeps the
+   password on the stored host profile, not on the `directTcp` connection; `prepare_agent_web_pane`
+   (`src-tauri/src/services/panes.rs`) writes it there. The daemon-served page also injects a
+   `__PASEO_INITIAL_DAEMON_CONNECTION__` hint, which the client skips when the seeded registry
+   already holds a connection to the same `localhost:<port>` endpoint. The client validates the
+   stored profile strictly and deletes the whole registry on any violation (a non-RFC 3339
+   `createdAt`, for one), so the seed carries only the required fields and lets the client fill
+   in timestamps and defaults.
+
+Measured against a base-image-7 container: a warm open (daemon running, stamp matching) takes about
+1 second in one exec; a cold launch takes about 4 seconds; a first open additionally pays the
+`mise use` download.
+
 ## Common Gotchas
 
 | Gotcha | Cause | Fix |
@@ -243,7 +297,11 @@ needs it typed in by hand, so no UI consumer remains.
 | A newly created sandbox has no "Open Agents UI" tab even after this feature ships | Container ports are `--publish`ed only at `podman create` time; existing containers never gain `PASEO_WEB_PORT` | Re-create the sandbox (destroy + recreate) to pick up the new `--publish` argument, same as the existing `ZELLIJ_WEB_PORT` gotcha |
 | The embedded Agents pane shows the "Direct Connection" / "Paste pairing link" welcome screen instead of auto-logging in | The seeded `@paseo:daemon-registry` entry failed `normalizeStoredHostProfile` validation (empty `serverId`, no parseable connections) and was discarded on load, or the `initialization_script` didn't run before the SPA's first paint | Confirm `prepare_agent_web_pane` built the endpoint as `localhost:{windows_port}`; re-verify with the Playwright spike technique (seed the same localStorage key against the daemon's published port directly, outside the Tauri app) before assuming it's a Paseo-version regression |
 | The embedded Agents pane loads but every connection attempt ends in "Connection timed out", while pasting the same endpoint + password into the welcome screen works | The seeded `@paseo:daemon-registry` entry's `serverId` doesn't match the daemon's real one; the client closes the (successfully authenticated) connection on mismatch, so the failure masquerades as a network timeout | Seed the real id — `fetch_paseo_server_info` gets it from `GET /api/status` before the registry entry is built; check that call didn't regress before suspecting the forward |
-| `paseo daemon start` binds `127.0.0.1` and shows no web UI even though the process started fine | The defaults are loopback-only with the bundled UI disabled | Always pass `--listen 0.0.0.0:6767 --web-ui --hostnames true` explicitly, exactly as `01_ideas.md`'s spike found |
+| `paseo daemon start` binds `127.0.0.1` and shows no web UI even though the process started fine | Paseo defaults to a loopback-only listener with the bundled web UI disabled, and `paseo daemon start` ignores `PASEO_*` environment settings | Launch through `paseo daemon run` with `PASEO_LISTEN`, `PASEO_WEB_UI_ENABLED` and `PASEO_HOSTNAMES` set, as `src-tauri/resources/agent-web/paseo-up.sh` does |
+| `--listen was removed. Use paseo daemon config set daemon.listen <value>` | Paseo 0.16 removed the `daemon start` launch flags | Pass launch settings as `PASEO_*` environment variables to `paseo daemon run` (`src-tauri/resources/agent-web/paseo-up.sh`) |
 | `paseo daemon status`/`stop` crashes with `spawn ps ENOENT` | The base image lacks `procps` until Phase A adds it | Confirm `procps` landed in the `Containerfile` and `BASE_IMAGE_VERSION` was bumped; a sandbox on the old image needs re-creating |
-| An agent launched through Paseo doesn't see the local-LLM provider even though `provision_pi`/`provision_opencode` already ran | The Paseo daemon may have cached its spawn environment from before provisioning was written | `open_agent_web` restarts the daemon on every open (Phase B step 3) specifically to avoid this; if it still happens, the restart-on-open logic regressed |
-| A second `paseo daemon start` fails with "another Paseo daemon is already running" even after `kill -9`-ing the process you saw | Paseo runs a self-restarting supervisor in addition to the daemon child | Use `paseo daemon stop` (not a manual kill) before restarting, or rely on the idempotent status check in Phase B step 2 |
+| An agent launched through Paseo doesn't see the local-LLM provider even though `provision_pi`/`provision_opencode` already ran | The Paseo daemon keeps the spawn environment it started with, and only a `mise.toml` change restarts the daemon | Confirm provisioning changed `mise.toml`; `paseo-up.sh` restarts the daemon when the `mise.toml` hash in `/root/.paseo/mio-launch` differs (Revision: Paseo 0.16, Resolved Decision 3) |
+| A second `paseo daemon start` fails with "another Paseo daemon is already running" even after `kill -9`-ing the process you saw | Paseo runs a self-restarting supervisor in addition to the daemon child | Use `paseo daemon stop` (not a manual kill) before restarting, as `paseo-up.sh` does |
+| The embedded Agents pane shows the welcome screen and the daemon log records `4401 Password required` for the pane's connection | The seeded registry failed the client's strict schema (for example an epoch-second `createdAt`), so the client deleted it and fell back to a password-less connection hint | Keep the seed in `prepare_agent_web_pane` (`src-tauri/src/services/panes.rs`) to the required fields only; replay it in a headless browser against the daemon to see the exact rejection |
+| Every Agents open after a launch-script change waits 5 seconds and then fails with "still starting" | A process started inside `paseo-up.sh` inherited the script's `flock` descriptor and holds `/root/.paseo/mio-up.lock` for its lifetime | Close descriptor 9 on every process `src-tauri/resources/agent-web/paseo-up.sh` backgrounds |
+| `/api/status` returns `{"error":"Unauthorized"}` during a readiness check | Paseo 0.16 requires the daemon password on `/api/status` | Send `Authorization: Bearer <password>`, as `alive()` in `paseo-up.sh` and `fetch_paseo_server_info` in `src-tauri/src/services/panes.rs` do |

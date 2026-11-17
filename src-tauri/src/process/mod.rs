@@ -1084,7 +1084,7 @@ mod tests {
             assert_eq!(super::msb_call_timeout(args), super::MSB_CALL_TIMEOUT, "{args:?}");
         }
         for args in [
-            &["exec", "--workdir", "/root/work", "x", "--", "mise", "use", "node@24.19.0", "npm:@getpaseo/cli@0.4.0"][..],
+            &["exec", "--workdir", "/root/work", "x", "--", "mise", "use", "node@24.19.0", "npm:@getpaseo/cli@0.16.1"][..],
             &["exec", "--workdir", "/root/work", "x", "--", "mise", "install"],
             &["exec", "x", "--", "mise", "exec", "node@lts", "--", "node", "/t/lib/node_modules/p/install.cjs"],
         ] {

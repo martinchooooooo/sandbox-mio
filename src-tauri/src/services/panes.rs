@@ -59,27 +59,32 @@ fn write_password(path: &Path, password: &str) -> Result<(), mio_files::FileErro
     mio_files::write_compact(path, &serde_json::json!({ "password": password }))
 }
 
-/// Reads the app-data password, adopting a pre-existing workspace copy once: the workspace file is
-/// deleted only after the app-data copy is written, so a failed write loses nothing.
-fn read_or_migrate_paseo_password(app_copy: &Path, workspace_copy: &Path) -> Option<String> {
-    if let Some(password) = password_in(app_copy) {
-        return Some(password);
-    }
-    let password = password_in(workspace_copy)?;
-    match write_password(app_copy, &password) {
-        Ok(()) => {
-            if let Err(e) = std::fs::remove_file(workspace_copy) {
-                tracing::warn!(target: "panes", path = %workspace_copy.display(), error = %e, "could not delete the workspace paseo password copy");
-            }
-        }
-        Err(e) => tracing::warn!(target: "panes", error = %e, "could not move the paseo password to app data"),
-    }
-    Some(password)
+/// The Paseo password minted for `name` on its first agents-UI open, if any.
+fn read_paseo_password(app: &tauri::AppHandle, name: &str) -> Option<String> {
+    password_in(&paseo_password_path(app, name).ok()?)
 }
 
-pub fn read_paseo_password(app: &tauri::AppHandle, name: &str, workspace_path: &str) -> Option<String> {
-    let app_copy = paseo_password_path(app, name).ok()?;
-    read_or_migrate_paseo_password(&app_copy, &mio_files::mio_path(workspace_path, "paseo.json"))
+/// Brings `name`'s Paseo daemon up off the caller's path, so a later Agents tab open finds it
+/// running. Only for sandboxes that opened the agents UI before, which left a saved password.
+pub fn spawn_prewarm_agent_web(app: &tauri::AppHandle, name: &str) {
+    let Some(password) = read_paseo_password(app, name) else {
+        return;
+    };
+    let app = app.clone();
+    let name = name.to_string();
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = prewarm_agent_web(&app, &name, &password).await {
+            tracing::warn!(target: "panes", sandbox = %name, error = %e, "paseo pre-warm failed");
+        }
+    });
+}
+
+async fn prewarm_agent_web(app: &tauri::AppHandle, name: &str, password: &str) -> Result<(), AppError> {
+    use tauri::Manager;
+    let route = app.state::<SandboxRouter>().locate(name).await?;
+    let runtime = app.state::<Arc<dyn RuntimeManager>>();
+    runtime.prepare_agent_web(name, &route.machine, password).await?;
+    Ok(())
 }
 
 async fn fetch_paseo_server_info(
@@ -117,7 +122,6 @@ async fn fetch_paseo_server_info(
 
 pub async fn prepare_agent_web_pane(
     name: &str,
-    workspace_path: &str,
     router: &SandboxRouter,
     runtime: &Arc<dyn RuntimeManager>,
     network: &Arc<dyn NetworkManager>,
@@ -125,7 +129,7 @@ pub async fn prepare_agent_web_pane(
 ) -> Result<WebviewPane, AppError> {
     let route = router.resolve(name, app).await?;
 
-    let password = read_paseo_password(app, name, workspace_path)
+    let password = read_paseo_password(app, name)
         .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
 
     let container_port = runtime
@@ -147,25 +151,18 @@ pub async fn prepare_agent_web_pane(
         .map_err(|e| RuntimeError::agent_web_unavailable(format!("paseo /api/status through forward: {e}")))?;
     let endpoint = format!("localhost:{windows_port}");
     let connection_id = format!("direct:{endpoint}");
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-        .to_string();
+    // Only the fields the client requires: it validates strictly and deletes the whole registry on
+    // any malformed one, so optional fields (timestamps, lifecycle) stay out. Since 0.16 the
+    // password sits on the profile, and the daemon's connection hint reuses this entry by endpoint.
     let registry_entry = serde_json::json!([{
         "serverId": &server_id,
+        "password": &password,
         "label": hostname.as_deref().unwrap_or(name),
-        "lifecycle": {},
         "connections": [{
             "id": &connection_id,
             "type": "directTcp",
             "endpoint": &endpoint,
-            "useTls": false,
-            "password": &password,
         }],
-        "preferredConnectionId": &connection_id,
-        "createdAt": &now,
-        "updatedAt": &now,
     }]);
     let registry_json = serde_json::to_string(&registry_entry.to_string())
         .map_err(RuntimeError::agent_web_unavailable)?;
@@ -173,42 +170,4 @@ pub async fn prepare_agent_web_pane(
 
     let parsed_url = url.parse::<tauri::Url>().map_err(RuntimeError::agent_web_unavailable)?;
     Ok(WebviewPane { url: parsed_url, init_script, forward_name })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn scratch(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("mio-panes-{tag}-{}", uuid::Uuid::new_v4().simple()));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
-    #[test]
-    fn workspace_copy_is_moved_to_app_data_once() {
-        let root = scratch("migrate");
-        let app_copy = root.join("app").join("paseo.json");
-        let workspace_copy = root.join("ws").join(".mio").join("paseo.json");
-        write_password(&workspace_copy, "hunter2").unwrap();
-
-        assert_eq!(read_or_migrate_paseo_password(&app_copy, &workspace_copy).as_deref(), Some("hunter2"));
-        assert!(!workspace_copy.exists());
-        assert_eq!(password_in(&app_copy).as_deref(), Some("hunter2"));
-        assert_eq!(read_or_migrate_paseo_password(&app_copy, &workspace_copy).as_deref(), Some("hunter2"));
-        std::fs::remove_dir_all(root).ok();
-    }
-
-    #[test]
-    fn app_data_copy_wins_and_absence_reads_none() {
-        let root = scratch("wins");
-        let app_copy = root.join("app").join("paseo.json");
-        let workspace_copy = root.join("ws").join(".mio").join("paseo.json");
-        assert_eq!(read_or_migrate_paseo_password(&app_copy, &workspace_copy), None);
-
-        write_password(&app_copy, "new").unwrap();
-        write_password(&workspace_copy, "old").unwrap();
-        assert_eq!(read_or_migrate_paseo_password(&app_copy, &workspace_copy).as_deref(), Some("new"));
-        std::fs::remove_dir_all(root).ok();
-    }
 }

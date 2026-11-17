@@ -76,7 +76,7 @@ pub async fn open_agent_web(
     }
 
     let pane =
-        prepare_agent_web_pane(&name, &workspace_path, &router, &runtime, &network, &app).await?;
+        prepare_agent_web_pane(&name, &router, &runtime, &network, &app).await?;
     workspace::embed_agent_web(&app, &name, &workspace_path, pane)?;
     Ok(())
 }

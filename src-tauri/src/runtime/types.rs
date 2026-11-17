@@ -75,7 +75,8 @@ pub trait RuntimeManager: Send + Sync {
         workspace_host_path: &str,
     ) -> Result<(), RuntimeError>;
 
-    /// Start paseo agent-web daemon in sandbox, return its container port.
+    /// Ensure the sandbox's paseo agent-web daemon runs with the current workspace environment and
+    /// `password`, restarting it only when either changed; returns its container port.
     async fn prepare_agent_web(
         &self,
         name: &str,

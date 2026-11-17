@@ -22,16 +22,20 @@ const LOCKFILE_REL: &str = "mise.lock";
 
 const PASEO_WEB_PORT: u16 = 6767;
 
-const PASEO_PROJECTS_DIR: &str = "/root/.paseo/projects";
-const PASEO_PROJECTS_FILE: &str = "/root/.paseo/projects/projects.json";
-
-/// Pinned rather than `node@lts` / `npm:@getpaseo/cli` (latest): `prepare_agent_web` runs this
-/// `mise use` on every "Agents" tab open, and an unpinned tag forces mise to re-resolve it over
-/// the network every time, even when the tool is already installed — slow on its own and worse
-/// through a sandbox's traffic proxy (TLS interception per request). A pinned version already
-/// present locally needs no network round trip. Bump these deliberately, not automatically.
+/// Pinned because the launch script and the login seeded by `prepare_agent_web_pane`
+/// (`src-tauri/src/services/panes.rs`) rely on Paseo internals; re-check both when bumping.
 const PASEO_NODE_TOOL: &str = "node@24.19.0";
-const PASEO_CLI_TOOL: &str = "npm:@getpaseo/cli@0.4.0";
+const PASEO_CLI_TOOL: &str = "npm:@getpaseo/cli@0.16.1";
+
+/// Starts the Paseo daemon, or confirms the running one is current, in one exec
+/// (`docs/features/agent-web-ui/02_dev.md`, Revision: Paseo 0.16).
+const PASEO_UP_SCRIPT: &str = include_str!("../../resources/agent-web/paseo-up.sh");
+/// [`PASEO_UP_SCRIPT`] exit code: the pinned tools are missing; install them and run it again.
+const PASEO_UP_INSTALL_NEEDED: i32 = 10;
+/// [`PASEO_UP_SCRIPT`] exit code: the daemon is still starting; run it again.
+const PASEO_UP_STARTING: i32 = 11;
+/// Each run waits about 15s, so this covers a cold start of about a minute.
+const PASEO_UP_ATTEMPTS: usize = 5;
 
 pub fn default_runtime(
     providers: Arc<crate::provider::ProviderRegistry>,
@@ -119,69 +123,28 @@ impl MiseRuntime {
         argv.extend_from_slice(mise_args);
         check(provider.exec(name, &argv, opts).await?)
     }
-
-    async fn seed_paseo_projects(
-        provider: &Arc<dyn MachineProvider>,
-        name: &str,
-    ) -> Result<(), RuntimeError> {
-        let already_seeded = provider
-            .exec(name, &["test", "-f", PASEO_PROJECTS_FILE], ExecOpts::default())
-            .await
-            .map(|out| out.status.success())
-            .unwrap_or(false);
-        if already_seeded {
-            return Ok(());
-        }
-
-        check(provider.exec(name, &["mkdir", "-p", PASEO_PROJECTS_DIR], ExecOpts::default()).await?)?;
-
-        let now = iso8601_now();
-        let projects = serde_json::json!([{
-            "projectId": WORKSPACE_MOUNT,
-            "rootPath": WORKSPACE_MOUNT,
-            "kind": "non_git",
-            "displayName": name,
-            "customName": null,
-            "createdAt": &now,
-            "updatedAt": &now,
-            "archivedAt": null,
-        }]);
-        let contents = serde_json::to_string_pretty(&projects)
-            .map_err(|e| RuntimeError::AgentWebUnavailable(e.to_string()))?;
-
-        let tmp_path = std::env::temp_dir().join(format!("paseo-projects-{name}.json"));
-        std::fs::write(&tmp_path, &contents)
-            .map_err(|e| RuntimeError::AgentWebUnavailable(format!("failed to write {}: {e}", tmp_path.to_string_lossy())))?;
-        let result = provider.copy_in(name, &tmp_path.to_string_lossy(), PASEO_PROJECTS_FILE).await;
-        let _ = std::fs::remove_file(&tmp_path);
-        result.map_err(RuntimeError::from)
-    }
 }
 
-fn iso8601_now() -> String {
-    let since_epoch =
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
-    let secs = since_epoch.as_secs();
-    let millis = since_epoch.subsec_millis();
-    let days = (secs / 86400) as i64;
-    let rem = secs % 86400;
-    let (hour, minute, second) = (rem / 3600, (rem % 3600) / 60, rem % 60);
-    let (year, month, day) = civil_from_days(days);
-    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{millis:03}Z")
+/// Splits a pinned mise tool spec such as `node@24.19.0` into its tool name and version.
+fn split_tool_spec(spec: &str) -> (&str, &str) {
+    spec.rsplit_once('@').unwrap_or((spec, ""))
 }
 
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    let z = z + 719468;
-    let era = if z >= 0 { z } else { z - 146096 } / 146097;
-    let doe = (z - era * 146097) as u64;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    let y = if m <= 2 { y + 1 } else { y };
-    (y, m, d)
+/// The plain inputs of [`PASEO_UP_SCRIPT`]; the password travels separately as a secret.
+fn paseo_up_env(project_name: &str) -> Vec<(String, String)> {
+    let (node, node_version) = split_tool_spec(PASEO_NODE_TOOL);
+    let (cli, cli_version) = split_tool_spec(PASEO_CLI_TOOL);
+    [
+        ("MIO_PASEO_PORT", PASEO_WEB_PORT.to_string()),
+        ("MIO_PASEO_NODE", node.to_string()),
+        ("MIO_PASEO_NODE_VERSION", node_version.to_string()),
+        ("MIO_PASEO_CLI", cli.to_string()),
+        ("MIO_PASEO_CLI_VERSION", cli_version.to_string()),
+        ("MIO_PASEO_PROJECT_NAME", project_name.to_string()),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v))
+    .collect()
 }
 
 #[async_trait::async_trait]
@@ -257,66 +220,46 @@ impl RuntimeManager for MiseRuntime {
         // The container must be running before any `podman exec`.
         provider.start(name).await?;
 
-        Self::seed_paseo_projects(&provider, name).await?;
-
-        check(
-            provider
-                .exec(name, &["mise", "use", PASEO_NODE_TOOL, PASEO_CLI_TOOL], self.network_opts())
-                .await?,
-        )?;
-
-        // Stop any running daemon unconditionally (best-effort, fails when none is running):
-        let _ = provider
-            .exec(name, &["mise", "exec", "--", "paseo", "daemon", "stop"], workdir_opts())
-            .await;
-
-        // `mise exec` from the workspace dir puts the workspace's tools (opencode, pi) on PATH
-        // and applies `mise.toml [env]`, so paseo discovers installed providers and its spawned
-        // agents see the provisioned environment.
-        let listen = format!("0.0.0.0:{PASEO_WEB_PORT}");
-        let start_opts = ExecOpts {
+        // The script reads the workspace's `mise.toml`, and its `mise exec` launch puts the
+        // workspace's tools on the daemon's PATH and applies `mise.toml [env]` to its agents.
+        let script_opts = || ExecOpts {
             workdir: Some(WORKSPACE_MOUNT.to_string()),
+            env: paseo_up_env(name),
             secret_env: vec![("PASEO_PASSWORD".to_string(), password.to_string())],
-            detached: true,
-            ..Default::default()
+            detached: false,
         };
-        check(
-            provider
-                .exec(
-                    name,
-                    &[
-                        "mise", "exec", "--", "paseo", "daemon", "start", "--foreground",
-                        "--listen", &listen, "--web-ui", "--hostnames", "true",
-                    ],
-                    start_opts,
-                )
-                .await?,
-        )?;
-
-        // `exec -d --foreground` returns once the process is spawned, not once it accepts
-        // connections, and a fresh daemon's startup can outlast the web client's connect
-        // timeout.
-        let listen_url = format!("http://127.0.0.1:{PASEO_WEB_PORT}/");
-        check(
-            provider
-                .exec(
-                    name,
-                    &[
-                        "curl", "--silent", "--fail", "--output", "/dev/null",
-                        "--retry", "30", "--retry-delay", "1", "--retry-connrefused",
-                        "--max-time", "45", &listen_url,
-                    ],
-                    ExecOpts::default(),
-                )
-                .await?,
-        )
-        .map_err(|e| {
-            RuntimeError::AgentWebUnavailable(format!(
-                "paseo daemon did not come up on {PASEO_WEB_PORT} within 45s: {e}"
-            ))
-        })?;
-
-        Ok(PASEO_WEB_PORT)
+        let argv = ["sh", "-c", PASEO_UP_SCRIPT, "paseo-up"];
+        let mut installed = false;
+        for _ in 0..PASEO_UP_ATTEMPTS {
+            let out = provider.exec(name, &argv, script_opts()).await?;
+            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            match out.status.code() {
+                Some(0) => {
+                    if !stderr.is_empty() {
+                        tracing::warn!(target: "runtime", sandbox = name, %stderr, "paseo-up reported a problem");
+                    }
+                    return Ok(PASEO_WEB_PORT);
+                }
+                // Only when missing: a `mise use` on every open re-resolves the tools.
+                Some(PASEO_UP_INSTALL_NEEDED) if !installed => {
+                    check(
+                        provider
+                            .exec(name, &["mise", "use", PASEO_NODE_TOOL, PASEO_CLI_TOOL], self.network_opts())
+                            .await?,
+                    )?;
+                    installed = true;
+                }
+                Some(PASEO_UP_STARTING) => {}
+                code => {
+                    return Err(RuntimeError::AgentWebUnavailable(format!(
+                        "paseo-up exited with {code:?}: {stderr}"
+                    )))
+                }
+            }
+        }
+        Err(RuntimeError::AgentWebUnavailable(format!(
+            "paseo daemon did not come up on {PASEO_WEB_PORT} after {PASEO_UP_ATTEMPTS} attempts"
+        )))
     }
 
     async fn registry(&self, name: &str) -> Result<Vec<types::RegistryEntry>, types::RuntimeError> {
@@ -339,5 +282,16 @@ impl RuntimeManager for MiseRuntime {
         let provider = self.provider_of(name).await;
         provider.start(name).await?;
         check(provider.exec(name, args, self.network_opts()).await?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_spec_splits_at_the_version_not_the_npm_scope() {
+        assert_eq!(split_tool_spec("npm:@getpaseo/cli@0.16.1"), ("npm:@getpaseo/cli", "0.16.1"));
+        assert_eq!(split_tool_spec("node@24.19.0"), ("node", "24.19.0"));
     }
 }

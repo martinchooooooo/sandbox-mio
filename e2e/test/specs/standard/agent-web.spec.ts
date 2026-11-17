@@ -16,6 +16,7 @@ import {
   paneFor,
   openAgentWeb,
   closeWorkspace,
+  closePane,
   hideActivePane,
 } from "../../../lib/workspace.js";
 
@@ -44,6 +45,10 @@ describe("Agent web UI (paseo)", function () {
   const keyDir = path.join(APP_DATA_ROOT, "ssh-keys", projectName);
   let serverId: string;
   let password: string;
+
+  // The pid paseo records for its running daemon.
+  const daemonPid = (): number =>
+    JSON.parse(podman(LOCAL_CONNECTION, ["exec", projectName, "cat", "/root/.paseo/paseo.pid"])).pid;
 
   captureDiagOnFailure();
 
@@ -260,6 +265,38 @@ describe("Agent web UI (paseo)", function () {
     const id = await fetchServerId(port, password);
     assert(id, `/api/status on port ${port} did not return 200 with a serverId after re-open`);
     assert.strictEqual(id, serverId, "The daemon's serverId changed across a pane re-open.");
+  });
+
+  it("re-opening after the pane closed reuses the running daemon and its registered project", async () => {
+    const pidBefore = daemonPid();
+    await closePane(projectName, "agentweb");
+    await browser.waitUntil(
+      async () => paneFor(await workspaceState(), projectName, "agentweb") === undefined,
+      { timeout: 30000, interval: 1000, timeoutMsg: "close_pane left the agentweb pane in place." }
+    );
+
+    await openAgentWeb(projectName, workspaceDir);
+    const pane = paneFor(await workspaceState(), projectName, "agentweb");
+    assert(pane, "open_agent_web after close_pane created no agentweb pane.");
+
+    // paseo-up.sh restarts the daemon only when mise.toml or the password changed.
+    assert.strictEqual(
+      daemonPid(),
+      pidBefore,
+      "The paseo daemon was restarted although mise.toml and the password are unchanged."
+    );
+    const id = await fetchServerId(new URL(pane.url!).port, password);
+    assert.strictEqual(id, serverId, "The daemon's serverId changed across a pane close and re-open.");
+
+    const projects = JSON.parse(
+      podman(LOCAL_CONNECTION, [
+        "exec", "--workdir", "/root/work", projectName,
+        "mise", "exec", "--", "paseo", "project", "ls", "--json",
+      ])
+    ) as { path: string; name: string }[];
+    const workspace = projects.find((p) => p.path === "/root/work");
+    assert(workspace, `paseo lists no project for /root/work:\n${JSON.stringify(projects)}`);
+    assert.strictEqual(workspace.name, projectName, "The paseo project is not named after the sandbox.");
   });
 
   it("closing the workspace tears down the forward but leaves the daemon running", async () => {
