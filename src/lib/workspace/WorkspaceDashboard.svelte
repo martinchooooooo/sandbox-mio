@@ -19,6 +19,7 @@
     import { ensureSandboxRemoteState, refreshSandboxState, sandboxesList } from "$lib/sandbox/state.svelte";
     import { forgetProxyStatus } from "$lib/proxy/status.svelte";
     import { forgetAgentAuth } from "$lib/agents/authStatus.svelte";
+    import { forgetChat } from "$lib/agent-chat/chat.svelte";
     import { forgetSection, sectionFor, setSection } from "$lib/workspace/dashboard.svelte";
     import { DASHBOARD_SECTIONS, type DashboardSectionId } from "$lib/workspace/sections";
     import DashboardOverview from "$lib/workspace/DashboardOverview.svelte";
@@ -66,6 +67,7 @@
             forgetSection(sandboxName);
             forgetProxyStatus(sandboxName);
             forgetAgentAuth(sandboxName);
+            forgetChat(sandboxName);
             await refreshSandboxState();
             await closeSandbox(sandboxName);
         }

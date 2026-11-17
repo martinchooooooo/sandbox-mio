@@ -434,3 +434,13 @@ export function ensureChat(sandbox: string, workspacePath: string): ChatStore {
     store.workspacePath = workspacePath;
     return store;
 }
+
+/** Drops `sandbox`'s chat store so a sandbox recreated under the same name starts from a fresh one. */
+export function forgetChat(sandbox: string): void {
+    const store = stores.get(sandbox);
+    if (!store) return;
+    stores.delete(sandbox);
+    // Detaching drops the channel (late events are ignored) and rejects in-flight requests. The
+    // backend detach is best-effort: the sandbox is already gone, so its failure is only logged.
+    void store.detach();
+}
