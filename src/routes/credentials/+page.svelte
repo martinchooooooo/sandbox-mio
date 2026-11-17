@@ -4,18 +4,17 @@
     import { Input } from "$lib/components/ui/input";
     import * as Collapsible from "$lib/components/ui/collapsible";
     import { invoke, Channel } from "@tauri-apps/api/core";
-    import { onMount } from "svelte";
-    import { toast } from "svelte-sonner";
+    import { onMount, untrack } from "svelte";
     import { createActionRunner } from "$lib/actions.svelte";
-    import { AGENTS, onboardingSeed } from "$lib/agents/catalogue";
+    import { AGENTS } from "$lib/agents/catalogue";
     import { m } from "$lib/paraglide/messages.js";
-    import { parseError } from "$lib/errors";
     import type { AgentInstallEvent } from "$lib/agents/types";
     import AuthSessionCard from "$lib/agents/AuthSessionCard.svelte";
     import {
         authSessionId,
         authPhase,
-        authExitCode,
+        authActiveServiceId,
+        authCapturedCount,
         beginSigningIn,
         start as startAuthSession,
         reset as resetAuthSession,
@@ -30,9 +29,7 @@
     const action = createActionRunner();
 
     let bundles = $state<Record<string, CredentialManifest>>({});
-    let activeServiceId = $state<string | null>(null);
     let cardOpen = $state<Record<string, boolean>>({});
-    let handledExitId: string | null = null;
 
     // Distinct services referenced by the catalogue, keeping the first agent descriptor that
     // names each one — it supplies the install/auth shape `logIn` needs to drive the auth container.
@@ -52,49 +49,7 @@
 
     function dismiss(serviceId: string) {
         resetAuthSession();
-        activeServiceId = null;
         delete cardOpen[serviceId];
-    }
-
-    async function handleExit(sessionId: string) {
-        const serviceId = activeServiceId;
-        if (!serviceId) return;
-        const agent = AGENTS.find((a) => a.credentialService === serviceId && a.auth);
-        if (!agent || !agent.auth) return;
-        const auth = agent.auth;
-        const authContainer = `mio-auth-${serviceId}`;
-        const code = authExitCode();
-
-        if (code === 0) {
-            try {
-                const seed = onboardingSeed(agent);
-                if (seed) {
-                    await invoke("seed_agent_onboarding", { name: authContainer, onboarding: seed }).catch(
-                        () => {},
-                    );
-                }
-                await invoke("capture_agent_credentials", {
-                    name: authContainer,
-                    serviceId,
-                    credentialPath: auth.credentialFile,
-                    expiresAtJsonKey: auth.expiresAtJsonKey,
-                    accountSourcePath: auth.accountSourceFile ?? null,
-                    accountEmailJsonKey: auth.accountEmailJsonKey ?? null,
-                });
-                await loadBundles();
-            } catch (e) {
-                // A failed capture must still let the card collapse below — otherwise a CLI login
-                // that printed success leaves the row stuck open with nothing rendered, which is
-                // indistinguishable from a hang.
-                toast.error(parseError(e).message);
-            }
-        }
-
-        // Destroyed after every attempt, whatever the outcome, so a failed capture never leaks a
-        // container (docs/features/shared-agent-auth/02_dev.md, "Auth container cleanup on failure").
-        await invoke("destroy_sandbox", { name: authContainer, force: true }).catch(() => {});
-
-        if (code === 0) dismiss(serviceId);
     }
 
     async function logIn(serviceId: string) {
@@ -103,8 +58,7 @@
         const auth = agent.auth;
         const authContainer = `mio-auth-${serviceId}`;
 
-        activeServiceId = serviceId;
-        beginSigningIn();
+        beginSigningIn(serviceId);
         cardOpen[serviceId] = true;
 
         const ok = await action.run(`login-${serviceId}`, async () => {
@@ -125,7 +79,7 @@
                 authCommand: auth.command,
             });
 
-            if (activeServiceId !== serviceId) {
+            if (authActiveServiceId() !== serviceId) {
                 // Cancelled/dismissed while ensure_auth_container/install_agent were still
                 // running, before a sessionId existed to cancel against — clean up the session
                 // and container that just came into existence instead of silently reattaching.
@@ -183,13 +137,10 @@
         }
     }
 
+    // The store captures credentials and destroys the auth container on exit, even while this
+    // page is unmounted; the page only refreshes its list when a capture lands.
     $effect(() => {
-        const id = authSessionId();
-        const ph = authPhase();
-        if (ph === "exited" && id && id !== handledExitId) {
-            handledExitId = id;
-            void handleExit(id);
-        }
+        if (authCapturedCount() > 0) void untrack(loadBundles);
     });
 
     onMount(loadBundles);
@@ -202,8 +153,8 @@
     <div class="flex flex-col gap-3">
         {#each services as service}
             {@const bundle = bundles[service.serviceId]}
-            {@const active = activeServiceId === service.serviceId && authPhase() !== "idle"}
-            {@const open = cardOpen[service.serviceId] ?? active}
+            {@const active = authActiveServiceId() === service.serviceId && authPhase() !== "idle"}
+            {@const open = active && (cardOpen[service.serviceId] ?? true)}
             <Collapsible.Root
                 {open}
                 onOpenChange={(o) => (cardOpen[service.serviceId] = o)}

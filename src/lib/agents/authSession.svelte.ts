@@ -1,7 +1,12 @@
+import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { toast } from "svelte-sonner";
+import { parseError } from "$lib/errors";
+import { AGENTS, onboardingSeed } from "./catalogue";
 import type { AgentAuthEvent } from "./types";
 
-// Module-scoped store; owns the subscription for the in-progress login session.
+// Module-scoped store; owns the subscription and the exit cleanup for the in-progress login
+// session, so the auth container is destroyed even when the credentials page is unmounted.
 
 export type AuthPhase = "idle" | "starting" | "awaiting-url" | "awaiting-code" | "exited";
 
@@ -10,6 +15,9 @@ let phase = $state<AuthPhase>("idle");
 let outputLines = $state<string[]>([]);
 let authUrl = $state<string | null>(null);
 let exitCode = $state<number | null>(null);
+let activeServiceId = $state<string | null>(null);
+let capturedCount = $state(0);
+let handledExitId: string | null = null;
 
 let unlisten: UnlistenFn | null = null;
 
@@ -33,8 +41,19 @@ export function authExitCode(): number | null {
     return exitCode;
 }
 
-/** Marks a login as in flight before a sessionId exists (during ensure_auth_container/install_agent). */
-export function beginSigningIn(): void {
+/** Credential service the in-progress login belongs to; null when no login is active. */
+export function authActiveServiceId(): string | null {
+    return activeServiceId;
+}
+
+/** Increments after each successful capture, so pages can refresh their bundle list. */
+export function authCapturedCount(): number {
+    return capturedCount;
+}
+
+/** Marks a login for `serviceId` as in flight before a sessionId exists (during ensure_auth_container/install_agent). */
+export function beginSigningIn(serviceId: string): void {
+    activeServiceId = serviceId;
     phase = "starting";
     outputLines = [];
     authUrl = null;
@@ -43,6 +62,8 @@ export function beginSigningIn(): void {
 
 /** Attaches the session's output listener once start_agent_auth has returned a sessionId. */
 export async function start(id: string): Promise<void> {
+    unlisten?.();
+    unlisten = null;
     sessionId = id;
     phase = "awaiting-url";
     unlisten = await listen<AgentAuthEvent>(`agent-auth-output-${id}`, (event) => {
@@ -55,13 +76,59 @@ export async function start(id: string): Promise<void> {
         } else if (data.kind === "Exit") {
             exitCode = data.code;
             phase = "exited";
+            if (id !== handledExitId) {
+                handledExitId = id;
+                void handleExit();
+            }
         }
     });
 }
 
-/** Tears down the listener and clears all state. Called once the credentials page has finished
- * its own Exit handling (capture/seed/destroy) and the card is dismissed. */
+async function handleExit(): Promise<void> {
+    const serviceId = activeServiceId;
+    if (!serviceId) return;
+    const agent = AGENTS.find((a) => a.credentialService === serviceId && a.auth);
+    if (!agent || !agent.auth) return;
+    const auth = agent.auth;
+    const authContainer = `mio-auth-${serviceId}`;
+    const code = exitCode;
+
+    if (code === 0) {
+        try {
+            const seed = onboardingSeed(agent);
+            if (seed) {
+                await invoke("seed_agent_onboarding", { name: authContainer, onboarding: seed }).catch(
+                    () => {},
+                );
+            }
+            await invoke("capture_agent_credentials", {
+                name: authContainer,
+                serviceId,
+                credentialPath: auth.credentialFile,
+                expiresAtJsonKey: auth.expiresAtJsonKey,
+                accountSourcePath: auth.accountSourceFile ?? null,
+                accountEmailJsonKey: auth.accountEmailJsonKey ?? null,
+            });
+            capturedCount++;
+        } catch (e) {
+            // A failed capture must still let the card collapse below — otherwise a CLI login
+            // that printed success leaves the row stuck open with nothing rendered, which is
+            // indistinguishable from a hang.
+            toast.error(parseError(e).message);
+        }
+    }
+
+    // Destroyed after every attempt, whatever the outcome, so a failed capture never leaks a
+    // container (docs/features/shared-agent-auth/02_dev.md, "Auth container cleanup on failure").
+    await invoke("destroy_sandbox", { name: authContainer, force: true }).catch(() => {});
+
+    if (code === 0) reset();
+}
+
+/** Tears down the listener and clears all state, including the active service. Called when the
+ * card is dismissed or after a successful exit has been handled. */
 export function reset(): void {
+    activeServiceId = null;
     unlisten?.();
     unlisten = null;
     sessionId = null;
