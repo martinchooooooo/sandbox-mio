@@ -6,7 +6,7 @@ use crate::provider::types::MachineRef;
 /// Everything one attach needs, resolved by the caller so the subsystem reads no app state.
 #[derive(Debug, Clone)]
 pub struct AttachRequest {
-    /// The sandbox, which also names its zellij session.
+    /// The sandbox, which also names its Herdr session (see `session_name` in `terminal/mod.rs`).
     pub name: String,
     pub machine: MachineRef,
     /// Whether the sandbox must be started before the exec
@@ -25,7 +25,7 @@ pub struct AttachRequest {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum TerminalEvent {
-    /// The session ended; the zellij session inside the sandbox may still run.
+    /// The session ended; the Herdr session inside the sandbox may still run.
     Exited { reason: String, exit_status: Option<u32> },
 }
 
@@ -46,9 +46,12 @@ pub enum TerminalError {
     /// The sandbox refused the sandbox identity.
     #[error("the sandbox refused the terminal's key: {0}")]
     Auth(String),
-    /// Creating or resurrecting the zellij session failed.
+    /// Starting the Herdr server for the sandbox failed.
     #[error("could not create the terminal session: {0}")]
     SessionCreate(String),
+    /// The sandbox image has no `herdr` binary.
+    #[error("this sandbox predates the Herdr terminal; recreate it from the project list to use the terminal")]
+    MultiplexerMissing,
     /// No live session exists for the sandbox.
     #[error("the terminal is not connected")]
     NotAttached,
@@ -67,14 +70,14 @@ impl From<crate::provider::types::ProviderError> for TerminalError {
 }
 
 /// Host side of the native terminal: holds at most one SSH session per sandbox, attached to the
-/// sandbox's zellij session. Real impl `SshTerminalHost` carries SSH over the engine's streamed
+/// sandbox's Herdr session. Real impl `SshTerminalHost` carries SSH over the engine's streamed
 /// exec; `MockTerminalHost` echoes input under `MIO_MOCK_BACKEND=1`.
 #[async_trait::async_trait]
 pub trait TerminalHost: Send + Sync {
     /// Opens a session for `req.name`, replacing any earlier one. A detach or newer attach while
     /// this one is opening cancels it with [`TerminalError::Cancelled`]. Raw output bytes go to
     /// `on_output`; the final [`TerminalEvent::Exited`] goes to `on_event`. Returns once `sshd` has
-    /// accepted the zellij client command.
+    /// accepted the Herdr client command.
     async fn attach(
         &self,
         req: AttachRequest,
@@ -85,7 +88,7 @@ pub trait TerminalHost: Send + Sync {
     async fn input(&self, name: &str, bytes: Vec<u8>) -> Result<(), TerminalError>;
     /// Sends a window-change to the live session.
     async fn resize(&self, name: &str, cols: u32, rows: u32) -> Result<(), TerminalError>;
-    /// Ends the live session for `name`, if any. The zellij session keeps running.
+    /// Ends the live session for `name`, if any. The Herdr session keeps running.
     async fn detach(&self, name: &str);
     /// Ends every live session and waits (bounded) for each to release its exec child; called on
     /// app exit.

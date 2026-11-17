@@ -1,4 +1,4 @@
-//! The native terminal: attach to, write to, resize and detach from a sandbox's zellij session.
+//! The native terminal: attach to, write to, resize and detach from a sandbox's Herdr session.
 
 use std::sync::Arc;
 
@@ -47,7 +47,7 @@ pub async fn terminal_resize(
     Ok(terminal.resize(&name, cols, rows).await?)
 }
 
-/// Ends this app's session; the zellij session keeps running inside the sandbox.
+/// Ends this app's session; the Herdr session keeps running inside the sandbox.
 #[tauri::command]
 pub async fn terminal_detach(name: String, terminal: State<'_, Arc<dyn TerminalHost>>) -> Result<(), AppError> {
     terminal.detach(&name).await;

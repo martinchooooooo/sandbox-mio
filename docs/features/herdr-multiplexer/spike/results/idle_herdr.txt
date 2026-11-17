@@ -1,0 +1,3 @@
+pid=4 cmd=herdr --session spk server  rss_kb=22272 cpu_ticks_10s=3
+pid=4 cmd=herdr --session spk server  rss_kb=22532 cpu_ticks_10s=4
+pid=1527 cmd=herdr --session spk  rss_kb=14072 cpu_ticks_10s=4

@@ -57,30 +57,42 @@ RUN curl -fsSL "https://github.com/jdx/mise/releases/download/${MISE_VERSION}/mi
 
 # MISE_LOCKFILE=1 makes installs maintain mise.lock (only when the lockfile already exists, which the
 # runtime's init creates). MISE_YES auto-confirms so `podman exec` never blocks on a prompt.
-# SHELL=bash makes zellij open bash panes (which read .bashrc) instead of /bin/sh.
+# SHELL=bash keeps tools that read $SHELL on bash; Herdr's own pane shell is `default_shell` below.
 ENV MISE_DATA_DIR=/root/.local/share/mise \
     MISE_LOCKFILE=1 \
     MISE_YES=1 \
     SHELL=/bin/bash
 
-# Bake the in-app terminal's multiplexer (zellij) and symlink it onto the global PATH so the terminal
-# runs plain `zellij` over the engine exec and SSH, NOT through mise. Pinned to an exact version so
-# the install skips the rate-limited GitHub releases-list API. The terminal relies on
-# `zellij attach --create-background`; verify it still behaves before bumping ZELLIJ_VERSION.
-ARG ZELLIJ_VERSION=0.44.3
-RUN mise install "zellij@${ZELLIJ_VERSION}" \
- && ln -sf "$(mise where zellij@${ZELLIJ_VERSION})/zellij" /usr/local/bin/zellij \
- && zellij --version
+# Bake the in-app terminal's multiplexer (Herdr) from its pinned release asset, checksum-verified.
+# mise is not used: mise 2026.6.14 fails the release's attestation check
+# (docs/features/herdr-multiplexer/02_dev.md, Resolved Decision 2).
+ARG HERDR_VERSION=0.9.5
+ARG HERDR_SHA256=14d9e8bc8b4a9e0118d77c32266f76d461f09b40342eb23752960bd89f59929d
+RUN curl -fsSL -o /usr/local/bin/herdr "https://github.com/herdrdev/herdr/releases/download/v${HERDR_VERSION}/herdr-linux-x86_64" \
+ && echo "${HERDR_SHA256}  /usr/local/bin/herdr" | sha256sum -c - \
+ && chmod +x /usr/local/bin/herdr \
+ && herdr --version
 
-# Dump the default config into the location zellij resolves at startup, so every session starts
-# from a known config file.
-RUN mkdir -p /root/.config/zellij \
- && zellij setup --dump-config > /root/.config/zellij/config.kdl
+# Baked config: no onboarding box, no update checks (no calls to herdr.dev), panes open bash in the
+# workspace. `default_shell` and `new_cwd` only take effect under [terminal]. Written with printf
+# because the build context holds the Containerfile alone.
+RUN mkdir -p /root/.config/herdr \
+ && printf '%s\n' \
+    'onboarding = false' \
+    '' \
+    '[update]' \
+    'version_check = false' \
+    'manifest_check = false' \
+    '' \
+    '[terminal]' \
+    'default_shell = "/bin/bash"' \
+    'new_cwd = "/root/work"' \
+    > /root/.config/herdr/config.toml
 
-# Activate mise in interactive bash sessions so zellij terminal panes have installed tools on PATH.
+# Activate mise in interactive bash sessions so Herdr terminal panes have installed tools on PATH.
 RUN echo 'eval "$(mise activate bash)"' > /root/.bashrc
 
-# Default to the workspace directory so the zellij server (and the panes it spawns) start where
+# Default to the workspace directory so the Herdr server (and the panes it spawns) start where
 # mise.toml lives, letting mise resolve the right tool versions without an explicit `cd`.
 WORKDIR /root/work
 

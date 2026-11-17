@@ -71,7 +71,7 @@ flowchart LR
 | Sandbox | One project's isolated environment: a container or microVM plus its workspace |
 | Provider | The engine running a sandbox, Podman or microsandbox ([Providers](providers.md)) |
 | Machine | The WSL-backed Podman VM that hosts Podman sandboxes |
-| Base image | The versioned image every sandbox starts from: Debian, mise, zellij and an SSH server |
+| Base image | The versioned image every sandbox starts from: Debian, mise, Herdr and an SSH server |
 | Workspace | The project folder shared between the host and the sandbox |
 | Alias | An app-managed SSH host entry that reaches one sandbox through its engine's `exec` |
 | Forward | A Mutagen port forward from a host loopback port into a sandbox, or the reverse |

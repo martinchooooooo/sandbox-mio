@@ -39,7 +39,7 @@ The app runs in one OS window. One webview renders the whole SvelteKit frontend 
 ## Panes and the Registry
 
 - A Rust registry is the source of truth for the open panes (terminal, agent web UI or native chat, per sandbox), the active app, the collapsed flag, and each sandbox's last active pane. Every change is pushed to the frontend as one state event.
-- Opening a web pane starts the service inside the sandbox (`zellij web` or the Paseo agent UI), forwards it to a fresh host loopback port ([Transport](transport.md)), and mounts a webview on that port. Opening a pane that already exists switches to it instead.
+- Opening a web pane starts the service inside the sandbox (Herdr, through the native terminal, or the Paseo agent UI), forwards it to a fresh host loopback port ([Transport](transport.md)), and mounts a webview on that port. Opening a pane that already exists switches to it instead.
 - The native chat pane has no webview, forward or URL: the main webview renders it like Manage, and activating it hides any overlay webview. Its connection is described in [Agents](agents.md).
 - Closing a pane removes its webview and ends its forward, or ends the chat's attach; closing a sandbox's workspace closes all of its panes.
 
@@ -53,7 +53,7 @@ The app runs in one OS window. One webview renders the whole SvelteKit frontend 
 
 ## Terminal Login
 
-The terminal pane is `zellij web` inside the sandbox. Before the webview opens, the app mints a login token and injects a script that logs the webview in; the token is held only in that script, never written to disk. The agent web UI's password is kept in the app-data root, outside the synced workspace.
+The terminal pane is Herdr inside the sandbox. Before the webview opens, the app mints a login token and injects a script that logs the webview in; the token is held only in that script, never written to disk. The agent web UI's password is kept in the app-data root, outside the synced workspace.
 
 ## Invariants
 

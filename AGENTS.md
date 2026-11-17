@@ -1,6 +1,6 @@
 # Repo Map
 
-Sandbox-mio is a Tauri 2 desktop app (Windows-first) that manages per-project "sandboxes" (Podman containers or microsandbox microVMs) with a host-side workspace, a mise-managed runtime, embedded zellij terminals, installable AI coding agents, remote deploys with Mutagen file sync, and local LLM inference.
+Sandbox-mio is a Tauri 2 desktop app (Windows-first) that manages per-project "sandboxes" (Podman containers or microsandbox microVMs) with a host-side workspace, a mise-managed runtime, embedded Herdr terminals, installable AI coding agents, remote deploys with Mutagen file sync, and local LLM inference.
 
 | Area | Contents | Orientation doc |
 |---|---|---|

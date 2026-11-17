@@ -205,7 +205,7 @@ const PODMAN_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 /// than the old blanket 300s.
 const MACHINE_START_TIMEOUT: Duration = Duration::from_secs(150);
 
-/// `podman build` of the base image: installing mise, zellij, and apt packages easily exceeds 20s
+/// `podman build` of the base image: installing mise, Herdr, and apt packages easily exceeds 20s
 /// and can run longer over a slow network or disk — bounded generously, but not open-ended.
 const BUILD_TIMEOUT: Duration = Duration::from_secs(180);
 

@@ -5,8 +5,13 @@ Records feature status changes only: creation (`Create`), reaching `implemented`
 history with at most one `Create` and one `Implement` entry per feature, so seeded dates are
 approximate. New entries go on top.
 
+## 2026-11-18
+
+* **Implement** [herdr-multiplexer](herdr-multiplexer/index.md): Herdr replaces zellij in the base image and the native terminal's two command strings; standard specs pass and the user checked the manual renderer, microsandbox and deployed-sandbox cases
+
 ## 2026-11-17
 
+* **Create** [herdr-multiplexer](herdr-multiplexer/index.md): replace zellij with Herdr as the in-sandbox multiplexer behind the native terminal, for its mouse-first interface and agent awareness
 * **Create** [sandbox-resource-monitor](sandbox-resource-monitor/index.md): per-sandbox CPU and memory sampling, a health indicator with a restart hint, and a local usage history for sizing the default sandbox memory
 * **Implement** [unified-sidebar-nav](unified-sidebar-nav/index.md): one persistent sidebar replaces the top tabs and switcher bar; the user approved the new shell, and the `heavy` tier was not run before closing
 * **Implement** [native-agent-ui](native-agent-ui/index.md): built-in pi chat pane over an in-sandbox supervisor, translated into all locales; the microsandbox hand check was skipped by the user

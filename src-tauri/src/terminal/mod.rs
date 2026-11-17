@@ -1,6 +1,6 @@
 //! The terminal host subsystem: the native terminal's host side, which carries an SSH session over
-//! the engine's streamed exec and attaches it to the sandbox's zellij session
-//! (`docs/features/native-terminal/02_dev.md`).
+//! the engine's streamed exec and attaches it to the sandbox's Herdr session
+//! (`docs/features/native-terminal/02_dev.md`, `docs/features/herdr-multiplexer/02_dev.md`).
 
 mod host;
 mod mock;
@@ -11,6 +11,7 @@ pub mod types;
 use std::process::Stdio;
 use std::sync::Arc;
 
+use sha2::{Digest, Sha256};
 use russh::client::{Handle, Msg};
 use russh::{Channel as SshChannel, ChannelMsg, Disconnect};
 use tauri::ipc::{Channel, InvokeResponseBody};
@@ -23,7 +24,7 @@ use crate::provider::ProviderRegistry;
 use host::{Ended, LifecycleHost, Link, SessionCommand, Transport};
 use types::{AttachRequest, TerminalError, TerminalHost};
 
-/// The working directory of every pane a new zellij session opens. Must equal `WORKSPACE_MOUNT`
+/// The working directory of every pane a new Herdr session opens. Must equal `WORKSPACE_MOUNT`
 /// in `src-tauri/src/provider/mod.rs`, which is private there.
 const WORKDIR: &str = "/root/work";
 
@@ -37,16 +38,53 @@ pub fn default_terminal_host(registry: Arc<ProviderRegistry>, director: Arc<Mock
     Arc::new(LifecycleHost::new(SshTransport { registry }))
 }
 
-/// The engine-exec argv that creates or resurrects the zellij session. The session is never
-/// created over SSH, because `sshd` drops the container's environment
-/// (`docs/features/native-terminal/02_dev.md`, Resolved Decision 7).
-fn create_argv(name: &str) -> Vec<String> {
-    ["zellij", "attach", "--create-background", name].map(String::from).to_vec()
+/// Longest Herdr session name that keeps its socket path under the `sun_path` limit.
+const SESSION_NAME_MAX: usize = 61;
+
+/// Characters of a long name kept before the hash suffix (`52 + 1 + 8 = SESSION_NAME_MAX`).
+const SESSION_NAME_PREFIX: usize = 52;
+
+/// The Herdr session name for a sandbox: the name itself when its socket path fits, otherwise a
+/// truncated prefix plus a hash so two long names sharing a prefix stay apart
+/// (`docs/features/herdr-multiplexer/02_dev.md`, Resolved Decision 4).
+fn session_name(sandbox: &str) -> String {
+    if sandbox.chars().count() <= SESSION_NAME_MAX {
+        return sandbox.to_string();
+    }
+    let prefix: String = sandbox.chars().take(SESSION_NAME_PREFIX).collect();
+    let digest = Sha256::digest(sandbox.as_bytes());
+    let hex: String = digest.iter().take(4).map(|b| format!("{b:02x}")).collect();
+    format!("{prefix}-{hex}")
 }
 
-/// The client command run over SSH, attaching to the session `create_argv` made.
-fn client_command(name: &str) -> String {
-    format!("zellij attach {}", shell_quote(name))
+/// Exit code of the start script when `herdr` is not on `PATH`.
+const EXIT_MULTIPLEXER_MISSING: i32 = 127;
+
+/// Starts the session's Herdr server unless it already runs, and returns only once it reports
+/// running. The check and the poll are foreground on purpose: an SSH client arriving first would
+/// start its own server with the stripped `sshd` environment
+/// (`docs/features/herdr-multiplexer/02_dev.md`, Resolved Decision 3).
+const START_SCRIPT: &str = r#"command -v herdr >/dev/null 2>&1 || exit 127
+herdr --session "$1" status server 2>/dev/null | grep -q 'status: running' && exit 0
+setsid herdr --session "$1" server </dev/null >/dev/null 2>&1 &
+i=0
+while [ "$i" -lt 50 ]; do
+  herdr --session "$1" status server 2>/dev/null | grep -q 'status: running' && exit 0
+  sleep 0.1
+  i=$((i+1))
+done
+exit 1"#;
+
+/// The engine-exec argv that creates or resurrects the Herdr server for `session`. The server is
+/// never started over SSH, because `sshd` drops the container's environment
+/// (`docs/features/native-terminal/02_dev.md`, Resolved Decision 7).
+fn create_argv(session: &str) -> Vec<String> {
+    ["sh", "-c", START_SCRIPT, "sh", session].map(String::from).to_vec()
+}
+
+/// The client command run over SSH, attaching to the session `create_argv` started.
+fn client_command(session: &str) -> String {
+    format!("herdr --session {}", shell_quote(session))
 }
 
 /// Quotes `word` for the remote shell `sshd` runs the client command through; plain words stay
@@ -57,13 +95,6 @@ fn shell_quote(word: &str) -> String {
         return word.to_string();
     }
     format!("'{}'", word.replace('\'', "'\\''"))
-}
-
-/// Whether a failed `--create-background` failed only because the session is already running.
-/// zellij 0.44 exits non-zero with "Session already exists" in that case, which for an attach is
-/// success: the session the client attaches to is there.
-fn session_already_running(stderr: &str) -> bool {
-    stderr.to_ascii_lowercase().contains("session already exists")
 }
 
 struct SshTransport {
@@ -82,15 +113,15 @@ struct Session {
 
 impl SshTransport {
     async fn create_session(&self, provider: &Arc<dyn MachineProvider>, name: &str) -> Result<(), TerminalError> {
-        let argv = create_argv(name);
+        let argv = create_argv(&session_name(name));
         let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
         let opts = ExecOpts { workdir: Some(WORKDIR.to_string()), ..Default::default() };
         let out = provider.exec(name, &argv, opts).await?;
         if !out.status.success() {
-            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-            if session_already_running(&stderr) {
-                return Ok(());
+            if out.status.code() == Some(EXIT_MULTIPLEXER_MISSING) {
+                return Err(TerminalError::MultiplexerMissing);
             }
+            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
             return Err(TerminalError::SessionCreate(stderr));
         }
         Ok(())
@@ -122,7 +153,7 @@ impl Transport for SshTransport {
             req.rows,
         );
         let ((handle, mut channel), ()) = tokio::try_join!(handshake, self.create_session(&provider, &req.name))?;
-        let client = client_command(&req.name);
+        let client = client_command(&session_name(&req.name));
         channel.exec(true, client).await.map_err(|e| TerminalError::Handshake(e.to_string()))?;
         // `exec` only sends the request; `attach` must not report success before `sshd` accepts it.
         let early = ssh::await_reply(&mut channel, "the sandbox refused the terminal command").await?;
@@ -184,20 +215,12 @@ impl Link for Session {
 
 #[cfg(test)]
 mod tests {
-    use super::{session_already_running, client_command, create_argv, shell_quote};
+    use super::{client_command, create_argv, session_name, shell_quote, START_SCRIPT};
 
     #[test]
-    fn a_running_session_is_not_a_create_failure() {
-        assert!(session_already_running("Session already exists"));
-        assert!(session_already_running("Error: session already exists: demo"));
-        assert!(!session_already_running("No such file or directory"));
-        assert!(!session_already_running(""));
-    }
-
-    #[test]
-    fn the_session_is_created_by_exec_and_only_attached_over_ssh() {
-        assert_eq!(create_argv("demo"), ["zellij", "attach", "--create-background", "demo"]);
-        assert_eq!(client_command("demo"), "zellij attach demo");
+    fn the_server_is_started_by_exec_and_only_attached_over_ssh() {
+        assert_eq!(create_argv("demo"), ["sh", "-c", START_SCRIPT, "sh", "demo"]);
+        assert_eq!(client_command("demo"), "herdr --session demo");
     }
 
     #[test]
@@ -207,6 +230,26 @@ mod tests {
         assert_eq!(shell_quote("x;rm -rf /"), "'x;rm -rf /'");
         assert_eq!(shell_quote("it's"), "'it'\\''s'");
         assert_eq!(shell_quote(""), "''");
-        assert_eq!(client_command("a$b"), "zellij attach 'a$b'");
+        assert_eq!(client_command("a$b"), "herdr --session 'a$b'");
+    }
+
+    #[test]
+    fn a_session_name_passes_through_up_to_the_socket_limit() {
+        assert_eq!(session_name("demo"), "demo");
+        let at_limit = "a".repeat(61);
+        assert_eq!(session_name(&at_limit), at_limit);
+    }
+
+    #[test]
+    fn a_longer_name_is_truncated_with_a_hash_suffix() {
+        let name = "a".repeat(62);
+        let session = session_name(&name);
+        assert_eq!(session.len(), 61);
+        assert!(session.starts_with(&"a".repeat(52)));
+        assert_eq!(session.as_bytes()[52], b'-');
+        assert_eq!(session, session_name(&name));
+        let other = format!("{}b", "a".repeat(61));
+        assert_ne!(session_name(&other), session);
+        assert_eq!(session_name(&other).len(), 61);
     }
 }

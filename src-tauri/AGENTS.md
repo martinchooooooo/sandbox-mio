@@ -24,7 +24,7 @@ Every subsystem that touches external processes is a trait injected into Tauri s
 | `MachineManager` | `machine/types.rs` | podman machine / WSL lifecycle | same struct, `ScriptedPodmanRunner` | `default_machine_manager()` in `machine/mod.rs` |
 | `NetworkManager` | `network/types.rs` | `MutagenNetworkManager` (forward lifecycle, port exposure) | `network/mock.rs` | `default_network_manager()` in `network/mod.rs` |
 | `AgentHost` | `agent_host/types.rs` | `ExecAgentHost` (pi supervisor scripts and attach streams over the engine's streamed exec) | `agent_host/mock.rs` (replays recorded pi traces) | `default_agent_host()` in `agent_host/mod.rs` |
-| `TerminalHost` | `terminal/types.rs` | `SshTerminalHost` (an in-process russh session over the engine's streamed exec, attached to the sandbox's zellij session) | `terminal/mock.rs` (echoes input, prints resizes) | `default_terminal_host()` in `terminal/mod.rs` |
+| `TerminalHost` | `terminal/types.rs` | `SshTerminalHost` (an in-process russh session over the engine's streamed exec, attached to the sandbox's Herdr session) | `terminal/mock.rs` (echoes input, prints resizes) | `default_terminal_host()` in `terminal/mod.rs` |
 
 Cross-subsystem orchestration lives in `services/` (e.g. the deploy teardown ordering in `services/sandbox.rs` drives both `SandboxBackend` and `SyncEngine`) so subsystems never depend on each other. When adding a new external-process capability, route it through one of these traits rather than shelling out from a command — otherwise the e2e `light` tier (see `e2e/AGENTS.md`) breaks for every flow touching the new capability. Prefer the runner path over a new mock struct: a hand-written mock reimplements the logic it stands in for and drifts from it (`docs/features/scriptable-mock-backend/02_dev.md`, "Superseded").
 
@@ -55,7 +55,7 @@ Modules follow one layout: `types.rs` declares the public types/trait, `mod.rs` 
 - `net_policy.rs` — the `.mio/net-policy.json` schema, validation, and per-sandbox applied snapshot; a plain file module like `mio_files.rs`, usable from any layer.
 - `activity/` — `TaskRegistry`, the source of truth for long-running task state; pushes `activity://task-updated` events consumed by `src/lib/activity/activity.svelte.ts`.
 - `agent_host/` — the native agent chat's host side: installs and drives the in-sandbox pi supervisor (`resources/agent-host/*.sh`), holds one attach stream per sandbox, frames the journal into offset-tagged records, derives pending dialogs, and lists chat session files host-side. See `docs/features/native-agent-ui/02_dev.md`.
-- `terminal/` — the native terminal's host side: one SSH session per sandbox carried over the engine's streamed exec to `mio-sshd`, the zellij session created through a separate engine exec, raw output bytes streamed to the main webview over a Tauri channel. See `docs/features/native-terminal/02_dev.md`.
+- `terminal/` — the native terminal's host side: one SSH session per sandbox carried over the engine's streamed exec to `mio-sshd`, the Herdr server started through a separate engine exec, raw output bytes streamed to the main webview over a Tauri channel. See `docs/features/native-terminal/02_dev.md`.
 - `agents/` — AI agent install/provisioning and interactive auth sessions (`AuthSessionMap`).
 - `credentials/` — shared agent credential bundles (capture from one sandbox, inject into another).
 - `inference/` — local LLM serving: machine-spec probing, model downloads, llama.cpp (`inference/llama.rs`) and Foundry Local (`inference/foundry.rs`) engines.

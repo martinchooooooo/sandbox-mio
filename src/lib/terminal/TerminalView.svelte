@@ -84,7 +84,7 @@
             .catch((e) => console.error(parseError(e).message));
     }
 
-    // A hidden terminal's size is never sent, so zellij keeps the visible layout
+    // A hidden terminal's size is never sent, so Herdr keeps the visible layout
     // (docs/features/native-terminal/02_dev.md, Common Gotchas).
     function syncSize() {
         if (frame !== null || !active || status !== "attached") return;

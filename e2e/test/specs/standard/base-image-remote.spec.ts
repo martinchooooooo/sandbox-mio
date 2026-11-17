@@ -13,7 +13,7 @@ describe("Base image bootstrap (remote)", () => {
   captureDiagOnFailure();
 
   it("builds the mise base image on first remote deploy when it is absent on the target", async function () {
-    // The base-image build on the remote downloads and bakes mise + zellij (~324 MB); generous
+    // The base-image build on the remote downloads and bakes mise + Herdr (size not re-measured); generous
     // ceiling covers both the local create and the remote build.
     this.timeout(900000);
 

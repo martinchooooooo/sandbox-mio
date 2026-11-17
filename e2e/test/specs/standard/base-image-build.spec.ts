@@ -13,7 +13,7 @@ describe("Base image bootstrap", () => {
   captureDiagOnFailure();
 
   it("builds the mise base image on first sandbox create when it is absent", async function () {
-    // The base-image build downloads and bakes mise + zellij (~324 MB), longer than the suite default.
+    // The base-image build downloads and bakes mise + Herdr (size not re-measured), longer than the suite default.
     this.timeout(900000);
 
     // Force the bug's precondition: no base image staged on the connection.

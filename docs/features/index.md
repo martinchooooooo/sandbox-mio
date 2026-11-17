@@ -31,6 +31,7 @@
 * [e2e-tiering](e2e-tiering/index.md) - Split the e2e suite into light (mocked), standard (real Podman) and heavy (large assets) tiers.
 * [embedded-windows](embedded-windows/index.md) - Host a sandbox's tool surfaces (terminal, apps) as child webviews inside the main window.
 * [expose-ports](expose-ports/index.md) - Exposing sandbox ports on the host; predates the feature pipeline, so only deferred improvements are recorded.
+* [herdr-multiplexer](herdr-multiplexer/index.md) - Replace zellij with Herdr as the in-sandbox terminal multiplexer behind the native terminal, for its mouse-first interface and built-in coding-agent awareness.
 * [lib-decomposition](lib-decomposition/index.md) - Split the 1,800-line src-tauri/src/lib.rs into command, service and startup modules.
 * [loading-states](loading-states/index.md) - Per-row in-flight feedback (loading buttons, StatusRow, action runner) for every sandbox action.
 * [local-llm](local-llm/index.md) - Detect host specs, recommend and download a local model, and run a host inference server.

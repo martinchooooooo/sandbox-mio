@@ -9,6 +9,7 @@ import sidebar from "../../pageobjects/sidebar.page.js";
 import { podman, podmanOk, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
 import { forwardList } from "../../../lib/mutagen.js";
 import { captureDiagOnFailure } from "../../../lib/diag.js";
+import { liveHerdrSessions, terminalView, waitForTerminalAttached } from "../../../lib/herdr.js";
 import {
   workspaceState,
   setPanelCollapsed,
@@ -29,40 +30,6 @@ const NAVIGATION_PANEL_RAIL_W = 48;
 const SWITCHER_H = 64;
 
 const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
-
-// The live (not exited) zellij sessions inside the sandbox. `list-sessions` exits non-zero when
-// there are none, hence `check: false`; a resurrectable session's line carries "EXITED".
-function liveZellijSessions(name: string): string[] {
-  const out = podman(LOCAL_CONNECTION, ["exec", name, "zellij", "list-sessions", "--no-formatting"], {
-    check: false,
-  });
-  return out
-    .split(/\r?\n/)
-    .filter((line) => line.trim() !== "" && !line.includes("EXITED") && !line.startsWith("No active"))
-    .map((line) => line.trim().split(/\s+/)[0]);
-}
-
-// The native terminal's view of sandbox `name` (src/lib/terminal/TerminalView.svelte).
-function terminalView(name: string) {
-  return $(`[data-terminal='${name}']`);
-}
-
-// Proves the native pane's SSH session attached and the zellij session named after the sandbox runs
-// (docs/features/native-terminal/02_dev.md, Resolved Decision 7).
-async function waitForTerminalAttached(name: string): Promise<void> {
-  await browser.waitUntil(
-    async () => {
-      const view = await terminalView(name);
-      if (!(await view.isExisting())) return false;
-      return (await view.getAttribute("data-status")) === "attached" && liveZellijSessions(name).includes(name);
-    },
-    {
-      timeout: 60000,
-      interval: 1000,
-      timeoutMsg: `the terminal of "${name}" never attached to a live zellij session "${name}" after open_terminal_pane`,
-    },
-  );
-}
 
 // The retired web terminal's forward must never be created again
 // (docs/features/native-terminal/02_dev.md, Resolved Decision 3).
@@ -142,11 +109,11 @@ describe("Embedded workspace (app sidebar, sandbox header and Dashboard in one w
       null,
       "active_app must stay null while the client-side view is Dashboard for any sandbox.",
     );
-    const sessions = liveZellijSessions(nameA);
+    const sessions = liveHerdrSessions(nameA);
     assert.deepStrictEqual(
       sessions,
       [],
-      `zellij runs sessions in "${nameA}" before any Terminal pane was requested ` +
+      `Herdr runs sessions in "${nameA}" before any Terminal pane was requested ` +
         `(${JSON.stringify(sessions)}) — the terminal attached eagerly, defeating the lazy-Terminal goal.`,
     );
 
@@ -252,17 +219,17 @@ describe("Embedded workspace (app sidebar, sandbox header and Dashboard in one w
     });
   });
 
-  it("the native terminal renders zellij from the sandbox's session, with no forward", async () => {
+  it("the native terminal renders Herdr from the sandbox's session, with no forward", async () => {
     await waitForTerminalAttached(nameA);
     await browser.waitUntil(async () => ((await (await terminalView(nameA)).getText()) ?? "").trim() !== "", {
       timeout: 30000,
       interval: 1000,
-      timeoutMsg: `the terminal of "${nameA}" attached but never rendered any zellij output.`,
+      timeoutMsg: `the terminal of "${nameA}" attached but never rendered any Herdr output.`,
     });
     assert.deepStrictEqual(
-      liveZellijSessions(nameA),
+      liveHerdrSessions(nameA),
       [nameA],
-      `Expected exactly one live zellij session, named "${nameA}", inside the sandbox.`,
+      `Expected exactly one live Herdr session, named "${nameA}", inside the sandbox.`,
     );
     assertNoTerminalForward(nameA);
   });
@@ -323,21 +290,21 @@ describe("Embedded workspace (app sidebar, sandbox header and Dashboard in one w
     );
     await assertDashboardVisible(nameA);
 
-    // Closing the tab only detaches: the zellij session keeps running, and reopening reattaches to
+    // Closing the tab only detaches: the Herdr session keeps running, and reopening reattaches to
     // it under the same pane label instead of creating a second session.
     assert.deepStrictEqual(
-      liveZellijSessions(nameA),
+      liveHerdrSessions(nameA),
       [nameA],
-      "Closing the Terminal tab must leave the sandbox's zellij session running.",
+      "Closing the Terminal tab must leave the sandbox's Herdr session running.",
     );
     await openTerminalPane(nameA, workspaceDirA);
     await waitForTerminalAttached(nameA);
     const reopened = paneFor(await workspaceState(), nameA, "terminal")!;
     assert.strictEqual(reopened.label, terminalBefore.label);
     assert.deepStrictEqual(
-      liveZellijSessions(nameA),
+      liveHerdrSessions(nameA),
       [nameA],
-      "Reopening the Terminal pane must reattach to the existing zellij session, not create another.",
+      "Reopening the Terminal pane must reattach to the existing Herdr session, not create another.",
     );
   });
 

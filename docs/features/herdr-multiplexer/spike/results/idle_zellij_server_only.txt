@@ -1,0 +1,1 @@
+pid=242 cmd=/root/.local/share/mise/installs/zellij/0.44.3/zellij --server /tmp/zellij-0/contract_version_1/z  rss_kb=79464 cpu_ticks_10s=1
