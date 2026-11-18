@@ -110,7 +110,7 @@ pub async fn send_agent_auth_input(
     Ok(agents::send_auth_input(&session_id, &input, &sessions).await?)
 }
 
-/// Cancel auth session by closing stdin.
+/// Cancel auth session by killing its exec client.
 #[tauri::command]
 pub async fn cancel_agent_auth(
     session_id: String,

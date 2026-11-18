@@ -141,7 +141,11 @@ pub async fn start_auth(
     let stdout = child.stdout.take().ok_or_else(|| AgentError::AuthFailed("stdout not piped".into()))?;
     let stderr = child.stderr.take().ok_or_else(|| AgentError::AuthFailed("stderr not piped".into()))?;
 
-    sessions.lock().await.insert(session_id.clone(), AuthSession { stdin });
+    let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
+    sessions
+        .lock()
+        .await
+        .insert(session_id.clone(), AuthSession { stdin: Some(stdin), cancel: cancel_tx });
 
     let event_name = format!("agent-auth-output-{session_id}");
 
@@ -167,7 +171,14 @@ pub async fn start_auth(
     let sessions_wait = sessions.clone();
     let session_id_wait = session_id.clone();
     tokio::spawn(async move {
-        let code = child.wait().await.ok().and_then(|s| s.code()).unwrap_or(-1);
+        let code = tokio::select! {
+            status = child.wait() => status.ok().and_then(|s| s.code()).unwrap_or(-1),
+            Ok(()) = cancel_rx => {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                -1
+            }
+        };
         let _ = tokio::join!(stdout_handle, stderr_handle);
         sessions_wait.lock().await.remove(&session_id_wait);
         app_wait.emit(&event_name, &AgentAuthEvent::Exit { code }).ok();
@@ -181,12 +192,12 @@ pub async fn send_auth_input(
     input: &str,
     sessions: &AuthSessionMap,
 ) -> Result<(), AgentError> {
-    let session = sessions
+    let mut stdin = sessions
         .lock()
         .await
-        .remove(session_id)
+        .get_mut(session_id)
+        .and_then(|session| session.stdin.take())
         .ok_or_else(|| AgentError::AuthSessionNotFound(session_id.to_string()))?;
-    let mut stdin = session.stdin;
     let line = format!("{input}\n");
     stdin
         .write_all(line.as_bytes())
@@ -195,8 +206,11 @@ pub async fn send_auth_input(
     Ok(())
 }
 
+/// Ends the login: the wait task kills the exec client and emits `Exit`.
 pub async fn cancel_auth(session_id: &str, sessions: &AuthSessionMap) -> Result<(), AgentError> {
-    sessions.lock().await.remove(session_id);
+    if let Some(session) = sessions.lock().await.remove(session_id) {
+        let _ = session.cancel.send(());
+    }
     Ok(())
 }
 

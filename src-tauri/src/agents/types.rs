@@ -54,9 +54,13 @@ pub struct AgentAuthStatus {
     pub account_email: Option<String>,
 }
 
-/// An active auth subprocess. Holds its stdin for one-shot writes (PKCE flows).
+/// An active auth subprocess. Holds its stdin for one-shot writes (PKCE flows) and a cancel
+/// signal that kills the exec client, since closing stdin does not stop every login
+/// (`docs/features/github-cli-auth/02_dev.md`, Resolved Decision 7).
 pub struct AuthSession {
-    pub stdin: tokio::process::ChildStdin,
+    /// Taken by the first input write; `None` afterwards.
+    pub stdin: Option<tokio::process::ChildStdin>,
+    pub cancel: tokio::sync::oneshot::Sender<()>,
 }
 
 pub type AuthSessionMap =
