@@ -7,6 +7,7 @@
         authOutputLines,
         authUrlDetected,
         authExitCode,
+        authDeviceCode,
     } from "$lib/agents/authSession.svelte";
     import { openUrl } from "@tauri-apps/plugin-opener";
 
@@ -26,6 +27,19 @@
     let showDetails = $state(false);
     let codeInput = $state("");
     let submittingCode = $state(false);
+    let codeCopied = $state(false);
+
+    async function copyDeviceCode() {
+        const code = authDeviceCode();
+        if (!code) return;
+        try {
+            await navigator.clipboard.writeText(code);
+            codeCopied = true;
+            setTimeout(() => (codeCopied = false), 2000);
+        } catch {
+            codeCopied = false;
+        }
+    }
 
     async function submitCode() {
         const code = codeInput.trim();
@@ -51,6 +65,16 @@
         {/if}
     {:else if !authUrlDetected()}
         <p class="text-xs text-muted-foreground">{m.auth_signing_in()}</p>
+    {/if}
+
+    {#if authDeviceCode() && authPhase() !== "exited"}
+        <div class="flex items-center gap-2" data-device-code>
+            <span class="text-xs text-muted-foreground">Enter this code on GitHub:</span><!-- TODO(i18n) -->
+            <code class="flex-1 text-lg font-bold font-mono tracking-widest select-all">{authDeviceCode()}</code>
+            <Button size="sm" variant="outline" onclick={copyDeviceCode}>
+                {codeCopied ? "Copied" : "Copy"}<!-- TODO(i18n) -->
+            </Button>
+        </div>
     {/if}
 
     {#if authUrlDetected() && authPhase() !== "exited"}

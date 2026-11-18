@@ -9,6 +9,7 @@
     import { AGENTS } from "$lib/agents/catalogue";
     import { m } from "$lib/paraglide/messages.js";
     import type { AgentInstallEvent } from "$lib/agents/types";
+    import { GITHUB_SERVICE, GITHUB_AUTH_CONTAINER, GITHUB_LOGIN_COMMAND } from "$lib/github";
     import AuthSessionCard from "$lib/agents/AuthSessionCard.svelte";
     import {
         authSessionId,
@@ -24,6 +25,8 @@
         capturedAtMs: number;
         accountEmail: string | null;
         expiresAtMs: number | null;
+        accountLogin: string | null;
+        missingScopes: string[];
     }
 
     const action = createActionRunner();
@@ -94,10 +97,30 @@
         if (!ok) dismiss(serviceId);
     }
 
-    // Service id of the single-value GitHub token bundle (`GITHUB_SERVICE` in src-tauri/src/credentials/mod.rs).
-    const GITHUB_SERVICE = "github";
     let githubToken = $state("");
     const githubBundle = $derived(bundles[GITHUB_SERVICE]);
+    const githubActive = $derived(authActiveServiceId() === GITHUB_SERVICE && authPhase() !== "idle");
+
+    async function logInGithub() {
+        beginSigningIn(GITHUB_SERVICE);
+        const ok = await action.run("github-login", async () => {
+            await invoke("ensure_auth_container", { name: GITHUB_AUTH_CONTAINER });
+            const sessionId = await invoke<string>("start_agent_auth", {
+                name: GITHUB_AUTH_CONTAINER,
+                authCommand: GITHUB_LOGIN_COMMAND,
+            });
+
+            if (authActiveServiceId() !== GITHUB_SERVICE) {
+                // Dismissed before a sessionId existed to cancel against.
+                await invoke("cancel_agent_auth", { sessionId }).catch(() => {});
+                await invoke("destroy_sandbox", { name: GITHUB_AUTH_CONTAINER, force: true }).catch(() => {});
+                return;
+            }
+
+            await startAuthSession(sessionId);
+        });
+        if (!ok) dismiss(GITHUB_SERVICE);
+    }
 
     async function saveGithubToken() {
         const ok = await action.run("github-save", async () => {
@@ -212,25 +235,50 @@
                 <div class="min-w-0">
                     <div class="text-sm font-medium truncate">{m.credentials_github_title()}</div>
                     <div class="text-xs text-muted-foreground truncate" data-status>
-                        {#if githubBundle}
+                        {#if githubActive}
+                            {m.auth_signing_in()}
+                        {:else if githubBundle?.accountLogin}
+                            {`Logged in as ${githubBundle.accountLogin}`}<!-- TODO(i18n) -->
+                        {:else if githubBundle}
                             {m.credentials_github_saved({ date: new Date(githubBundle.capturedAtMs).toLocaleDateString() })}
                         {:else}
                             {m.credentials_github_not_saved()}
                         {/if}
                     </div>
                 </div>
-                {#if githubBundle}
+                {#if !githubActive}
+                    {#if githubBundle}
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            onclick={removeGithubToken}
+                            disabled={action.busy !== null}
+                            data-github-remove
+                        >
+                            {m.credentials_github_remove()}
+                        </Button>
+                    {/if}
                     <Button
                         size="sm"
-                        variant="outline"
-                        onclick={removeGithubToken}
+                        onclick={logInGithub}
                         disabled={action.busy !== null}
-                        data-github-remove
+                        data-github-login
                     >
-                        {m.credentials_github_remove()}
+                        {githubBundle ? "Log in again with GitHub" : "Log in with GitHub"}<!-- TODO(i18n) -->
                     </Button>
                 {/if}
             </div>
+            {#if githubBundle && githubBundle.missingScopes.length > 0 && !githubActive}
+                <p class="text-xs text-destructive" data-github-scopes>
+                    {`The token lacks ${githubBundle.missingScopes.join(", ")}; sandboxes may reject it.`}<!-- TODO(i18n) -->
+                </p>
+            {/if}
+            {#if githubActive}
+                <AuthSessionCard
+                    onCancel={() => cancelOrDismiss(GITHUB_SERVICE)}
+                    onSubmitCode={submitCode}
+                />
+            {/if}
             <p class="text-xs text-muted-foreground">
                 {m.credentials_github_help()}
             </p>

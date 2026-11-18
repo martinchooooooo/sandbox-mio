@@ -11,6 +11,7 @@
     import { packagesFor } from "$lib/workspace/packages.svelte";
     import AgentManager from "../../routes/projects/AgentManager.svelte";
     import StatusSummary from "./StatusSummary.svelte";
+    import GithubAccess from "./GithubAccess.svelte";
     import type { DashboardSectionId } from "./sections";
 
     let {
@@ -79,4 +80,5 @@
     {/if}
     <StatusSummary {sandboxName} {showRemote} onOpen={onOpenSection} />
     <AgentManager {sandboxName} {workspacePath} {action} />
+    <GithubAccess {sandboxName} />
 </div>

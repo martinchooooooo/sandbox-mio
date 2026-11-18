@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { toast } from "svelte-sonner";
 import { parseError } from "$lib/errors";
+import { GITHUB_AUTH_CONTAINER, GITHUB_SERVICE, parseDeviceCode } from "$lib/github";
 import { AGENTS, onboardingSeed } from "./catalogue";
 import type { AgentAuthEvent } from "./types";
 
@@ -14,6 +15,7 @@ let sessionId = $state<string | null>(null);
 let phase = $state<AuthPhase>("idle");
 let outputLines = $state<string[]>([]);
 let authUrl = $state<string | null>(null);
+let deviceCode = $state<string | null>(null);
 let exitCode = $state<number | null>(null);
 let activeServiceId = $state<string | null>(null);
 let capturedCount = $state(0);
@@ -37,6 +39,11 @@ export function authUrlDetected(): string | null {
     return authUrl;
 }
 
+/** One-time code of a GitHub device-flow login, shown for the user to enter in the browser. */
+export function authDeviceCode(): string | null {
+    return deviceCode;
+}
+
 export function authExitCode(): number | null {
     return exitCode;
 }
@@ -57,6 +64,7 @@ export function beginSigningIn(serviceId: string): void {
     phase = "starting";
     outputLines = [];
     authUrl = null;
+    deviceCode = null;
     exitCode = null;
 }
 
@@ -72,6 +80,8 @@ export async function start(id: string): Promise<void> {
             outputLines = [...outputLines, data.line];
             const match = data.line.match(/https:\/\/[a-z0-9.-]+\.[a-z]{2,}\/[^\s]+/i);
             if (match && !authUrl) authUrl = match[0];
+            const code = parseDeviceCode(data.line);
+            if (code) deviceCode = code;
             if (data.line.toLowerCase().includes("paste code")) phase = "awaiting-code";
         } else if (data.kind === "Exit") {
             exitCode = data.code;
@@ -87,28 +97,33 @@ export async function start(id: string): Promise<void> {
 async function handleExit(): Promise<void> {
     const serviceId = activeServiceId;
     if (!serviceId) return;
+    const isGithub = serviceId === GITHUB_SERVICE;
     const agent = AGENTS.find((a) => a.credentialService === serviceId && a.auth);
-    if (!agent || !agent.auth) return;
-    const auth = agent.auth;
-    const authContainer = `mio-auth-${serviceId}`;
+    if (!isGithub && (!agent || !agent.auth)) return;
+    const authContainer = isGithub ? GITHUB_AUTH_CONTAINER : `mio-auth-${serviceId}`;
     const code = exitCode;
 
     if (code === 0) {
         try {
-            const seed = onboardingSeed(agent);
-            if (seed) {
-                await invoke("seed_agent_onboarding", { name: authContainer, onboarding: seed }).catch(
-                    () => {},
-                );
+            if (isGithub) {
+                await invoke("capture_github_login");
+            } else {
+                const auth = agent!.auth!;
+                const seed = onboardingSeed(agent!);
+                if (seed) {
+                    await invoke("seed_agent_onboarding", { name: authContainer, onboarding: seed }).catch(
+                        () => {},
+                    );
+                }
+                await invoke("capture_agent_credentials", {
+                    name: authContainer,
+                    serviceId,
+                    credentialPath: auth.credentialFile,
+                    expiresAtJsonKey: auth.expiresAtJsonKey,
+                    accountSourcePath: auth.accountSourceFile ?? null,
+                    accountEmailJsonKey: auth.accountEmailJsonKey ?? null,
+                });
             }
-            await invoke("capture_agent_credentials", {
-                name: authContainer,
-                serviceId,
-                credentialPath: auth.credentialFile,
-                expiresAtJsonKey: auth.expiresAtJsonKey,
-                accountSourcePath: auth.accountSourceFile ?? null,
-                accountEmailJsonKey: auth.accountEmailJsonKey ?? null,
-            });
             capturedCount++;
         } catch (e) {
             // A failed capture must still let the card collapse below — otherwise a CLI login
@@ -135,5 +150,6 @@ export function reset(): void {
     phase = "idle";
     outputLines = [];
     authUrl = null;
+    deviceCode = null;
     exitCode = null;
 }
