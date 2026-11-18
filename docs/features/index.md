@@ -18,7 +18,9 @@
 
 ## idea
 
+* [chat-mcp-learning](chat-mcp-learning/index.md) - A built-in offline demo MCP server and MCP visibility in the native chat (server badges on tool calls, a tools popover), so users can learn what an MCP server does with the local model.
 * [cloud-sandboxes](cloud-sandboxes/index.md) - Top-level Cloud Sandboxes nav panel for administering remote Podman hosts, including Oracle Cloud and Google Cloud provisioning.
+* [mcp-servers](mcp-servers/index.md) - An app-wide library of MCP servers, added by pasting a URL or README snippet and switched on per sandbox, rendered into the native MCP config of Claude Code, OpenCode and pi so Paseo, the terminal and the native chat all use them.
 * [proxy-remote-deploy](proxy-remote-deploy/index.md) - Let a proxy-enabled sandbox be deployed to a remote host instead of being refused.
 
 ## implemented
