@@ -329,13 +329,15 @@ mod tests {
     }
 
     #[test]
-    fn the_github_entry_swaps_authorization_for_four_hosts_only() {
+    fn the_github_entry_swaps_authorization_only_for_github_api_and_content_hosts() {
         let config = render(&NetPolicy::default(), "10.90.7.2", &[], &[github_app_binding()]);
         let secrets = config["transforms"][1]["config"]["secrets"].as_array().unwrap();
         assert_eq!(secrets.len(), 1);
         let entry = &secrets[0];
         let hosts: Vec<&str> =
             entry["rules"].as_array().unwrap().iter().map(|r| r["host"].as_str().unwrap()).collect();
+        // raw.githubusercontent.com is deliberately in scope: mise sends its token there
+        // (`proxy-credential-secrets/02_dev.md`, Resolved Decision 15).
         assert_eq!(
             hosts,
             [

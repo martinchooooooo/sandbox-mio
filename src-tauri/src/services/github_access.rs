@@ -12,6 +12,7 @@ use crate::credentials::types::CredentialError;
 use crate::credentials::{self, GITHUB_SERVICE};
 use crate::error::AppError;
 use crate::provider::ProviderRegistry;
+use crate::proxy::iron::BindingState;
 use crate::sync::types::SyncEngine;
 
 /// Serialises every reconcile, so an apply-all after a save cannot race a start hook on the same
@@ -41,7 +42,8 @@ enum Action {
 /// Decides the action from the desired state alone. `credential_captured_at_ms` is `None` when no
 /// GitHub credential is saved.
 /// An applied outcome whose `swapped` differs from `sidecar_mode` is re-applied, which migrates a
-/// sandbox that holds the plaintext token (or the placeholder) to the current mode.
+/// sandbox that holds the plaintext token (or the placeholder) to the current mode. In sidecar mode
+/// the placeholder is fixed, so a rotation (new `captured_at_ms`) needs only the binding refresh.
 fn plan(credential_captured_at_ms: Option<u64>, state: &GithubSandboxState, sidecar_mode: bool) -> Action {
     let applied = match &state.outcome {
         Some(ApplyOutcome::Applied { captured_at_ms, swapped }) if *swapped == sidecar_mode => {
@@ -54,7 +56,7 @@ fn plan(credential_captured_at_ms: Option<u64>, state: &GithubSandboxState, side
         matches!(state.outcome, Some(ApplyOutcome::Applied { .. } | ApplyOutcome::Failed { .. }));
     match credential_captured_at_ms {
         Some(captured) if !state.opted_out => {
-            if applied == Some(captured) {
+            if applied == Some(captured) || (sidecar_mode && applied.is_some()) {
                 Action::None
             } else {
                 Action::Apply(captured)
@@ -64,6 +66,21 @@ fn plan(credential_captured_at_ms: Option<u64>, state: &GithubSandboxState, side
         _ if state.outcome.is_some() => Action::Forget,
         _ => Action::None,
     }
+}
+
+/// Lets gh run with the placeholder only when the sidecar holds the real token, and otherwise
+/// gives the Failed reason. Unswapped, GitHub would reject the placeholder with a misleading error.
+fn binding_gate(refreshed: Result<BindingState, String>) -> Result<(), String> {
+    match refreshed {
+        Ok(BindingState::Live) => Ok(()),
+        Ok(BindingState::NotLive) => Err("network policy not applied yet".to_string()),
+        Err(e) => Err(e.chars().take(github::MAX_REASON_CHARS).collect()),
+    }
+}
+
+/// Whether the desired state grants GitHub access, which is when the sidecar holds the real token.
+fn wants_access(credential_captured_at_ms: Option<u64>, state: &GithubSandboxState) -> bool {
+    credential_captured_at_ms.is_some() && !state.opted_out
 }
 
 /// Whether `name` sits behind an iron-proxy sidecar, so gh holds the placeholder and not the token.
@@ -140,12 +157,22 @@ async fn reconcile_locked(
 ) -> Result<GithubSandboxState, AppError> {
     let path = state_path(app, name)?;
     let mut state = github::load_state(&path)?;
+    let sidecar_mode = github_sidecar_mode(app, name);
+    // The one binding refresh of this pass; the Apply gate and the drop-log reuse it.
+    let mut refreshed: Option<Result<BindingState, String>> = None;
     if let Some(opted_out) = opted_out {
         state.opted_out = opted_out;
         if !opted_out && !matches!(state.outcome, Some(ApplyOutcome::Applied { .. })) {
             state.outcome = None;
         }
         github::save_state(&path, &state)?;
+        // A stopped sidecar boots from its files on disk, so an opt-out must strip the token from them
+        // now. This is a security action: a failure is returned, and the saved opt-out makes a retry
+        // (the same call) re-run the refresh.
+        if opted_out && sidecar_mode {
+            let registry = app.state::<Arc<ProviderRegistry>>().inner().clone();
+            refreshed = Some(Ok(crate::proxy::iron::refresh_github_binding(app, &registry, name).await?));
+        }
     }
 
     let store = app.state::<Arc<dyn SandboxBackend>>().inner().clone();
@@ -153,12 +180,25 @@ async fn reconcile_locked(
         .await?
         .iter()
         .any(|s| s.name == name && s.status == "running");
-    if !running || is_deployed(app, name).await? {
+    if !running {
+        return Ok(state);
+    }
+    // Stopped sidecars are refreshed by `spawn_reconcile_all` and the opt-out above. A running one is
+    // refreshed here even when gh needs no action, which is how a rotation reaches the sidecar.
+    if sidecar_mode && refreshed.is_none() {
+        let registry = app.state::<Arc<ProviderRegistry>>().inner().clone();
+        refreshed = Some(crate::proxy::iron::refresh_github_binding(app, &registry, name).await.map_err(|e| e.to_string()));
+    }
+    if is_deployed(app, name).await? {
         return Ok(state);
     }
 
     let stamp = credential_stamp(app)?;
-    let sidecar_mode = github_sidecar_mode(app, name);
+    // A failed drop is only logged: the public placeholder stays valid for as long as the binding
+    // does, even when gh holds no login (outcome None or NeedsImage).
+    if let (Some(Err(e)), false) = (&refreshed, wants_access(stamp, &state)) {
+        tracing::warn!(target: "credentials", sandbox = %name, error = %e, "could not drop the GitHub binding from the sidecar");
+    }
     match plan(stamp, &state, sidecar_mode) {
         Action::None => return Ok(state),
         Action::Forget => state.outcome = None,
@@ -167,14 +207,11 @@ async fn reconcile_locked(
             let provider = registry.engine_of(name).await;
             let outcome = if sidecar_mode {
                 // The binding must be live before gh validates the placeholder online.
-                match crate::proxy::iron::refresh_github_binding(app, &registry, name).await {
+                match binding_gate(refreshed.unwrap_or(Ok(BindingState::NotLive))) {
                     Ok(()) => {
                         github::apply(&provider, name, github::GITHUB_PLACEHOLDER, captured_at_ms, true).await
                     }
-                    Err(e) => ApplyOutcome::Failed {
-                        reason: e.to_string().chars().take(200).collect(),
-                        captured_at_ms,
-                    },
+                    Err(reason) => ApplyOutcome::Failed { reason, captured_at_ms },
                 }
             } else {
                 let token = credentials::load_secret(app, GITHUB_SERVICE)?;
@@ -185,12 +222,6 @@ async fn reconcile_locked(
         Action::Remove => {
             let registry = app.state::<Arc<ProviderRegistry>>().inner().clone();
             let provider = registry.engine_of(name).await;
-            // Drop the sidecar's token first, so the credential is revoked even if the exec fails.
-            if sidecar_mode {
-                if let Err(e) = crate::proxy::iron::refresh_github_binding(app, &registry, name).await {
-                    tracing::warn!(target: "credentials", sandbox = %name, error = %e, "could not drop the GitHub binding from the sidecar");
-                }
-            }
             // The outcome is kept on failure, so the next reconcile retries the removal.
             match github::remove(&provider, name).await {
                 Ok(()) => state.outcome = None,
@@ -221,8 +252,8 @@ pub fn spawn_reconcile(app: &AppHandle, name: &str) {
     });
 }
 
-/// Refreshes the GitHub binding of every sidecar-mode sandbox, running or stopped, then reconciles
-/// the running local sandboxes, off the caller's path.
+/// Refreshes the GitHub binding of every stopped sidecar-mode sandbox, then reconciles the running
+/// ones, which refresh their own, off the caller's path.
 pub fn spawn_reconcile_all(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -235,7 +266,7 @@ pub fn spawn_reconcile_all(app: &AppHandle) {
             }
         };
         let registry = app.state::<Arc<ProviderRegistry>>().inner().clone();
-        for sandbox in sandboxes.iter().filter(|s| github_sidecar_mode(&app, &s.name)) {
+        for sandbox in sandboxes.iter().filter(|s| s.status != "running" && github_sidecar_mode(&app, &s.name)) {
             if let Err(e) = crate::proxy::iron::refresh_github_binding(&app, &registry, &sandbox.name).await {
                 tracing::warn!(target: "credentials", sandbox = %sandbox.name, error = %e, "could not refresh the GitHub binding");
             }
@@ -289,6 +320,23 @@ mod tests {
 
     fn state(opted_out: bool, outcome: Option<ApplyOutcome>) -> GithubSandboxState {
         GithubSandboxState { opted_out, outcome }
+    }
+
+    #[test]
+    fn gh_runs_with_the_placeholder_only_when_the_binding_is_live() {
+        assert_eq!(binding_gate(Ok(BindingState::Live)), Ok(()));
+        assert_eq!(binding_gate(Ok(BindingState::NotLive)), Err("network policy not applied yet".to_string()));
+        assert_eq!(binding_gate(Err("x".repeat(300))).unwrap_err().len(), github::MAX_REASON_CHARS);
+    }
+
+    #[test]
+    fn opting_out_or_losing_the_credential_drops_the_sidecar_binding() {
+        // Covers the outcomes plan() answers with Forget or None, where no gh-side removal runs.
+        for outcome in [None, Some(ApplyOutcome::NeedsImage)] {
+            assert!(!wants_access(Some(5), &state(true, outcome.clone())));
+            assert!(!wants_access(None, &state(false, outcome)));
+        }
+        assert!(wants_access(Some(5), &state(false, None)));
     }
 
     #[test]
@@ -350,5 +398,13 @@ mod tests {
     fn an_apply_in_the_current_mode_is_left_alone() {
         let swapped = Some(ApplyOutcome::Applied { captured_at_ms: 5, swapped: true });
         assert_eq!(plan(Some(5), &state(false, swapped), true), Action::None);
+    }
+
+    #[test]
+    fn a_rotation_reapplies_in_plaintext_mode_but_not_behind_a_sidecar() {
+        let plaintext = Some(ApplyOutcome::Applied { captured_at_ms: 5, swapped: false });
+        assert_eq!(plan(Some(9), &state(false, plaintext), false), Action::Apply(9));
+        let swapped = Some(ApplyOutcome::Applied { captured_at_ms: 5, swapped: true });
+        assert_eq!(plan(Some(9), &state(false, swapped), true), Action::None);
     }
 }

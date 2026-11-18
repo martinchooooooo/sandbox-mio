@@ -43,8 +43,10 @@
         if (s.outcome?.kind === "needsImage") return "needs-image";
         if (s.outcome?.kind === "failed") return "failed";
         if (s.outcome?.kind === "applied") {
+            // Behind a sidecar the placeholder never changes, so a rotation does not make gh stale.
             const current =
-                s.outcome.capturedAtMs === s.credentialCapturedAtMs && s.outcome.swapped === s.sidecarMode;
+                s.outcome.swapped === s.sidecarMode &&
+                (s.sidecarMode || s.outcome.capturedAtMs === s.credentialCapturedAtMs);
             return current ? "applied" : "out-of-date";
         }
         return "pending";

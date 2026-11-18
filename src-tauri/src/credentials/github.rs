@@ -115,7 +115,7 @@ pub async fn save_github_token(
 const EXIT_NO_GH: i32 = 64;
 
 /// Longest `Failed` reason kept, so one noisy stderr line cannot bloat the state file or the card.
-const MAX_REASON_CHARS: usize = 200;
+pub(crate) const MAX_REASON_CHARS: usize = 200;
 
 /// Runs with the token on stdin. The hosts file is cleared first so a re-login as another account
 /// replaces the old token instead of adding a second account

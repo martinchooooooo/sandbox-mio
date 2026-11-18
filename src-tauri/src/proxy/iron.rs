@@ -86,15 +86,50 @@ pub fn materialise_secret_files(
     let mut written = Vec::new();
     let mut missing = Vec::new();
     for binding in &policy.secrets {
-        match values.get(&binding.secret_id) {
-            Some(value) => {
-                write_atomic(&dir.join(&binding.env_var), value.as_bytes())?;
-                written.push(binding.env_var.clone());
-            }
-            None => missing.push(binding.env_var.clone()),
+        if has_value(binding, values) {
+            write_atomic(&dir.join(&binding.env_var), values[&binding.secret_id].as_bytes())?;
+            written.push(binding.env_var.clone());
+        } else {
+            missing.push(binding.env_var.clone());
         }
     }
     Ok((written, missing))
+}
+
+/// Whether `binding` has a stored value to write. The one filter behind both the files written to
+/// disk and the files a render names, so the two cannot drift.
+fn has_value(binding: &net_policy::SecretBinding, values: &HashMap<String, String>) -> bool {
+    values.contains_key(&binding.secret_id)
+}
+
+/// The file names an apply leaves in the secrets directory and renders into the config: one per
+/// workspace binding with a value, then the GitHub token file when `github`. Pure, so read-only
+/// paths can ask what a write would produce.
+fn planned_files(policy: &NetPolicy, values: &HashMap<String, String>, github: bool) -> Vec<String> {
+    let mut files: Vec<String> = policy
+        .secrets
+        .iter()
+        .filter(|b| has_value(b, values))
+        .map(|b| b.env_var.clone())
+        .collect();
+    if github {
+        files.push(iron_config::GITHUB_BINDING_FILE.to_string());
+    }
+    files
+}
+
+/// Writes the secret files and the GitHub token file (deleted when `token` is `None`). Returns the
+/// files now in place (`planned_files`) and the variables left out. A failure may leave files half
+/// written, so callers restore from a snapshot taken beforehand.
+fn stage_files(
+    dir: &Path,
+    policy: &NetPolicy,
+    values: &HashMap<String, String>,
+    token: Option<&str>,
+) -> Result<(Vec<String>, Vec<String>), ProxyError> {
+    let (_, missing) = materialise_secret_files(dir, policy, values)?;
+    stage_github_file(dir, token)?;
+    Ok((planned_files(policy, values, token.is_some()), missing))
 }
 
 /// Deletes secret files no rendered binding names, so an unbound value does not stay on disk.
@@ -247,6 +282,15 @@ pub fn github_binding(app: &AppHandle, sandbox: &str) -> Result<Option<String>, 
     Ok((!state.opted_out).then_some(token))
 }
 
+/// Turns a failed binding lookup into "no binding", so an unreadable GitHub state or credential
+/// store never blocks the workspace policy apply and never leaves a real token rendered.
+fn fail_closed_binding(sandbox: &str, binding: Result<Option<String>, ProxyError>) -> Option<String> {
+    binding.unwrap_or_else(|e| {
+        tracing::warn!(target: "proxy", %sandbox, error = %e, "GitHub binding unavailable; rendering the policy without it");
+        None
+    })
+}
+
 /// Writes the GitHub token file with the token's exact bytes, or deletes it when `token` is `None`.
 fn stage_github_file(dir: &Path, token: Option<&str>) -> Result<(), ProxyError> {
     let path = dir.join(iron_config::GITHUB_BINDING_FILE);
@@ -315,7 +359,7 @@ async fn apply_policy_locked(
 
     let secrets = secrets_dir(&state);
     let values = super::load_secrets(app)?;
-    let github_token = github_binding(app, sandbox)?;
+    let github_token = fail_closed_binding(sandbox, github_binding(app, sandbox));
     let snapshot = snapshot_secret_files(&secrets)?;
     // Every failure from here on puts the secret files back, so a value from a policy that never ran
     // neither stays on disk nor reaches the pipeline at its next restart.
@@ -324,12 +368,8 @@ async fn apply_policy_locked(
         restore_secret_files(&secrets, &snapshot, skip_github);
         e
     };
-    let (mut written, missing_secrets) =
-        materialise_secret_files(&secrets, &policy, &values).map_err(fail)?;
-    stage_github_file(&secrets, github_token.as_deref()).map_err(fail)?;
-    if github_token.is_some() {
-        written.push(iron_config::GITHUB_BINDING_FILE.to_string());
-    }
+    let (written, missing_secrets) =
+        stage_files(&secrets, &policy, &values, github_token.as_deref()).map_err(fail)?;
     let dir = config_dir(&state);
     let current = dir.join("config.yaml");
     let prev = dir.join("config.prev.yaml");
@@ -358,41 +398,69 @@ async fn apply_policy_locked(
     Ok(ApplyReport { missing_secrets })
 }
 
+/// What a binding refresh left in the sidecar.
+#[derive(Debug, PartialEq, Eq)]
+pub enum BindingState {
+    /// The real token is rendered, so the placeholder gets swapped.
+    Live,
+    /// No token is rendered: no applied policy to render onto, no iron-proxy sidecar, or no grant.
+    NotLive,
+}
+
 /// Re-renders one sandbox's GitHub binding from the credential store and the opt-out, so a
 /// credential change reaches the sidecar without a policy edit. A sandbox with no applied snapshot
-/// or no iron-proxy sidecar is skipped; an unchanged render skips the reload; a stopped sidecar gets
-/// its files rewritten without being started (`docs/features/proxy-credential-secrets/02_dev.md`,
-/// "Refresh paths").
+/// or no iron-proxy sidecar renders nothing and answers `NotLive`, so a caller about to hand gh the
+/// placeholder can tell; an unchanged render skips the reload; a stopped sidecar gets its files
+/// rewritten without being started (`docs/features/proxy-credential-secrets/02_dev.md`, "Refresh
+/// paths"). A failed binding lookup renders without the token and then returns the error, so a
+/// revocation never leaves the last token in place.
 pub async fn refresh_github_binding(
     app: &AppHandle,
     registry: &Arc<ProviderRegistry>,
     sandbox: &str,
-) -> Result<(), ProxyError> {
+) -> Result<BindingState, ProxyError> {
     let lock = apply_lock(sandbox);
     let _guard = lock.lock().await;
     let policy_err = |e: net_policy::NetPolicyError| ProxyError::CommandFailed(e.0);
-    let Some(applied) = net_policy::read_applied(app, sandbox).map_err(policy_err)? else {
-        return Ok(());
-    };
     let Some(meta) = super::read_meta(app, sandbox)
         .filter(|m| super::meta_engine(m) == super::types::ProxyEngine::IronProxy)
     else {
-        return Ok(());
+        return Ok(BindingState::NotLive);
+    };
+    let state = super::state_dir(app, sandbox)?;
+    let Some(applied) = net_policy::read_applied(app, sandbox).map_err(policy_err)? else {
+        // Nothing to render onto, but a failed first apply may have left the token file behind.
+        remove_github_file(&secrets_dir(&state))?;
+        return Ok(BindingState::NotLive);
     };
     let proxy_ip = meta["proxyIp"].as_str().unwrap_or_default().to_string();
-    let state = super::state_dir(app, sandbox)?;
-    let token = github_binding(app, sandbox)?;
+    let binding = github_binding(app, sandbox);
+    let lookup_error = binding.as_ref().err().map(ToString::to_string);
+    let token = fail_closed_binding(sandbox, binding);
     let values = super::load_secrets(app)?;
-    let (config, _) = rendered(&applied.policy, &proxy_ip, &values, token.is_some());
-    if github_files_current(&state, &config, token.as_deref()) {
-        return Ok(());
+    let config = rendered(&applied.policy, &proxy_ip, &values, token.is_some());
+    if !github_files_current(&state, &config, token.as_deref()) {
+        let provider = registry.local(ProviderId::Podman);
+        let sidecar = super::proxy_container_name(sandbox);
+        if is_running(&provider, &sidecar).await? {
+            apply_policy_locked(app, registry, sandbox, applied.policy).await?;
+        } else {
+            write_offline(&state, &applied.policy, &proxy_ip, &values, token.as_deref())?;
+        }
     }
-    let provider = registry.local(ProviderId::Podman);
-    let sidecar = super::proxy_container_name(sandbox);
-    if is_running(&provider, &sidecar).await? {
-        apply_policy_locked(app, registry, sandbox, applied.policy).await.map(|_| ())
-    } else {
-        write_offline(&state, &applied.policy, &proxy_ip, &values, token.as_deref())
+    if let Some(e) = lookup_error {
+        return Err(ProxyError::CommandFailed(e));
+    }
+    Ok(if token.is_some() { BindingState::Live } else { BindingState::NotLive })
+}
+
+/// Deletes the GitHub token file when it exists.
+fn remove_github_file(secrets: &Path) -> Result<(), ProxyError> {
+    let path = secrets.join(iron_config::GITHUB_BINDING_FILE);
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(io_err(&path, e)),
     }
 }
 
@@ -402,15 +470,9 @@ fn rendered(
     proxy_ip: &str,
     values: &HashMap<String, String>,
     github: bool,
-) -> (serde_json::Value, Vec<String>) {
-    let written: Vec<String> = policy
-        .secrets
-        .iter()
-        .filter(|b| values.contains_key(&b.secret_id))
-        .map(|b| b.env_var.clone())
-        .collect();
-    let config = iron_config::render(policy, proxy_ip, &written, &app_bindings(github));
-    (config, written)
+) -> serde_json::Value {
+    let written = planned_files(policy, values, github);
+    iron_config::render(policy, proxy_ip, &written, &app_bindings(github))
 }
 
 /// Whether `config.yaml` and the token file on disk already equal the desired render.
@@ -425,6 +487,29 @@ fn github_files_current(state: &Path, config: &serde_json::Value, token: Option<
         None => file.is_err(),
     };
     config_ok && file_ok
+}
+
+/// Whether the sidecar's staged `config.yaml` and token file already carry the GitHub binding the
+/// credential store and opt-out call for. Read-only: no reload, no write, so a caller about to hand
+/// out the placeholder can check cheaply. False when nothing is applied, the sandbox has no grant,
+/// or a refresh failed and left the files without the token; a lookup failure is an error.
+pub fn github_binding_live(app: &AppHandle, sandbox: &str) -> Result<bool, ProxyError> {
+    let Some(token) = github_binding(app, sandbox)? else {
+        return Ok(false);
+    };
+    let policy_err = |e: net_policy::NetPolicyError| ProxyError::CommandFailed(e.0);
+    let Some(meta) = super::read_meta(app, sandbox)
+        .filter(|m| super::meta_engine(m) == super::types::ProxyEngine::IronProxy)
+    else {
+        return Ok(false);
+    };
+    let Some(applied) = net_policy::read_applied(app, sandbox).map_err(policy_err)? else {
+        return Ok(false);
+    };
+    let proxy_ip = meta["proxyIp"].as_str().unwrap_or_default();
+    let values = super::load_secrets(app)?;
+    let config = rendered(&applied.policy, proxy_ip, &values, true);
+    Ok(github_files_current(&super::state_dir(app, sandbox)?, &config, Some(&token)))
 }
 
 /// Writes the secret files and `config.yaml` of a stopped sidecar, so it boots with the current
@@ -443,12 +528,8 @@ fn write_offline(
         restore_secret_files(&secrets, &snapshot, skip_github);
         e
     };
-    let (mut written, _) = materialise_secret_files(&secrets, policy, values).map_err(fail)?;
-    stage_github_file(&secrets, token).map_err(fail)?;
-    if token.is_some() {
-        written.push(iron_config::GITHUB_BINDING_FILE.to_string());
-    }
-    let (config, _) = rendered(policy, proxy_ip, values, token.is_some());
+    let (written, _) = stage_files(&secrets, policy, values, token).map_err(fail)?;
+    let config = rendered(policy, proxy_ip, values, token.is_some());
     let dir = config_dir(state);
     std::fs::create_dir_all(&dir).map_err(|e| fail(io_err(&dir, e)))?;
     write_config(&dir.join("config.yaml"), &config).map_err(fail)?;
@@ -459,6 +540,26 @@ fn write_offline(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remove_github_file_deletes_a_stale_token_and_tolerates_none() {
+        let dir = std::env::temp_dir().join(format!("mio-rmgh-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("mio-github"), b"ghp_stale").unwrap();
+        remove_github_file(&dir).unwrap();
+        assert!(!dir.join("mio-github").exists());
+        remove_github_file(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A GitHub lookup error must drop the binding, never fail the apply or keep a token.
+    #[test]
+    fn binding_error_renders_without_the_token() {
+        let err = Err(ProxyError::CommandFailed("corrupt state".to_string()));
+        assert_eq!(fail_closed_binding("s", err), None);
+        assert_eq!(fail_closed_binding("s", Ok(Some("t".to_string()))), Some("t".to_string()));
+        assert_eq!(fail_closed_binding("s", Ok(None)), None);
+    }
 
     /// A trailing newline in a secret file would be sent upstream inside the credential.
     #[test]
@@ -496,6 +597,23 @@ mod tests {
         assert_eq!(std::fs::read(dir.join("A_KEY")).unwrap(), b"old");
         assert!(!dir.join("B_KEY").exists());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The live check compares disk to the desired render, so a missing token file or a config
+    /// rendered without the binding must read as not live.
+    #[test]
+    fn staged_files_are_current_only_with_the_binding_and_token_file() {
+        let state = std::env::temp_dir().join(format!("mio-iron-test-{}", uuid::Uuid::new_v4()));
+        let policy: NetPolicy = serde_json::from_str("{}").unwrap();
+        let values = HashMap::new();
+        write_offline(&state, &policy, "10.0.0.2", &values, Some("ghp_real")).unwrap();
+        let with = rendered(&policy, "10.0.0.2", &values, true);
+        let without = rendered(&policy, "10.0.0.2", &values, false);
+        assert!(github_files_current(&state, &with, Some("ghp_real")));
+        assert!(!github_files_current(&state, &without, None));
+        std::fs::remove_file(secrets_dir(&state).join("mio-github")).unwrap();
+        assert!(!github_files_current(&state, &with, Some("ghp_real")));
+        std::fs::remove_dir_all(&state).unwrap();
     }
 
     #[test]
