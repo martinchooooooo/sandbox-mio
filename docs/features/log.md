@@ -7,6 +7,7 @@ approximate. New entries go on top.
 
 ## 2026-11-18
 
+* **Create** [github-cli-auth](github-cli-auth/index.md): ideation drafted; log in to GitHub once via gh's device flow in the auth container and apply the token to every sandbox, with a per-sandbox opt-out; the no-TTY login spike passed
 * **Implement** [herdr-multiplexer](herdr-multiplexer/index.md): Herdr replaces zellij in the base image and the native terminal's two command strings; standard specs pass and the user checked the manual renderer, microsandbox and deployed-sandbox cases
 
 ## 2026-11-17

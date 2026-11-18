@@ -10,6 +10,7 @@
 
 ## In-flight plans
 
+* [github-cli-auth](../features/github-cli-auth/index.md) - in-progress, changes agents.md, providers.md, network.md, workspace-ui.md: Log in to GitHub once through the GitHub CLI in the auth container, then apply that token to every sandbox's gh and git, at create and to existing sandboxes, with a per-sandbox opt-out.
 * [host-tool-ssh-access](../features/host-tool-ssh-access/index.md) - in-progress, changes transport.md: Let host SSH clients (e.g. the Claude Code desktop app) attach to a sandbox over the existing exec transport.
 * [native-terminal](../features/native-terminal/index.md) - in-progress, changes workspace-ui.md, transport.md: Faster terminal startup: render the sandbox terminal in the main webview over a Rust-owned SSH session that attaches zellij, replacing the zellij web child webview.
 * [onboarding-story](../features/onboarding-story/index.md) - in-progress, changes workspace-ui.md: Illustrated onboarding book inside the welcome flow, extensible by chapter, with first-run setup running in the background and reported through the activity center.

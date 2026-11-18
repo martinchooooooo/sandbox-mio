@@ -4,7 +4,7 @@ title: "Coding Agents and Credentials"
 description: "The agent catalogue, installing agents into sandboxes, logging in once and reusing the login everywhere, local-model wiring, and the Paseo agent web UI."
 generated:
   by: claude-code/opus-5-5
-  at: 2026-11-17T18:30:00+11:00
+  at: 2026-11-18T18:30:00+11:00
 stale_after: 2027-02-17T00:00:00+11:00
 code:
   - src/lib/agents/
@@ -19,6 +19,8 @@ code:
   - src-tauri/src/commands/credentials.rs
   - src/routes/credentials/
   - src/routes/projects/AgentManager.svelte
+  - src-tauri/src/services/github_access.rs
+  - src/lib/workspace/GithubAccess.svelte
 sources:
   - resource: docs/features/agent-setup/02_dev.md
   - resource: docs/features/shared-agent-auth/02_dev.md
@@ -29,6 +31,7 @@ sources:
   - resource: docs/features/native-agent-ui/02_dev.md
   - resource: docs/features/local-llm-reachability/02_dev.md
   - resource: docs/features/techdebt-sweep/02_dev.md
+  - resource: docs/features/github-cli-auth/02_dev.md
 ---
 # Coding Agents and Credentials
 
@@ -53,9 +56,9 @@ The app installs coding agents (Claude Code, OpenCode, pi) into a sandbox, lets 
 
 ## The GitHub Token
 
-- The credential store also holds one single-value credential: a GitHub token the user pastes on the Credentials page. It is write-only over IPC; the page only learns whether a token is saved and when.
-- Every in-sandbox mise call that resolves or downloads tools carries the token as `GITHUB_TOKEN` and `MISE_GITHUB_TOKEN`, which lifts GitHub's unauthenticated rate limit. The base-image build does not receive it.
-- The token travels as a secret exec environment ([Providers](providers.md)), never in a command line.
+- One single-value credential, saved by pasting a token or by a GitHub CLI device-flow login in the auth container. The host verifies it with GitHub.
+- In-sandbox mise calls carry it as a secret exec environment ([Providers](providers.md)), never a command line.
+- The base image carries the GitHub CLI. A serialised reconcile logs it into each running local sandbox over stdin on create, start, save, delete and the Manage switch, honouring a per-sandbox opt-out; failures are recorded.
 
 ## Local-Model Agents: OpenCode and pi
 
