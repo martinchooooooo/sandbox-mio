@@ -3,6 +3,8 @@
 
 use std::sync::Arc;
 
+use crate::activity::types::TaskKind;
+use crate::activity::{self, TaskFailure, TaskScope};
 use crate::backends;
 use crate::backends::types::{BackendError, EgressRequest, Sandbox, SandboxBackend};
 use crate::error::AppError;
@@ -67,6 +69,9 @@ pub async fn list_user(store: &Arc<dyn SandboxBackend>) -> Result<Vec<Sandbox>, 
 /// Creates a sandbox on `provider` and brings its workspace up. `proxy` opts the sandbox into a
 /// per-sandbox proxy sidecar (`docs/features/network-proxy/02_dev.md`); for Podman that is the
 /// iron-proxy egress boundary (`docs/features/podman-egress-boundary/02_dev.md`).
+///
+/// Runs as the `sandbox-create:<name>` activity task once the name is known to be usable, so the
+/// UI can show the current step; a rejected name fails fast without opening a task.
 pub async fn create(
     name: &str,
     existing_path: Option<&str>,
@@ -91,10 +96,34 @@ pub async fn create(
         .into());
     }
 
+    let id = format!("sandbox-create:{name}");
+    activity::scope(app, &id, TaskKind::SandboxCreate, Some(name.to_string()), |task| async move {
+        create_steps(&task, name, existing_path, provider, proxy, egress, store, runtime, engine, registry, app)
+            .await
+            .map_err(TaskFailure::same)
+    })
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn create_steps(
+    task: &TaskScope,
+    name: &str,
+    existing_path: Option<&str>,
+    provider: ProviderId,
+    proxy: bool,
+    egress: Option<&EgressRequest>,
+    store: &Arc<dyn SandboxBackend>,
+    runtime: &Arc<dyn RuntimeManager>,
+    engine: &Arc<dyn SyncEngine>,
+    registry: &Arc<ProviderRegistry>,
+    app: &tauri::AppHandle,
+) -> Result<Sandbox, AppError> {
     // Stage markers, so a failed create is attributable to a step from the log alone. The
     // microsandbox path spans four subsystems (provider, ssh, runtime, sync) and its failures
     // surface as one flattened string in the UI toast, which cannot say how far it got.
     tracing::info!(target: "create", %name, %provider, "create_sandbox: ensuring base image");
+    task.progress(None, "Preparing base image");
     store.ensure_base_image(provider).await?;
 
     // The sidecar runs on the sandbox's own provider
@@ -102,8 +131,10 @@ pub async fn create(
     let sidecar = registry.local(provider);
     let attachment = if proxy {
         tracing::info!(target: "create", %name, "create_sandbox: ensuring proxy image");
+        task.progress(None, "Preparing network proxy");
         crate::proxy::ensure_proxy_image(app, &sidecar, provider).await?;
         tracing::info!(target: "create", %name, "create_sandbox: creating proxy sidecar");
+        task.progress(None, "Starting network proxy");
         match crate::proxy::create_proxy(app, &sidecar, provider, name).await {
             Ok(a) => Some(a),
             Err(e) => {
@@ -116,6 +147,7 @@ pub async fn create(
     };
 
     tracing::info!(target: "create", %name, "create_sandbox: creating instance");
+    task.progress(None, "Creating container");
     let mut sandbox = match store.create(name, existing_path, provider, attachment.as_ref(), egress).await {
         Ok(s) => s,
         Err(e) => {
@@ -143,6 +175,7 @@ pub async fn create(
     } else if proxy {
         // Order is load-bearing: the sidecar denies everything until the first apply (Resolved
         // Decision 18), and the policy can only be read once `store.create` resolved the workspace.
+        task.progress(None, "Applying network policy");
         if let Err(e) = apply_policy_and_inject_ca(app, registry, &sidecar, name, &sandbox.workspace_path).await {
             tracing::error!(target: "create", %name, error = %e, "create_sandbox: proxy setup failed, rolling back");
             match store.destroy(name).await {
@@ -163,14 +196,17 @@ pub async fn create(
         workspace = %sandbox.workspace_path,
         "create_sandbox: instance created, initializing runtime"
     );
+    task.progress(None, "Setting up runtime");
     runtime.init(&sandbox.workspace_path).await?;
     if provider == ProviderId::Microsandbox {
+        task.progress(None, "Starting sandbox");
         // A microsandbox workspace lives in a VM disk volume, not a host bind mount, so it exists
         // only once Mutagen syncs into it — and the instance must already be running for `msb ssh
         // serve` (the alias's ProxyCommand) to answer (`docs/features/microsandbox-provider/02_dev.md`, Phase H).
         store.start(name).await?;
         let session = backends::msb_sync_session(name);
         let beta = backends::msb_sync_beta(name);
+        task.progress(None, "Syncing files");
         tracing::info!(
             target: "create",
             %name,

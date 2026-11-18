@@ -4,6 +4,13 @@
     import { invoke } from "@tauri-apps/api/core";
     import { onMount } from "svelte";
     import { m } from "$lib/paraglide/messages.js";
+    import {
+        lifecycleError,
+        lifecycleMessage,
+        pendingOp,
+        startSandbox,
+        stopSandbox,
+    } from "$lib/sandbox/lifecycle.svelte";
     import { createActionRunner } from "$lib/actions.svelte";
     import { HugeiconsIcon } from "@hugeicons/svelte";
     import { DashboardSquare01Icon, PlayIcon, StopIcon } from "@hugeicons/core-free-icons";
@@ -20,13 +27,10 @@
         project,
         deployment,
         currentImageVersion,
-        onChanged,
     }: {
         project: Project;
         deployment: Deployment | undefined;
         currentImageVersion: number | undefined;
-        // Tells the parent to reload its sandbox and deployment lists after a mutating action.
-        onChanged: () => void;
     } = $props();
 
     let dismissedVersion = $state<number | undefined>(undefined);
@@ -40,25 +44,7 @@
 
     const action = createActionRunner();
 
-    async function start() {
-        if (await action.run(
-            "start",
-            () => invoke("start_sandbox", { name: project.name }),
-            { message: m.projects_status_starting() }
-        )) {
-            onChanged();
-        }
-    }
-
-    async function stop() {
-        if (await action.run(
-            "stop",
-            () => invoke("stop_sandbox", { name: project.name }),
-            { message: m.projects_status_stopping() }
-        )) {
-            onChanged();
-        }
-    }
+    const pending = $derived(pendingOp(project.name));
 
     // The card always lands on Manage; the sidebar restores the last view instead
     // (docs/features/unified-sidebar-nav/02_dev.md, Resolved Decision 2).
@@ -86,10 +72,10 @@
     });
 </script>
 
-<li data-sandbox={project.name}>
+<li data-sandbox={project.name} data-pending={pending}>
 <Card.Root class="h-full gap-3 p-4 text-sm">
     <div class="flex min-w-0 items-center gap-2">
-        <span class={["inline-block size-2.5 shrink-0 rounded-full", statusDotClass(project.status, deployment)]}></span>
+        <span class={["inline-block size-2.5 shrink-0 rounded-full", statusDotClass(project.status, deployment, pending)]}></span>
         <Card.Title class="mb-0 truncate">{project.name}</Card.Title>
         {#if deployment}
             <span class="text-muted-foreground text-xs shrink-0">→ {deployment.host}</span>
@@ -100,19 +86,19 @@
          visible: Home cards always have room since pages use the full content area. -->
     <div class="flex flex-wrap items-center gap-2">
         <Button size="sm" onclick={openWorkspace} title={m.projects_workspace()}
-            loading={action.busy === "workspace"} disabled={action.busy !== null}>
+            loading={action.busy === "workspace"} disabled={action.busy !== null || pending !== undefined}>
             <HugeiconsIcon icon={DashboardSquare01Icon} size={16} />
             <span>{m.projects_workspace()}</span>
         </Button>
         {#if project.status === "running"}
-            <Button variant="ghost" size="sm" onclick={stop} title={m.projects_stop()}
-                loading={action.busy === "stop"} disabled={action.busy !== null}>
+            <Button variant="ghost" size="sm" onclick={() => stopSandbox(project.name)} title={m.projects_stop()}
+                loading={pending === "stop"} disabled={action.busy !== null || pending !== undefined}>
                 <HugeiconsIcon icon={StopIcon} size={16} />
                 <span>{m.projects_stop()}</span>
             </Button>
         {:else}
-            <Button variant="ghost" size="sm" onclick={start} title={m.projects_start()}
-                loading={action.busy === "start"} disabled={action.busy !== null}>
+            <Button variant="ghost" size="sm" onclick={() => startSandbox(project.name)} title={m.projects_start()}
+                loading={pending === "start"} disabled={action.busy !== null || pending !== undefined}>
                 <HugeiconsIcon icon={PlayIcon} size={16} />
                 <span>{m.projects_start()}</span>
             </Button>
@@ -120,9 +106,9 @@
     </div>
 
     <StatusRow
-        busy={action.busy}
-        message={action.message}
-        error={action.error}
+        busy={pending ?? action.busy}
+        message={pending ? lifecycleMessage(pending) : action.message}
+        error={lifecycleError(project.name) || action.error}
         status={translateStatus(deployment ? deployment.status : project.status)}
     />
 

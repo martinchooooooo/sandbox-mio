@@ -7,8 +7,7 @@
     import { invoke } from "@tauri-apps/api/core";
     import { open } from "@tauri-apps/plugin-dialog";
     import { m } from "$lib/paraglide/messages.js";
-    import { createActionRunner } from "$lib/actions.svelte";
-    import StatusRow from "./StatusRow.svelte";
+    import { createSandbox } from "$lib/sandbox/lifecycle.svelte";
     import {
         PROVIDERS,
         providerCapabilities,
@@ -20,8 +19,6 @@
     import { onMount } from "svelte";
     import { checkPodman, podmanUnavailable } from "$lib/podman/setup.svelte";
     import { createFocusRequested, takeCreateFocus } from "$lib/workspace/navigation.svelte";
-
-    let { onCreated }: { onCreated: () => void } = $props();
 
     let mode = $state<"name" | "folder">("name");
     let name = $state("");
@@ -45,7 +42,9 @@
             .catch(() => (caps = null));
     });
 
-    const action = createActionRunner();
+    // Only for a name that cannot start a create at all; a create that fails later is reported on
+    // its placeholder (Home card and sidebar entry), not here.
+    let error = $state("");
 
     // The sidebar's "New sandbox" lands here; the first name field takes the focus once.
     let nameInput = $state<HTMLElement | null>(null);
@@ -95,23 +94,18 @@
         // "Start Podman" screen, so no separate error handling is needed here.
         await checkPodman();
         if (podmanUnavailable()) return;
-        const path = existingPath;
-        const ok = await action.run(
-            "create",
-            async () => {
-                const network = egressSupported
-                    ? { egress, starterHosts: allAgentApiHosts() }
-                    : {};
-                await invoke("create_sandbox", { name: trimmed, existingPath: path, provider, proxy, ...network });
-            },
-            { message: m.projects_status_creating({ name: trimmed }) }
-        );
-        if (ok) {
-            name = "";
-            mode = "name";
-            existingPath = undefined;
-            onCreated();
+        const network = egressSupported ? { egress, starterHosts: allAgentApiHosts() } : undefined;
+        const started = createSandbox({ name: trimmed, existingPath, provider, proxy, network });
+        if (!started) {
+            // TODO(i18n)
+            error = `A sandbox named "${trimmed}" already exists or is being created.`;
+            return;
         }
+        // The create runs in the background as a placeholder, so the form is free for another one.
+        error = "";
+        name = "";
+        mode = "name";
+        existingPath = undefined;
     }
 </script>
 
@@ -128,8 +122,6 @@
                     <div class="flex w-full gap-2">
                         <Input placeholder={m.projects_name_placeholder()} bind:value={name} bind:ref={nameInput} />
                         <Button
-                            loading={action.busy === "create"}
-                            disabled={action.busy !== null}
                             onclick={createProject}
                         >{m.projects_create()}</Button>
                     </div>
@@ -150,8 +142,6 @@
                         <div class="flex w-full gap-2">
                             <Input placeholder={m.projects_name_placeholder()} bind:value={name} />
                             <Button
-                                loading={action.busy === "create"}
-                                disabled={action.busy !== null}
                                 onclick={createProject}
                             >{m.projects_create()}</Button>
                             <!-- TODO(i18n) -->
@@ -170,7 +160,6 @@
                                 aria-pressed={provider === option}
                                 variant={provider === option ? "default" : "outline"}
                                 size="sm"
-                                disabled={action.busy !== null}
                                 onclick={() => (provider = option)}
                             >{providerLabel(option)}</Button>
                         {/each}
@@ -183,7 +172,6 @@
                     <Switch
                         data-proxy-toggle
                         checked={proxy}
-                        disabled={action.busy !== null}
                         onCheckedChange={(v) => (proxy = v)}
                     />
                 </Field.Field>
@@ -208,8 +196,7 @@
                                     aria-pressed={egress === value}
                                     variant={egress === value ? "default" : "outline"}
                                     size="sm"
-                                    disabled={action.busy !== null}
-                                    onclick={() => (egress = value)}
+                                        onclick={() => (egress = value)}
                                 >{label}</Button>
                             {/each}
                         </div>
@@ -226,5 +213,7 @@
         </Field.Group>
     </Field.Set>
 
-    <StatusRow busy={action.busy} message={action.message} error={action.error} />
+    {#if error}
+        <p role="status" class="text-xs text-destructive">{error}</p>
+    {/if}
 </li>

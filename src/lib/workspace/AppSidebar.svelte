@@ -20,9 +20,15 @@
         import { m } from "$lib/paraglide/messages.js";
     import { parseError } from "$lib/errors";
     import { statusDotClass, type Project } from "$lib/sandbox";
+    import { lifecycleMessage, pendingCreates, pendingOp } from "$lib/sandbox/lifecycle.svelte";
     import { deploymentFor, ensureSandboxRemoteState, liveStatus, sandboxesList } from "$lib/sandbox/state.svelte";
     import { activePane, isCollapsed, viewSandboxName } from "$lib/workspace/state.svelte";
     import { newSandbox, openSandbox, showPage } from "$lib/workspace/navigation.svelte";
+
+    // A failed placeholder stays listed; a successful one is hidden once its real entry exists.
+    const creating = $derived(
+        pendingCreates().filter((c) => c.error || !sandboxesList().some((p) => p.name === c.name)),
+    );
 
     const collapsed = $derived(isCollapsed());
     const viewing = $derived(viewSandboxName());
@@ -108,9 +114,12 @@
 
         <NavList.Group label={m.sidebar_sandboxes()} class="min-h-0 flex-1 overflow-y-auto" data-sidebar-sandboxes>
             {#each sandboxesList() as project (project.id)}
-                {@const dot = statusDotClass(liveStatus(project), deploymentFor(project.name))}
+                {@const pending = pendingOp(project.name)}
+                {@const hint = pending ? lifecycleMessage(pending) : undefined}
+                {@const dot = statusDotClass(liveStatus(project), deploymentFor(project.name), pending)}
                 <NavList.Item
                     data-nav-sandbox={project.name}
+                    data-pending={pending}
                     label={project.name}
                     active={viewing === project.name}
                     onclick={() => open(project)}
@@ -119,18 +128,40 @@
                         {#if collapsed}
                             <span class="relative flex size-6 items-center justify-center rounded-sm border-2 font-head text-xs uppercase">
                                 {project.name.slice(0, 1)}
-                                <span class={["absolute -bottom-1 -right-1 size-2 rounded-full", dot]}></span>
+                                <span class={["absolute -bottom-1 -right-1 size-2 rounded-full", dot]} title={hint}></span>
                             </span>
                         {:else}
-                            <span class={["inline-block size-2 rounded-full", dot]}></span>
+                            <span class={["inline-block size-2 rounded-full", dot]} title={hint}></span>
                         {/if}
                     {/snippet}
                 </NavList.Item>
-            {:else}
-                {#if !collapsed}
-                    <p class="text-muted-foreground px-2.5 text-xs">{m.sidebar_no_sandboxes()}</p>
-                {/if}
             {/each}
+            {#each creating as create (create.name)}
+                {@const dot = create.error ? "bg-destructive" : statusDotClass(undefined, undefined, "create")}
+                {@const hint = create.error || create.step}
+                <!-- Not a destination yet: a click goes to Home, where the placeholder card shows progress. -->
+                <NavList.Item
+                    data-nav-sandbox={create.name}
+                    data-pending="create"
+                    label={create.name}
+                    active={false}
+                    onclick={() => showPage("/projects")}
+                >
+                    {#snippet icon()}
+                        {#if collapsed}
+                            <span class="relative flex size-6 items-center justify-center rounded-sm border-2 font-head text-xs uppercase">
+                                {create.name.slice(0, 1)}
+                                <span class={["absolute -bottom-1 -right-1 size-2 rounded-full", dot]} title={hint}></span>
+                            </span>
+                        {:else}
+                            <span class={["inline-block size-2 rounded-full", dot]} title={hint}></span>
+                        {/if}
+                    {/snippet}
+                </NavList.Item>
+            {/each}
+            {#if sandboxesList().length === 0 && creating.length === 0 && !collapsed}
+                <p class="text-muted-foreground px-2.5 text-xs">{m.sidebar_no_sandboxes()}</p>
+            {/if}
             <NavList.Item data-new-sandbox label={m.sidebar_new_sandbox()} onclick={newSandbox}>
                 {#snippet icon()}
                     <HugeiconsIcon icon={Add01Icon} size={16} />

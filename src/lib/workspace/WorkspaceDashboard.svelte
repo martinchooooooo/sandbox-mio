@@ -1,12 +1,11 @@
 <script lang="ts">
-    import { invoke } from "@tauri-apps/api/core";
     import { onMount } from "svelte";
     import { HugeiconsIcon } from "@hugeicons/svelte";
     import Button from "$lib/components/ui/button/button.svelte";
     import * as SectionNav from "$lib/components/ui/section-nav";
     import { m } from "$lib/paraglide/messages.js";
     import { createActionRunner } from "$lib/actions.svelte";
-    import { parseError } from "$lib/errors";
+    import { destroySandbox, pendingOp } from "$lib/sandbox/lifecycle.svelte";
     import StatusRow from "../../routes/projects/StatusRow.svelte";
     import PackageManager from "../../routes/projects/PackageManager.svelte";
     import PortsManager from "../../routes/projects/PortsManager.svelte";
@@ -49,22 +48,10 @@
         setSection(sandboxName, id);
     }
 
-    async function destroySandbox() {
-        if (await action.run("destroy", async () => {
-            try {
-                await invoke("destroy_sandbox", { name: sandboxName, force: false });
-            } catch (e) {
-                const err = parseError(e);
-                // The guard refuses to discard unsynced remote work; confirm, then force.
-                if (err.kind === "UnsyncedChanges") {
-                    // TODO(i18n)
-                    if (!confirm(`${err.message}\n\nDestroy anyway and discard them?`)) return;
-                    await invoke("destroy_sandbox", { name: sandboxName, force: true });
-                } else {
-                    throw e;
-                }
-            }
-        })) {
+    async function onDestroy() {
+        // TODO(i18n)
+        const confirmForce = (message: string) => confirm(`${message}\n\nDestroy anyway and discard them?`);
+        if (await destroySandbox(sandboxName, { confirmForce })) {
             // A recreated sandbox with the same name must not inherit the destroyed one's state.
             forgetSection(sandboxName);
             forgetProxyStatus(sandboxName);
@@ -126,9 +113,10 @@
                         {:else if section.id === "danger"}
                             <div class="flex flex-col items-start gap-2">
                                 <span class="text-muted-foreground text-xs">{section.label()}</span>
-                                <Button variant="destructive" size="sm" onclick={destroySandbox}
+                                <Button variant="destructive" size="sm" onclick={onDestroy}
                                     title={m.projects_destroy()}
-                                    loading={action.busy === "destroy"} disabled={action.busy !== null}>
+                                    loading={pendingOp(sandboxName) === "destroy"}
+                                    disabled={pendingOp(sandboxName) !== undefined || action.busy !== null}>
                                     <HugeiconsIcon icon={Delete02Icon} size={16} />
                                     {m.projects_destroy()}
                                 </Button>

@@ -27,6 +27,8 @@ pub enum TaskKind {
     MachineSetup,
     /// Building the base image on its own, ahead of the first sandbox (`build_base_image`).
     BaseImageBuild,
+    /// Creating a sandbox (`create_sandbox`); `detail` carries the current step.
+    SandboxCreate,
 }
 
 #[derive(serde::Serialize, Clone, Copy, PartialEq, Eq)]

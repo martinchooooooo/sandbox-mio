@@ -1,5 +1,4 @@
 <script lang="ts">
-    import { invoke } from "@tauri-apps/api/core";
     import { revealItemInDir } from "@tauri-apps/plugin-opener";
     import { HugeiconsIcon } from "@hugeicons/svelte";
     import { Cancel01Icon, Folder01Icon, PlayIcon, StopIcon } from "@hugeicons/core-free-icons";
@@ -9,8 +8,16 @@
     import { m } from "$lib/paraglide/messages.js";
     import { cn } from "$lib/utils";
     import { createActionRunner } from "$lib/actions.svelte";
-        import { statusDotClass, translateStatus } from "$lib/sandbox";
-    import { deploymentFor, liveStatus, refreshSandboxState, sandboxesList } from "$lib/sandbox/state.svelte";
+    import { statusDotClass, translateStatus } from "$lib/sandbox";
+    import {
+        lifecycleError,
+        lifecycleMessage,
+        pendingOp,
+        restartSandbox,
+        startSandbox,
+        stopSandbox,
+    } from "$lib/sandbox/lifecycle.svelte";
+    import { deploymentFor, liveStatus, sandboxesList } from "$lib/sandbox/state.svelte";
     import { HOME_APP, LAUNCHABLE_APPS } from "$lib/workspace/apps";
     import { activeAppLabel, panesOf } from "$lib/workspace/state.svelte";
     import { activatePane, closePane, closeSandbox, showManage } from "$lib/workspace/navigation.svelte";
@@ -33,31 +40,10 @@
     );
     const manageActive = $derived(activeAppLabel() === null);
     const action = createActionRunner();
+    const pending = $derived(pendingOp(sandbox));
 
     const tabClass = cn(navItemBase, "shrink-0 px-2.5");
     const activeTabClass = "border-border bg-primary text-primary-foreground font-semibold";
-
-    async function start() {
-        if (await action.run("start", () => invoke("start_sandbox", { name: sandbox }), {
-            message: m.projects_status_starting(),
-        })) {
-            await refreshSandboxState();
-        }
-    }
-
-    async function stop(): Promise<boolean> {
-        const stopped = await action.run("stop", () => invoke("stop_sandbox", { name: sandbox }), {
-            message: m.projects_status_stopping(),
-        });
-        if (stopped) await refreshSandboxState();
-        return stopped;
-    }
-
-    // Stop then Start, never a backend restart, so a stop's pane teardown still runs
-    // (docs/features/sandbox-resource-monitor/02_dev.md, Resolved Decision 12).
-    async function restart() {
-        if (await stop()) await start();
-    }
 
     async function openFolder() {
         if (entry) await action.run("folder", () => revealItemInDir(entry.workspace_path));
@@ -70,17 +56,18 @@
 <div
     data-sandbox={sandbox}
     data-sandbox-header
+    data-pending={pending}
     class="@container/header flex h-16 shrink-0 items-center gap-3 border-b-2 bg-background px-4"
 >
     <div class="flex w-44 min-w-0 shrink items-center gap-2">
-        <span class={["inline-block size-2.5 shrink-0 rounded-full", statusDotClass(status, deployment)]}></span>
+        <span class={["inline-block size-2.5 shrink-0 rounded-full", statusDotClass(status, deployment, pending)]}></span>
         <div class="min-w-0">
             <Text as="h1" class="truncate text-base leading-tight" title={sandbox}>{sandbox}</Text>
             <div class="[&>div]:truncate">
                 <StatusRow
-                    busy={action.busy}
-                    message={action.message}
-                    error={action.error}
+                    busy={pending ?? action.busy}
+                    message={pending ? lifecycleMessage(pending) : action.message}
+                    error={lifecycleError(sandbox) || action.error}
                     status={status === undefined ? "" : translateStatus(deployment ? deployment.status : status)}
                 />
             </div>
@@ -88,7 +75,7 @@
     </div>
 
     {#if status === "running"}
-        <HealthChip {sandbox} restarting={action.busy !== null} onRestart={restart} />
+        <HealthChip {sandbox} restarting={pending !== undefined} onRestart={() => restartSandbox(sandbox)} />
     {/if}
 
     <div
@@ -136,20 +123,20 @@
     <div class="flex shrink-0 items-center gap-1">
         {#if entry}
             {#if status === "running"}
-                <Button variant="ghost" size="sm" onclick={stop} title={m.projects_stop()}
-                    loading={action.busy === "stop"} disabled={action.busy !== null}>
+                <Button variant="ghost" size="sm" onclick={() => stopSandbox(sandbox)} title={m.projects_stop()}
+                    loading={pending === "stop"} disabled={action.busy !== null || pending !== undefined}>
                     <HugeiconsIcon icon={StopIcon} size={16} />
                     <span class="@max-[44rem]/header:hidden">{m.projects_stop()}</span>
                 </Button>
             {:else}
-                <Button variant="ghost" size="sm" onclick={start} title={m.projects_start()}
-                    loading={action.busy === "start"} disabled={action.busy !== null}>
+                <Button variant="ghost" size="sm" onclick={() => startSandbox(sandbox)} title={m.projects_start()}
+                    loading={pending === "start"} disabled={action.busy !== null || pending !== undefined}>
                     <HugeiconsIcon icon={PlayIcon} size={16} />
                     <span class="@max-[44rem]/header:hidden">{m.projects_start()}</span>
                 </Button>
             {/if}
             <Button variant="ghost" size="sm" onclick={openFolder} title={entry.workspace_path}
-                loading={action.busy === "folder"} disabled={action.busy !== null}>
+                loading={action.busy === "folder"} disabled={action.busy !== null || pending !== undefined}>
                 <HugeiconsIcon icon={Folder01Icon} size={16} />
                 <span class="@max-[44rem]/header:hidden">{m.projects_folder()}</span>
             </Button>

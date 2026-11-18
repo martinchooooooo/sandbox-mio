@@ -17,6 +17,10 @@
         startPodman as startPodmanMachine,
         setupPodman as provisionPodmanMachine,
     } from "$lib/podman/setup.svelte";
+    import * as Card from "$lib/components/ui/card";
+    import { Spinner } from "$lib/components/ui/spinner";
+    import { dismissCreate, pendingCreates, retryCreate } from "$lib/sandbox/lifecycle.svelte";
+    import { statusDotClass } from "$lib/sandbox";
     import SandboxItem from "./SandboxItem.svelte";
     import CreateSandboxItem from "./CreateSandboxItem.svelte";
     import {
@@ -24,7 +28,6 @@
         sandboxesList,
         deploymentFor,
         sandboxLoadError,
-        refreshSandboxState,
         liveStatus,
     } from "$lib/sandbox/state.svelte";
 
@@ -34,6 +37,12 @@
     // The store's raw list, overlaid with the latest container status from the activity store's
     // event stream for responsiveness between the store's 3 s poll ticks.
     const projects = $derived(sandboxesList().map((p) => ({ ...p, status: liveStatus(p) })));
+
+    // A create whose real entry is already listed (the instant before its placeholder is removed)
+    // renders as the real card only, unless it failed: that one keeps its error visible.
+    const placeholders = $derived(
+        pendingCreates().filter((c) => c.error || !projects.some((p) => p.name === c.name)),
+    );
 
     onMount(async () => {
         // Probe Podman before anything else: a stopped machine after a host restart should show the
@@ -106,10 +115,34 @@
                         {project}
                         {currentImageVersion}
                         deployment={deploymentFor(project.name)}
-                        onChanged={refreshSandboxState}
                     />
                 {/each}
-                <CreateSandboxItem onCreated={refreshSandboxState} />
+                {#each placeholders as create (create.name)}
+                    <li data-sandbox={create.name} data-pending="create" data-create-placeholder>
+                        <Card.Root class="h-full gap-3 p-4 text-sm">
+                            <div class="flex min-w-0 items-center gap-2">
+                                <span
+                                    class={["inline-block size-2.5 shrink-0 rounded-full", create.error ? "bg-destructive" : statusDotClass(undefined, undefined, "create")]}
+                                ></span>
+                                <Card.Title class="mb-0 truncate">{create.name}</Card.Title>
+                            </div>
+                            {#if create.error}
+                                <p role="status" class="text-xs text-destructive">{create.error}</p>
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <Button size="sm" data-create-retry onclick={() => retryCreate(create.name)}>{m.retry()}</Button>
+                                    <!-- TODO(i18n) -->
+                                    <Button variant="ghost" size="sm" data-create-dismiss onclick={() => dismissCreate(create.name)}>Dismiss</Button>
+                                </div>
+                            {:else}
+                                <div role="status" aria-live="polite" class="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                    <Spinner class="size-3.5" />
+                                    <span data-create-step>{create.step}</span>
+                                </div>
+                            {/if}
+                        </Card.Root>
+                    </li>
+                {/each}
+                <CreateSandboxItem />
             </ul>
         {/if}
     </div>
