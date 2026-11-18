@@ -12,6 +12,7 @@
 
 ## planned
 
+* [paseo-plugins](paseo-plugins/index.md) - Ship app-owned Paseo plugins in the binary and register them with each sandbox's Paseo daemon at launch, to extend the Agents pane.
 * [proxy-toggle-management](proxy-toggle-management/index.md) - App-global proxy default and turning the proxy on or off for an existing sandbox by recreating it.
 * [tailscale-access](tailscale-access/index.md) - Join deployed sandboxes to the user's tailnet so their web services are reachable from other devices.
 
