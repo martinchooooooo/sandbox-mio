@@ -3,4 +3,6 @@
 docs/features/log.md merge=union
 
 # Embedded into the binary and run by sh inside a sandbox, so a CRLF checkout would break them.
-src-tauri/resources/agent-host/*.sh text eol=lf
+src-tauri/resources/**/*.sh text eol=lf
+src-tauri/resources/**/*.py text eol=lf
+src-tauri/resources/Containerfile text eol=lf
