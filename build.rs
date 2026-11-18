@@ -811,25 +811,28 @@ fn find_file(dir: &Path, name: &str) -> Option<PathBuf> {
 /// Suffix marking a `target/debug` file renamed aside by [`move_aside_locked_dev_files`].
 const LOCKED_ASIDE_MARKER: &str = ".locked-aside-";
 
-/// Frees the `target/debug` files tauri-build rewrites (the Mutagen sidecar, the `msb` resources)
-/// while a process still runs from them: a lingering Mutagen daemon or a running sandbox's `msb`
-/// VM supervisor. tauri-build otherwise panics with `Access is denied` (os error 5).
+/// Frees the `target/debug` files tauri-build rewrites (the Mutagen sidecar and the `msb`, `podman`
+/// and `llama` resources) while a process still runs from them: a lingering Mutagen daemon, a
+/// running sandbox's `msb` VM supervisor, or a `podman exec … mio-sshd` relay that the Mutagen
+/// daemon's SSH transport spawned. tauri-build otherwise panics with `Access is denied` (os error 5)
+/// or a sharing violation (os error 32).
 ///
 /// Renamed aside rather than killed: Windows allows renaming an in-use image, the holder keeps
 /// running from the renamed file, and killing would drop sync sessions or running sandboxes.
 /// The copy restored in its place is unlocked, so tauri-build can overwrite it. Earlier asides are
 /// deleted once their holder has exited.
 fn move_aside_locked_dev_files() {
-    let msb_dir = debug_dir().join("msb");
     let mut candidates = vec![debug_dir().join(if cfg!(windows) { "mutagen.exe" } else { "mutagen" })];
-    for dir in [debug_dir(), msb_dir] {
+    let resource_dirs = ["msb", "podman", "llama"].map(|d| debug_dir().join(d));
+    for dir in std::iter::once(debug_dir()).chain(resource_dirs.iter().cloned()) {
         let Ok(entries) = fs::read_dir(&dir) else { continue };
+        let is_resource_dir = dir != debug_dir();
         for entry in entries.flatten() {
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().into_owned();
             if name.contains(LOCKED_ASIDE_MARKER) {
                 let _ = fs::remove_file(&path);
-            } else if dir.ends_with("msb") && path.is_file() {
+            } else if is_resource_dir && path.is_file() {
                 candidates.push(path);
             }
         }
@@ -1065,7 +1068,15 @@ fn run_dev_directly() {
     wait_for_dev_server(&mut vite);
     let devtools = std::env::var("MIO_DEVTOOLS").ok().as_deref() == Some("1");
     let cargo_args: &[&str] = if devtools { &["build", "--features", "devtools"] } else { &["build"] };
-    run(root_dir().join("src-tauri"), "cargo", cargo_args);
+    // Repeated here: the Mutagen daemon can respawn its `podman exec` relays from
+    // `target/debug/podman/` while Vite starts, locking files again after `dev`'s first pass.
+    // One retry covers a relay respawned mid-build; a second failure is a real build error.
+    move_aside_locked_dev_files();
+    if !try_run(root_dir().join("src-tauri"), "cargo", cargo_args) {
+        println!("cargo build failed; moving aside any newly locked target/debug files and retrying once");
+        move_aside_locked_dev_files();
+        run(root_dir().join("src-tauri"), "cargo", cargo_args);
+    }
 
     let exe = debug_dir().join("sandbox-mio.exe");
     // Not `run`/`try_run`: the app's own exit status must not panic `build.exe`.
