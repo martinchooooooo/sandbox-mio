@@ -34,8 +34,12 @@ impl From<ProviderError> for CredentialError {
     }
 }
 
-/// Prefix for ephemeral auth containers created to capture credentials.
+/// Prefix for ephemeral auth containers created to capture credentials. Mirrored in
+/// `src/lib/github.ts`.
 pub const AUTH_CONTAINER_PREFIX: &str = "mio-auth-";
+
+/// The GitHub login's auth container. Must equal `GITHUB_AUTH_CONTAINER` in `src/lib/github.ts`.
+pub const GITHUB_AUTH_CONTAINER: &str = "mio-auth-github";
 
 /// Credential metadata exposed to the frontend. Files stay host-side; only metadata crosses IPC.
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
@@ -47,6 +51,12 @@ pub struct CredentialManifest {
     pub account_email: Option<String>,
     /// Expiry time if the credential has one.
     pub expires_at_ms: Option<u64>,
+    /// GitHub login the token belongs to, when GitHub confirmed it.
+    #[serde(default)]
+    pub account_login: Option<String>,
+    /// Scopes `gh auth login` needs that a classic GitHub token lacks.
+    #[serde(default)]
+    pub missing_scopes: Vec<String>,
 }
 
 /// Instructions to skip agent onboarding after credential injection.

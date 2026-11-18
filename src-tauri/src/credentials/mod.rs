@@ -1,6 +1,7 @@
 //! Host-side credential store: capture once, inject into any sandbox to skip interactive login.
 //! Stores full directory snapshot (preserves onboarding state) as `home.tar.gz` per service.
 
+pub mod github;
 pub mod types;
 
 use std::path::{Path, PathBuf};
@@ -66,7 +67,8 @@ pub fn save_manifest(
     std::fs::write(&path, json).map_err(|e| CredentialError::Io(e.to_string()))
 }
 
-/// Service id of the GitHub token: a single-value credential, not a directory snapshot.
+/// Service id of the GitHub token: a single-value credential, not a directory snapshot. Must equal
+/// `GITHUB_SERVICE` in `src/lib/github.ts`.
 pub const GITHUB_SERVICE: &str = "github";
 
 /// Variables a GitHub token is exported as inside a sandbox: `mise`'s GitHub backends read both.
@@ -88,7 +90,13 @@ fn write_secret(dir: &Path, value: &str) -> Result<CredentialManifest, Credentia
         ));
     }
     std::fs::write(dir.join(SECRET_FILE), value).map_err(|e| CredentialError::Io(e.to_string()))?;
-    let manifest = CredentialManifest { captured_at_ms: now_ms(), account_email: None, expires_at_ms: None };
+    let manifest = CredentialManifest {
+        captured_at_ms: now_ms(),
+        account_email: None,
+        expires_at_ms: None,
+        account_login: None,
+        missing_scopes: Vec::new(),
+    };
     let json = serde_json::to_string_pretty(&manifest).map_err(|e| CredentialError::Parse(e.to_string()))?;
     std::fs::write(dir.join("manifest.json"), json).map_err(|e| CredentialError::Io(e.to_string()))?;
     Ok(manifest)
@@ -219,7 +227,13 @@ pub async fn capture(
     let dir = bundle_dir(app, service_id)?;
     std::fs::write(dir.join("home.tar.gz"), &archive).map_err(|e| CredentialError::Io(e.to_string()))?;
 
-    let manifest = CredentialManifest { captured_at_ms: now_ms(), account_email, expires_at_ms };
+    let manifest = CredentialManifest {
+        captured_at_ms: now_ms(),
+        account_email,
+        expires_at_ms,
+        account_login: None,
+        missing_scopes: Vec::new(),
+    };
     save_manifest(app, service_id, &manifest)?;
     Ok(manifest)
 }

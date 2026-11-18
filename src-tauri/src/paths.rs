@@ -46,3 +46,10 @@ pub fn app_config_root<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, tauri:
 pub fn resource_history_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, tauri::Error> {
     Ok(app_data_root(app)?.join("resources"))
 }
+
+/// A sandbox's GitHub-access state: the opt-out and the last apply outcome. Host-side, because a
+/// file in the workspace is writable by code inside the sandbox
+/// (`docs/features/github-cli-auth/02_dev.md`, Resolved Decision 10).
+pub fn sandbox_github_state_path<R: Runtime>(app: &AppHandle<R>, name: &str) -> Result<PathBuf, tauri::Error> {
+    Ok(app_data_root(app)?.join("github").join(format!("{name}.json")))
+}

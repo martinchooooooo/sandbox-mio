@@ -68,6 +68,7 @@ pub async fn start_sandbox(
 ) -> Result<(), AppError> {
     store.start(&name).await?;
     services::inference_reach::spawn_ensure_for_sandbox(&app, &name);
+    services::github_access::spawn_reconcile(&app, &name);
     services::panes::spawn_prewarm_agent_web(&app, &name);
     services::ssh_access::spawn_pin_host_keys(&app, &name);
     Ok(())

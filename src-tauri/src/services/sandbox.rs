@@ -16,7 +16,8 @@ use crate::sync::types::{SyncEngine, SyncStatus};
 use crate::workspace;
 
 /// Removes the host-side state a sandbox leaves outside its container: the managed SSH alias, the
-/// identity directory (whose `known_hosts` is the pinned host key), and the pane state directory.
+/// identity directory (whose `known_hosts` is the pinned host key), the pane state directory, and
+/// the GitHub access state file.
 /// Best-effort and warn-logged, so it can never fail a destroy
 /// (`docs/features/techdebt-sweep/02_dev.md`, Resolved Decision 8). The alias removal strips only
 /// `name`'s own block from the host-global config, which is what keeps concurrent worktrees safe.
@@ -31,6 +32,12 @@ fn cleanup_host_state(name: &str, app: &tauri::AppHandle) {
     }
     remove_dir_best_effort(name, "ssh identity", crate::paths::sandbox_key_dir(app, name));
     remove_dir_best_effort(name, "pane state", crate::paths::sandbox_pane_dir(app, name));
+    // Spawned because this fn is sync; `forget` takes the reconcile lock so a reconcile in flight
+    // cannot recreate the file for a same-name sandbox.
+    let (app_for_github, name_for_github) = (app.clone(), name.to_string());
+    tauri::async_runtime::spawn(async move {
+        super::github_access::forget(&app_for_github, &name_for_github).await;
+    });
     // A sandbox recreated under the same name must not inherit this one's usage history.
     if let Some(monitor) =
         tauri::Manager::try_state::<Arc<crate::services::resources::ResourceMonitor>>(app)
@@ -239,6 +246,7 @@ async fn create_steps(
         sandbox.status = "running".to_string();
     }
     super::inference_reach::spawn_ensure_for_sandbox(app, name);
+    super::github_access::spawn_reconcile(app, name);
     Ok(sandbox)
 }
 

@@ -26,6 +26,8 @@ pub const STARTER_BASE_HOSTS: &[&str] = &[
     "github.com",
     "api.github.com",
     "codeload.github.com",
+    "uploads.github.com",
+    "gist.github.com",
     "*.githubusercontent.com",
     "nodejs.org",
     "mise.jdx.dev",
