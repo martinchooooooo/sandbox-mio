@@ -27,6 +27,9 @@ tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+# Held on 2.3 to match `@tauri-apps/plugin-clipboard-manager` `~2.3.3` in package.json: 2.4+
+# requires a newer tauri/wry than this crate's `tauri = "2"` currently locks.
+tauri-plugin-clipboard-manager = "~2.3"
 # Optional so a release build can drop it with `--no-default-features` (see the `devtools`
 # feature below); `lib.rs` only wires it up under `#[cfg(debug_assertions)]` regardless.
 tauri-plugin-devtools = { version = "2.0.0", optional = true }

@@ -56,6 +56,11 @@ impl SandboxRouter {
         Ok(SandboxRoute { machine, forward_alias: name.to_string(), running })
     }
 
+    /// The provider driving `machine`, for a caller that execs in the sandbox itself.
+    pub fn provider_for(&self, machine: &MachineRef) -> Arc<dyn crate::provider::types::MachineProvider> {
+        self.registry.provider_for(machine)
+    }
+
     /// Whether `machine` is its provider's local machine, i.e. not a deploy target.
     pub fn is_local(&self, machine: &MachineRef) -> bool {
         *machine == self.registry.local_ref(machine.provider)

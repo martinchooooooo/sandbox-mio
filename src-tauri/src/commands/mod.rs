@@ -16,6 +16,7 @@ pub mod packages;
 pub mod panes;
 pub mod proxy;
 pub mod sandbox;
+pub mod ssh;
 pub mod terminal;
 
 /// The whole `#[tauri::command]` inventory, registered once by `run()`. A command that compiles but
@@ -82,6 +83,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         hosts::add_sandbox_host,
         hosts::prepare_sandbox_host,
         hosts::provision_sandbox_host,
+        ssh::sandbox_ssh_access,
         deploy::enable_sync,
         deploy::disable_sync,
         packages::list_registry,

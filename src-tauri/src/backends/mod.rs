@@ -22,7 +22,7 @@ use types::{
 const BASE_IMAGE: &str = "sandbox-mio/base";
 /// Bump whenever the Containerfile changes: `ensure_base_image` short-circuits on an existing
 /// tag, so an unchanged version silently keeps stale images.
-pub(crate) const BASE_IMAGE_VERSION: u32 = 8;
+pub(crate) const BASE_IMAGE_VERSION: u32 = 9;
 
 /// The connection `podman machine init` creates for the local machine. Renaming this const (not its
 /// value) breaks the regex parse in `e2e/lib/podman-machine.ts`, which mirrors it as `DEFAULT_MACHINE`.
@@ -364,6 +364,12 @@ impl CliBackend {
         // Notably *not* `msb ssh authorize` for microsandbox — that authorizes against
         // microsandbox's own SSH server, which `ensure_msb_sandbox_alias` no longer uses.
         self.install_sandbox_key(provider, name, &identity_path).await?;
+        // Only microsandbox is running by now: `podman create` leaves the container stopped, which
+        // `exec` cannot reach, so a Podman sandbox is pinned on its first start instead
+        // (`services::ssh_access::spawn_pin_host_keys`).
+        if provider_id == ProviderId::Microsandbox {
+            seed_sandbox_host_keys(provider, name, &identity_path).await;
+        }
         match provider_id {
             ProviderId::Podman => ensure_sandbox_alias(name, &self.connection, &identity_path).await?,
             ProviderId::Microsandbox => ensure_msb_sandbox_alias(name, &identity_path).await?,
@@ -748,6 +754,7 @@ impl SandboxBackend for CliBackend {
         let identity_path = ensure_sandbox_identity(&self.app, name)?;
         forget_sandbox_host_key(&identity_path);
         self.install_sandbox_key(&target_provider, name, &identity_path).await?;
+        seed_sandbox_host_keys(&target_provider, name, &identity_path).await;
         ensure_sandbox_alias(name, target_connection, &identity_path).await?;
 
         Ok(RemoteDeployment {
@@ -944,19 +951,7 @@ pub async fn ensure_sandbox_alias(
     connection: &str,
     identity_path: &str,
 ) -> Result<(), BackendError> {
-    // `mio-sshd` is referenced by bare name (it lives on the container's default `PATH` via
-    // `/usr/local/bin`, baked in the Containerfile) rather than by its `/usr/local/bin/...` absolute
-    // path, so the argument carries no MSYS-manglable token. This is load-bearing, not cosmetic:
-    // Mutagen forwarding runs in the long-lived daemon, which spawns the `ssh → sh -c "exec …"`
-    // transport — the daemon "outlives the app" (`crate::sync::sweep_stale_forwards`) and is only
-    // env-configured by whichever CLI call happens to auto-start it, so the `MSYS_NO_PATHCONV`
-    // suppression set on `crate::sync::command` does not reach a pre-existing daemon. A bare name
-    // is correct regardless of daemon provenance. See `docs/features/podman-exec-transport/02_dev.md`,
-    // Resolved Decision 5.
-    let command = format!(
-        "{} --connection {connection} exec -i {name} mio-sshd",
-        podman_literal_path()
-    );
+    let command = podman_proxy_command(name, connection);
     crate::ssh::write_alias(&crate::ssh::types::SshAlias::Proxied {
         alias: name.to_string(),
         command,
@@ -979,6 +974,25 @@ const MSB_WORKSPACE_MOUNT: &str = "/root/work";
 fn msb_literal_path() -> String {
     let exe = crate::process::msb_executable();
     format!("\"{}\"", exe.to_string_lossy().replace('\\', "/"))
+}
+
+/// The `ProxyCommand` a sandbox's own alias pins on `machine`. The single source for both the
+/// alias writes and the string `sandbox_ssh_access` shows the user, so the two cannot diverge.
+pub fn sandbox_proxy_command(name: &str, machine: &crate::provider::types::MachineRef) -> String {
+    match machine.provider {
+        ProviderId::Podman => podman_proxy_command(name, &machine.id),
+        ProviderId::Microsandbox => msb_proxy_command(name),
+    }
+}
+
+/// The `ProxyCommand` [`ensure_sandbox_alias`] pins for a Podman sandbox on `connection`.
+fn podman_proxy_command(name: &str, connection: &str) -> String {
+    // Bare `mio-sshd`, never its absolute path: a pre-existing Mutagen daemon lacks `MSYS_NO_PATHCONV`
+    // and would mangle it (`docs/features/podman-exec-transport/02_dev.md`, Resolved Decision 5).
+    format!(
+        "{} --connection {connection} exec -i {name} mio-sshd",
+        podman_literal_path()
+    )
 }
 
 /// The `ProxyCommand` [`ensure_msb_sandbox_alias`] pins, split out from the alias write so the
@@ -1048,9 +1062,107 @@ pub(crate) fn sandbox_known_hosts_path(identity_path: &str) -> String {
 
 /// Drop the host key pinned for a sandbox alias. Must run whenever a *fresh* container is created
 /// under a name that may have been used before: the sshd host key is baked into the base image, so
-/// it changes across an image rebuild while the alias name stays the same.
+/// it changes across an image rebuild while the alias name stays the same. The file stays empty
+/// until [`seed_sandbox_host_keys`] next reaches the container running.
 fn forget_sandbox_host_key(identity_path: &str) {
     let _ = std::fs::remove_file(sandbox_known_hosts_path(identity_path));
+}
+
+/// Renders the pinned `known_hosts` from the host `.pub` files, dropping any line that is not a key.
+/// The `[<alias>]:*` pattern matches the port some clients carry, meaningless over a `ProxyCommand`.
+pub(crate) fn render_known_hosts(alias: &str, pub_keys: &str) -> String {
+    let mut out = String::new();
+    for line in pub_keys.lines() {
+        let mut fields = line.split_whitespace();
+        let (Some(kind), Some(blob)) = (fields.next(), fields.next()) else {
+            continue;
+        };
+        let is_key_type = kind.starts_with("ssh-") || kind.starts_with("ecdsa-");
+        let is_base64 = blob.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'='));
+        if is_key_type && is_base64 {
+            out.push_str(&format!("{alias},[{alias}]:* {kind} {blob}\n"));
+        }
+    }
+    out
+}
+
+/// Pins the running container's host keys so a strict-checking client connects on first contact
+/// (`docs/features/host-tool-ssh-access/02_dev.md`, Resolved Decisions). Best effort: a failure is
+/// warn-logged and must never fail a create, deploy or panel fetch.
+pub(crate) async fn seed_sandbox_host_keys(
+    provider: &Arc<dyn crate::provider::types::MachineProvider>,
+    name: &str,
+    identity_path: &str,
+) {
+    let out = provider
+        .exec(
+            name,
+            &["sh", "-c", "cat /etc/ssh/ssh_host_*_key.pub"],
+            crate::provider::types::ExecOpts::default(),
+        )
+        .await;
+    let out = match out {
+        Ok(out) if out.status.success() => out,
+        Ok(out) => {
+            tracing::warn!(target: "backends", %name, code = out.status.code().unwrap_or(-1), "reading host keys failed; not pinning");
+            return;
+        }
+        Err(e) => {
+            tracing::warn!(target: "backends", %name, error = %e, "reading host keys failed; not pinning");
+            return;
+        }
+    };
+    let rendered = render_known_hosts(name, &String::from_utf8_lossy(&out.stdout));
+    if rendered.is_empty() {
+        tracing::warn!(target: "backends", %name, "container returned no host keys; not pinning");
+        return;
+    }
+    // A start's background pin and the panel's re-fetch seed concurrently; sharing the temp file
+    // unlocked, one could rename the other's half-written copy into place.
+    static WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = WRITE_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let path = std::path::PathBuf::from(sandbox_known_hosts_path(identity_path));
+    if std::fs::read_to_string(&path).is_ok_and(|existing| existing == rendered) {
+        return;
+    }
+    let tmp = path.with_extension("tmp");
+    if let Err(e) = std::fs::write(&tmp, &rendered).and_then(|()| std::fs::rename(&tmp, &path)) {
+        tracing::warn!(target: "backends", %name, error = %e, "writing pinned host keys failed");
+        let _ = std::fs::remove_file(&tmp);
+    }
+}
+
+#[cfg(test)]
+mod known_hosts_tests {
+    use super::*;
+
+    const ED: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIELO root@abc";
+    const RSA: &str = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQAB+/== root@abc";
+    const EC: &str = "ecdsa-sha2-nistp256 AAAAE2VjZHNh root@abc";
+
+    #[test]
+    fn every_key_gets_the_port_agnostic_host_pattern() {
+        let out = render_known_hosts("box", &format!("{EC}\n{ED}\n{RSA}\n"));
+        assert_eq!(
+            out,
+            "box,[box]:* ecdsa-sha2-nistp256 AAAAE2VjZHNh\n\
+             box,[box]:* ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIELO\n\
+             box,[box]:* ssh-rsa AAAAB3NzaC1yc2EAAAADAQAB+/==\n"
+        );
+    }
+
+    #[test]
+    fn empty_or_garbage_output_renders_nothing() {
+        assert_eq!(render_known_hosts("box", ""), "");
+        assert_eq!(render_known_hosts("box", "cat: /etc/ssh/ssh_host_*_key.pub: No such file\n"), "");
+        assert_eq!(render_known_hosts("box", "\n\n not a key\n"), "");
+    }
+
+    #[test]
+    fn garbage_lines_are_dropped_among_real_keys() {
+        let out = render_known_hosts("box", &format!("noise\r\n{ED}\r\n"));
+        assert_eq!(out, "box,[box]:* ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIELO\n");
+    }
 }
 
 #[cfg(test)]
@@ -1071,5 +1183,34 @@ mod msb_sync_tests {
         let command = msb_proxy_command("my-sandbox");
         assert!(command.ends_with(" exec --stream my-sandbox -- mio-sshd"), "{command}");
         assert!(!command.contains("ssh serve"), "{command}");
+    }
+
+    fn machine(provider: ProviderId, id: &str) -> crate::provider::types::MachineRef {
+        crate::provider::types::MachineRef { provider, id: id.to_string() }
+    }
+
+    /// The `--connection` value is what a deploy or undeploy changes, so it must come from the
+    /// machine the route resolved rather than from the local default.
+    #[test]
+    fn podman_proxy_command_execs_on_the_route_machine() {
+        let command = sandbox_proxy_command("my-sandbox", &machine(ProviderId::Podman, "remote-box"));
+        assert!(
+            command.ends_with(" --connection remote-box exec -i my-sandbox mio-sshd"),
+            "{command}"
+        );
+        assert_eq!(command, podman_proxy_command("my-sandbox", "remote-box"));
+    }
+
+    /// A bare `mio-sshd` keeps the argument free of MSYS-manglable absolute paths.
+    #[test]
+    fn podman_proxy_command_names_mio_sshd_bare() {
+        let command = podman_proxy_command("my-sandbox", "podman-machine-default");
+        assert!(!command.contains("/usr/local/bin"), "{command}");
+    }
+
+    #[test]
+    fn microsandbox_proxy_command_ignores_the_machine_id() {
+        let command = sandbox_proxy_command("my-sandbox", &machine(ProviderId::Microsandbox, "local"));
+        assert_eq!(command, msb_proxy_command("my-sandbox"));
     }
 }

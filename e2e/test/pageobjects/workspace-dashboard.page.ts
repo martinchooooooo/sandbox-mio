@@ -282,6 +282,48 @@ class WorkspaceDashboardPage {
     await this.#clickButton(row.$("button[title='Stop exposing']"));
   }
 
+  // ── SSH access (SshAccessCard.svelte, in the Ports section) ─────────────────
+  // Selected by data attributes, never by text: the panel's wording may change
+  // (docs/features/host-tool-ssh-access/02_dev.md, Phase 0) and the Paraglide pass localises it.
+
+  get sshAccess(): Element {
+    return this.root.$("[data-ssh-access]");
+  }
+
+  get sshRefreshButton(): Element {
+    return this.sshAccess.$("[data-ssh-refresh]");
+  }
+
+  /** The alias the panel hands to a desktop client; waits for the first fetch to land. */
+  async sshAlias(): Promise<string> {
+    const alias = await this.sshAccess.$("[data-ssh-alias]");
+    await alias.waitForExist({ timeout: SUBPROCESS, timeoutMsg: "the SSH access panel never showed an alias" });
+    return alias.getText();
+  }
+
+  /** `data-ssh-state`: "loading", "running", "stopped" or "deployed". */
+  async waitForSshState(state: string, timeoutMs = SUBPROCESS): Promise<void> {
+    await browser.waitUntil(async () => (await this.sshAccess.getAttribute("data-ssh-state")) === state, {
+      timeout: timeoutMs,
+      timeoutMsg: `the SSH access panel never reached state "${state}"`,
+    });
+  }
+
+  async sshStateText(): Promise<string> {
+    return this.sshAccess.$("[data-ssh-state-text]").getText();
+  }
+
+  /** A value from the panel's collapsed Details: "identity", "known-hosts" or "proxy-command". */
+  async sshDetail(key: "identity" | "known-hosts" | "proxy-command"): Promise<string> {
+    const value = await this.sshAccess.$(`[data-ssh-value='${key}']`);
+    if (!(await value.isExisting())) {
+      await this.#clickButton(this.sshAccess.$("[data-ssh-details] [data-slot='collapsible-trigger']"));
+      await value.waitForExist({ timeout: COMMAND, timeoutMsg: "the SSH access Details never opened" });
+    }
+    // `title` holds the untruncated value; the text node is ellipsised in a narrow window.
+    return (await value.getAttribute("title")) ?? "";
+  }
+
   // ── Destroy (WorkspaceDashboard.svelte) ─────────────────────────────────────
 
   // The "Delete sandbox" section's button; its label is `projects_destroy` in messages/en.json.

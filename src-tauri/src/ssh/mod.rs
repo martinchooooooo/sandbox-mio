@@ -158,6 +158,12 @@ fn atomic_write(path: &std::path::Path, contents: &str) -> Result<(), SshError> 
         .map_err(|e| SshError::WriteError(format!("failed to replace {path:?}: {e}")))
 }
 
+/// An OpenSSH config argument in double quotes, so a path under a home directory containing a space
+/// stays one argument. Deliberately unescaped: the Windows 10 inbox client's older parser has no escapes.
+fn quoted(value: &str) -> String {
+    format!("\"{value}\"")
+}
+
 /// Render the managed `Host` block for `alias`. `Direct` and `Proxied` emit mutually exclusive
 /// OpenSSH stanzas so a caller can never populate both `HostName`/`Port` and `ProxyCommand`.
 fn render_block(a: &SshAlias) -> String {
@@ -168,18 +174,24 @@ fn render_block(a: &SshAlias) -> String {
             format!("    HostName {host}"),
             format!("    Port {port}"),
             format!("    User {user}"),
-            format!("    IdentityFile {identity}"),
+            format!("    IdentityFile {}", quoted(identity)),
             "    IdentitiesOnly yes".to_string(),
             "    StrictHostKeyChecking accept-new".to_string(),
         ],
         SshAlias::Proxied { alias, command, user, identity, known_hosts } => vec![
             format!("Host {alias}"),
+            // Never wrapped in `quoted`: OpenSSH takes the rest of the line unparsed, so the command
+            // carries its own quoting.
             format!("    ProxyCommand {command}"),
             format!("    User {user}"),
-            format!("    IdentityFile {identity}"),
-            format!("    UserKnownHostsFile {known_hosts}"),
+            format!("    IdentityFile {}", quoted(identity)),
+            format!("    UserKnownHostsFile {}", quoted(known_hosts)),
             "    IdentitiesOnly yes".to_string(),
             "    StrictHostKeyChecking accept-new".to_string(),
+            // Mirrors the image's `ClientAlive*` (`src-tauri/resources/Containerfile`): the exec pipe
+            // never reports a dead peer, so both ends rely on probes and give up after about 45 s.
+            "    ServerAliveInterval 15".to_string(),
+            "    ServerAliveCountMax 3".to_string(),
         ],
     };
     std::iter::once(begin)
@@ -253,4 +265,74 @@ pub fn remove_alias(alias: &str) -> Result<(), SshError> {
         };
         atomic_write(&path, &contents)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn proxied(identity: &str, known_hosts: &str) -> SshAlias {
+        SshAlias::Proxied {
+            alias: "box".to_string(),
+            command: r#""C:/Program Files/podman.exe" --connection m exec -i box mio-sshd"#.to_string(),
+            user: "root".to_string(),
+            identity: identity.to_string(),
+            known_hosts: known_hosts.to_string(),
+        }
+    }
+
+    fn line<'a>(block: &'a str, keyword: &str) -> &'a str {
+        block
+            .lines()
+            .map(str::trim)
+            .find(|l| l.split_once(' ').is_some_and(|(k, _)| k == keyword))
+            .unwrap_or_else(|| panic!("no {keyword} line in:\n{block}"))
+    }
+
+    #[test]
+    fn proxied_block_carries_keepalives() {
+        let block = render_block(&proxied("/k/id_ed25519", "/k/known_hosts"));
+        assert_eq!(line(&block, "ServerAliveInterval"), "ServerAliveInterval 15");
+        assert_eq!(line(&block, "ServerAliveCountMax"), "ServerAliveCountMax 3");
+    }
+
+    #[test]
+    fn proxied_block_quotes_space_bearing_paths() {
+        let block = render_block(&proxied(
+            "C:/Users/John Smith/AppData/ssh-keys/box/id_ed25519",
+            "C:/Users/John Smith/AppData/ssh-keys/box/known_hosts",
+        ));
+        assert_eq!(
+            line(&block, "IdentityFile"),
+            r#"IdentityFile "C:/Users/John Smith/AppData/ssh-keys/box/id_ed25519""#
+        );
+        assert_eq!(
+            line(&block, "UserKnownHostsFile"),
+            r#"UserKnownHostsFile "C:/Users/John Smith/AppData/ssh-keys/box/known_hosts""#
+        );
+        assert_eq!(
+            line(&block, "ProxyCommand"),
+            r#"ProxyCommand "C:/Program Files/podman.exe" --connection m exec -i box mio-sshd"#
+        );
+    }
+
+    #[test]
+    fn direct_block_quotes_identity_without_keepalives() {
+        let block = render_block(&SshAlias::Direct {
+            alias: "remote".to_string(),
+            host: "10.0.0.1".to_string(),
+            port: "22".to_string(),
+            user: "core".to_string(),
+            identity: r"C:\Users\John Smith\.ssh\podman".to_string(),
+        });
+        assert_eq!(line(&block, "IdentityFile"), r#"IdentityFile "C:\Users\John Smith\.ssh\podman""#);
+        assert!(!block.contains("ServerAlive"), "{block}");
+    }
+
+    #[test]
+    fn quoted_block_is_still_stripped_by_its_markers() {
+        let block = render_block(&proxied("C:/a b/id", "C:/a b/known_hosts"));
+        let text = format!("keep\n{block}\nalso keep\n");
+        assert_eq!(strip_block(&text, "box"), "keep\nalso keep");
+    }
 }

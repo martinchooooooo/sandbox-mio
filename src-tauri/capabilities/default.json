@@ -12,6 +12,7 @@
     "core:window:allow-set-focus",
     "updater:default",
     "process:allow-restart",
+    "clipboard-manager:allow-write-text",
     {
       "identifier": "shell:allow-execute",
       "allow": [{ "name": "binaries/mutagen", "sidecar": true, "args": true }]

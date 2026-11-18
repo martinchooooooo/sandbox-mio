@@ -1,0 +1,8 @@
+echo FLAGS=$- SHLVL=$SHLVL
+echo LOGIN-PATH=$PATH
+cd /root/work
+echo WORK-PATH=$PATH
+node -v
+cd /root
+echo HOME-PATH=$PATH
+exit

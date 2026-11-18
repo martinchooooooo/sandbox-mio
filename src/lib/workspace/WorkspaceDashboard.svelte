@@ -10,6 +10,7 @@
     import StatusRow from "../../routes/projects/StatusRow.svelte";
     import PackageManager from "../../routes/projects/PackageManager.svelte";
     import PortsManager from "../../routes/projects/PortsManager.svelte";
+    import SshAccessCard from "../../routes/projects/SshAccessCard.svelte";
     import RemoteManager from "../../routes/projects/RemoteManager.svelte";
     import ProxyPanel from "../../routes/projects/ProxyPanel.svelte";
     import TrafficPanel from "../../routes/projects/TrafficPanel.svelte";
@@ -115,6 +116,7 @@
                             <PackageManager {sandboxName} {workspacePath} {action} />
                         {:else if section.id === "ports"}
                             <PortsManager {sandboxName} {workspacePath} {action} />
+                            <SshAccessCard {sandboxName} {workspacePath} {action} />
                         {:else if section.id === "network"}
                             <ProxyPanel {sandboxName} {workspacePath} {provider} {action} />
                         {:else if section.id === "traffic"}

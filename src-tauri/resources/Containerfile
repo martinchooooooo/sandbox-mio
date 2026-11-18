@@ -29,6 +29,9 @@ RUN apt-get update -qq \
 # ClientAlive* is what ends a forwarding `sshd -i` whose client died without a disconnect: `podman
 # exec` does not propagate the client's death, so the keepalive probe is the only signal (about
 # 45 seconds of silence).
+# SetEnv PATH: a host client's remote agent runs commands non-interactively, outside the .bashrc
+# mise hook, and must still see the toolchain (docs/features/host-tool-ssh-access/02_dev.md).
+# Its shims path is literal (this RUN precedes ENV MISE_DATA_DIR below) and must equal that + /shims.
 RUN ssh-keygen -A \
  && printf '%s\n' \
     'AuthorizedKeysFile /etc/ssh/authorized_keys.container' \
@@ -39,6 +42,7 @@ RUN ssh-keygen -A \
     'ClientAliveCountMax 3' \
     'UsePAM no' \
     'Subsystem sftp /usr/lib/openssh/sftp-server' \
+    'SetEnv PATH=/root/.local/share/mise/shims:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' \
     > /etc/ssh/sshd_config.container \
  && touch /etc/ssh/authorized_keys.container \
  && printf '%s\n' \
@@ -58,6 +62,7 @@ RUN curl -fsSL "https://github.com/jdx/mise/releases/download/${MISE_VERSION}/mi
 # MISE_LOCKFILE=1 makes installs maintain mise.lock (only when the lockfile already exists, which the
 # runtime's init creates). MISE_YES auto-confirms so `podman exec` never blocks on a prompt.
 # SHELL=bash keeps tools that read $SHELL on bash; Herdr's own pane shell is `default_shell` below.
+# MISE_DATA_DIR + /shims is repeated literally in sshd_config.container's SetEnv PATH above.
 ENV MISE_DATA_DIR=/root/.local/share/mise \
     MISE_LOCKFILE=1 \
     MISE_YES=1 \

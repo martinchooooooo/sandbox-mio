@@ -44,6 +44,26 @@ pub enum SshAlias {
     },
 }
 
+/// What a host SSH client needs to reach a sandbox through its own `Proxied` alias, returned by
+/// `sandbox_ssh_access`. Every value mirrors the managed block as just rewritten, never a cached
+/// copy (`docs/features/host-tool-ssh-access/02_dev.md`, Phase A).
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshAccess {
+    /// The `Host` token, which is the sandbox name.
+    pub alias: String,
+    /// Private key path of the per-sandbox keypair the alias's `IdentityFile` names.
+    pub identity_path: String,
+    /// The alias's `UserKnownHostsFile`, pinned next to the identity.
+    pub known_hosts_path: String,
+    /// The exact `ProxyCommand` in the block. It embeds the machine the sandbox runs on, so a
+    /// copy goes stale after a deploy or undeploy while the alias does not.
+    pub proxy_command: String,
+    /// Whether the sandbox is listed as running on its provider's local machine, by the same rule as
+    /// `SandboxRoute::running` (`src-tauri/src/services/routing.rs`): false for a deployed sandbox.
+    pub running: bool,
+}
+
 impl SshAlias {
     pub fn alias(&self) -> &str {
         match self {
