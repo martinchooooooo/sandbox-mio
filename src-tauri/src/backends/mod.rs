@@ -22,7 +22,7 @@ use types::{
 const BASE_IMAGE: &str = "sandbox-mio/base";
 /// Bump whenever the Containerfile changes: `ensure_base_image` short-circuits on an existing
 /// tag, so an unchanged version silently keeps stale images.
-pub(crate) const BASE_IMAGE_VERSION: u32 = 9;
+pub(crate) const BASE_IMAGE_VERSION: u32 = 10;
 
 /// The connection `podman machine init` creates for the local machine. Renaming this const (not its
 /// value) breaks the regex parse in `e2e/lib/podman-machine.ts`, which mirrors it as `DEFAULT_MACHINE`.

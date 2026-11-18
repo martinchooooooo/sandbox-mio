@@ -66,7 +66,8 @@ RUN curl -fsSL "https://github.com/jdx/mise/releases/download/${MISE_VERSION}/mi
 ENV MISE_DATA_DIR=/root/.local/share/mise \
     MISE_LOCKFILE=1 \
     MISE_YES=1 \
-    SHELL=/bin/bash
+    SHELL=/bin/bash \
+    GH_NO_UPDATE_NOTIFIER=1
 
 # Bake the in-app terminal's multiplexer (Herdr) from its pinned release asset, checksum-verified.
 # mise is not used: mise 2026.6.14 fails the release's attestation check
@@ -77,6 +78,16 @@ RUN curl -fsSL -o /usr/local/bin/herdr "https://github.com/herdrdev/herdr/releas
  && echo "${HERDR_SHA256}  /usr/local/bin/herdr" | sha256sum -c - \
  && chmod +x /usr/local/bin/herdr \
  && herdr --version
+
+# Bake the GitHub CLI at a stable path: `gh auth setup-git` writes gh's absolute path into
+# /root/.gitconfig, so gh must never move (docs/features/github-cli-auth/02_dev.md, Phase A).
+ARG GH_VERSION=2.105.0
+ARG GH_SHA256=79e7ab5db738c48777b696e374f8b428f0647debfb424f44d2f426370407fe2f
+RUN curl -fsSL -o /tmp/gh.tar.gz "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" \
+ && echo "${GH_SHA256}  /tmp/gh.tar.gz" | sha256sum -c - \
+ && tar -xzf /tmp/gh.tar.gz -C /usr/local/bin --strip-components=2 "gh_${GH_VERSION}_linux_amd64/bin/gh" \
+ && rm /tmp/gh.tar.gz \
+ && gh --version
 
 # Baked config: no onboarding box, no update checks (no calls to herdr.dev), panes open bash in the
 # workspace. `default_shell` and `new_cwd` only take effect under [terminal]. Written with printf
