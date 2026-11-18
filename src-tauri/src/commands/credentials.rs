@@ -85,7 +85,8 @@ pub fn list_credential_bundles(
 }
 
 /// Delete host credential bundle (container copies are untouched). Deleting the GitHub token also
-/// removes it from running sandboxes now, and from stopped ones on their next start.
+/// removes it from running sandboxes now and from stopped ones on their next start; a sandbox
+/// behind an iron-proxy sidecar loses the token file at once, stopped or not.
 #[tauri::command]
 pub fn delete_credential_bundle(service_id: String, app: tauri::AppHandle) -> Result<(), AppError> {
     credentials::delete(&app, &service_id)?;

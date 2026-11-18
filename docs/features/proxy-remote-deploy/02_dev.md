@@ -108,9 +108,8 @@ the sandbox's own destruction on either side.
    *trait* or function, preserving the one-directional `backends → proxy` dependency that already
    exists (`backends/mod.rs` already calls `crate::proxy::exists`, etc.). It does reuse the plain
    `ConnectionInfo` struct (`src-tauri/src/backends/types.rs`, widened from `pub(super)` to
-   `pub(crate)` in Phase A) as a data type — justified by the same precedent
-   `docs/features/proxy-credential-secrets/02_dev.md` Resolved Decision 5 already established for
-   `proxy/` calling `credentials/`: a plain-data or pure-function reference is not the kind of
+   `pub(crate)` in Phase A) as a data type — justified by the precedent of
+   `proxy/` calling `credentials/` for plain data: a plain-data or pure-function reference is not the kind of
    dependency the "subsystems never depend on each other" rule (`src-tauri/AGENTS.md`) is protecting
    against — only a dependency on another subsystem's *trait* (breaking independent mockability) is.
    The SSH command-construction logic itself (argv building, spawning) is duplicated into `proxy/mod.rs`

@@ -376,5 +376,18 @@
   "agent_chat_error_stopped": "остановлено",
   "agent_chat_error_disconnected": "соединение потеряно",
   "agent_chat_error_timeout": "Время ожидания {command} истекло",
-  "agent_chat_error_command_failed": "команда не выполнена"
+  "agent_chat_error_command_failed": "команда не выполнена",
+  "github_access_switch_label": "Доступ к GitHub для этой песочницы",
+  "github_card_title": "GitHub",
+  "github_deployed": "Недоступно для развёрнутых песочниц",
+  "github_no_credential": "Вход в GitHub не выполнен.",
+  "github_login_link": "Войти на странице учётных данных",
+  "github_opted_out": "Отключено для этой песочницы",
+  "github_needs_image": "Для gh нужно пересоздать песочницу поверх её рабочей области",
+  "github_failed": "Сбой: {reason}",
+  "github_account": "GitHub: {login}",
+  "github_token_sidecar": "токен надёжно хранится",
+  "github_token_plaintext": "токен хранится в песочнице",
+  "github_out_of_date": "Устарело; применится при следующем запуске",
+  "github_pending": "Применится, когда песочница запущена"
 }

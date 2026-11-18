@@ -376,5 +376,18 @@
   "agent_chat_error_stopped": "gestoppt",
   "agent_chat_error_disconnected": "Verbindung getrennt",
   "agent_chat_error_timeout": "{command} hat das Zeitlimit überschritten",
-  "agent_chat_error_command_failed": "Befehl fehlgeschlagen"
+  "agent_chat_error_command_failed": "Befehl fehlgeschlagen",
+  "github_access_switch_label": "GitHub-Zugriff für diese Sandbox",
+  "github_card_title": "GitHub",
+  "github_deployed": "Für bereitgestellte Sandboxes nicht verfügbar",
+  "github_no_credential": "Keine GitHub-Anmeldung.",
+  "github_login_link": "Auf der Seite „Zugangsdaten“ anmelden",
+  "github_opted_out": "Für diese Sandbox aus",
+  "github_needs_image": "Sandbox muss für gh über ihrem Workspace neu erstellt werden",
+  "github_failed": "Fehlgeschlagen: {reason}",
+  "github_account": "GitHub: {login}",
+  "github_token_sidecar": "Token sicher verwahrt",
+  "github_token_plaintext": "Token in der Sandbox gespeichert",
+  "github_out_of_date": "Veraltet; wird beim nächsten Start angewendet",
+  "github_pending": "Wird angewendet, wenn die Sandbox läuft"
 }

@@ -376,5 +376,18 @@
   "agent_chat_error_stopped": "stopped",
   "agent_chat_error_disconnected": "disconnected",
   "agent_chat_error_timeout": "{command} timed out",
-  "agent_chat_error_command_failed": "command failed"
+  "agent_chat_error_command_failed": "command failed",
+  "github_access_switch_label": "GitHub access for this sandbox",
+  "github_card_title": "GitHub",
+  "github_deployed": "Not available for deployed sandboxes",
+  "github_no_credential": "No GitHub login.",
+  "github_login_link": "Log in on the Credentials page",
+  "github_opted_out": "Off for this sandbox",
+  "github_needs_image": "Needs the sandbox recreated over its workspace for gh",
+  "github_failed": "Failed: {reason}",
+  "github_account": "GitHub: {login}",
+  "github_token_sidecar": "token kept securely",
+  "github_token_plaintext": "token stored in sandbox",
+  "github_out_of_date": "Out of date; applies on next start",
+  "github_pending": "Applies when the sandbox runs"
 }

@@ -7,6 +7,7 @@
 
 use serde_json::{json, Value};
 
+use crate::credentials::github::GITHUB_PLACEHOLDER;
 use crate::net_policy::{self, EgressMode, NetPolicy, RuleAction};
 
 /// Replaces iron-proxy's default deny list in every config, so an allowed host resolving to a
@@ -29,6 +30,41 @@ pub const BASELINE_DENY_CIDRS: &[&str] = &[
 pub const CONTAINER_CERTS_DIR: &str = "/etc/iron-proxy/certs";
 pub const CONTAINER_SECRETS_DIR: &str = "/etc/iron-proxy/secrets";
 
+/// The GitHub binding's secret file. Lowercase and hyphenated, so it can never equal a workspace
+/// binding's `[A-Z0-9_]` file name (`docs/features/proxy-credential-secrets/02_dev.md`, Resolved
+/// Decision 6).
+pub const GITHUB_BINDING_FILE: &str = "mio-github";
+
+/// Hosts the GitHub placeholder is swapped for (`docs/features/proxy-credential-secrets/02_dev.md`,
+/// Resolved Decision 3).
+pub const GITHUB_BINDING_HOSTS: &[&str] = &[
+    "github.com",
+    "api.github.com",
+    "uploads.github.com",
+    "gist.github.com",
+    "raw.githubusercontent.com",
+];
+
+/// A secret binding the app owns, rendered beside the workspace policy's bindings but never stored
+/// in `.mio/net-policy.json`, which code inside the sandbox can write.
+pub struct AppBinding {
+    /// The file under [`CONTAINER_SECRETS_DIR`] holding the value.
+    pub file: String,
+    pub placeholder: String,
+    pub hosts: Vec<String>,
+    pub headers: Vec<String>,
+}
+
+/// The GitHub token binding: `Authorization` headers to GitHub's hosts only.
+pub fn github_app_binding() -> AppBinding {
+    AppBinding {
+        file: GITHUB_BINDING_FILE.to_string(),
+        placeholder: GITHUB_PLACEHOLDER.to_string(),
+        hosts: GITHUB_BINDING_HOSTS.iter().map(|h| h.to_string()).collect(),
+        headers: vec!["Authorization".to_string()],
+    }
+}
+
 /// The sidecar environment variable holding the management bearer token; iron-proxy refuses to
 /// boot a management listener without it (Resolved Decision 13).
 pub const MGMT_API_KEY_ENV: &str = "IRON_MANAGEMENT_API_KEY";
@@ -50,8 +86,14 @@ pub fn bootstrap(proxy_ip: &str) -> Value {
 
 /// The config enforcing `policy`, which [`net_policy::validate`] has accepted in the sidecar
 /// dialect. `with_value` names the bindings whose secret has a stored value; any other binding is
-/// left out, so its placeholder passes through unswapped (Resolved Decision 15).
-pub fn render(policy: &NetPolicy, proxy_ip: &str, with_value: &[String]) -> Value {
+/// left out, so its placeholder passes through unswapped (Resolved Decision 15). `app_bindings` are
+/// appended after the workspace bindings.
+pub fn render(
+    policy: &NetPolicy,
+    proxy_ip: &str,
+    with_value: &[String],
+    app_bindings: &[AppBinding],
+) -> Value {
     let mut domains: Vec<String> = Vec::new();
     let mut deny = BASELINE_DENY_CIDRS.iter().map(|c| c.to_string()).collect::<Vec<_>>();
     for rule in &policy.rules {
@@ -64,7 +106,7 @@ pub fn render(policy: &NetPolicy, proxy_ip: &str, with_value: &[String]) -> Valu
         }
     }
     let mut transforms = vec![allowlist(policy.egress == EgressMode::Open, domains)];
-    let secrets: Vec<Value> = policy
+    let mut secrets: Vec<Value> = policy
         .secrets
         .iter()
         .filter(|b| with_value.contains(&b.env_var))
@@ -85,6 +127,19 @@ pub fn render(policy: &NetPolicy, proxy_ip: &str, with_value: &[String]) -> Valu
             })
         })
         .collect();
+    secrets.extend(app_bindings.iter().map(|b| {
+        let rules: Vec<Value> = b.hosts.iter().map(|h| json!({ "host": h })).collect();
+        json!({
+            "source": { "type": "file", "path": format!("{CONTAINER_SECRETS_DIR}/{}", b.file) },
+            "replace": {
+                "proxy_value": b.placeholder,
+                "match_headers": b.headers,
+                "match_query": false,
+                "match_body": false,
+            },
+            "rules": rules,
+        })
+    }));
     // Omitted rather than rendered empty: an empty `secrets` transform was never run in Phase A.
     if !secrets.is_empty() {
         transforms.push(json!({ "name": "secrets", "config": { "secrets": secrets } }));
@@ -245,8 +300,9 @@ mod tests {
         let open = NetPolicy { egress: EgressMode::Open, ..policy() };
         let with_value = ["OPENAI_API_KEY".to_string()];
         for config in [
-            render(&policy(), "10.90.7.2", &with_value),
-            render(&open, "10.90.7.2", &with_value),
+            render(&policy(), "10.90.7.2", &with_value, &[]),
+            render(&policy(), "10.90.7.2", &with_value, &[github_app_binding()]),
+            render(&open, "10.90.7.2", &with_value, &[]),
             bootstrap("10.90.7.2"),
         ] {
             let mut rendered = BTreeSet::new();
@@ -262,7 +318,7 @@ mod tests {
             rules: vec![deny_cidr("203.0.113.5"), deny_cidr("2001:db8::1"), deny_cidr("198.51.100.0/24")],
             ..NetPolicy::default()
         };
-        let config = render(&p, "10.90.7.2", &[]);
+        let config = render(&p, "10.90.7.2", &[], &[]);
         let deny: Vec<&str> = config["proxy"]["upstream_deny_cidrs"]
             .as_array()
             .unwrap()
@@ -270,5 +326,36 @@ mod tests {
             .map(|v| v.as_str().unwrap())
             .collect();
         assert!(deny.ends_with(&["203.0.113.5/32", "2001:db8::1/128", "198.51.100.0/24"]), "{deny:?}");
+    }
+
+    #[test]
+    fn the_github_entry_swaps_authorization_for_four_hosts_only() {
+        let config = render(&NetPolicy::default(), "10.90.7.2", &[], &[github_app_binding()]);
+        let secrets = config["transforms"][1]["config"]["secrets"].as_array().unwrap();
+        assert_eq!(secrets.len(), 1);
+        let entry = &secrets[0];
+        let hosts: Vec<&str> =
+            entry["rules"].as_array().unwrap().iter().map(|r| r["host"].as_str().unwrap()).collect();
+        assert_eq!(
+            hosts,
+            [
+                "github.com",
+                "api.github.com",
+                "uploads.github.com",
+                "gist.github.com",
+                "raw.githubusercontent.com"
+            ]
+        );
+        assert_eq!(entry["replace"]["match_headers"], json!(["Authorization"]));
+        assert_eq!(entry["replace"]["match_query"], json!(false));
+        assert_eq!(entry["replace"]["match_body"], json!(false));
+        assert_eq!(entry["replace"]["proxy_value"], GITHUB_PLACEHOLDER);
+        assert_eq!(entry["source"]["path"], "/etc/iron-proxy/secrets/mio-github");
+    }
+
+    #[test]
+    fn the_secrets_transform_is_omitted_without_any_binding() {
+        let config = render(&NetPolicy::default(), "10.90.7.2", &[], &[]);
+        assert_eq!(config["transforms"].as_array().unwrap().len(), 1);
     }
 }

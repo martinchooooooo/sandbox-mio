@@ -5,8 +5,13 @@ Records feature status changes only: creation (`Create`), reaching `implemented`
 history with at most one `Create` and one `Implement` entry per feature, so seeded dates are
 approximate. New entries go on top.
 
+## 2026-11-19
+
+* **Implement** [proxy-credential-secrets](proxy-credential-secrets/index.md): the GitHub token stays on the host; sidecar-mode sandboxes hold a placeholder the iron-proxy sidecar swaps on GitHub requests, for gh, git and mise, and the Manage card shows the mode; the e2e specs in `03_e2e.md` are not implemented yet
+
 ## 2026-11-18
 
+* **Create** [proxy-credential-secrets](proxy-credential-secrets/index.md): ideation rewritten from scratch; sandboxes hold a fixed GitHub-shaped placeholder that the iron-proxy sidecar swaps for the host-held token; the gh and git swap spike passed against iron-proxy 0.56.0; the earlier Claude-bundle plan was dropped
 * **Create** [mcp-servers](mcp-servers/index.md): ideation drafted; an app-wide MCP library filled by pasting a URL or README snippet, switched on per sandbox and rendered into Claude Code, OpenCode and pi configs; gating spike not yet run
 * **Create** [chat-mcp-learning](chat-mcp-learning/index.md): ideation drafted; a built-in offline demo MCP server and MCP visibility in the native chat, building on mcp-servers; gating spike not yet run
 * **Create** [github-cli-auth](github-cli-auth/index.md): ideation drafted; log in to GitHub once via gh's device flow in the auth container and apply the token to every sandbox, with a per-sandbox opt-out; the no-TTY login spike passed

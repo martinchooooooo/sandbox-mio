@@ -40,9 +40,13 @@ enum Action {
 
 /// Decides the action from the desired state alone. `credential_captured_at_ms` is `None` when no
 /// GitHub credential is saved.
-fn plan(credential_captured_at_ms: Option<u64>, state: &GithubSandboxState) -> Action {
+/// An applied outcome whose `swapped` differs from `sidecar_mode` is re-applied, which migrates a
+/// sandbox that holds the plaintext token (or the placeholder) to the current mode.
+fn plan(credential_captured_at_ms: Option<u64>, state: &GithubSandboxState, sidecar_mode: bool) -> Action {
     let applied = match &state.outcome {
-        Some(ApplyOutcome::Applied { captured_at_ms }) => Some(*captured_at_ms),
+        Some(ApplyOutcome::Applied { captured_at_ms, swapped }) if *swapped == sidecar_mode => {
+            Some(*captured_at_ms)
+        }
         _ => None,
     };
     // A failed apply can sit over a token gh already wrote (login ok, setup-git failed, or a timeout).
@@ -60,6 +64,11 @@ fn plan(credential_captured_at_ms: Option<u64>, state: &GithubSandboxState) -> A
         _ if state.outcome.is_some() => Action::Forget,
         _ => Action::None,
     }
+}
+
+/// Whether `name` sits behind an iron-proxy sidecar, so gh holds the placeholder and not the token.
+pub fn github_sidecar_mode(app: &AppHandle, name: &str) -> bool {
+    crate::proxy::sidecar_engine(app, name) == crate::proxy::types::ProxyEngine::IronProxy
 }
 
 /// Whether `name` has a Mutagen deploy session, which puts it out of scope. An error is not
@@ -149,18 +158,39 @@ async fn reconcile_locked(
     }
 
     let stamp = credential_stamp(app)?;
-    match plan(stamp, &state) {
+    let sidecar_mode = github_sidecar_mode(app, name);
+    match plan(stamp, &state, sidecar_mode) {
         Action::None => return Ok(state),
         Action::Forget => state.outcome = None,
         Action::Apply(captured_at_ms) => {
-            let token = credentials::load_secret(app, GITHUB_SERVICE)?;
             let registry = app.state::<Arc<ProviderRegistry>>().inner().clone();
             let provider = registry.engine_of(name).await;
-            state.outcome = Some(github::apply(&provider, name, &token, captured_at_ms).await);
+            let outcome = if sidecar_mode {
+                // The binding must be live before gh validates the placeholder online.
+                match crate::proxy::iron::refresh_github_binding(app, &registry, name).await {
+                    Ok(()) => {
+                        github::apply(&provider, name, github::GITHUB_PLACEHOLDER, captured_at_ms, true).await
+                    }
+                    Err(e) => ApplyOutcome::Failed {
+                        reason: e.to_string().chars().take(200).collect(),
+                        captured_at_ms,
+                    },
+                }
+            } else {
+                let token = credentials::load_secret(app, GITHUB_SERVICE)?;
+                github::apply(&provider, name, &token, captured_at_ms, false).await
+            };
+            state.outcome = Some(outcome);
         }
         Action::Remove => {
             let registry = app.state::<Arc<ProviderRegistry>>().inner().clone();
             let provider = registry.engine_of(name).await;
+            // Drop the sidecar's token first, so the credential is revoked even if the exec fails.
+            if sidecar_mode {
+                if let Err(e) = crate::proxy::iron::refresh_github_binding(app, &registry, name).await {
+                    tracing::warn!(target: "credentials", sandbox = %name, error = %e, "could not drop the GitHub binding from the sidecar");
+                }
+            }
             // The outcome is kept on failure, so the next reconcile retries the removal.
             match github::remove(&provider, name).await {
                 Ok(()) => state.outcome = None,
@@ -191,7 +221,8 @@ pub fn spawn_reconcile(app: &AppHandle, name: &str) {
     });
 }
 
-/// Reconciles every running local sandbox, off the caller's path.
+/// Refreshes the GitHub binding of every sidecar-mode sandbox, running or stopped, then reconciles
+/// the running local sandboxes, off the caller's path.
 pub fn spawn_reconcile_all(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -203,6 +234,12 @@ pub fn spawn_reconcile_all(app: &AppHandle) {
                 return;
             }
         };
+        let registry = app.state::<Arc<ProviderRegistry>>().inner().clone();
+        for sandbox in sandboxes.iter().filter(|s| github_sidecar_mode(&app, &s.name)) {
+            if let Err(e) = crate::proxy::iron::refresh_github_binding(&app, &registry, &sandbox.name).await {
+                tracing::warn!(target: "credentials", sandbox = %sandbox.name, error = %e, "could not refresh the GitHub binding");
+            }
+        }
         for sandbox in sandboxes.iter().filter(|s| s.status == "running") {
             if let Err(e) = reconcile_sandbox(&app, &sandbox.name).await {
                 tracing::warn!(target: "credentials", sandbox = %sandbox.name, error = %e, "GitHub access reconcile failed");
@@ -220,6 +257,8 @@ pub struct GithubSandboxStatus {
     pub credential_captured_at_ms: Option<u64>,
     pub account_login: Option<String>,
     pub deployed: bool,
+    /// The sandbox sits behind an iron-proxy sidecar and holds the placeholder, not the token.
+    pub sidecar_mode: bool,
 }
 
 pub async fn status(app: &AppHandle, name: &str) -> Result<GithubSandboxStatus, AppError> {
@@ -240,6 +279,7 @@ pub async fn status(app: &AppHandle, name: &str) -> Result<GithubSandboxStatus, 
         credential_captured_at_ms: manifest.as_ref().map(|m| m.captured_at_ms),
         account_login: manifest.and_then(|m| m.account_login),
         deployed,
+        sidecar_mode: github_sidecar_mode(app, name),
     })
 }
 
@@ -253,47 +293,62 @@ mod tests {
 
     #[test]
     fn a_saved_credential_is_applied_when_nothing_is() {
-        assert_eq!(plan(Some(5), &state(false, None)), Action::Apply(5));
+        assert_eq!(plan(Some(5), &state(false, None), false), Action::Apply(5));
     }
 
     #[test]
     fn a_current_apply_is_left_alone() {
-        let applied = Some(ApplyOutcome::Applied { captured_at_ms: 5 });
-        assert_eq!(plan(Some(5), &state(false, applied)), Action::None);
+        let applied = Some(ApplyOutcome::Applied { captured_at_ms: 5, swapped: false });
+        assert_eq!(plan(Some(5), &state(false, applied), false), Action::None);
     }
 
     #[test]
     fn a_newer_credential_is_reapplied() {
-        let applied = Some(ApplyOutcome::Applied { captured_at_ms: 5 });
-        assert_eq!(plan(Some(9), &state(false, applied)), Action::Apply(9));
+        let applied = Some(ApplyOutcome::Applied { captured_at_ms: 5, swapped: false });
+        assert_eq!(plan(Some(9), &state(false, applied), false), Action::Apply(9));
     }
 
     #[test]
     fn a_failed_or_imageless_apply_is_retried() {
-        assert_eq!(plan(Some(5), &state(false, Some(ApplyOutcome::NeedsImage))), Action::Apply(5));
+        assert_eq!(plan(Some(5), &state(false, Some(ApplyOutcome::NeedsImage)), false), Action::Apply(5));
         let failed = Some(ApplyOutcome::Failed { reason: "x".into(), captured_at_ms: 5 });
-        assert_eq!(plan(Some(5), &state(false, failed)), Action::Apply(5));
+        assert_eq!(plan(Some(5), &state(false, failed), false), Action::Apply(5));
     }
 
     #[test]
     fn opting_out_or_deleting_the_credential_removes_an_applied_token() {
-        let applied = Some(ApplyOutcome::Applied { captured_at_ms: 5 });
-        assert_eq!(plan(Some(5), &state(true, applied.clone())), Action::Remove);
-        assert_eq!(plan(None, &state(false, applied)), Action::Remove);
+        let applied = Some(ApplyOutcome::Applied { captured_at_ms: 5, swapped: false });
+        assert_eq!(plan(Some(5), &state(true, applied.clone()), false), Action::Remove);
+        assert_eq!(plan(None, &state(false, applied), false), Action::Remove);
     }
 
     #[test]
     fn a_failed_apply_may_hold_a_token_so_it_is_removed_too() {
         let failed = Some(ApplyOutcome::Failed { reason: "x".into(), captured_at_ms: 5 });
-        assert_eq!(plan(Some(5), &state(true, failed.clone())), Action::Remove);
-        assert_eq!(plan(None, &state(false, failed)), Action::Remove);
+        assert_eq!(plan(Some(5), &state(true, failed.clone()), false), Action::Remove);
+        assert_eq!(plan(None, &state(false, failed), false), Action::Remove);
     }
 
     #[test]
     fn an_imageless_outcome_is_forgotten_without_a_script() {
-        assert_eq!(plan(None, &state(false, Some(ApplyOutcome::NeedsImage))), Action::Forget);
-        assert_eq!(plan(Some(5), &state(true, Some(ApplyOutcome::NeedsImage))), Action::Forget);
-        assert_eq!(plan(None, &state(false, None)), Action::None);
-        assert_eq!(plan(Some(5), &state(true, None)), Action::None);
+        assert_eq!(plan(None, &state(false, Some(ApplyOutcome::NeedsImage)), false), Action::Forget);
+        assert_eq!(plan(Some(5), &state(true, Some(ApplyOutcome::NeedsImage)), false), Action::Forget);
+        assert_eq!(plan(None, &state(false, None), false), Action::None);
+        assert_eq!(plan(Some(5), &state(true, None), false), Action::None);
+    }
+
+    #[test]
+    fn a_plaintext_apply_is_migrated_when_the_sandbox_is_behind_a_sidecar() {
+        let plaintext = Some(ApplyOutcome::Applied { captured_at_ms: 5, swapped: false });
+        assert_eq!(plan(Some(5), &state(false, plaintext), true), Action::Apply(5));
+        let swapped = Some(ApplyOutcome::Applied { captured_at_ms: 5, swapped: true });
+        assert_eq!(plan(Some(5), &state(false, swapped.clone()), false), Action::Apply(5));
+        assert_eq!(plan(Some(5), &state(true, swapped), true), Action::Remove);
+    }
+
+    #[test]
+    fn an_apply_in_the_current_mode_is_left_alone() {
+        let swapped = Some(ApplyOutcome::Applied { captured_at_ms: 5, swapped: true });
+        assert_eq!(plan(Some(5), &state(false, swapped), true), Action::None);
     }
 }

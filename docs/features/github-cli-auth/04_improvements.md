@@ -9,7 +9,7 @@ Ideas raised while scoping `github-cli-auth` (`docs/features/github-cli-auth/01_
 
 ## Keep the token out of proxy sandboxes with secret swapping
 
-A proxy-enabled sandbox could hold a placeholder instead of the real token, with the sidecar swapping it in only for `api.github.com` and `github.com` (`docs/architecture/network.md`, secret swapping). Deferred because git over HTTPS sends the token inside a Basic `Authorization` header, where a placeholder is base64-encoded and a plain substitution would miss it, and because `gh auth login --with-token` validates the placeholder online and would reject it. Builds on `docs/features/proxy-credential-secrets/01_ideas.md`.
+A proxy-enabled sandbox could hold a placeholder instead of the real token, with the sidecar swapping it in only for `api.github.com` and `github.com` (`docs/architecture/network.md`, secret swapping). First deferred over two assumed blockers: git's Basic `Authorization` header base64-encodes the placeholder, and `gh auth login --with-token` validates the placeholder online. The 2026-11-18 spike (`spike/proxy-swap.md`) cleared both for iron-proxy 0.56.0 sandboxes: iron-proxy decodes and re-encodes Basic auth, and gh's validation request is swapped on its way out. The remaining work is product scope: every sandbox behind a sidecar, a host-sourced binding value, and binding-before-apply ordering. Now planned in `docs/features/proxy-credential-secrets/01_ideas.md`.
 
 ## A Sandbox-mio GitHub OAuth app
 

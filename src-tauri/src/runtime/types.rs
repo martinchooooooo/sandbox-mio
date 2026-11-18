@@ -99,9 +99,10 @@ pub trait RuntimeManager: Send + Sync {
 /// Secret environment for in-sandbox toolchain calls that resolve or download tools (the GitHub
 /// token of `docs/features/techdebt-sweep/02_dev.md`, Resolved Decision 3). Implemented over the
 /// credential store by `services::toolchain_secrets`, so this module never reads app state itself.
-/// Empty when nothing is saved; values are never logged.
+/// Empty when nothing is saved or the sandbox sits behind a proxy sidecar (`docs/features/
+/// proxy-credential-secrets/02_dev.md`, Resolved Decision 11); values are never logged.
 pub trait ToolchainSecrets: Send + Sync {
-    fn env(&self) -> Vec<(String, String)>;
+    fn env(&self, sandbox: &str) -> Vec<(String, String)>;
 }
 
 /// Drives `mise` through whichever [`crate::provider::types::MachineProvider`] owns the sandbox.

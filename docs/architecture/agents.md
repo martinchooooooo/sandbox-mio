@@ -3,8 +3,8 @@ type: architecture
 title: "Coding Agents and Credentials"
 description: "The agent catalogue, installing agents into sandboxes, logging in once and reusing the login everywhere, local-model wiring, and the Paseo agent web UI."
 generated:
-  by: claude-code/opus-5-5
-  at: 2026-11-18T18:30:00+11:00
+  by: claude-code/sonnet-5-5
+  at: 2026-11-19T18:00:00+11:00
 stale_after: 2027-02-17T00:00:00+11:00
 code:
   - src/lib/agents/
@@ -32,52 +32,52 @@ sources:
   - resource: docs/features/local-llm-reachability/02_dev.md
   - resource: docs/features/techdebt-sweep/02_dev.md
   - resource: docs/features/github-cli-auth/02_dev.md
+  - resource: docs/features/proxy-credential-secrets/02_dev.md
 ---
 # Coding Agents and Credentials
 
-The app installs coding agents (Claude Code, OpenCode, pi) into a sandbox, lets the user log an agent in once and reuse that login in every sandbox, points the local-model agents at the host inference server, offers Paseo as a browser alternative to the terminal, and offers a built-in chat for pi.
+The app installs coding agents (Claude Code, OpenCode, pi) into a sandbox, lets the user log in once and reuse the login everywhere, points local-model agents at the host inference server, and offers Paseo and a built-in pi chat.
 
 ## The Agent Catalogue
 
-- One frontend catalogue declares every installable agent: its mise packages, post-install steps, how it authenticates (login command, credential file, expiry, onboarding state), an optional provisioning step, and the API hosts it calls.
+- One frontend catalogue declares every installable agent: mise packages, post-install steps, authentication (login command, credential file, expiry, onboarding state), an optional provisioning step, and API hosts.
 - The catalogue's API hosts seed the starter allowlist for network policy ([Network](network.md)).
 
 ## Install
 
-- Installing runs the agent's packages through mise inside the sandbox, so the agent is recorded in `mise.toml` and reproduced on remote deploy, then runs the post-install steps. 
-- If the host credential store holds a login for the agent, install injects it, so a fresh agent starts signed in.
+- Installing runs the agent's packages through mise inside the sandbox, so the agent is recorded in `mise.toml` and reproduced on remote deploy, then runs the post-install steps.
+- Install injects the stored login for the agent, if any, so a fresh agent starts signed in.
 
 ## Login and the Credential Store
 
-- Login runs in a short-lived, hidden auth container, so logging in needs no sandbox.
-- The login command's output streams to an inline card on the Credentials page, where the user pastes the returned code.
-- After login, the app captures the agent's whole config directory, which carries onboarding state as well as the token, into a credential store in the app-data root.
-- Any sandbox can then receive that bundle; injection also marks first-run onboarding complete. Auth status is read from the agent's credential file and expiry.
+- Login runs in a short-lived, hidden auth container, so it needs no sandbox; output streams to an inline card on the Credentials page, where the user pastes the returned code.
+- After login, the app captures the agent's whole config directory (token and onboarding state) into a credential store in the app-data root.
+- Any sandbox can receive that bundle; injection also marks first-run onboarding complete.
 
 ## The GitHub Token
 
-- One single-value credential, saved by pasting a token or by a GitHub CLI device-flow login in the auth container. The host verifies it with GitHub.
+- One single-value credential, saved by pasting a token or by a device-flow login in the auth container, and verified by the host with GitHub.
 - In-sandbox mise calls carry it as a secret exec environment ([Providers](providers.md)), never a command line.
-- The base image carries the GitHub CLI. A serialised reconcile logs it into each running local sandbox over stdin on create, start, save, delete and the Manage switch, honouring a per-sandbox opt-out; failures are recorded.
+- The base image carries the GitHub CLI. A serialised reconcile logs it into each running local sandbox over stdin on create, start, save, delete and the Manage switch, honouring a per-sandbox opt-out.
+- Two modes, derived from whether the sandbox sits behind a proxy sidecar. In sidecar mode gh and mise hold a fixed placeholder, and the sidecar swaps in the real token on requests to GitHub's hosts, so the token stays on the host ([Network](network.md)); an opted-out sandbox holds nothing. In plaintext mode (deployed sandboxes, no sidecar) both hold the real token. A mode change re-applies the login.
 
 ## Local-Model Agents: OpenCode and pi
 
-- OpenCode and pi are provisioned to use the host inference server as a model provider ([Local Inference](inference.md)). Provisioning writes their configuration into the workspace from the host, so it works while the sandbox is stopped. OpenCode's configuration is merged into existing user settings; pi's lives in its own file under `.mio/`.
-- Every provisioned agent is re-provisioned, best-effort, at app startup and after each server start, keeping the model list and server address current.
-- An agent's default model follows the running server, unless the user picked a model from another provider in the agent itself.
-- pi gets one local model, "Local LLM", keyed by the served id; the Models page switches it.
+- OpenCode and pi are provisioned to use the host inference server as a model provider ([Local Inference](inference.md)). Provisioning writes their configuration into the workspace from the host, so it works while the sandbox is stopped. OpenCode's is merged into existing user settings; pi's lives under `.mio/`.
+- Every provisioned agent is re-provisioned, best-effort, at app startup and after each server start, keeping model list and address current. Its default model follows the running server, unless the user picked another provider's model in the agent.
+- pi gets one local model, "Local LLM", keyed by the served id.
 
 ## Agent Web UI (Paseo)
 
-- Paseo runs in-sandbox as a pinned mise tool behind a forward ([Workspace UI](workspace-ui.md)); the workspace is its project, named after the sandbox.
-- The daemon restarts only when `mise.toml` or the password changes; starting a Paseo-using sandbox pre-starts it.
+- Paseo runs in-sandbox as a pinned mise tool behind a forward ([Workspace UI](workspace-ui.md)); its project is the workspace.
+- The daemon restarts only when `mise.toml` or the password changes.
 
 ## Native Chat (pi)
 
-- A chat pane in the main webview drives pi in its JSON-lines RPC mode inside the sandbox ([Workspace UI](workspace-ui.md)). Traffic rides the engine's streamed exec, not SSH.
-- A small supervisor inside the sandbox keeps one pi alive across disconnects and journals its output. The host reattaches from a cursor, rebuilds history from pi itself, and installs the supervisor scripts, which ship in the app binary, on demand.
+- A chat pane in the main webview drives pi's RPC mode inside the sandbox over the engine's streamed exec ([Workspace UI](workspace-ui.md)).
+- A small in-sandbox supervisor keeps one pi alive across disconnects and journals its output; the host reattaches from a cursor and installs the supervisor scripts on demand.
 - One attach is the writer; any other attach is read-only until the user takes control.
-- Chat sessions live in the workspace under their own directory, so the chat and Paseo never write one session file. pi is pinned in the catalogue and the chat asks for an update when the sandbox runs an older pi.
+- Chat sessions live in the workspace under their own directory, so chat and Paseo never write one session file. The chat asks for an update when the sandbox runs an older pi than the catalogue pins.
 - Deployed sandboxes are unsupported. Rationale: [native-agent-ui plan](../features/native-agent-ui/02_dev.md).
 
 ## Invariants

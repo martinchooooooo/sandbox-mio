@@ -392,6 +392,20 @@ class WorkspaceDashboardPage {
       timeoutMsg: `${what} never settled`,
     });
     if (await error.isExisting()) throw new Error(`${what} failed: ${await error.getText()}`);
+    // The editor drops a removed row optimistically, before the value deletion and refresh finish;
+    // its inputs stay disabled for as long as the commit is in flight, so wait for them to re-enable.
+    await $("[data-secret-hosts]").waitForEnabled({ timeout: SUBPROCESS, timeoutMsg: `${what} never finished committing` });
+  }
+
+  /** Clicks once no sonner toast is on screen: a toast raised by the previous save covers the controls. */
+  async #clickWhenUncovered(button: Element): Promise<void> {
+    await $("[data-sonner-toast]").waitForExist({ reverse: true, timeout: COMMAND, timeoutMsg: "a toast kept covering the editor" });
+    await this.#clickButton(button);
+  }
+
+  /** Flips the value field's show/hide switch in the open secret form. */
+  async toggleSecretValueVisibility(): Promise<void> {
+    await this.#clickWhenUncovered($("[data-secret-form] [data-secret-show]"));
   }
 
   /** Adds a secret from the add form; this saves the whole policy and applies it on the sidecar. */
@@ -400,7 +414,7 @@ class WorkspaceDashboardPage {
     await this.#typeInto(form.$("[data-secret-env-var]"), envVar);
     await this.#typeInto(form.$("[data-secret-hosts]"), hosts);
     await this.#typeInto(form.$("[data-secret-value]"), value);
-    await form.$("[data-secret-save]").click();
+    await this.#clickWhenUncovered(form.$("[data-secret-save]"));
     // The row renders a tick before the form resets, so wait for both.
     await this.#awaitSecretCommit(
       async () => (await this.secretRow(envVar).isExisting()) && (await form.$("[data-secret-env-var]").getValue()) === "",
@@ -410,17 +424,17 @@ class WorkspaceDashboardPage {
 
   /** Edits a secret's hosts and/or replaces its value; an omitted field keeps its current content. */
   async editSecret(envVar: string, change: { hosts?: string; value?: string }): Promise<void> {
-    await this.#clickButton(this.secretRow(envVar).$("[data-secret-edit]"));
+    await this.#clickWhenUncovered(this.secretRow(envVar).$("[data-secret-edit]"));
     const form = $("[data-secret-form='edit']");
     await form.waitForExist({ timeout: COMMAND });
     if (change.hosts !== undefined) await this.#typeInto(form.$("[data-secret-hosts]"), change.hosts);
     if (change.value !== undefined) await this.#typeInto(form.$("[data-secret-value]"), change.value);
-    await form.$("[data-secret-save]").click();
+    await this.#clickWhenUncovered(form.$("[data-secret-save]"));
     await this.#awaitSecretCommit(async () => !(await form.isExisting()), `editing $${envVar}`);
   }
 
   async removeSecret(envVar: string): Promise<void> {
-    await this.#clickButton(this.secretRow(envVar).$("[data-secret-remove]"));
+    await this.#clickWhenUncovered(this.secretRow(envVar).$("[data-secret-remove]"));
     await this.#awaitSecretCommit(async () => !(await this.secretRow(envVar).isExisting()), `removing $${envVar}`);
   }
 

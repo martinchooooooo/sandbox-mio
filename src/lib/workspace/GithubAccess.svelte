@@ -5,12 +5,13 @@
     import { Switch } from "$lib/components/ui/switch";
     import { parseError } from "$lib/errors";
     import { authCapturedCount } from "$lib/agents/authSession.svelte";
+    import { m } from "$lib/paraglide/messages.js";
     import { showPage } from "$lib/workspace/navigation.svelte";
 
     // Mirrors `ApplyOutcome` and `GithubSandboxStatus` in src-tauri/src/credentials/github.rs and
     // src-tauri/src/services/github_access.rs.
     type Outcome =
-        | { kind: "applied"; capturedAtMs: number }
+        | { kind: "applied"; capturedAtMs: number; swapped: boolean }
         | { kind: "needsImage" }
         | { kind: "failed"; reason: string; capturedAtMs: number };
     interface GithubStatus {
@@ -19,11 +20,10 @@
         credentialCapturedAtMs: number | null;
         accountLogin: string | null;
         deployed: boolean;
+        sidecarMode: boolean;
     }
 
     let { sandboxName }: { sandboxName: string } = $props();
-
-    const switchLabel = "GitHub access for this sandbox"; // TODO(i18n)
 
     let status = $state<GithubStatus | null>(null);
     let busy = $state(false);
@@ -43,7 +43,9 @@
         if (s.outcome?.kind === "needsImage") return "needs-image";
         if (s.outcome?.kind === "failed") return "failed";
         if (s.outcome?.kind === "applied") {
-            return s.outcome.capturedAtMs === s.credentialCapturedAtMs ? "applied" : "out-of-date";
+            const current =
+                s.outcome.capturedAtMs === s.credentialCapturedAtMs && s.outcome.swapped === s.sidecarMode;
+            return current ? "applied" : "out-of-date";
         }
         return "pending";
     });
@@ -105,29 +107,32 @@
         class="flex items-center justify-between gap-2 rounded-lg border p-3 text-xs"
         data-github-access
         data-state={display}
+        data-github-mode={status.sidecarMode ? "sidecar" : "plaintext"}
     >
         <div class="min-w-0">
-            <div class="text-sm font-medium">GitHub</div><!-- TODO(i18n) -->
+            <div class="text-sm font-medium">{m.github_card_title()}</div>
             <div class="text-muted-foreground" data-github-access-text>
                 {#if display === "deployed"}
-                    Not available for deployed sandboxes<!-- TODO(i18n) -->
+                    {m.github_deployed()}
                 {:else if display === "no-credential"}
-                    No GitHub login.<!-- TODO(i18n) -->
+                    {m.github_no_credential()}
                     <button type="button" class="underline" onclick={() => showPage("/credentials")}>
-                        Log in on the Credentials page<!-- TODO(i18n) -->
+                        {m.github_login_link()}
                     </button>
                 {:else if display === "opted-out"}
-                    Off for this sandbox<!-- TODO(i18n) -->
+                    {m.github_opted_out()}
                 {:else if display === "needs-image"}
-                    Needs the sandbox recreated over its workspace for gh<!-- TODO(i18n) -->
+                    {m.github_needs_image()}
                 {:else if display === "failed" && status.outcome?.kind === "failed"}
-                    {`Failed: ${status.outcome.reason}`}<!-- TODO(i18n) -->
+                    {m.github_failed({ reason: status.outcome.reason })}
                 {:else if display === "applied"}
-                    {status.accountLogin ? `GitHub: ${status.accountLogin}` : "GitHub token applied"}<!-- TODO(i18n) -->
+                    {`${status.accountLogin ? m.github_account({ login: status.accountLogin }) : m.github_card_title()} · ${
+                        status.sidecarMode ? m.github_token_sidecar() : m.github_token_plaintext()
+                    }`}
                 {:else if display === "out-of-date"}
-                    Out of date; applies on next start<!-- TODO(i18n) -->
+                    {m.github_out_of_date()}
                 {:else}
-                    Applies when the sandbox runs<!-- TODO(i18n) -->
+                    {m.github_pending()}
                 {/if}
             </div>
             {#if error}<div class="text-destructive">{error}</div>{/if}
@@ -138,7 +143,7 @@
                     checked={!status.optedOut}
                     onCheckedChange={setAccess}
                     disabled={busy}
-                    aria-label={switchLabel}
+                    aria-label={m.github_access_switch_label()}
                     data-github-access-switch
                 />
             {/key}

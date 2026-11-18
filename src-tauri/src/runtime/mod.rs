@@ -102,8 +102,8 @@ impl MiseRuntime {
 
     /// [`workdir_opts`] plus the toolchain secret environment, for calls that resolve or download
     /// tools.
-    fn network_opts(&self) -> ExecOpts {
-        ExecOpts { secret_env: self.secrets.env(), ..workdir_opts() }
+    fn network_opts(&self, name: &str) -> ExecOpts {
+        ExecOpts { secret_env: self.secrets.env(name), ..workdir_opts() }
     }
 
     // Runs mise in container workspace; data dir and lockfile from image ENV.
@@ -167,7 +167,7 @@ impl RuntimeManager for MiseRuntime {
 
     async fn install(&self, name: &str, package: &str) -> Result<(), RuntimeError> {
         validate_package(package)?;
-        self.mise_exec_with(name, &["use", package], self.network_opts()).await.map(|_| ())
+        self.mise_exec_with(name, &["use", package], self.network_opts(name)).await.map(|_| ())
     }
 
     async fn uninstall(&self, name: &str, package: &str) -> Result<(), RuntimeError> {
@@ -207,7 +207,7 @@ impl RuntimeManager for MiseRuntime {
         provider.copy_in(name, &lockfile_src, &format!("{WORKSPACE_MOUNT}/{LOCKFILE_REL}")).await?;
         // Install the lock-pinned tools from the upstream release hosts. Resolving from `mise.lock`
         // (not tool names) is what makes the remote reproduce the identical builds the laptop locked.
-        check(provider.exec(name, &["mise", "install"], self.network_opts()).await?).map(|_| ())
+        check(provider.exec(name, &["mise", "install"], self.network_opts(name)).await?).map(|_| ())
     }
 
     async fn prepare_agent_web(
@@ -244,7 +244,7 @@ impl RuntimeManager for MiseRuntime {
                 Some(PASEO_UP_INSTALL_NEEDED) if !installed => {
                     check(
                         provider
-                            .exec(name, &["mise", "use", PASEO_NODE_TOOL, PASEO_CLI_TOOL], self.network_opts())
+                            .exec(name, &["mise", "use", PASEO_NODE_TOOL, PASEO_CLI_TOOL], self.network_opts(name))
                             .await?,
                     )?;
                     installed = true;
@@ -281,7 +281,7 @@ impl RuntimeManager for MiseRuntime {
     async fn exec_in_container(&self, name: &str, args: &[&str]) -> Result<String, types::RuntimeError> {
         let provider = self.provider_of(name).await;
         provider.start(name).await?;
-        check(provider.exec(name, args, self.network_opts()).await?)
+        check(provider.exec(name, args, self.network_opts(name)).await?)
     }
 }
 

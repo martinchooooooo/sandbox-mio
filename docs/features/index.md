@@ -12,7 +12,6 @@
 
 ## planned
 
-* [proxy-credential-secrets](proxy-credential-secrets/index.md) - Source proxy secret-injection values from the credential store instead of hand-entered values.
 * [proxy-toggle-management](proxy-toggle-management/index.md) - App-global proxy default and turning the proxy on or off for an existing sandbox by recreating it.
 * [tailscale-access](tailscale-access/index.md) - Join deployed sandboxes to the user's tailnet so their web services are reachable from other devices.
 
@@ -55,6 +54,7 @@
 * [podman-exec-transport](podman-exec-transport/index.md) - Reach containers over an SSH-over-exec transport instead of publishing ports.
 * [podman-process-isolation](podman-process-isolation/index.md) - Stop spawned processes on Windows from inheriting the app's console handles.
 * [podman-startup-recovery](podman-startup-recovery/index.md) - Graceful recovery when the Podman machine is stopped or its socket is missing after a host restart.
+* [proxy-credential-secrets](proxy-credential-secrets/index.md) - Keep the GitHub token on the host: sandboxes hold a fixed placeholder that the iron-proxy sidecar swaps for the real token on GitHub requests.
 * [proxy-traffic-viewer](proxy-traffic-viewer/index.md) - Per-sandbox panel listing the HTTP(S) flows the proxy sidecar observed.
 * [remote-deploys](remote-deploys/index.md) - Deploy a sandbox from the local Podman machine to a remote Podman host.
 * [remote-sync](remote-sync/index.md) - Run a sandbox on a remote host while mirroring its workspace to the laptop with Mutagen.

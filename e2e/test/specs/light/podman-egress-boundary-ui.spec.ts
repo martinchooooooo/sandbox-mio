@@ -102,7 +102,7 @@ describe("Podman egress boundary — editor gating and failure paths (mock backe
 
     const value = $("[data-secret-form='add'] [data-secret-value]");
     assert.equal(await value.getAttribute("type"), "password");
-    await $("[data-secret-form='add'] [data-secret-show]").click();
+    await workspaceDashboard.toggleSecretValueVisibility();
     assert.equal(await value.getAttribute("type"), "text");
 
     // An allowlist policy gains an allow rule for a secret host no rule covers.

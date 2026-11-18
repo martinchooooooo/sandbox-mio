@@ -3,8 +3,8 @@ type: architecture
 title: "Outbound Network Control"
 description: "Per-sandbox traffic viewer, secret swapping and egress policy, and how Podman and microsandbox each implement them."
 generated:
-  by: claude-code/opus-5-5
-  at: 2026-11-15T12:00:00+11:00
+  by: claude-code/sonnet-5-5
+  at: 2026-11-19T18:00:00+11:00
 stale_after: 2027-02-05T00:00:00+11:00
 code:
   - src-tauri/src/proxy/
@@ -21,14 +21,16 @@ sources:
   - resource: docs/features/microsandbox-network-policy/02_dev.md
   - resource: docs/features/local-llm-reachability/02_dev.md
   - resource: docs/features/podman-egress-boundary/02_dev.md
+  - resource: docs/features/proxy-credential-secrets/02_dev.md
 ---
 # Outbound Network Control
 
-A sandbox can opt into three controls over its outbound traffic, all switched on together by the create dialog's proxy switch:
+A sandbox can opt into these controls over its outbound traffic, all switched on by the create dialog's proxy switch:
 
-- **Traffic viewer**: a per-sandbox proxy sidecar records every HTTP(S) request (never headers, bodies or secret values), and the traffic panel tails that record.
-- **Secret swapping**: the sandbox holds only a placeholder in a bound variable; the real credential replaces the placeholder outside the sandbox, and only in requests to the binding's hosts.
-- **Egress policy**: an allowlist, or open mode, for outbound destinations, stored in the workspace's `.mio/net-policy.json`. Secret bindings live in the same file.
+- **Traffic viewer**: a per-sandbox proxy sidecar records every HTTP(S) request (never headers, bodies or secret values) for the traffic panel.
+- **Secret swapping**: the sandbox holds only a placeholder; the real credential replaces it outside the sandbox, only in requests to the binding's hosts.
+- **Egress policy**: an allowlist, or open mode, for outbound destinations, stored in the workspace's `.mio/net-policy.json` with the secret bindings.
+- **App-owned binding**: a binding the app renders from its own state, never from the workspace policy, so the user cannot edit or remove it. The GitHub login uses one: gh and mise hold a fixed placeholder, and the sidecar swaps in the host-held token on requests to GitHub's API, web, gist, upload and raw-content hosts.
 
 Podman and microsandbox enforce one policy format with different engines.
 
@@ -36,28 +38,28 @@ Podman and microsandbox enforce one policy format with different engines.
 
 | Control | Podman | microsandbox |
 |---|---|---|
-| Network boundary | The sandbox sits on an internal network with no route out; an iron-proxy sidecar on that network and on Podman's default network is the only exit | msb's own network stack |
+| Network boundary | The sandbox sits on an internal network; an iron-proxy sidecar, also on Podman's default network, is the only exit | msb's own network stack |
 | Traffic viewer | The sidecar's per-request audit log, copied into the app's flow record | A mitmproxy sidecar microVM that msb chains the sandbox's traffic to over SOCKS5 |
 | Secret swapping | The sidecar swaps placeholders per binding | msb swaps placeholders per binding |
 | Egress policy | Enforced by the sidecar: host allows and CIDR denies only | Enforced by msb, with ports, groups and violation actions |
 | Non-HTTP traffic | Blocked | Governed by the policy |
-| Changing the policy after create | Applied live by reloading the sidecar; a binding added later needs its placeholder exported by hand | Recreate the VM around its preserved workspace volume |
+| Changing the policy after create | Applied live by reloading the sidecar | Recreate the VM around its preserved workspace volume |
 | Remote deploy | Refused | Not applicable |
 
-A Podman sidecar created before the boundary existed keeps running and recording traffic, but has no boundary and no policy until the sandbox is recreated.
+A Podman sidecar created before the boundary existed records traffic but has no boundary or policy until the sandbox is recreated.
 
 ## Where State Lives
 
 - **Workspace** (`.mio/`, visible inside the sandbox): the egress policy and secret bindings, which reference secrets by id only.
-- **App data** (never mounted into the sandbox): secret values, each sidecar's CA private key and rendered config, the per-binding secret files the sidecar reads, the snapshot of the policy last applied, and the flow record.
-- Whether a sandbox has a proxy is derived from the sidecar's existence, never stored.
+- **App data** (never mounted into the sandbox): secret values, each sidecar's CA key, config and secret files, the snapshot of the policy last applied, and the flow record.
+- Whether a sandbox has a proxy is derived from the sidecar's existence.
 
 ## Lifecycle
 
-- **Create**: the sidecar is created before the sandbox and starts denying everything; the workspace policy is applied once the sandbox exists. Any failure after the sidecar exists removes it.
-- **Policy change**: Podman renders the policy into the sidecar's config and reloads it, restoring the previous config if the reload is rejected. microsandbox recreates the VM. The UI shows drift between the workspace file and the last applied snapshot.
-- **Traffic record**: while the traffic panel watches a Podman sandbox, the backend translates new audit lines into the flow record, so history survives the sidecar's log being truncated.
-- **Destroy**: the sandbox, then the sidecar, then the sidecar's network and state directory, which holds the CA key and secret files.
+- **Create**: the sidecar is created first and denies everything until the workspace policy is applied. Any later failure removes it.
+- **Policy change**: Podman reloads the sidecar, restoring the previous config if the reload is rejected; microsandbox recreates the VM. The UI shows drift between the workspace file and the last applied snapshot.
+- **Traffic record**: while the traffic panel watches a Podman sandbox, new audit lines are copied into the flow record, so history survives log truncation.
+- **Destroy**: the sandbox, then the sidecar, then its network and state directory.
 - **Startup**: sidecars whose sandbox no longer exists are swept.
 
 ## Invariants
@@ -67,6 +69,7 @@ A Podman sidecar created before the boundary existed keeps running and recording
 - The sidecar refuses upstream connections to private, loopback, link-local and metadata addresses, whatever hostname resolved to them.
 - The sidecar's management and metrics listeners are reachable only from inside the sidecar.
 - Local-model traffic reaches the host over the sandbox's own loopback forward, so neither proxy nor egress policy sees it.
+- The GitHub credential is never resolved from a workspace binding.
 - A sidecar is recognised by its image, never by its `-proxy` name suffix.
 - The msb store is shared by every worktree on the host, so a microsandbox sidecar is swept only by the app-data root that created it.
-- The flow-record line cap is one value shared by the sidecar ingest, the backend poller and the frontend store.
+- The flow-record line cap is one value shared by ingest, poller and frontend store.

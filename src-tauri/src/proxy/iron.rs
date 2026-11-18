@@ -11,6 +11,9 @@ use tauri::AppHandle;
 
 use super::types::ProxyError;
 use super::{io_err, iron_config, write_atomic};
+use crate::credentials::github;
+use crate::credentials::types::CredentialError;
+use crate::credentials::{self, GITHUB_SERVICE};
 use crate::net_policy::{self, NetPolicy};
 use crate::provider::types::{ExecOpts, MachineProvider, ProviderId};
 use crate::provider::ProviderRegistry;
@@ -128,7 +131,9 @@ fn snapshot_secret_files(dir: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>, ProxyErr
 }
 
 /// Rolls `dir` back to `snapshot`: removes files the failed apply added and rewrites the rest.
-fn restore_secret_files(dir: &Path, snapshot: &[(PathBuf, Vec<u8>)]) {
+/// `skip_github` leaves the GitHub token file as the apply left it (deleted), so a removal is never
+/// undone (`docs/features/proxy-credential-secrets/02_dev.md`, Resolved Decision 12).
+fn restore_secret_files(dir: &Path, snapshot: &[(PathBuf, Vec<u8>)], skip_github: bool) {
     if let Ok(entries) = std::fs::read_dir(dir) {
         for path in entries.flatten().map(|e| e.path()) {
             if !snapshot.iter().any(|(p, _)| *p == path) {
@@ -139,6 +144,9 @@ fn restore_secret_files(dir: &Path, snapshot: &[(PathBuf, Vec<u8>)]) {
         }
     }
     for (path, bytes) in snapshot {
+        if skip_github && path.file_name().is_some_and(|n| n == iron_config::GITHUB_BINDING_FILE) {
+            continue;
+        }
         if let Err(e) = write_atomic(path, bytes) {
             tracing::error!(target: "proxy", file = %path.display(), error = %e, "failed to restore a secret file");
         }
@@ -224,6 +232,42 @@ async fn start_and_confirm(
     }
 }
 
+/// The GitHub token the sidecar should swap the placeholder for, or `None` when no credential is
+/// saved or the sandbox is opted out (`docs/features/proxy-credential-secrets/02_dev.md`, "When the
+/// binding is rendered").
+pub fn github_binding(app: &AppHandle, sandbox: &str) -> Result<Option<String>, ProxyError> {
+    let token = match credentials::load_secret(app, GITHUB_SERVICE) {
+        Ok(token) if !token.is_empty() => token,
+        Ok(_) | Err(CredentialError::NotFound(_)) => return Ok(None),
+        Err(e) => return Err(ProxyError::CommandFailed(e.to_string())),
+    };
+    let path = crate::paths::sandbox_github_state_path(app, sandbox)
+        .map_err(|e| ProxyError::CommandFailed(e.to_string()))?;
+    let state = github::load_state(&path).map_err(|e| ProxyError::CommandFailed(e.to_string()))?;
+    Ok((!state.opted_out).then_some(token))
+}
+
+/// Writes the GitHub token file with the token's exact bytes, or deletes it when `token` is `None`.
+fn stage_github_file(dir: &Path, token: Option<&str>) -> Result<(), ProxyError> {
+    let path = dir.join(iron_config::GITHUB_BINDING_FILE);
+    match token {
+        Some(token) => {
+            std::fs::create_dir_all(dir).map_err(|e| io_err(dir, e))?;
+            write_atomic(&path, token.as_bytes())
+        }
+        None => match std::fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(io_err(&path, e)),
+        },
+    }
+}
+
+/// The app-owned bindings to render for a sandbox.
+fn app_bindings(github: bool) -> Vec<iron_config::AppBinding> {
+    if github { vec![iron_config::github_app_binding()] } else { Vec::new() }
+}
+
 /// Makes the sidecar run `policy`, already validated: reload when running, start when stopped
 /// (Resolved Decision 13). A failed reload or start restores `config.prev.yaml` and never restarts,
 /// so disk matches what the sidecar last ran; `applied.json` is rewritten only once the new policy
@@ -271,20 +315,27 @@ async fn apply_policy_locked(
 
     let secrets = secrets_dir(&state);
     let values = super::load_secrets(app)?;
+    let github_token = github_binding(app, sandbox)?;
     let snapshot = snapshot_secret_files(&secrets)?;
     // Every failure from here on puts the secret files back, so a value from a policy that never ran
     // neither stays on disk nor reaches the pipeline at its next restart.
+    let skip_github = github_token.is_none();
     let fail = |e: ProxyError| {
-        restore_secret_files(&secrets, &snapshot);
+        restore_secret_files(&secrets, &snapshot, skip_github);
         e
     };
-    let (written, missing_secrets) =
+    let (mut written, missing_secrets) =
         materialise_secret_files(&secrets, &policy, &values).map_err(fail)?;
+    stage_github_file(&secrets, github_token.as_deref()).map_err(fail)?;
+    if github_token.is_some() {
+        written.push(iron_config::GITHUB_BINDING_FILE.to_string());
+    }
     let dir = config_dir(&state);
     let current = dir.join("config.yaml");
     let prev = dir.join("config.prev.yaml");
     std::fs::copy(&current, &prev).map_err(|e| fail(io_err(&current, e)))?;
-    write_config(&current, &iron_config::render(&policy, &proxy_ip, &written)).map_err(fail)?;
+    let bindings = app_bindings(github_token.is_some());
+    write_config(&current, &iron_config::render(&policy, &proxy_ip, &written, &bindings)).map_err(fail)?;
 
     let sidecar = super::proxy_container_name(sandbox);
     let outcome = if is_running(&provider, &sidecar).await? {
@@ -305,6 +356,104 @@ async fn apply_policy_locked(
         tracing::warn!(target: "proxy", %sandbox, ?missing_secrets, "bindings without a stored secret were not applied");
     }
     Ok(ApplyReport { missing_secrets })
+}
+
+/// Re-renders one sandbox's GitHub binding from the credential store and the opt-out, so a
+/// credential change reaches the sidecar without a policy edit. A sandbox with no applied snapshot
+/// or no iron-proxy sidecar is skipped; an unchanged render skips the reload; a stopped sidecar gets
+/// its files rewritten without being started (`docs/features/proxy-credential-secrets/02_dev.md`,
+/// "Refresh paths").
+pub async fn refresh_github_binding(
+    app: &AppHandle,
+    registry: &Arc<ProviderRegistry>,
+    sandbox: &str,
+) -> Result<(), ProxyError> {
+    let lock = apply_lock(sandbox);
+    let _guard = lock.lock().await;
+    let policy_err = |e: net_policy::NetPolicyError| ProxyError::CommandFailed(e.0);
+    let Some(applied) = net_policy::read_applied(app, sandbox).map_err(policy_err)? else {
+        return Ok(());
+    };
+    let Some(meta) = super::read_meta(app, sandbox)
+        .filter(|m| super::meta_engine(m) == super::types::ProxyEngine::IronProxy)
+    else {
+        return Ok(());
+    };
+    let proxy_ip = meta["proxyIp"].as_str().unwrap_or_default().to_string();
+    let state = super::state_dir(app, sandbox)?;
+    let token = github_binding(app, sandbox)?;
+    let values = super::load_secrets(app)?;
+    let (config, _) = rendered(&applied.policy, &proxy_ip, &values, token.is_some());
+    if github_files_current(&state, &config, token.as_deref()) {
+        return Ok(());
+    }
+    let provider = registry.local(ProviderId::Podman);
+    let sidecar = super::proxy_container_name(sandbox);
+    if is_running(&provider, &sidecar).await? {
+        apply_policy_locked(app, registry, sandbox, applied.policy).await.map(|_| ())
+    } else {
+        write_offline(&state, &applied.policy, &proxy_ip, &values, token.as_deref())
+    }
+}
+
+/// The config an apply would write, with the workspace bindings that have a stored value.
+fn rendered(
+    policy: &NetPolicy,
+    proxy_ip: &str,
+    values: &HashMap<String, String>,
+    github: bool,
+) -> (serde_json::Value, Vec<String>) {
+    let written: Vec<String> = policy
+        .secrets
+        .iter()
+        .filter(|b| values.contains_key(&b.secret_id))
+        .map(|b| b.env_var.clone())
+        .collect();
+    let config = iron_config::render(policy, proxy_ip, &written, &app_bindings(github));
+    (config, written)
+}
+
+/// Whether `config.yaml` and the token file on disk already equal the desired render.
+fn github_files_current(state: &Path, config: &serde_json::Value, token: Option<&str>) -> bool {
+    let Ok(want) = serde_json::to_vec_pretty(config) else {
+        return false;
+    };
+    let config_ok = std::fs::read(config_dir(state).join("config.yaml")).is_ok_and(|b| b == want);
+    let file = std::fs::read(secrets_dir(state).join(iron_config::GITHUB_BINDING_FILE));
+    let file_ok = match token {
+        Some(t) => file.is_ok_and(|b| b == t.as_bytes()),
+        None => file.is_err(),
+    };
+    config_ok && file_ok
+}
+
+/// Writes the secret files and `config.yaml` of a stopped sidecar, so it boots with the current
+/// state. Nothing runs, so a write failure restores the secret files and leaves the old config.
+fn write_offline(
+    state: &Path,
+    policy: &NetPolicy,
+    proxy_ip: &str,
+    values: &HashMap<String, String>,
+    token: Option<&str>,
+) -> Result<(), ProxyError> {
+    let secrets = secrets_dir(state);
+    let snapshot = snapshot_secret_files(&secrets)?;
+    let skip_github = token.is_none();
+    let fail = |e: ProxyError| {
+        restore_secret_files(&secrets, &snapshot, skip_github);
+        e
+    };
+    let (mut written, _) = materialise_secret_files(&secrets, policy, values).map_err(fail)?;
+    stage_github_file(&secrets, token).map_err(fail)?;
+    if token.is_some() {
+        written.push(iron_config::GITHUB_BINDING_FILE.to_string());
+    }
+    let (config, _) = rendered(policy, proxy_ip, values, token.is_some());
+    let dir = config_dir(state);
+    std::fs::create_dir_all(&dir).map_err(|e| fail(io_err(&dir, e)))?;
+    write_config(&dir.join("config.yaml"), &config).map_err(fail)?;
+    remove_stale_secret_files(&secrets, &written);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -343,9 +492,35 @@ mod tests {
         let snapshot = snapshot_secret_files(&dir).unwrap();
         let new = HashMap::from([("a".to_string(), "new".to_string()), ("b".to_string(), "b".to_string())]);
         materialise_secret_files(&dir, &policy, &new).unwrap();
-        restore_secret_files(&dir, &snapshot);
+        restore_secret_files(&dir, &snapshot, false);
         assert_eq!(std::fs::read(dir.join("A_KEY")).unwrap(), b"old");
         assert!(!dir.join("B_KEY").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_github_file_holds_exact_bytes_and_survives_the_stale_sweep() {
+        let dir = std::env::temp_dir().join(format!("mio-iron-test-{}", uuid::Uuid::new_v4()));
+        stage_github_file(&dir, Some("ghp_realtoken")).unwrap();
+        std::fs::write(dir.join("STALE_KEY"), b"x").unwrap();
+        remove_stale_secret_files(&dir, &[iron_config::GITHUB_BINDING_FILE.to_string()]);
+        assert_eq!(std::fs::read(dir.join("mio-github")).unwrap(), b"ghp_realtoken");
+        assert!(!dir.join("STALE_KEY").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A removal must not be undone by the rollback of a failed reload.
+    #[test]
+    fn a_removed_github_file_stays_deleted_after_a_failed_apply() {
+        let dir = std::env::temp_dir().join(format!("mio-iron-test-{}", uuid::Uuid::new_v4()));
+        stage_github_file(&dir, Some("ghp_realtoken")).unwrap();
+        let snapshot = snapshot_secret_files(&dir).unwrap();
+        stage_github_file(&dir, None).unwrap();
+        assert!(!dir.join("mio-github").exists());
+        restore_secret_files(&dir, &snapshot, true);
+        assert!(!dir.join("mio-github").exists());
+        restore_secret_files(&dir, &snapshot, false);
+        assert!(dir.join("mio-github").exists());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

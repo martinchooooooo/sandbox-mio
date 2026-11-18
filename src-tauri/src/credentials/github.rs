@@ -10,6 +10,11 @@ use super::types::{CredentialError, CredentialManifest};
 use super::{GITHUB_SERVICE, save_manifest, save_secret};
 use crate::provider::types::{ExecOpts, MachineProvider};
 
+/// What a sandbox behind an iron-proxy sidecar holds in place of the token; the sidecar swaps it
+/// for the real token on GitHub's hosts (`docs/features/proxy-credential-secrets/02_dev.md`,
+/// Resolved Decision 1). Carries no secret.
+pub const GITHUB_PLACEHOLDER: &str = "ghp_MioPlaceholder0000000000000000000000";
+
 /// Scopes `gh auth login --with-token` requires of a classic token.
 const REQUIRED_SCOPES: [&str; 2] = ["repo", "read:org"];
 
@@ -124,8 +129,14 @@ const REMOVE_SCRIPT: &str = "rm -f /root/.config/gh/hosts.yml";
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum ApplyOutcome {
-    /// gh holds the credential captured at `captured_at_ms`.
-    Applied { captured_at_ms: u64 },
+    /// gh holds the credential captured at `captured_at_ms`. `swapped` is true when gh holds the
+    /// placeholder that a sidecar swaps, false when it holds the real token; state files from
+    /// before the sidecar swap load as false.
+    Applied {
+        captured_at_ms: u64,
+        #[serde(default)]
+        swapped: bool,
+    },
     /// The sandbox's image predates gh; recreating it over its workspace fixes that.
     NeedsImage,
     /// gh or the sandbox refused; `reason` is gh's first stderr line.
@@ -166,12 +177,14 @@ fn first_line(stderr: &[u8]) -> String {
 }
 
 /// Logs gh into `name` with `token`, and wires git to gh. `captured_at_ms` is the credential's
-/// manifest stamp, recorded so the card can tell a current apply from an older one.
+/// manifest stamp, recorded so the card can tell a current apply from an older one. `token` is the
+/// real token or the placeholder; `swapped` records which one the caller passed.
 pub async fn apply(
     provider: &Arc<dyn MachineProvider>,
     name: &str,
     token: &str,
     captured_at_ms: u64,
+    swapped: bool,
 ) -> ApplyOutcome {
     let out = match provider.exec_piped(name, &["sh", "-c", APPLY_SCRIPT], token.as_bytes()).await {
         Ok(out) => out,
@@ -180,7 +193,7 @@ pub async fn apply(
         }
     };
     match out.status.code() {
-        Some(0) => ApplyOutcome::Applied { captured_at_ms },
+        Some(0) => ApplyOutcome::Applied { captured_at_ms, swapped },
         Some(EXIT_NO_GH) => ApplyOutcome::NeedsImage,
         _ => ApplyOutcome::Failed { reason: first_line(&out.stderr), captured_at_ms },
     }
@@ -201,12 +214,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_placeholder_has_the_shape_of_a_classic_token() {
+        assert!(GITHUB_PLACEHOLDER.starts_with("ghp_"));
+        assert_eq!(GITHUB_PLACEHOLDER.len(), 40);
+    }
+
+    #[test]
     fn the_first_stderr_line_is_kept_and_capped() {
         assert_eq!(first_line(b"
  error validating token: HTTP 401
 more"), "error validating token: HTTP 401");
         assert_eq!(first_line(b""), "gh refused the token");
         assert_eq!(first_line("x".repeat(500).as_bytes()).chars().count(), MAX_REASON_CHARS);
+    }
+
+    #[test]
+    fn an_applied_outcome_without_swapped_loads_as_plaintext() {
+        let json = r#"{"kind":"applied","capturedAtMs":3}"#;
+        let outcome: ApplyOutcome = serde_json::from_str(json).expect("parses");
+        assert_eq!(outcome, ApplyOutcome::Applied { captured_at_ms: 3, swapped: false });
     }
 
     #[test]

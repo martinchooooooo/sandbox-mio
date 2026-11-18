@@ -126,7 +126,8 @@ pub fn load_secret(app: &AppHandle, service_id: &str) -> Result<String, Credenti
     read_secret(&store_dir(app)?.join(service_id), service_id)
 }
 
-fn github_env(token: &str) -> Vec<(String, String)> {
+/// The mise variables carrying `token`, which may be the placeholder in sidecar mode.
+pub fn github_env(token: &str) -> Vec<(String, String)> {
     GITHUB_TOKEN_ENV.iter().map(|name| (name.to_string(), token.to_string())).collect()
 }
 

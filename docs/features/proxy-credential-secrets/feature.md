@@ -1,16 +1,18 @@
 ---
 type: feature
 title: "proxy-credential-secrets"
-description: "Source proxy secret-injection values from the credential store instead of hand-entered values."
-status: planned
+description: "Keep the GitHub token on the host: sandboxes hold a fixed placeholder that the iron-proxy sidecar swaps for the real token on GitHub requests."
+status: implemented
 architecture: [docs/architecture/network.md, docs/architecture/agents.md]
-depends_on: [podman-egress-boundary, microsandbox-network-policy, shared-agent-auth]
+depends_on: [podman-egress-boundary, github-cli-auth]
 ---
 
 # proxy-credential-secrets
 
-Source proxy secret-injection values from the credential store instead of hand-entered values.
+Keep the GitHub token on the host: sandboxes hold a fixed placeholder that the iron-proxy sidecar swaps for the real token on GitHub requests.
 
 ## Status note
 
-The goal stands, but `02_dev.md` must be rewritten with `feature-dev` before implementation. It folds into network-proxy's mitmproxy injection rules (`rules.rs`, `materialise`, `set_proxy_rules`, a `SecretSource` inside each rule), which `podman-egress-boundary` deleted (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 20). The new seam is the secret value store: bindings in `.mio/net-policy.json` reference a secret by id, values live in `<app_data_root>/proxy/secrets.json` (written by `set_proxy_secret`), the iron-proxy sidecar reads them through `materialise_secret_files` (`src-tauri/src/proxy/iron.rs`) at every apply, and microsandbox reads them at every start. A credential-sourced secret should resolve at those two points. The 2026-08-18 tar-extraction spike still holds. `docs/features/techdebt-sweep/04_improvements.md` asks for the microsandbox `StartEnvSource` and `ToolchainSecrets` merge to land with this feature.
+Rewritten from scratch on 2026-11-18. The earlier plan (extracting Claude OAuth tokens from credential bundles into mitmproxy injection rules) was dropped: its seams were deleted by `podman-egress-boundary`, and its goal moved to `04_improvements.md`. The placeholder-swap spike passed (`docs/features/github-cli-auth/spike/proxy-swap.md`). All four phases of `02_dev.md` are implemented: the GitHub binding in the sidecar (swapping on `github.com`, `api.github.com`, `uploads.github.com`, `gist.github.com` and `raw.githubusercontent.com`), placeholder login for gh, the placeholder for mise, and the Manage card mode with Paraglide strings.
+
+The e2e plan is written in `03_e2e.md` (a standard spec for the real sidecar swap, a light spec for the plaintext card); the specs are not implemented yet.
