@@ -87,7 +87,8 @@ describe("Onboarding story — book and background setup", function () {
     await $("[data-welcome-skip]").click();
     await $("[data-setup-progress]").waitForDisplayed({ timeout: UI_SETTLE });
     await shot("03-setup-cards");
-    // Everything ready hands over to the hello-world sandbox, which also finishes onboarding. Finishing unlocks the app chrome, whose sidebar always carries the Home entry.
+    // Everything ready hands over to the hello-world sandbox, which also finishes onboarding.
+    // Finishing unlocks the app chrome, whose sidebar always carries the Home entry.
     await navButton("/projects").waitForDisplayed({ timeout: COMMAND });
   });
 

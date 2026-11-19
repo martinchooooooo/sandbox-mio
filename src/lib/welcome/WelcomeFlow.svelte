@@ -63,7 +63,7 @@
 
     // TODO(i18n): the hint and the action label.
     const headline = $derived.by((): ActivityHeadline | null => {
-        const summary = setupHeadline();
+        const summary = setupHeadline("podman", variant === "onboarding");
         if (!summary) return null;
         return {
             ...summary,

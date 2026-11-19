@@ -78,6 +78,16 @@ let model = $state<ModelRun>({ choice: null, downloadPct: null, downloading: fal
 let specs = $state<MachineSpecs | null>(null);
 let testModel = $state<ModelDescriptor | null>(null);
 let modelJob: Promise<void> | null = null;
+// Reactive twin of `modelJob`, for the headline's "checking" state.
+let modelJobActive = $state(false);
+
+function trackModelJob(run: Promise<void>): Promise<void> {
+    modelJobActive = true;
+    return run.finally(() => {
+        modelJob = null;
+        modelJobActive = false;
+    });
+}
 
 export function modelRun(): ModelRun { return model; }
 
@@ -122,16 +132,14 @@ export function modelOffer(): ModelOffer | null {
  * page must never start a download. A call while a run is in flight joins that run.
  */
 export function startModelSetup(): Promise<void> {
-    modelJob ??= (async () => {
+    modelJob ??= trackModelJob((async () => {
         // The probe may still be in flight or may have failed; re-running it is cheap and idempotent.
         await probeMachineSpecs();
         const offer = modelOffer();
         if (offer) return runModelSetup(offer.descriptor);
         // No offer must not dead-end the progress page: an error surfaces its skip path.
         model = { ...model, error: "Your computer could not be checked for a Model that fits." };
-    })().finally(() => {
-        modelJob = null;
-    });
+    })());
     return modelJob;
 }
 
@@ -148,14 +156,13 @@ export function retryModelSetup(): Promise<void> {
         model = { ...model, error: "" };
         return startModelSetup();
     }
-    modelJob ??= runModelSetup(model.choice).finally(() => {
-        modelJob = null;
-    });
+    modelJob ??= trackModelJob(runModelSetup(model.choice));
     return modelJob;
 }
 
 async function runModelSetup(descriptor: ModelDescriptor): Promise<void> {
     model = { choice: descriptor, downloadPct: null, downloading: false, starting: false, ready: false, skipped: false, error: "" };
+    let servedModelId: string | null = null;
     try {
         const source = descriptor.llama;
         if (!source) throw { kind: "Backend", message: "This model has no download for the built-in engine." };
@@ -188,13 +195,21 @@ async function runModelSetup(descriptor: ModelDescriptor): Promise<void> {
         });
         if (!status.running) throw { kind: "Backend", message: "The model did not start." };
         recordMilestone("server-started");
-        if (status.modelId) await reprovisionInstalledAgents(status.modelId);
+        servedModelId = status.modelId ?? null;
         model.ready = true;
     } catch (e) {
         model.error = parseError(e).message;
+        return;
     } finally {
         model.downloading = false;
         model.starting = false;
+    }
+    // Best-effort and after the ready flag: a healthy server must not be reported as failed, and a
+    // retry must not restart it.
+    try {
+        if (servedModelId) await reprovisionInstalledAgents(servedModelId);
+    } catch {
+        // Agents are re-pointed again at the next launch.
     }
 }
 
@@ -287,14 +302,15 @@ export function firstSandboxReady(provider: ProviderId = "podman"): boolean {
 
 /**
  * The setup run in one line, for the activity toggle, in the tour's vocabulary. `null` while there
- * is nothing to report.
+ * is nothing to report. `requireModel` is false in a replay, where the model is not part of setup.
  * TODO(i18n): every string below.
  */
-export function setupHeadline(provider: ProviderId = "podman"): ActivityHeadline | null {
+export function setupHeadline(provider: ProviderId = "podman", requireModel = true): ActivityHeadline | null {
     const status = machineReadiness(provider);
     const machineDone = !status.probing && status.readiness.ready;
 
-    if (firstSandboxReady(provider)) {
+    // A replay never starts a model job, so it is finished once machine and image are.
+    if (requireModel ? firstSandboxReady(provider) : setupComplete(provider)) {
         return { state: "done", title: "Everything is ready", detail: "Your first sandbox is next." };
     }
     if (machine.rebootMessage || podmanRebootRequired()) {
@@ -326,6 +342,6 @@ export function setupHeadline(provider: ProviderId = "podman"): ActivityHeadline
             detail: "Something did not go through. You can try again at the end of the tour.",
         };
     }
-    if (backgroundActive || modelJob) return { state: "running", title: "Getting things ready", detail: "Checking your computer…" };
+    if (backgroundActive || modelJobActive) return { state: "running", title: "Getting things ready", detail: "Checking your computer…" };
     return null;
 }

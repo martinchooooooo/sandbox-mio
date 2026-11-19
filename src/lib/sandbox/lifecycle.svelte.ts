@@ -122,6 +122,12 @@ export interface CreateArgs {
     network?: { egress: "open" | "allowlist"; starterHosts: string[] };
     /** Agent ids to install after create; omitted means plan from host state (`planPreinstall`). */
     agents?: string[];
+    /** False leaves opening the new sandbox to the caller; omitted means open it once created. */
+    autoOpen?: boolean;
+    /** Called as soon as the sandbox exists, before any agent install. */
+    onCreated?: () => void;
+    /** Called once the agent installs ended, with the ids that installed successfully. */
+    onInstalled?: (installed: string[]) => void;
 }
 
 export interface PendingCreate {
@@ -184,13 +190,15 @@ export function dismissCreate(name: string): void {
  * Best-effort: a failed install is toasted and never fails the create, since the Manage tab still
  * offers the manual install (docs/features/fastest-time-to-wow/02_dev.md, Phase D).
  */
-async function preinstallAgents(name: string, workspacePath: string, explicit: string[] | undefined): Promise<void> {
+async function preinstallAgents(name: string, workspacePath: string, explicit: string[] | undefined): Promise<string[]> {
+    const installed: string[] = [];
     try {
         const ids = explicit ?? planPreinstall(await readPreinstallFacts());
         for (const agent of agentsById(ids)) {
             installNotes[name] = `Installing ${agent.label}`; // TODO(i18n)
             try {
                 await installAgentInSandbox(name, workspacePath, agent);
+                installed.push(agent.id);
             } catch (e) {
                 toast.error(`${name}: ${agent.label} was not installed. ${parseError(e).message}`); // TODO(i18n)
             }
@@ -198,6 +206,7 @@ async function preinstallAgents(name: string, workspacePath: string, explicit: s
     } finally {
         delete installNotes[name];
     }
+    return installed;
 }
 
 async function runCreate(name: string): Promise<void> {
@@ -211,11 +220,14 @@ async function runCreate(name: string): Promise<void> {
             proxy: args.proxy,
             ...args.network,
         });
-        await preinstallAgents(name, sandbox.workspace_path, args.agents);
+        args.onCreated?.();
+        const installed = await preinstallAgents(name, sandbox.workspace_path, args.agents);
+        args.onInstalled?.(installed);
         await refreshSandboxState();
         // The placeholder goes only once the real entry is listed, so there is no gap or flicker.
         delete creates[name];
         delete pending[name];
+        if (args.autoOpen === false) return;
         try {
             await openSandbox(name, sandbox.workspace_path, { restore: false });
         } catch (e) {

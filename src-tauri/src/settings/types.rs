@@ -23,6 +23,9 @@ pub struct AppSettings {
     /// Whether the user has finished the welcome/onboarding flow. Absent from a settings file
     /// written before the feature, so an existing install deserializes as not yet onboarded.
     pub onboarding_completed: bool,
+    /// Unix milliseconds of the first launch, the zero point of the first-run milestones; absent
+    /// until the first onboarding launch records it (`docs/features/fastest-time-to-wow/02_dev.md`, Phase H).
+    pub first_opened_at_ms: Option<u64>,
     /// Which engine the create-sandbox flow selects by default. Absent from an existing settings
     /// file, which therefore keeps creating Podman sandboxes
     /// (`docs/features/microsandbox-provider/02_dev.md`, Phase J).

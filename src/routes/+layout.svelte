@@ -16,6 +16,7 @@
     import { ensureOnboardingState, onboardingCompleted } from "$lib/settings/onboarding.svelte";
     import { reprovisionInstalledAgents } from "$lib/agents/reprovision";
     import { probeMachineSpecs } from "$lib/onboarding/setup.svelte";
+    import { startMilestoneClock } from "$lib/onboarding/milestones";
     import type { InferenceStatus } from "$lib/models/types";
     import { m } from "$lib/paraglide/messages.js";
     import type { Snippet } from "svelte";
@@ -85,11 +86,16 @@
             }
             // Before any heavy job lowers free RAM, so the first-run heads-up rates models on the
             // most headroom the machine will have. Not awaited: it must not delay the shell.
-            if (isNavigationPanel) void probeMachineSpecs();
+            const probing = isNavigationPanel ? ensureOnboardingState().then(() => {
+                if (onboardingCompleted() !== false) return;
+                startMilestoneClock();
+                void probeMachineSpecs();
+            }) : null;
             await ensureWorkspaceState();
             await ensureNetworkState();
             await ensureResources();
             await ensureOnboardingState();
+            await probing;
             if (isNavigationPanel) {
                 checkForUpdate();
                 reprovisionAtStartup();
