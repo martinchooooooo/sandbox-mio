@@ -83,6 +83,7 @@ The app installs coding agents (Claude Code, OpenCode, pi) into a sandbox, lets 
 ## Invariants
 
 - Credential bundle contents and the GitHub token never cross IPC or reach logs; only metadata does.
+- The real GitHub token never enters a sandbox behind a sidecar; the GitHub binding is app-owned, never sandbox-writable.
 - Provisioning merges into a user's agent configuration rather than replacing it.
 - An agent's behaviour is declared in the catalogue.
 - At most one attach per sandbox writes to pi, and no session file has two writers.
