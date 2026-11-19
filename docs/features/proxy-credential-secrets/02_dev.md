@@ -5,7 +5,7 @@ feature: proxy-credential-secrets
 ---
 # Proxy Credential Secrets: Build Plan
 
-This document is the build plan for keeping the GitHub token out of Podman sandboxes that sit behind an iron-proxy sidecar. It continues `docs/features/proxy-credential-secrets/01_ideas.md` and supersedes it wherever the two disagree. Each such sandbox holds a fixed, GitHub-shaped placeholder, and the sidecar swaps the placeholder for the real token, read from the host credential store, only in the `Authorization` header of requests to GitHub's hosts. The mechanism was proven end to end by the 2026-11-18 spike (`docs/features/github-cli-auth/spike/proxy-swap.md`). Status: Phases A, B and C are implemented; phase D is `Remaining`.
+This document is the build plan for keeping the GitHub token out of Podman sandboxes that sit behind an iron-proxy sidecar. It continues `docs/features/proxy-credential-secrets/01_ideas.md` and supersedes it wherever the two disagree. Each such sandbox holds a fixed, GitHub-shaped placeholder, and the sidecar swaps the placeholder for the real token, read from the host credential store, only in the `Authorization` header of requests to GitHub's hosts. The mechanism was proven end to end by the 2026-11-18 spike (`docs/features/github-cli-auth/spike/proxy-swap.md`). Status: Phases A–D are all implemented.
 
 ## The Concrete Model
 
@@ -123,7 +123,7 @@ Proxy-side only; no in-sandbox behaviour changes until Phase B.
   - Built as planned; `github_sidecar_mode()` is `pub`, and the `Remove` refresh logs a failure and continues to the exec rather than aborting.
 - `src-tauri/src/commands/credentials.rs`: no signature change; `delete_credential_bundle`'s doc comment changes to say a stopped sidecar loses the token file at once.
 
-## Implemented: Phase C � mise Env in Sidecar Mode
+## Implemented: Phase C — mise Env in Sidecar Mode
 
 Built as Resolved Decision 15 records: the placeholder in sidecar mode.
 
