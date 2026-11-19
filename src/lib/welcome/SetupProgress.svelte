@@ -15,7 +15,9 @@
         probeImage,
         retryModelSetup,
         runImageDownload,
+        retryFirstSandbox,
         runMachineSetup,
+        sandboxRun,
         skipModelSetup,
     } from "$lib/onboarding/setup.svelte";
 
@@ -24,7 +26,7 @@
         showModel = true,
     }: {
         provider?: ProviderId;
-        /** False on a replay, which starts no Model. */
+        /** False on a replay, which starts no Model and no first sandbox. */
         showModel?: boolean;
     } = $props();
 
@@ -33,6 +35,7 @@
     const machine = $derived(machineRun());
     const image = $derived(imageRun());
     const model = $derived(modelRun());
+    const sandbox = $derived(sandboxRun());
     const status = $derived(machineReadiness(provider));
 
     const machineDone = $derived(!status.probing && status.readiness.ready);
@@ -125,6 +128,27 @@
                 <p class="text-muted-foreground text-sm">{model.choice.label} ({model.choice.llama.file}) served by llama.cpp.</p>
             {/if}
             {#if model.error}<p class="text-xs text-foreground/80">{model.error}</p>{/if}
+        </AdvancedSection>
+    </Card.Root>
+
+    <Card.Root class="gap-3 p-5" data-step="first-sandbox" data-done={sandbox.ready}>
+        <Card.Title>Preparing your first sandbox</Card.Title>
+        {#if sandbox.ready}
+            <p class="text-sm font-medium">Ready ✓</p>
+        {:else if sandbox.error}
+            <p class="text-destructive text-sm">Your first sandbox did not come together.</p>
+            <Button onclick={retryFirstSandbox}>Try again</Button>
+        {:else if sandbox.busy}
+            <p class="text-muted-foreground text-sm">Putting it together. This takes a few minutes.</p>
+        {:else}
+            <p class="text-muted-foreground text-sm">Waiting its turn…</p>
+        {/if}
+        <AdvancedSection label="For those who know">
+            <p class="text-muted-foreground text-sm">
+                A sandbox named hello-world{model.skipped ? " with no agent, as you went on without a Model" : " with the pi agent installed, pointed at the Model once that is ready"}.
+            </p>
+            {#if sandbox.busy && sandbox.step}<p class="text-xs text-foreground/80">{sandbox.step}</p>{/if}
+            {#if sandbox.error}<p class="text-xs text-foreground/80">{sandbox.error}</p>{/if}
         </AdvancedSection>
     </Card.Root>
     {/if}

@@ -17,6 +17,12 @@
     import { PROVIDERS, providerLabel, type ProviderId } from "$lib/providers";
     import AdvancedSection from "$lib/components/AdvancedSection.svelte";
     import ResourceUsageCard from "$lib/settings/ResourceUsageCard.svelte";
+    import { Switch } from "$lib/components/ui/switch";
+    import { restartOnboarding } from "$lib/settings/onboarding.svelte";
+    import { destroySandbox } from "$lib/sandbox/lifecycle.svelte";
+    import { refreshSandboxState, sandboxesList } from "$lib/sandbox/state.svelte";
+    import { FIRST_SANDBOX } from "$lib/onboarding/handoff.svelte";
+    import { closeSandbox } from "$lib/workspace/navigation.svelte";
 
     function cycleLocale() {
         const current = getLocale();
@@ -131,6 +137,25 @@
         if (await action.run("reset-podman-machine", () => invoke("reset_stuck_podman_machine"))) {
             machineReset = true;
         }
+    }
+
+    let deleteFirstSandbox = $state(true);
+
+    async function restartOnboardingFlow() {
+        await action.run("restart-onboarding", async () => {
+            if (deleteFirstSandbox) {
+                await refreshSandboxState();
+                // Without the sandbox, the handoff creates it afresh instead of opening the old one.
+                if (sandboxesList().some((p) => p.name === FIRST_SANDBOX)) {
+                    // TODO(i18n)
+                    const confirmForce = (message: string) => confirm(`${message}\n\nDestroy anyway and discard them?`);
+                    if (!(await destroySandbox(FIRST_SANDBOX, { confirmForce }))) return;
+                    // The reload below resets webview state, but the sandbox's native panes live on the Rust side.
+                    await closeSandbox(FIRST_SANDBOX);
+                }
+            }
+            await restartOnboarding();
+        });
     }
 </script>
 
@@ -248,6 +273,29 @@
                     onclick={resetPodmanMachine}
                 >{m.settings_debugging_reset_machine_button()}</Button>
                 {#if machineReset}<p data-reset-podman-machine-done class="text-xs text-emerald-600 dark:text-emerald-400">{m.settings_debugging_reset_machine_done()}</p>{/if}
+            </Field.Field>
+            <Field.Field>
+                <Field.Label>{m.settings_debugging_restart_onboarding_label()}</Field.Label>
+                <p class="text-xs text-muted-foreground">{m.settings_debugging_restart_onboarding_description()}</p>
+                <Field.Field orientation="horizontal">
+                    <Switch
+                        id="restart-onboarding-delete-sandbox"
+                        data-restart-onboarding-delete-sandbox
+                        checked={deleteFirstSandbox}
+                        onCheckedChange={(v) => (deleteFirstSandbox = v)}
+                    />
+                    <Field.Label for="restart-onboarding-delete-sandbox">
+                        {m.settings_debugging_restart_onboarding_delete_sandbox({ name: FIRST_SANDBOX })}
+                    </Field.Label>
+                </Field.Field>
+                <Button
+                    data-settings-restart-onboarding
+                    size="sm"
+                    variant="outline"
+                    loading={action.busy === "restart-onboarding"}
+                    disabled={action.busy !== null}
+                    onclick={restartOnboardingFlow}
+                >{m.settings_debugging_restart_onboarding_button()}</Button>
             </Field.Field>
         </Field.Group>
     </Field.Set>

@@ -139,7 +139,17 @@ pub async fn stop_inference(
 
 #[tauri::command]
 pub async fn inference_status(active: State<'_, ActiveServer>) -> Result<InferenceStatus, AppError> {
-    let guard = active.lock().await;
+    let mut guard = active.lock().await;
+    // A server whose process died (crash, out of memory, killed by hand) is not running, whatever
+    // the stored handle says; dropping it makes callers see the truth and start a fresh one.
+    let exited = guard
+        .as_mut()
+        .and_then(|h| h.child.as_mut())
+        .is_some_and(|child| matches!(child.try_wait(), Ok(Some(_))));
+    if exited {
+        tracing::warn!(target: "inference", "server process exited; clearing it");
+        *guard = None;
+    }
     Ok(match guard.as_ref() {
         Some(handle) => handle.status(),
         None => InferenceStatus { running: false, engine: None, model_id: None, base_url: None },

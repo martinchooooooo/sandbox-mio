@@ -2,96 +2,42 @@ import { invoke } from "@tauri-apps/api/core";
 import { toast } from "svelte-sonner";
 import { parseError } from "$lib/errors";
 import { completeOnboarding } from "$lib/settings/onboarding.svelte";
-import { createSandbox, dismissCreate, pendingCreates } from "$lib/sandbox/lifecycle.svelte";
 import { refreshSandboxState, sandboxesList } from "$lib/sandbox/state.svelte";
 import { openSandbox } from "$lib/workspace/navigation.svelte";
-import { modelRun } from "./setup.svelte";
-import { recordMilestone } from "./milestones";
+import { FIRST_SANDBOX, modelRun, retryFirstSandbox, sandboxRun, startFirstSandbox } from "./setup.svelte";
 
-/** The first sandbox's name; the dash is required by `validate_name`, so "hello world" is copy only. */
-export const FIRST_SANDBOX = "hello-world";
+export { FIRST_SANDBOX };
 
 type Phase = "idle" | "creating" | "opening" | "failed";
 
 // Module-scoped so a step change or the back button neither restarts nor duplicates the handoff.
 let phase = $state<Phase>("idle");
 let error = $state("");
-let step = $state("");
 let cancelled = false;
 
 export function handoffPhase(): Phase { return phase; }
 export function handoffError(): string { return error; }
-export function handoffStep(): string { return step; }
-
-function creationSettled(): { done: boolean; error: string } {
-    const placeholder = pendingCreates().find((p) => p.name === FIRST_SANDBOX);
-    if (placeholder) {
-        step = placeholder.step;
-        return { done: false, error: placeholder.error };
-    }
-    return { done: sandboxesList().some((p) => p.name === FIRST_SANDBOX), error: "" };
-}
-
-// Generous: the create includes the agent install, which can take minutes on a slow connection.
-const CREATE_TIMEOUT_MS = 20 * 60 * 1000;
-
-/** Resolves with "" once `hello-world` is listed, or with the reason it will not be. */
-function waitForCreate(): Promise<string> {
-    return new Promise((resolve) => {
-        const deadline = Date.now() + CREATE_TIMEOUT_MS;
-        const timer = setInterval(() => {
-            const state = creationSettled();
-            if (state.error || state.done) {
-                clearInterval(timer);
-                resolve(state.error);
-            } else if (Date.now() > deadline) {
-                clearInterval(timer);
-                resolve("Creating the sandbox took too long.");
-            }
-        }, 400);
-    });
-}
 
 /**
- * Builds the first sandbox, finishes onboarding and opens the pi chat. Call once the machine, image
- * and model are ready; a repeat call while running or after success does nothing. An existing
- * `hello-world` is opened as it is, never recreated (docs/features/fastest-time-to-wow/02_dev.md,
- * OQ-hello-world-special). A failed create or open leaves onboarding open for `retryHandoff`.
+ * Opens the first sandbox, finishes onboarding and opens the pi chat. The sandbox itself is built
+ * by the background setup (`startFirstSandbox` in `setup.svelte.ts`); this waits for that job, so
+ * call it once the setup is ready. A repeat call while running or after success does nothing. A
+ * failed create or open leaves onboarding open for `retryHandoff`.
  */
 export async function startHandoff(): Promise<void> {
     if (phase === "creating" || phase === "opening") return;
     phase = "creating";
     cancelled = false;
     error = "";
-    step = "";
     try {
+        // Joins the background job; starts it only when nothing did (it never recreates `hello-world`).
+        await startFirstSandbox();
+        const sandbox = sandboxRun();
+        if (sandbox.error) throw { kind: "Backend", message: sandbox.error };
         await refreshSandboxState();
-        let workspacePath = sandboxesList().find((p) => p.name === FIRST_SANDBOX)?.workspace_path;
+        const workspacePath = sandboxesList().find((p) => p.name === FIRST_SANDBOX)?.workspace_path;
         // An existing sandbox is opened as it is; its chat is tried whenever the model is up.
-        let piReady = modelRun().ready;
-        if (!workspacePath) {
-            piReady = false;
-            // Pre-install is explicit: first run never plans from host state, which could add Claude Code.
-            const started = createSandbox({
-                name: FIRST_SANDBOX,
-                proxy: false,
-                agents: modelRun().ready ? ["pi"] : [],
-                // The handoff owns the open, so a cancel can really prevent it.
-                autoOpen: false,
-                onCreated: () => recordMilestone("sandbox-created"),
-                onInstalled: (installed) => {
-                    piReady = installed.includes("pi");
-                    if (piReady) recordMilestone("pi-installed");
-                },
-            });
-            // A refused start is fine only when a create or the sandbox itself is already there to wait on.
-            if (!started && !creationSettled().done && !pendingCreates().some((p) => p.name === FIRST_SANDBOX)) {
-                throw { kind: "Backend", message: "The sandbox could not be started." };
-            }
-            const failure = await waitForCreate();
-            if (failure) throw { kind: "Backend", message: failure };
-            workspacePath = sandboxesList().find((p) => p.name === FIRST_SANDBOX)?.workspace_path;
-        }
+        const piReady = sandbox.reused ? modelRun().ready : sandbox.installed;
         if (cancelled) {
             phase = "idle";
             return;
@@ -117,9 +63,9 @@ export function cancelHandoff(): void {
     cancelled = true;
 }
 
-/** Dismisses a failed create's placeholder and tries again. */
-export function retryHandoff(): Promise<void> {
-    dismissCreate(FIRST_SANDBOX);
+/** Tries the handoff again; a failed create is retried first, through the setup job. */
+export async function retryHandoff(): Promise<void> {
+    if (sandboxRun().error) await retryFirstSandbox();
     phase = "idle";
     return startHandoff();
 }

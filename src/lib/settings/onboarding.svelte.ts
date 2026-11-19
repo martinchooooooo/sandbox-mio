@@ -40,3 +40,16 @@ export function completeOnboarding(): Promise<void> {
 export function resetOnboarding(): Promise<void> {
     return writeCompleted(false);
 }
+
+/**
+ * Debug affordance: returns the app to a first launch, including the first-run milestone clock.
+ * The Podman machine, base image and downloaded models stay, as with `resetOnboarding`.
+ */
+export async function restartOnboarding(): Promise<void> {
+    const settings = await invoke<AppSettings>("get_settings");
+    await invoke("set_settings", {
+        settings: { ...settings, onboardingCompleted: false, firstOpenedAtMs: null },
+    });
+    // A reload drops the in-memory setup jobs and handoff, as a language change does.
+    window.location.assign("/");
+}

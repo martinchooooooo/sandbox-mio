@@ -85,8 +85,10 @@ describe("Onboarding story — book and background setup", function () {
     await shot("02-story-sandbox-page");
 
     await $("[data-welcome-skip]").click();
-    await $("[data-setup-progress]").waitForDisplayed({ timeout: UI_SETTLE });
-    await shot("03-setup-cards");
+    // The background setup has built hello-world by now (the first sandbox is part of it), so the
+    // progress page hands over at once and may be gone before it can be observed; it is only
+    // captured when it is still up.
+    if (SHOTS && (await $("[data-setup-progress]").isExisting())) await shot("03-setup-cards");
     // Everything ready hands over to the hello-world sandbox, which also finishes onboarding.
     // Finishing unlocks the app chrome, whose sidebar always carries the Home entry.
     await navButton("/projects").waitForDisplayed({ timeout: COMMAND });

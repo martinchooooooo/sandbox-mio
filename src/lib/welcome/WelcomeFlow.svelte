@@ -7,12 +7,21 @@
     import ActivityCenter from "$lib/activity/ActivityCenter.svelte";
     import type { ActivityHeadline } from "$lib/activity/types";
     import OnboardingBook from "$lib/onboarding/OnboardingBook.svelte";
-    import { firstSandboxReady, setupHeadline, skipModelSetup, startBackgroundSetup, startModelSetup } from "$lib/onboarding/setup.svelte";
+    import {
+        firstSandboxReady,
+        firstSandboxWanted,
+        requestFirstSandbox,
+        setupComplete,
+        setupHeadline,
+        skipModelSetup,
+        startBackgroundSetup,
+        startFirstSandbox,
+        startModelSetup,
+    } from "$lib/onboarding/setup.svelte";
     import {
         cancelHandoff,
         handoffError,
         handoffPhase,
-        handoffStep,
         retryHandoff,
         startHandoff,
     } from "$lib/onboarding/handoff.svelte";
@@ -43,6 +52,7 @@
     // tour's pages, a skip or a replay (docs/features/fastest-time-to-wow/02_dev.md, Phase E).
     function confirmHeadsUp() {
         recordMilestone("heads-up-confirmed");
+        requestFirstSandbox();
         startBackgroundSetup();
         void startModelSetup();
         step = "story";
@@ -50,9 +60,16 @@
 
     function declineModel() {
         skipModelSetup();
+        requestFirstSandbox();
         startBackgroundSetup();
         step = "story";
     }
+
+    // The first sandbox is built in the background as soon as machine and image are ready, in
+    // parallel with the model; the effect also covers a machine or image retried from its card.
+    $effect(() => {
+        if (variant === "onboarding" && firstSandboxWanted() && setupComplete()) void startFirstSandbox();
+    });
 
     // The progress page hands over to the first sandbox on its own once everything is ready.
     $effect(() => {
@@ -122,8 +139,7 @@
                         <p class="text-destructive text-sm">Your first sandbox did not come together. {handoffError()}</p>
                         <Button onclick={retryHandoff}>Try again</Button>
                     {:else}
-                        <p class="text-sm font-medium">Preparing your first sandbox, hello world…</p>
-                        {#if handoffStep()}<p class="text-muted-foreground text-xs">{handoffStep()}</p>{/if}
+                        <p class="text-sm font-medium">Opening your first sandbox, hello world…</p>
                     {/if}
                 </div>
             {/if}

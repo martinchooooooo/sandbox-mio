@@ -6,6 +6,8 @@ import { MODELS, testModelFromEnv } from "$lib/models/catalogue";
 import { recommendModels } from "$lib/models/recommend";
 import type { InferenceStatus, MachineSpecs, ModelDescriptor, ModelDownloadEvent } from "$lib/models/types";
 import { recordMilestone } from "./milestones";
+import { createSandbox, dismissCreate, pendingCreates } from "$lib/sandbox/lifecycle.svelte";
+import { refreshSandboxState, sandboxesList } from "$lib/sandbox/state.svelte";
 import { prepareMachine } from "$lib/machine/readiness";
 import { ensureMachineReadiness, machineReadiness } from "$lib/machine/readiness.svelte";
 import type { MachineSetupEvent, ProviderId } from "$lib/machine/types";
@@ -71,10 +73,12 @@ interface ModelRun {
     ready: boolean;
     /** The user chose to go on without a model; onboarding then creates the sandbox with no agent. */
     skipped: boolean;
+    /** The id the running server reports for the model, which provisioning points agents at. */
+    servedModelId: string | null;
     error: string;
 }
 
-let model = $state<ModelRun>({ choice: null, downloadPct: null, downloading: false, starting: false, ready: false, skipped: false, error: "" });
+let model = $state<ModelRun>({ choice: null, downloadPct: null, downloading: false, starting: false, ready: false, skipped: false, servedModelId: null, error: "" });
 let specs = $state<MachineSpecs | null>(null);
 let testModel = $state<ModelDescriptor | null>(null);
 let modelJob: Promise<void> | null = null;
@@ -161,7 +165,7 @@ export function retryModelSetup(): Promise<void> {
 }
 
 async function runModelSetup(descriptor: ModelDescriptor): Promise<void> {
-    model = { choice: descriptor, downloadPct: null, downloading: false, starting: false, ready: false, skipped: false, error: "" };
+    model = { choice: descriptor, downloadPct: null, downloading: false, starting: false, ready: false, skipped: false, servedModelId: null, error: "" };
     let servedModelId: string | null = null;
     try {
         const source = descriptor.llama;
@@ -188,14 +192,24 @@ async function runModelSetup(descriptor: ModelDescriptor): Promise<void> {
         }
         recordMilestone("model-downloaded");
         model.starting = true;
-        const status = await invoke<InferenceStatus>("start_inference", {
-            engine: "llama",
-            modelId: descriptor.id,
-            onProgress: new Channel(),
-        });
-        if (!status.running) throw { kind: "Backend", message: "The model did not start." };
+        // A healthy server already serving this model (a restarted onboarding keeps the Rust side
+        // alive) is reused: starting again would kill it and drop every sandbox's forward to it.
+        let status = await invoke<InferenceStatus>("inference_status");
+        if (!(status.running && status.modelId === descriptor.id)) {
+            await invoke<InferenceStatus>("start_inference", {
+                engine: "llama",
+                modelId: descriptor.id,
+                onProgress: new Channel(),
+            });
+            // Re-read rather than trust the start's reply: ready means the server answers as running now.
+            status = await invoke<InferenceStatus>("inference_status");
+        }
+        if (!status.running || status.modelId !== descriptor.id) {
+            throw { kind: "Backend", message: "The model did not start." };
+        }
         recordMilestone("server-started");
-        servedModelId = status.modelId ?? null;
+        servedModelId = status.modelId;
+        model.servedModelId = servedModelId;
         model.ready = true;
     } catch (e) {
         model.error = parseError(e).message;
@@ -210,6 +224,130 @@ async function runModelSetup(descriptor: ModelDescriptor): Promise<void> {
         if (servedModelId) await reprovisionInstalledAgents(servedModelId);
     } catch {
         // Agents are re-pointed again at the next launch.
+    }
+}
+
+/** The first sandbox's name; the dash is required by `validate_name`, so "hello world" is copy only. */
+export const FIRST_SANDBOX = "hello-world";
+
+interface SandboxRun {
+    busy: boolean;
+    /** Current step text while the sandbox is created and its agent installed. */
+    step: string;
+    /** `hello-world` exists and its agent install (if any) has ended. */
+    ready: boolean;
+    /** pi was installed by this run. */
+    installed: boolean;
+    /** An existing `hello-world` was found and is used as it is. */
+    reused: boolean;
+    error: string;
+}
+
+let sandbox = $state<SandboxRun>({ busy: false, step: "", ready: false, installed: false, reused: false, error: "" });
+// Set by the heads-up's two choices; a replay never sets it, so a replay creates nothing.
+let sandboxWanted = $state(false);
+let sandboxJob: Promise<void> | null = null;
+
+export function sandboxRun(): SandboxRun { return sandbox; }
+
+/** Marks the first sandbox as part of this run's setup. Call only from the heads-up's choices. */
+export function requestFirstSandbox(): void { sandboxWanted = true; }
+export function firstSandboxWanted(): boolean { return sandboxWanted; }
+
+// Generous: the agent install can take minutes on a slow connection.
+const CREATE_TIMEOUT_MS = 20 * 60 * 1000;
+
+function creationSettled(): { done: boolean; error: string } {
+    const placeholder = pendingCreates().find((p) => p.name === FIRST_SANDBOX);
+    if (placeholder) {
+        sandbox.step = placeholder.step;
+        return { done: false, error: placeholder.error };
+    }
+    return { done: sandboxesList().some((p) => p.name === FIRST_SANDBOX), error: "" };
+}
+
+/** Resolves with "" once `hello-world` is listed, or with the reason it will not be. */
+function waitForCreate(): Promise<string> {
+    return new Promise((resolve) => {
+        const deadline = Date.now() + CREATE_TIMEOUT_MS;
+        const timer = setInterval(() => {
+            const state = creationSettled();
+            if (state.error || state.done) {
+                clearInterval(timer);
+                resolve(state.error);
+            } else if (Date.now() > deadline) {
+                clearInterval(timer);
+                resolve("Creating the sandbox took too long.");
+            }
+        }, 400);
+    });
+}
+
+/**
+ * Creates `hello-world` and installs pi into it, in parallel with the model job. Needs machine and
+ * image ready; call it once they are. An existing `hello-world` is reused, never recreated
+ * (docs/features/fastest-time-to-wow/02_dev.md, OQ-hello-world-special). With no model, no agent is
+ * installed (OQ-no-local-model). A call while a run is in flight joins it; after a success or a
+ * failure it does nothing, and `retryFirstSandbox` runs it again.
+ */
+export function startFirstSandbox(): Promise<void> {
+    if (sandbox.ready || sandbox.error) return Promise.resolve();
+    sandboxJob ??= runFirstSandbox().finally(() => {
+        sandboxJob = null;
+        sandbox.busy = false;
+    });
+    return sandboxJob;
+}
+
+/** Dismisses a failed create's placeholder and runs the job again. */
+export function retryFirstSandbox(): Promise<void> {
+    if (!sandbox.error || sandboxJob) return sandboxJob ?? Promise.resolve();
+    dismissCreate(FIRST_SANDBOX);
+    sandbox = { busy: false, step: "", ready: false, installed: false, reused: false, error: "" };
+    return startFirstSandbox();
+}
+
+async function runFirstSandbox(): Promise<void> {
+    sandbox = { busy: true, step: "", ready: false, installed: false, reused: false, error: "" };
+    try {
+        await refreshSandboxState();
+        if (sandboxesList().some((p) => p.name === FIRST_SANDBOX)) {
+            sandbox.reused = true;
+        } else {
+            // Pre-install is explicit: first run never plans from host state, which could add Claude Code.
+            // pi does not wait for the model: it is pointed at the model once both are done.
+            const started = createSandbox({
+                name: FIRST_SANDBOX,
+                proxy: false,
+                agents: model.skipped ? [] : ["pi"],
+                // The handoff owns the open, so a cancel can really prevent it.
+                autoOpen: false,
+                onCreated: () => recordMilestone("sandbox-created"),
+                onInstalled: (installed) => {
+                    sandbox.installed = installed.includes("pi");
+                    if (sandbox.installed) recordMilestone("pi-installed");
+                },
+            });
+            // A refused start is fine only when a create or the sandbox itself is already there to wait on.
+            if (!started && !creationSettled().done && !pendingCreates().some((p) => p.name === FIRST_SANDBOX)) {
+                throw { kind: "Backend", message: "The sandbox could not be started." };
+            }
+            const failure = await waitForCreate();
+            if (failure) throw { kind: "Backend", message: failure };
+        }
+        sandbox.ready = true;
+    } catch (e) {
+        sandbox.error = parseError(e).message;
+        return;
+    }
+    // The model may have become ready while pi was installing, and its own re-pointing ran before
+    // pi's packages were listed; doing it again here covers whichever finished first.
+    if (sandbox.installed && model.ready && model.servedModelId) {
+        try {
+            await reprovisionInstalledAgents(model.servedModelId);
+        } catch {
+            // Agents are re-pointed again at the next launch.
+        }
     }
 }
 
@@ -297,7 +435,7 @@ export function setupComplete(provider: ProviderId = "podman"): boolean {
 
 /** Whether machine, image and model are all done, so the first sandbox can be built. */
 export function firstSandboxReady(provider: ProviderId = "podman"): boolean {
-    return setupComplete(provider) && (model.ready || model.skipped);
+    return setupComplete(provider) && (model.ready || model.skipped) && sandbox.ready;
 }
 
 /**
@@ -320,8 +458,8 @@ export function setupHeadline(provider: ProviderId = "podman", requireModel = tr
             detail: "Restart it to finish getting things ready. You can keep reading first.",
         };
     }
-    const doneCount = Number(machineDone) + Number(!image.probing && image.ready) + Number(model.ready || model.skipped);
-    const progress = `${doneCount} of 3 ready`;
+    const doneCount = Number(machineDone) + Number(!image.probing && image.ready) + Number(model.ready || model.skipped) + Number(sandbox.ready);
+    const progress = `${doneCount} of 4 ready`;
     if (machine.busy) {
         return { state: "running", title: "Getting things ready", detail: `${progress} · Preparing a pretend computer for your sandboxes` };
     }
@@ -335,13 +473,16 @@ export function setupHeadline(provider: ProviderId = "podman", requireModel = tr
     if (image.busy) {
         return { state: "running", title: "Getting things ready", detail: `${progress} · Packing what sandboxes need` };
     }
-    if (machine.error || status.error || image.error || model.error || (machineDone && image.probeError)) {
+    if (sandbox.busy) {
+        return { state: "running", title: "Getting things ready", detail: `${progress} · Preparing your first sandbox` };
+    }
+    if (machine.error || status.error || image.error || model.error || sandbox.error || (machineDone && image.probeError)) {
         return {
             state: "attention",
             title: "Something needs a hand",
             detail: "Something did not go through. You can try again at the end of the tour.",
         };
     }
-    if (backgroundActive || modelJobActive) return { state: "running", title: "Getting things ready", detail: "Checking your computer…" };
+    if (backgroundActive || modelJobActive || (sandboxWanted && !sandbox.ready)) return { state: "running", title: "Getting things ready", detail: "Checking your computer…" };
     return null;
 }
