@@ -7,7 +7,10 @@ import { COMMAND, UI_SETTLE } from "../../../lib/timeouts.js";
 
 // LIGHT spec for the onboarding story: the book mounts and turns pages, first-run setup starts in
 // the background when the story opens, and the activity toggle reports it. The mock backend answers
-// instantly, so only the end states (finished, needs attention) are observable here.
+// machine and image setup instantly, so only the end states (finished, needs attention) are
+// observable here. The spec declines the model ("Set up without a Model") because inference has no
+// mock backend; the real model path (download, serve, pi in the sandbox) belongs in a standard or
+// heavy tier spec.
 
 // Set MIO_E2E_SHOTS to a directory to keep a screenshot of each stage for a visual check.
 const SHOTS = process.env.MIO_E2E_SHOTS;
@@ -25,9 +28,10 @@ async function openStory(): Promise<void> {
   const start = await $("[data-welcome-get-started]");
   await start.waitForClickable({ timeout: COMMAND });
   await start.click();
-  const begin = await $("[data-welcome-begin]");
-  await begin.waitForClickable({ timeout: UI_SETTLE });
-  await begin.click();
+  // Decline the model: confirming would download and serve a real one, which the mock backend cannot fake.
+  const decline = await $("[data-welcome-decline]");
+  await decline.waitForClickable({ timeout: UI_SETTLE });
+  await decline.click();
   await $("[data-story-book]").waitForDisplayed({ timeout: UI_SETTLE });
 }
 
@@ -45,7 +49,7 @@ describe("Onboarding story — book and background setup", function () {
     await setOnboarded(true);
   });
 
-  it("plays the story while setup finishes in the background, then lets the user finish", async () => {
+  it("plays the story while setup finishes in the background, then hands over to the hello-world sandbox", async () => {
     await setOnboarded(false);
     await openStory();
 
@@ -81,11 +85,9 @@ describe("Onboarding story — book and background setup", function () {
     await shot("02-story-sandbox-page");
 
     await $("[data-welcome-skip]").click();
-    const finish = await $("[data-welcome-finish]");
-    await finish.waitForEnabled({ timeout: COMMAND });
+    await $("[data-setup-progress]").waitForDisplayed({ timeout: UI_SETTLE });
     await shot("03-setup-cards");
-    await finish.click();
-    // Finishing unlocks the app chrome, whose sidebar always carries the Home entry.
+    // Everything ready hands over to the hello-world sandbox, which also finishes onboarding. Finishing unlocks the app chrome, whose sidebar always carries the Home entry.
     await navButton("/projects").waitForDisplayed({ timeout: COMMAND });
   });
 
@@ -107,9 +109,9 @@ describe("Onboarding story — book and background setup", function () {
     await detail.$("button").click();
     await $("[data-welcome-step='actions']").waitForDisplayed({ timeout: UI_SETTLE });
     assert.strictEqual(
-      await (await $("[data-welcome-finish]")).isEnabled(),
+      await (await $("[data-welcome-handoff]")).isExisting(),
       false,
-      "Finish is enabled although the base image is not built.",
+      "The first-sandbox handoff started although the base image is not built.",
     );
   });
 });

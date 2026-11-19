@@ -15,6 +15,7 @@
     import { ensureResources } from "$lib/sandbox/resources.svelte";
     import { ensureOnboardingState, onboardingCompleted } from "$lib/settings/onboarding.svelte";
     import { reprovisionInstalledAgents } from "$lib/agents/reprovision";
+    import { probeMachineSpecs } from "$lib/onboarding/setup.svelte";
     import type { InferenceStatus } from "$lib/models/types";
     import { m } from "$lib/paraglide/messages.js";
     import type { Snippet } from "svelte";
@@ -82,6 +83,9 @@
             } catch {
                 // Plain-browser dev or another window (agent-auth): no workspace chrome.
             }
+            // Before any heavy job lowers free RAM, so the first-run heads-up rates models on the
+            // most headroom the machine will have. Not awaited: it must not delay the shell.
+            if (isNavigationPanel) void probeMachineSpecs();
             await ensureWorkspaceState();
             await ensureNetworkState();
             await ensureResources();

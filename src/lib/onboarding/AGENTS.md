@@ -11,7 +11,7 @@
 | `book/` | The reusable kit every chapter is written with: `Book`, `Chapter`, `Act`, `Page`, `Term`, `Glossary`, `GlossaryItem`, `Callout`. Import from `book/index.ts`. |
 | `stage/` | The whiteboard animation engine scenes draw with: the cast, placement, timing, screens, arms, effects, and `stage.css`. |
 | `OnboardingBook.svelte` | Renders every registered chapter in one `Book`. |
-| `setup.svelte.ts` | Background first-run setup (machine, then base image), shared with the two setup cards in `src/lib/welcome/`. |
+| `setup.svelte.ts` | Background first-run setup (machine, base image and model), shared with the setup progress page in `src/lib/welcome/`. |
 
 ## Adding a chapter
 

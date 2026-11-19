@@ -36,7 +36,7 @@ export const AGENTS: AgentDescriptor[] = [
   {
     id: "opencode",
     label: "OpenCode",
-    description: "Open-source terminal coding agent, pre-wired to your local LLM",
+    description: "Open-source terminal coding agent, pre-wired to your Model",
     misePackages: ["opencode"],
     postInstallSteps: [],
     provision: { kind: "opencode-provider", providerId: "local-llm", relativeConfigPath: "opencode.json" },
@@ -45,11 +45,11 @@ export const AGENTS: AgentDescriptor[] = [
   {
     id: "pi",
     label: "Pi",
-    description: "Minimal terminal coding agent, pre-wired to your local LLM",
+    description: "Minimal terminal coding agent, pre-wired to your Model",
     misePackages: [`pi@${PI_PINNED_VERSION}`],
     postInstallSteps: [],
     provision: { kind: "pi-provider", providerId: "local-llm", relativeConfigPath: PI_CONFIG_REL_PATH },
-    // The local LLM is reached through the reverse forward, which is not egress.
+    // The Model is reached through the reverse forward, which is not egress.
     apiHosts: [],
   },
 ];

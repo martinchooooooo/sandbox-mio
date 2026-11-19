@@ -46,7 +46,7 @@ fn records(fixture: &str) -> Vec<Value> {
 /// (`buildPiLocalLlmProvider` in `src/lib/agents/pi.ts`).
 fn models() -> Value {
     json!([{
-        "id": "qwen3.5-2b", "name": "Local LLM", "api": "openai-completions", "provider": "local-llm",
+        "id": "qwen3.5-2b", "name": "Model", "api": "openai-completions", "provider": "local-llm",
         "baseUrl": "http://127.0.0.1:51199/v1", "reasoning": true, "input": ["text"],
         "contextWindow": 32768, "maxTokens": 16384
     }])

@@ -19,6 +19,7 @@ approximate. New entries go on top.
 * **Create** [mcp-servers](mcp-servers/index.md): ideation drafted; an app-wide MCP library filled by pasting a URL or README snippet, switched on per sandbox and rendered into Claude Code, OpenCode and pi configs; gating spike not yet run
 * **Create** [chat-mcp-learning](chat-mcp-learning/index.md): ideation drafted; a built-in offline demo MCP server and MCP visibility in the native chat, building on mcp-servers; gating spike not yet run
 * **Create** [paseo-plugins](paseo-plugins/index.md): ideation drafted; ship app-owned Paseo plugins in the binary, stream them into each sandbox and register them in the daemon's `config.json` before launch; the delivery and hot-reload spike passed against Paseo 0.16.1
+* **Create** [fastest-time-to-wow](fastest-time-to-wow/index.md): ideation drafted from the Expert UX review; local-model-first onboarding judged by fastest time to wow, with a consented model download, a hello-world sandbox with pi, and one word for models
 * **Create** [github-cli-auth](github-cli-auth/index.md): ideation drafted; log in to GitHub once via gh's device flow in the auth container and apply the token to every sandbox, with a per-sandbox opt-out; the no-TTY login spike passed
 * **Implement** [herdr-multiplexer](herdr-multiplexer/index.md): Herdr replaces zellij in the base image and the native terminal's two command strings; standard specs pass and the user checked the manual renderer, microsandbox and deployed-sandbox cases
 

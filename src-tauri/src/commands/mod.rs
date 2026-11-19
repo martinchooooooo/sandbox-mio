@@ -117,6 +117,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         inference::test_model,
         app::get_settings,
         app::set_settings,
+        app::log_milestone,
         mockctl::mock_configure,
         mockctl::mock_reset,
         mockctl::mock_calls,

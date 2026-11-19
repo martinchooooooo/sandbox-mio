@@ -13,9 +13,9 @@
 </script>
 
 <Act label="Act 1 · At first">
-    <Page title="Meet the brain" scene={act1.meetTheBrain}>
+    <Page title="Meet the Brain (AKA Model)" scene={act1.meetTheBrain}>
         <p>
-            An AI <Term>model</Term> is a bit like a brain in a jar. It has read an enormous amount of text, which makes it
+            An AI <Term>Brain</Term> (AKA Model) is a bit like a brain in a jar. It has read an enormous amount of text, which makes it
             very good at one thing: you give it words, and it gives words back.
         </p>
         <p>That is all it can do. It has no hands, it can't see your screen, and it has no way to touch your computer.</p>

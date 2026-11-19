@@ -15,7 +15,7 @@ export function buildLocalLlmProvider(defaultModelId: string): {
     providerId: LOCAL_LLM_PROVIDER_ID,
     providerJson: {
       npm: "@ai-sdk/openai-compatible",
-      name: "Local LLM",
+      name: "Model",
       options: { baseURL: LOCAL_LLM_BASE_URL, apiKey: "sk-local" },
       models,
     },

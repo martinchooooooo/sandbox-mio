@@ -24,3 +24,12 @@ pub fn set_settings(settings: AppSettings, app: tauri::AppHandle) -> Result<(), 
     settings::save(&app, &settings)?;
     Ok(())
 }
+
+/// Writes a first-run milestone (a short fixed name, no user data) to the application log, so the
+/// time to the first model reply can be read off the log
+/// (docs/features/fastest-time-to-wow/02_dev.md, Phase H).
+#[tauri::command]
+pub fn log_milestone(name: String, elapsed_ms: u64) {
+    let name: String = name.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').take(48).collect();
+    tracing::info!(target: "milestone", %name, elapsed_ms, "first-run milestone");
+}

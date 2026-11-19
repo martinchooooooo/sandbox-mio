@@ -2,7 +2,7 @@ import { MODELS } from "$lib/models/catalogue";
 import { FALLBACK_MODEL_ID, LOCAL_LLM_BASE_URL, LOCAL_LLM_PROVIDER_ID } from "./local-llm";
 
 /** Name pi reports for the local model; the chat header shows a translated label instead. */
-export const LOCAL_LLM_MODEL_NAME = "Local LLM";
+export const LOCAL_LLM_MODEL_NAME = "Model";
 
 export const PI_CONFIG_DIR_CONTAINER = "/root/work/.mio/pi-agent";
 export const PI_CONFIG_ENV = "PI_CODING_AGENT_DIR";
@@ -25,7 +25,7 @@ function catalogueEntry(servedId: string) {
   );
 }
 
-/** pi's provider block: one "Local LLM" entry keyed by the served id, since only one model is served.
+/** pi's provider block: one "Model" entry keyed by the served id, since only one model is served.
  * The dummy `apiKey` is required because OpenAI-compatible clients always send an Authorization header.
  * `servedContext` caps `contextWindow`; `null` (Foundry, not probed) keeps the catalogue value. */
 export function buildPiLocalLlmProvider(servedModelId: string, servedContext: number | null): {

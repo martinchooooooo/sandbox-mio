@@ -7,6 +7,8 @@ import { tasks } from "$lib/activity/activity.svelte";
 import { openSandbox } from "$lib/workspace/navigation.svelte";
 import type { Project } from "$lib/sandbox";
 import type { ProviderId } from "$lib/providers";
+import { installAgentInSandbox } from "$lib/agents/install";
+import { agentsById, planPreinstall, readPreinstallFacts } from "$lib/agents/preinstall";
 
 // Module-scoped store (mirrors src/lib/sandbox/state.svelte.ts): the in-flight lifecycle operation
 // and last failure per sandbox name. Component-local runners lost both on navigation, so a start
@@ -113,10 +115,13 @@ export async function destroySandbox(
 export interface CreateArgs {
     name: string;
     existingPath?: string;
-    provider: ProviderId;
+    /** Omitted means the backend resolves the default provider. */
+    provider?: ProviderId;
     proxy: boolean;
     /** Present only when the provider supports an egress policy. */
     network?: { egress: "open" | "allowlist"; starterHosts: string[] };
+    /** Agent ids to install after create; omitted means plan from host state (`planPreinstall`). */
+    agents?: string[];
 }
 
 export interface PendingCreate {
@@ -139,8 +144,12 @@ export function pendingCreates(): PendingCreate[] {
     }));
 }
 
+// Install progress the backend cannot report: it knows only the create task, not the agent install after it.
+let installNotes = $state<Record<string, string>>({});
+
 // The backend reports each step as the `detail` of the running `sandbox-create` task for this name.
 function createStep(name: string): string {
+    if (installNotes[name]) return installNotes[name];
     const task = tasks().find((t) => t.kind === "sandbox-create" && t.target === name && t.status === "running");
     return task?.detail || lifecycleMessage("create");
 }
@@ -171,6 +180,26 @@ export function dismissCreate(name: string): void {
     if (creates[name]?.error) delete creates[name];
 }
 
+/**
+ * Best-effort: a failed install is toasted and never fails the create, since the Manage tab still
+ * offers the manual install (docs/features/fastest-time-to-wow/02_dev.md, Phase D).
+ */
+async function preinstallAgents(name: string, workspacePath: string, explicit: string[] | undefined): Promise<void> {
+    try {
+        const ids = explicit ?? planPreinstall(await readPreinstallFacts());
+        for (const agent of agentsById(ids)) {
+            installNotes[name] = `Installing ${agent.label}`; // TODO(i18n)
+            try {
+                await installAgentInSandbox(name, workspacePath, agent);
+            } catch (e) {
+                toast.error(`${name}: ${agent.label} was not installed. ${parseError(e).message}`); // TODO(i18n)
+            }
+        }
+    } finally {
+        delete installNotes[name];
+    }
+}
+
 async function runCreate(name: string): Promise<void> {
     const { args } = creates[name];
     pending[name] = "create";
@@ -182,6 +211,7 @@ async function runCreate(name: string): Promise<void> {
             proxy: args.proxy,
             ...args.network,
         });
+        await preinstallAgents(name, sandbox.workspace_path, args.agents);
         await refreshSandboxState();
         // The placeholder goes only once the real entry is listed, so there is no gap or flicker.
         delete creates[name];

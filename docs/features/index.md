@@ -12,6 +12,7 @@
 
 ## planned
 
+* [fastest-time-to-wow](fastest-time-to-wow/index.md) - Reshape first-run onboarding around one metric, the fastest time to a local-model wow: story-voiced setup, a local model downloaded with consent, a pre-built hello-world sandbox with pi, and one consistent word for models.
 * [proxy-toggle-management](proxy-toggle-management/index.md) - App-global proxy default and turning the proxy on or off for an existing sandbox by recreating it.
 * [tailscale-access](tailscale-access/index.md) - Join deployed sandboxes to the user's tailnet so their web services are reachable from other devices.
 

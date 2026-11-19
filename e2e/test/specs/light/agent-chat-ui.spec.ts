@@ -97,10 +97,10 @@ describe("Native agent chat — replayed pi traces (mock backend)", function () 
     });
   });
 
-  it("offers the served model as a single Local LLM option", async () => {
+  it("offers the served model as a single Model option", async () => {
     await chat.pick(chat.modelButton, chat.modelOption("qwen3.5-2b"));
     assert.strictEqual(await (await chat.modelButton).getAttribute("data-chat-model"), "qwen3.5-2b");
-    assert.strictEqual((await (await chat.modelButton).getText()).trim(), "Local LLM");
+    assert.strictEqual((await (await chat.modelButton).getText()).trim(), "Model");
   });
 
   it("lists a session file from the workspace and starts a new session", async () => {

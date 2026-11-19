@@ -2,7 +2,7 @@ import { invoke, Channel } from "@tauri-apps/api/core";
 import { parseError } from "$lib/errors";
 import type { MachineReadiness, MachineSetupEvent, ProviderId, SetupStep } from "./types";
 
-/** Provider-neutral welcome-flow readiness (`CreateVmStep.svelte`), distinct from the Podman-only
+/** Provider-neutral welcome-flow readiness (`SetupProgress.svelte`), distinct from the Podman-only
  * recovery gate in `$lib/podman/setup.svelte` that the projects page and download-necessities step
  * keep using unchanged (`docs/features/microsandbox-provider/02_dev.md`, Phase I). */
 export async function fetchMachineSetupSteps(provider: ProviderId): Promise<SetupStep[]> {

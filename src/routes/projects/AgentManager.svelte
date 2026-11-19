@@ -1,11 +1,11 @@
 <script lang="ts">
     import Button from "$lib/components/ui/button/button.svelte";
-    import { invoke, Channel } from "@tauri-apps/api/core";
+    import { invoke } from "@tauri-apps/api/core";
     import { onMount } from "svelte";
     import { m } from "$lib/paraglide/messages.js";
     import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
     import { AGENTS, miseKey, onboardingSeed } from "$lib/agents/catalogue";
-    import { provisionAgent } from "$lib/agents/provision";
+    import { installAgentInSandbox } from "$lib/agents/install";
     import type { AgentDescriptor, AgentInstallEvent } from "$lib/agents/types";
     import { agentAuthFor, refreshAgentAuth } from "$lib/agents/authStatus.svelte";
     import type { InferenceStatus } from "$lib/models/types";
@@ -58,32 +58,12 @@
     async function installAgent(descriptor: AgentDescriptor) {
         installingAgent = descriptor.id;
         installLog = [];
-        const npmStep = descriptor.postInstallSteps.find((s) => s.kind === "npm-postinstall");
         const success = await action.run("install-agent", async () => {
-            const channel = new Channel<AgentInstallEvent>();
-            channel.onmessage = (event) => {
-                installLog = [...installLog, formatInstallEvent(event)];
-            };
-            await invoke("install_agent", {
-                name: sandboxName,
-                packages: descriptor.misePackages,
-                postinstallNpm: npmStep ? [npmStep.package, npmStep.nodeVersion] : null,
-                credentialService: descriptor.credentialService ?? null,
-                onboarding: onboardingSeed(descriptor),
-                onProgress: channel,
+            await installAgentInSandbox(sandboxName, workspacePath, descriptor, (p) => {
+                if (p.kind === "event") installLog = [...installLog, formatInstallEvent(p.event)];
+                else if (p.kind === "provisioning") installLog = [...installLog, m.projects_agent_provisioning()];
+                else installLog = [...installLog, `✓ ${m.projects_agent_provider_configured()}`];
             });
-            if (descriptor.provision) {
-                installLog = [...installLog, m.projects_agent_provisioning()];
-                let runningModelId: string | null = null;
-                try {
-                    const status = await invoke<InferenceStatus>("inference_status");
-                    runningModelId = status.running ? status.modelId : null;
-                } catch {
-                    runningModelId = null;
-                }
-                await provisionAgent(descriptor, workspacePath, runningModelId);
-                installLog = [...installLog, `✓ ${m.projects_agent_provider_configured()}`];
-            }
         });
         installingAgent = null;
         if (success) {

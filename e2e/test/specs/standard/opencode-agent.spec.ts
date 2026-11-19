@@ -155,7 +155,7 @@ describe("OpenCode agent — install, provision, merge", function () {
       providerId: "local-llm",
       providerJson: {
         npm: "@ai-sdk/openai-compatible",
-        name: "Local LLM",
+        name: "Model",
         options: { baseURL: EXPECTED_BASE_URL, apiKey: "sk-local" },
         models: { "qwen3.5-4b": { name: "Qwen3.5 4B" } },
       },

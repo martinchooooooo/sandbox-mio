@@ -2,12 +2,21 @@
     import Button from "$lib/components/ui/button/button.svelte";
     import { Text } from "$lib/components/ui/text";
     import MioHero from "./MioHero.svelte";
-    import CreateVmStep from "./CreateVmStep.svelte";
-    import DownloadNecessitiesStep from "./DownloadNecessitiesStep.svelte";
+    import HeadsUpStep from "./HeadsUpStep.svelte";
+    import SetupProgress from "./SetupProgress.svelte";
     import ActivityCenter from "$lib/activity/ActivityCenter.svelte";
     import type { ActivityHeadline } from "$lib/activity/types";
     import OnboardingBook from "$lib/onboarding/OnboardingBook.svelte";
-    import { setupComplete, setupHeadline, startBackgroundSetup } from "$lib/onboarding/setup.svelte";
+    import { firstSandboxReady, setupHeadline, skipModelSetup, startBackgroundSetup, startModelSetup } from "$lib/onboarding/setup.svelte";
+    import {
+        cancelHandoff,
+        handoffError,
+        handoffPhase,
+        handoffStep,
+        retryHandoff,
+        startHandoff,
+    } from "$lib/onboarding/handoff.svelte";
+    import { recordMilestone } from "$lib/onboarding/milestones";
     import { completeOnboarding } from "$lib/settings/onboarding.svelte";
     import { m } from "$lib/paraglide/messages.js";
 
@@ -15,25 +24,42 @@
 
     // Component-local on purpose: a step machine that should reset when the route is left
     // (src/AGENTS.md's rune-store convention).
-    let step = $state<"hero" | "welcome" | "story" | "actions">("hero");
+    let step = $state<"hero" | "consent" | "story" | "actions">("hero");
 
-    let finishing = $state(false);
+    let cancelling = $state(false);
 
-    async function finish() {
-        finishing = true;
+    // Leaves for the sandbox list; the first sandbox keeps building in the background.
+    async function cancelHandoffToList() {
+        cancelling = true;
+        cancelHandoff();
         try {
             await completeOnboarding();
         } finally {
-            finishing = false;
+            cancelling = false;
         }
     }
 
-    // Setup starts here so it runs while the user reads. A replay only walks through: it must
-    // not trigger anything (docs/features/welcome-onboarding/02_dev.md, Phase D).
-    function beginStory() {
-        if (variant === "onboarding") startBackgroundSetup();
+    // Consent is given here, so everything starts from this one action and nowhere else: not the
+    // tour's pages, a skip or a replay (docs/features/fastest-time-to-wow/02_dev.md, Phase E).
+    function confirmHeadsUp() {
+        recordMilestone("heads-up-confirmed");
+        startBackgroundSetup();
+        void startModelSetup();
         step = "story";
     }
+
+    function declineModel() {
+        skipModelSetup();
+        startBackgroundSetup();
+        step = "story";
+    }
+
+    // The progress page hands over to the first sandbox on its own once everything is ready.
+    $effect(() => {
+        if (variant === "onboarding" && step === "actions" && firstSandboxReady() && handoffPhase() === "idle") {
+            void startHandoff();
+        }
+    });
 
     // TODO(i18n): the hint and the action label.
     const headline = $derived.by((): ActivityHeadline | null => {
@@ -68,22 +94,11 @@
         <div class="space-y-10">
             <MioHero />
             <div class="text-center">
-                <Button onclick={() => (step = "welcome")} data-welcome-get-started>{m.welcome_get_started()}</Button>
+                <Button onclick={() => (step = variant === "onboarding" ? "consent" : "story")} data-welcome-get-started>{m.welcome_get_started()}</Button>
             </div>
         </div>
-    {:else if step === "welcome"}
-        <div class="max-w-lg text-center space-y-5">
-            <Text as="h1">{m.welcome_heading()}</Text>
-            <p class="text-muted-foreground">{m.welcome_intro_isolated()}</p>
-            <!-- TODO(i18n) -->
-            <p class="text-muted-foreground">
-                Let's start with a short illustrated tour of how AI agents work and why they belong in a sandbox.
-                {#if variant === "onboarding"}
-                    While you read, we will set up your computer in the background, so everything is ready when you finish.
-                {/if}
-            </p>
-            <Button onclick={beginStory} data-welcome-begin>{m.welcome_continue()}</Button>
-        </div>
+    {:else if step === "consent"}
+        <HeadsUpStep onconfirm={confirmHeadsUp} ondecline={declineModel} />
     {:else if step === "story"}
         <div class="flex w-full flex-col items-center gap-2">
             <!-- TODO(i18n): the finish label and the skip link. -->
@@ -97,21 +112,26 @@
         </div>
     {:else}
         <div class="w-full max-w-3xl space-y-6 pb-16">
-            <Text as="h1" class="text-center">{m.welcome_first_stops()}</Text>
-            <div class="grid gap-4 @max-[720px]:grid-cols-1 grid-cols-2">
-                <CreateVmStep />
-                <DownloadNecessitiesStep />
-            </div>
+            <!-- TODO(i18n) -->
+            <Text as="h1" class="text-center">Getting things ready</Text>
+            <SetupProgress showModel={variant === "onboarding"} />
+            {#if variant === "onboarding" && firstSandboxReady()}
+                <!-- TODO(i18n) -->
+                <div class="text-center space-y-2" data-welcome-handoff={handoffPhase()}>
+                    {#if handoffPhase() === "failed"}
+                        <p class="text-destructive text-sm">Your first sandbox did not come together. {handoffError()}</p>
+                        <Button onclick={retryHandoff}>Try again</Button>
+                    {:else}
+                        <p class="text-sm font-medium">Preparing your first sandbox, hello world…</p>
+                        {#if handoffStep()}<p class="text-muted-foreground text-xs">{handoffStep()}</p>{/if}
+                    {/if}
+                </div>
+            {/if}
             <div class="flex items-center justify-center gap-3">
                 <!-- TODO(i18n) -->
                 <Button variant="outline" onclick={() => (step = "story")} data-welcome-back-to-story>← Back to the tour</Button>
-                {#if variant === "onboarding"}
-                    <Button
-                        disabled={!setupComplete() || finishing}
-                        loading={finishing}
-                        onclick={finish}
-                        data-welcome-finish
-                    >{m.welcome_finish()}</Button>
+                {#if variant === "onboarding" && firstSandboxReady()}
+                    <Button variant="outline" loading={cancelling} onclick={cancelHandoffToList} data-welcome-cancel>Go to my sandbox list</Button>
                 {/if}
             </div>
         </div>
