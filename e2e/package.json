@@ -12,6 +12,7 @@
     "test:activity": "wdio run wdio.conf.ts --spec ./test/specs/heavy/activity-center.spec.ts",
     "test:port": "wdio run wdio.conf.ts --spec ./test/specs/standard/expose-port.spec.ts",
     "test:agentweb": "wdio run wdio.conf.ts --spec ./test/specs/standard/agent-web.spec.ts",
+    "test:agentweb-plugins": "wdio run wdio.conf.ts --spec ./test/specs/standard/agent-web-plugins.spec.ts",
     "test:opencode-forward": "wdio run wdio.conf.ts --spec ./test/specs/heavy/opencode-forward.spec.ts",
     "test:failures": "node -e \"const fs=require('fs');let found=0;for(const t of ['light','standard']){const f='failures-'+t+'.log';if(fs.existsSync(f)){found++;process.stdout.write('== '+f+'\\n'+(fs.readFileSync(f,'utf8')||'No failures\\n'))}}if(found===0)console.log('No failure logs yet: run a tier first')\"",
     "typecheck": "tsc --noEmit"
