@@ -12,6 +12,10 @@ approximate. New entries go on top.
 ## 2026-11-21
 
 * **Create** [chat-agent-anatomy](chat-agent-anatomy/index.md): ideation drafted; a learning mode for the native chat that outlines parts as Brain or Arms, splits tool calls into ask and act, and plays a live brain-and-arms stage in a left panel, reusing the onboarding stage engine; on by default in `hello-world`
+* **Implement** [remove-microsandbox](remove-microsandbox/index.md): the microsandbox provider, its proxy path, bundling and UI are removed and Podman is the only provider, keeping the provider, capability, process and net-policy seams; the standard tier passes apart from load-flaky specs that pass on rerun
+* **Supersede** [microsandbox-provider](microsandbox-provider/index.md): replaced by [remove-microsandbox](remove-microsandbox/index.md); microsandbox only ever added maintenance on top of Podman, which it needed to build its image
+* **Supersede** [microsandbox-network-policy](microsandbox-network-policy/index.md): replaced by [remove-microsandbox](remove-microsandbox/index.md); the Podman iron-proxy sidecar enforces the shared policy format alone
+* **Create** [remove-microsandbox](remove-microsandbox/index.md): ideation drafted; delete the microsandbox provider and make Podman the only provider while keeping the provider, capability, process and net-policy seams; no spike run
 * **Implement** [paseo-plugins](paseo-plugins/index.md): app-owned plugins are bundled into the binary, delivered on Agents-tab open and registered, reloaded or pruned in the daemon config; the standard spec passes on Podman, and the microsandbox and deployed-sandbox checks were skipped by the user
 
 ## 2026-11-19

@@ -3,9 +3,9 @@ type: architecture
 title: "Remote Deploy and Sync"
 description: "Moving a Podman sandbox to a remote Podman host while its workspace stays editable on the laptop: hosts, deploy, deployment state, undeploy and destroy."
 generated:
-  by: claude-code/opus-5-5
-  at: 2026-11-05T23:55:00+11:00
-stale_after: 2027-02-05T00:00:00+11:00
+  by: claude-code/sonnet-5-5
+  at: 2026-11-21T20:00:00+11:00
+stale_after: 2027-02-21T00:00:00+11:00
 code:
   - src-tauri/src/commands/deploy.rs
   - src-tauri/src/commands/hosts.rs
@@ -18,10 +18,11 @@ sources:
   - resource: docs/features/remote-sync/02_dev.md
   - resource: docs/features/remote-terminal/02_dev.md
   - resource: docs/features/sandbox-runtime-management/02_dev.md
+  - resource: docs/features/remove-microsandbox/02_dev.md
 ---
 # Remote Deploy and Sync
 
-A Podman sandbox can move from the laptop to a remote Podman host while its workspace stays editable on the laptop: the remote container does the work, and a Mutagen sync session mirrors the workspace in both directions. microsandbox sandboxes cannot be deployed ([Providers](providers.md)).
+A Podman sandbox can move from the laptop to a remote Podman host while its workspace stays editable on the laptop: the remote container does the work, and a Mutagen sync session mirrors the workspace in both directions.
 
 ## Remote Hosts
 
@@ -54,4 +55,4 @@ The two flows order their steps differently on purpose ([lib-decomposition plan]
 
 - Only tools installed through mise reach the remote host.
 - Remote connection details, notably the SSH port that changes on every machine boot, are re-read on every use and never cached.
-- Only a session named exactly after a sandbox means deployed; a microsandbox workspace session uses a different name.
+- Only a session named exactly after a sandbox means deployed.

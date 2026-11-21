@@ -4,8 +4,8 @@ title: "Local Inference"
 description: "Running a language model on the host (hardware probe, recommendation, downloads, the llama.cpp and Foundry Local engines) and offering it to sandboxes."
 generated:
   by: claude-code/sonnet-5-5
-  at: 2026-11-17T12:00:00+11:00
-stale_after: 2027-02-17T00:00:00+11:00
+  at: 2026-11-21T20:00:00+11:00
+stale_after: 2027-02-21T00:00:00+11:00
 code:
   - src-tauri/src/inference/
   - src-tauri/src/commands/inference.rs
@@ -17,6 +17,7 @@ sources:
   - resource: docs/features/models-page-caching/02_dev.md
   - resource: docs/features/local-llm-reachability/02_dev.md
   - resource: docs/features/native-agent-ui/02_dev.md
+  - resource: docs/features/remove-microsandbox/02_dev.md
 ---
 # Local Inference
 
@@ -41,7 +42,7 @@ The app can run a language model on the user's machine and offer it to sandboxes
 
 ## Reaching the Server from Sandboxes
 
-- Each running local sandbox, Podman or microsandbox, gets its own reverse Mutagen forward: a listener on the sandbox's own loopback, tunnelled over the sandbox's SSH alias to the server's host port ([Transport](transport.md)). Agents therefore use one loopback URL whatever the engine.
+- Each running local sandbox gets its own reverse Mutagen forward: a listener on the sandbox's own loopback, tunnelled over the sandbox's SSH alias to the server's host port ([Transport](transport.md)). Agents therefore use one loopback URL.
 - A reach service in the backend owns the forward set. It ensures a sandbox's forward when a server starts, and when the sandbox is created, started, re-applied or its workspace viewed. It closes forwards when the server stops, before their sandbox stops, and at app exit.
 - A server restart lands on a new host port, so every forward is recreated against it.
 - Deployed sandboxes get no forward.

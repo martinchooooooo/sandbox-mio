@@ -1,6 +1,6 @@
 # Repo Map
 
-Sandbox-mio is a Tauri 2 desktop app (Windows-first) that manages per-project "sandboxes" (Podman containers or microsandbox microVMs) with a host-side workspace, a mise-managed runtime, embedded Herdr terminals, installable AI coding agents, remote deploys with Mutagen file sync, and local LLM inference.
+Sandbox-mio is a Tauri 2 desktop app (Windows-first) that manages per-project "sandboxes" (Podman containers) with a host-side workspace, a mise-managed runtime, embedded Herdr terminals, installable AI coding agents, remote deploys with Mutagen file sync, and local LLM inference.
 
 | Area | Contents | Orientation doc |
 |---|---|---|
@@ -69,13 +69,11 @@ All read via `std::env::var` at call time, never cached:
 - `MIO_PODMAN_MACHINE` — test-only override for the machine `src-tauri/src/machine/mod.rs` targets; default `podman-machine-default`. Set only by the E2E harness.
 - `SANDBOX_WORKSPACE_ROOT` — root for sandbox workspace directories; default `<Documents>/sandbox-mio` (`workspace_root()` in `src-tauri/src/backends/mod.rs`).
 - `MIO_MOCK_BACKEND=1` — swaps every subsystem trait to its in-memory mock; used by the e2e `light` tier (`mock_backend_enabled()` in `src-tauri/src/backends/mod.rs`).
-- `MIO_MACHINE_PROVIDER` — overrides the persisted `default_provider` setting for the process (`podman` or `msb`), so a run can point the create-sandbox flow at a provider without writing that choice to `settings.json` (`load()` in `src-tauri/src/settings/mod.rs`).
 - `MIO_TEST_MODEL` — overrides the model used by inference e2e specs.
 - `MIO_APP_DATA_DIR` — app-data and log root; default the compiled-in `app_data_dir()`, and for logs `app_log_dir()` (`src-tauri/src/paths.rs`, `init_logging()` in `src-tauri/src/logging.rs`). Set by the e2e harness to a per-worktree directory, never by a shipped install.
 - `MIO_SETTINGS_DIR` — relocates `settings.json`; takes precedence over `MIO_APP_DATA_DIR` (`settings_path()` in `src-tauri/src/settings/mod.rs`).
 - `MIO_CREDENTIALS_DIR` — relocates the credential bundle store; takes precedence over `MIO_APP_DATA_DIR` (`store_dir()` in `src-tauri/src/credentials/mod.rs`).
 - `MIO_IRON_PROXY_IMAGE` — overrides the pinned iron-proxy image of the Podman proxy sidecar (`iron_proxy_image()` in `src-tauri/src/proxy/iron.rs`); an override must keep a non-integer tag (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 10).
-- `MIO_PROXY_IMAGE` — overrides the pinned mitmproxy image of the microsandbox proxy sidecar (`mitmproxy_image()` in `src-tauri/src/proxy/mod.rs`).
 - `MIO_PORT_BASE` — base of the e2e WebDriver port band each worktree's run claims a 16-port window from; default `45000` (`e2e/lib/run-identity.ts`).
 - `MIO_DRIVER_PORT` — harness-set, not read by the Rust side: the `msedgedriver` WebDriver port allocated for the session (`beforeSession` in `e2e/wdio.conf.ts`, asserted by `e2e/test/specs/light/run-identity.spec.ts`).
 

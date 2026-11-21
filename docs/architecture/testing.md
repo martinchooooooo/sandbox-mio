@@ -3,9 +3,9 @@ type: architecture
 title: "Testing"
 description: "The verification layers, the process-level mock seam behind the fast e2e tier, and how concurrent e2e runs stay isolated; spec-writing rules are in e2e/AGENTS.md."
 generated:
-  by: claude-code/opus-5-5
-  at: 2026-11-05T23:55:00+11:00
-stale_after: 2027-02-05T00:00:00+11:00
+  by: claude-code/sonnet-5-5
+  at: 2026-11-21T20:00:00+11:00
+stale_after: 2027-02-21T00:00:00+11:00
 code:
   - e2e/wdio.conf.ts
   - e2e/lib/
@@ -16,6 +16,7 @@ sources:
   - resource: docs/features/e2e-tiering/02_dev.md
   - resource: docs/features/scriptable-mock-backend/02_dev.md
   - resource: docs/features/parallel-worktree-e2e/02_dev.md
+  - resource: docs/features/remove-microsandbox/02_dev.md
 ---
 # Testing
 
@@ -33,7 +34,7 @@ Sandbox-mio is tested mainly end to end: WebdriverIO drives the real debug build
 
 ## The Mock Seam
 
-- The `light` tier replaces what sits below the subsystems, not the subsystems themselves. Every one-shot `podman`, `msb` and Mutagen sync call goes through a process runner, and one environment switch swaps the real runners for scripted ones. The real backend, machine manager, sync engine and providers run unmodified, so their output parsing and error mapping are exercised.
+- The `light` tier replaces what sits below the subsystems, not the subsystems themselves. Every one-shot `podman` and Mutagen sync call goes through a process runner, and one environment switch swaps the real runners for scripted ones. The real backend, machine manager, sync engine and providers run unmodified, so their output parsing and error mapping are exercised.
 - A shared director holds per-call overrides keyed by binary and subcommand, journals every call it answers, and otherwise falls back to small built-in defaults (an in-memory container list, a running machine). Specs drive the director through IPC commands that refuse to run outside mock mode.
 - The runtime and network subsystems still use hand-written in-memory mocks.
 - Streaming child processes cannot be scripted, so code that spawns one checks the mock switch directly.
@@ -43,7 +44,7 @@ Sandbox-mio is tested mainly end to end: WebdriverIO drives the real debug build
 
 Several worktrees can run `light` at once, alongside at most one `standard` or `heavy` run on the host. Isolation hangs off one run slug derived from the worktree's path:
 
-- App data, settings, credentials, workspaces and msb state move to slug-keyed directories through environment variables. This works only because the app derives every path from its app-data root.
+- App data, settings, credentials, workspaces and the Mutagen daemon state move to slug-keyed directories through environment variables. This works only because the app derives every path from its app-data root.
 - Each run takes its own port window, and stale-process cleanup matches the worktree's own build path, never a process name.
 - A worktree lock stops two runs in one worktree. A host lock stops two real-infrastructure runs, because the test machines and the deploy flow's `~/.ssh` files cannot be split per worktree.
 

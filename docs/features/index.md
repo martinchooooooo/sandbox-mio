@@ -41,8 +41,6 @@
 * [local-llm](local-llm/index.md) - Detect host specs, recommend and download a local model, and run a host inference server.
 * [local-llm-reachability](local-llm-reachability/index.md) - Make the host inference server reachable from every sandbox, microsandbox included, through a per-sandbox loopback forward, and keep every local-model agent's provisioned config current.
 * [manage-dashboard-redesign](manage-dashboard-redesign/index.md) - Make a sandbox's Manage dashboard open instantly and read simply: an Overview for launching and agents, advanced controls in a section sidebar that loads on demand.
-* [microsandbox-network-policy](microsandbox-network-policy/index.md) - Native egress policy, host-held secrets and a chained traffic proxy for microsandbox sandboxes.
-* [microsandbox-provider](microsandbox-provider/index.md) - microsandbox (libkrun microVMs via the msb CLI) as a second machine provider alongside Podman.
 * [models-page-caching](models-page-caching/index.md) - Make the /models route instant on repeat visits by caching the host-spec probe.
 * [mutagen-transport](mutagen-transport/index.md) - Provider-neutral port forwarding and workspace transport over the Mutagen sidecar.
 * [native-agent-ui](native-agent-ui/index.md) - Built-in chat UI in the app's own frontend, driving pi inside the sandbox over its RPC mode, kept alive by an in-sandbox supervisor.
@@ -62,6 +60,7 @@
 * [remote-deploys](remote-deploys/index.md) - Deploy a sandbox from the local Podman machine to a remote Podman host.
 * [remote-sync](remote-sync/index.md) - Run a sandbox on a remote host while mirroring its workspace to the laptop with Mutagen.
 * [remote-terminal](remote-terminal/index.md) - The in-app Zellij web terminal for sandboxes deployed on a remote host, via a Mutagen forward.
+* [remove-microsandbox](remove-microsandbox/index.md) - Remove the microsandbox provider and make Podman the only provider, keeping the provider, capability, process and net-policy seams so a future provider is a small addition.
 * [responsive-panel](responsive-panel/index.md) - Make the embedded workspace's global panel content adapt to narrow widths.
 * [sandbox-list-create](sandbox-list-create/index.md) - Inline create-sandbox item at the bottom of the sandbox list, with an existing-folder option.
 * [sandbox-runtime-management](sandbox-runtime-management/index.md) - Record installed software with mise and reproduce it on a remote host at deploy.
@@ -75,5 +74,7 @@
 
 ## superseded
 
+* [microsandbox-network-policy](microsandbox-network-policy/index.md) - Native egress policy, host-held secrets and a chained traffic proxy for microsandbox sandboxes.
+* [microsandbox-provider](microsandbox-provider/index.md) - microsandbox (libkrun microVMs via the msb CLI) as a second machine provider alongside Podman.
 * [proxy-network-policy](proxy-network-policy/index.md) - Domain allow/deny and interactive approval for Podman sandboxes through the mitmproxy sidecar.
 * [proxy-non-http-capture](proxy-non-http-capture/index.md) - Surface connections that bypass the proxy (non-HTTP(S) traffic) in the proxy panel.
