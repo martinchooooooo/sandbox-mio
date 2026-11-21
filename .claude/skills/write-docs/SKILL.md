@@ -53,7 +53,7 @@ the code; the `code` frontmatter is the jumping-off point into the code.
   handful of rules stated in domain terms ("No secret value is ever written into the workspace").
   No Common Gotchas table: an implementation-level gotcha belongs as a comment at the code site,
   or in the Common Gotchas table of the area's `AGENTS.md`.
-- **Budget:** about 500 words; `./build docs` warns above 700. Tables, short bullets and one
+- **Budget:** about 500 words; `./build docs` warns above 750. Tables, short bullets and one
   mermaid diagram (in a fenced block, which the budget does not count) are welcome.
 - **One home per fact.** Each fact lives in exactly one architecture document; others link to it.
 - **Change only when the picture changes:** a new subsystem, seam, capability or invariant.

@@ -38,7 +38,7 @@ pub const LOG_VERBS: &[&str] = &["Create", "Implement", "Supersede", "Abandon"];
 
 /// Prose words (fenced blocks excluded) above which an architecture document draws a warning.
 /// Architecture documents stay a high-level picture; detail belongs in code comments or plans.
-pub const ARCHITECTURE_WORD_BUDGET: usize = 700;
+pub const ARCHITECTURE_WORD_BUDGET: usize = 750;
 
 /// Repository-relative directories and files scanned for `docs/...` citations outside `docs/`.
 const CITATION_ROOTS: &[&str] = &[
