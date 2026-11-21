@@ -195,12 +195,12 @@ async function preinstallAgents(name: string, workspacePath: string, explicit: s
     try {
         const ids = explicit ?? planPreinstall(await readPreinstallFacts());
         for (const agent of agentsById(ids)) {
-            installNotes[name] = `Installing ${agent.label}`; // TODO(i18n)
+            installNotes[name] = m.projects_preinstall_installing({ agent: agent.label });
             try {
                 await installAgentInSandbox(name, workspacePath, agent);
                 installed.push(agent.id);
             } catch (e) {
-                toast.error(`${name}: ${agent.label} was not installed. ${parseError(e).message}`); // TODO(i18n)
+                toast.error(m.projects_preinstall_failed({ name, agent: agent.label, message: parseError(e).message }));
             }
         }
     } finally {

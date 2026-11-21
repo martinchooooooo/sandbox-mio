@@ -3,8 +3,8 @@ import { parseError } from "$lib/errors";
 import type { MachineReadiness, MachineSetupEvent, ProviderId, SetupStep } from "./types";
 
 /** Provider-neutral welcome-flow readiness (`SetupProgress.svelte`), distinct from the Podman-only
- * recovery gate in `$lib/podman/setup.svelte` that the projects page and download-necessities step
- * keep using unchanged (`docs/features/microsandbox-provider/02_dev.md`, Phase I). */
+ * recovery gate in `$lib/podman/setup.svelte` that the projects page and the setup store's image
+ * job keep using unchanged (`docs/features/microsandbox-provider/02_dev.md`, Phase I). */
 export async function fetchMachineSetupSteps(provider: ProviderId): Promise<SetupStep[]> {
     try {
         return await invoke<SetupStep[]>("machine_setup_steps", { provider });

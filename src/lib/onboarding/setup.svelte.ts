@@ -1,6 +1,9 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
 import { parseError, type AppErrorKind } from "$lib/errors";
 import type { ActivityHeadline } from "$lib/activity/types";
+import { miseKey } from "$lib/agents/catalogue";
+import { installAgentInSandbox } from "$lib/agents/install";
+import { agentsById } from "$lib/agents/preinstall";
 import { reprovisionInstalledAgents } from "$lib/agents/reprovision";
 import { MODELS, testModelFromEnv } from "$lib/models/catalogue";
 import { recommendModels } from "$lib/models/recommend";
@@ -23,11 +26,11 @@ import {
 } from "$lib/podman/setup.svelte";
 
 /**
- * First-run setup (machine, then base image) as one shared run.
+ * First-run setup as one shared run of four jobs: machine, base image, model and the first sandbox.
  *
  * Module-scoped so the run survives the welcome flow's step changes: it is started in the
- * background while the user reads the story, and the two setup cards render this same state
- * instead of starting a second run of their own.
+ * background while the user reads the story, and the cards of `SetupProgress.svelte` render this
+ * same state instead of starting a second run of their own.
  */
 interface MachineRun {
     busy: boolean;
@@ -80,6 +83,8 @@ interface ModelRun {
 
 let model = $state<ModelRun>({ choice: null, downloadPct: null, downloading: false, starting: false, ready: false, skipped: false, servedModelId: null, error: "" });
 let specs = $state<MachineSpecs | null>(null);
+// True once the probe settled, success or failure, so a failed probe cannot hold the heads-up back.
+let specsSettled = $state(false);
 let testModel = $state<ModelDescriptor | null>(null);
 let modelJob: Promise<void> | null = null;
 // Reactive twin of `modelJob`, for the headline's "checking" state.
@@ -105,6 +110,7 @@ export async function probeMachineSpecs(): Promise<void> {
     try {
         specs = await invoke<MachineSpecs>("detect_machine_specs");
     } catch {
+        specsSettled = true;
         return;
     }
     try {
@@ -112,7 +118,11 @@ export async function probeMachineSpecs(): Promise<void> {
     } catch {
         testModel = null;
     }
+    specsSettled = true;
 }
+
+/** Whether the machine probe has finished (even if it failed), so the offer is final. */
+export function specsProbed(): boolean { return specsSettled; }
 
 export interface ModelOffer {
     descriptor: ModelDescriptor;
@@ -147,9 +157,12 @@ export function startModelSetup(): Promise<void> {
     return modelJob;
 }
 
-/** Goes on without a model: never blocks onboarding (docs/features/fastest-time-to-wow/02_dev.md, OQ-no-local-model). */
+/**
+ * Goes on without a model: never blocks onboarding (docs/features/fastest-time-to-wow/02_dev.md,
+ * OQ-no-local-model). A running download keeps going; only the wait for it ends.
+ */
 export function skipModelSetup(): void {
-    if (model.ready || model.downloading || model.starting) return;
+    if (model.ready) return;
     model = { ...model, skipped: true, error: "" };
 }
 
@@ -236,7 +249,7 @@ interface SandboxRun {
     step: string;
     /** `hello-world` exists and its agent install (if any) has ended. */
     ready: boolean;
-    /** pi was installed by this run. */
+    /** pi is installed in the sandbox, by this run or an earlier one. */
     installed: boolean;
     /** An existing `hello-world` was found and is used as it is. */
     reused: boolean;
@@ -307,12 +320,31 @@ export function retryFirstSandbox(): Promise<void> {
     return startFirstSandbox();
 }
 
+/** Gives a reused `hello-world` pi when it lacks it; a failure leaves `installed` false, never fails the job. */
+async function ensurePiInstalled(): Promise<void> {
+    const workspacePath = sandboxesList().find((p) => p.name === FIRST_SANDBOX)?.workspace_path;
+    const pi = agentsById(["pi"])[0];
+    if (!workspacePath || !pi) return;
+    sandbox.step = "Installing pi"; // TODO(i18n)
+    try {
+        const packages = await invoke<string[]>("list_packages", { workspacePath });
+        if (!pi.misePackages.every((p) => packages.includes(miseKey(p)))) {
+            await installAgentInSandbox(FIRST_SANDBOX, workspacePath, pi);
+            recordMilestone("pi-installed");
+        }
+        sandbox.installed = true;
+    } catch {
+        // The Manage tab still offers the manual install.
+    }
+}
+
 async function runFirstSandbox(): Promise<void> {
     sandbox = { busy: true, step: "", ready: false, installed: false, reused: false, error: "" };
     try {
         await refreshSandboxState();
         if (sandboxesList().some((p) => p.name === FIRST_SANDBOX)) {
             sandbox.reused = true;
+            if (!model.skipped) await ensurePiInstalled();
         } else {
             // Pre-install is explicit: first run never plans from host state, which could add Claude Code.
             // pi does not wait for the model: it is pointed at the model once both are done.
@@ -458,8 +490,19 @@ export function setupHeadline(provider: ProviderId = "podman", requireModel = tr
             detail: "Restart it to finish getting things ready. You can keep reading first.",
         };
     }
+    const anyError = Boolean(
+        machine.error || status.error || image.error || (model.error && !model.skipped) || sandbox.error || (machineDone && image.probeError),
+    );
     const doneCount = Number(machineDone) + Number(!image.probing && image.ready) + Number(model.ready || model.skipped) + Number(sandbox.ready);
     const progress = `${doneCount} of 4 ready`;
+    // Checked before the running branches: a failure must not stay hidden behind a job that is still busy.
+    if (anyError) {
+        return {
+            state: "attention",
+            title: "Something needs a hand",
+            detail: `${progress} · Something did not go through. You can try again on the setup page.`,
+        };
+    }
     if (machine.busy) {
         return { state: "running", title: "Getting things ready", detail: `${progress} · Preparing a pretend computer for your sandboxes` };
     }
@@ -476,13 +519,12 @@ export function setupHeadline(provider: ProviderId = "podman", requireModel = tr
     if (sandbox.busy) {
         return { state: "running", title: "Getting things ready", detail: `${progress} · Preparing your first sandbox` };
     }
-    if (machine.error || status.error || image.error || model.error || sandbox.error || (machineDone && image.probeError)) {
-        return {
-            state: "attention",
-            title: "Something needs a hand",
-            detail: "Something did not go through. You can try again at the end of the tour.",
-        };
+    if (backgroundActive || modelJobActive || (setupComplete(provider) && sandboxWanted && !sandbox.ready)) {
+        return { state: "running", title: "Getting things ready", detail: "Checking your computer…" };
     }
-    if (backgroundActive || modelJobActive || (sandboxWanted && !sandbox.ready)) return { state: "running", title: "Getting things ready", detail: "Checking your computer…" };
+    // Something is unfinished and nothing is running: a step waits for a click on the progress page.
+    if (requireModel && sandboxWanted) {
+        return { state: "attention", title: "Something needs a hand", detail: "A step is waiting for you on the setup page." };
+    }
     return null;
 }

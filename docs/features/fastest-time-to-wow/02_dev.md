@@ -106,7 +106,7 @@ Add a third job to the first-run store `src/lib/onboarding/setup.svelte.ts`, rea
 
 - When `firstSandboxReady()` becomes true on the progress page, show the "preparing your first sandbox, hello world" message and call `createSandbox` with the name `hello-world`, the default provider, and the pre-install list `[pi]` when the model job succeeded, or none when it did not.
 - If `hello-world` exists, skip creation and open it.
-- After the sandbox is created and pi is provisioned, call `completeOnboarding`, then open the sandbox and its chat pane (`open_agent_chat` in `src/lib/workspace/apps.ts`). The finish button is replaced by this automatic handoff; the user can still cancel to the sandbox list.
+- After the sandbox is created and pi is provisioned, open the sandbox, then call `completeOnboarding`, then open its chat pane (`open_agent_chat` in `src/lib/workspace/apps.ts`). The sandbox opens first so an open failure leaves the retry UI mounted; the chat opens only when pi is installed and the model is serving, otherwise a toast says pi needs a Model. The finish button is replaced by this automatic handoff; the user can cancel to the sandbox list at any point of the wait, and a cancel is final until a retry (`cancelled` phase).
 - Handoff lives in `src/lib/onboarding/handoff.svelte.ts`; the progress page starts it when `firstSandboxReady()` turns true, and a "Go to my sandbox list" button cancels the automatic open.
 - Instrumentation (`src/lib/onboarding/milestones.ts`, Rust `log_milestone`): the first pi reply is not recorded, because the native chat renders it outside the webview code this plan touches; the other milestones are. Record in-memory milestones (app first open, heads-up confirmed, model downloaded, server started, sandbox created, pi installed, first pi reply) and write them to the application log through the existing tracing path on the Rust side, with a new thin command if none exists. This feeds the metric; it holds no user data.
 
@@ -119,10 +119,12 @@ Phase H originally created `hello-world` and installed pi only after `firstSandb
 - With no model ("Set up without a Model" or "Go on without it"), the sandbox is still created and no agent is installed, because pi is provisioned only for the local model and is useless without it.
 - `SetupProgress.svelte` gets a fourth card, "Preparing your first sandbox", with its own retry; the technical detail sits under "For those who know". `firstSandboxReady()` also requires the job, so the handoff in `handoff.svelte.ts` only opens the sandbox, finishes onboarding and opens the pi chat. "Go to my sandbox list" still prevents the automatic open.
 - The model job now reuses a server that already serves the chosen model and confirms the running state before reporting ready. `inference_status` drops a server whose process has exited.
+- A reused `hello-world` gets pi installed when the model was not skipped and pi is missing. The chat opens only when pi is installed and the model is serving, whatever the sandbox's origin.
+- The progress page always offers "Go to my sandbox list" (the cancel), the model card offers "Go on without it" while downloading or starting (the download keeps running), and the first-sandbox card offers it after a failure. `inference_status` also closes the sandbox forwards when it reaps a dead server.
 
 ## Remaining: Phase I: Translations
 
-After the user approves the English flow, add Paraglide keys in `messages/onboarding/{locale}.json` for every `TODO(i18n)` literal this plan adds or rewrites, matching `src/lib/onboarding/AGENTS.md`.
+After the user approves the English flow, add Paraglide keys in `messages/onboarding/{locale}.json` for every `TODO(i18n)` literal this plan adds or rewrites, matching `src/lib/onboarding/AGENTS.md`. Strings outside onboarding (the pre-install step text and failure toast, the restart's force-destroy confirm) are already in `messages/{en,de,ru}.json`, since every user sees them.
 
 ## Parallel-Worktree Constraints
 

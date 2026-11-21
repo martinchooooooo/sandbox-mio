@@ -138,7 +138,10 @@ pub async fn stop_inference(
 }
 
 #[tauri::command]
-pub async fn inference_status(active: State<'_, ActiveServer>) -> Result<InferenceStatus, AppError> {
+pub async fn inference_status(
+    active: State<'_, ActiveServer>,
+    network: State<'_, Arc<dyn NetworkManager>>,
+) -> Result<InferenceStatus, AppError> {
     let mut guard = active.lock().await;
     // A server whose process died (crash, out of memory, killed by hand) is not running, whatever
     // the stored handle says; dropping it makes callers see the truth and start a fresh one.
@@ -149,6 +152,11 @@ pub async fn inference_status(active: State<'_, ActiveServer>) -> Result<Inferen
     if exited {
         tracing::warn!(target: "inference", "server process exited; clearing it");
         *guard = None;
+        // Reaping a dead server also drops the forwards to its port, as `stop_inference` does.
+        let network = network.inner().clone();
+        tauri::async_runtime::spawn(async move {
+            services::inference_reach::close_all(&network).await;
+        });
     }
     Ok(match guard.as_ref() {
         Some(handle) => handle.status(),

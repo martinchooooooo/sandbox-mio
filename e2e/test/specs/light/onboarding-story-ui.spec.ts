@@ -35,6 +35,21 @@ async function openStory(): Promise<void> {
   await $("[data-story-book]").waitForDisplayed({ timeout: UI_SETTLE });
 }
 
+async function removeFirstSandbox(): Promise<void> {
+  await invokeCmd("destroy_sandbox", { name: "hello-world", force: true }).catch(() => undefined);
+}
+
+async function sandboxNames(): Promise<string[]> {
+  return (await invokeCmd<{ name: string }[]>("list_sandboxes")).map((p) => p.name);
+}
+
+async function skipTour(): Promise<void> {
+  const skip = await $("[data-welcome-skip]");
+  await skip.waitForClickable({ timeout: UI_SETTLE });
+  await skip.click();
+  await $("[data-welcome-step='actions']").waitForDisplayed({ timeout: UI_SETTLE });
+}
+
 async function headlineState(): Promise<string | null> {
   const toggle = await $("[data-activity-headline]");
   return (await toggle.isExisting()) ? toggle.getAttribute("data-activity-headline") : null;
@@ -92,6 +107,54 @@ describe("Onboarding story — book and background setup", function () {
     // Everything ready hands over to the hello-world sandbox, which also finishes onboarding.
     // Finishing unlocks the app chrome, whose sidebar always carries the Home entry.
     await navButton("/projects").waitForDisplayed({ timeout: COMMAND });
+
+    // The model was declined, so hello-world exists with no agent installed.
+    const first = (await invokeCmd<{ name: string; workspace_path: string }[]>("list_sandboxes")).find((p) => p.name === "hello-world");
+    assert(first, "hello-world was not created by the first-run setup.");
+    assert.deepStrictEqual(
+      await invokeCmd<string[]>("list_packages", { workspacePath: first.workspace_path }),
+      [],
+      "An agent was installed into hello-world although the model was declined.",
+    );
+  });
+
+  it("offers a retry when the first sandbox fails and hands over once it works", async () => {
+    await removeFirstSandbox();
+    await configureMock("podman.create", { kind: "fail-once", exit_code: 1, stderr: "create boom (scripted)" });
+    await setOnboarded(false);
+    await openStory();
+    await skipTour();
+
+    const retry = await $("[data-first-sandbox-retry]");
+    await retry.waitForDisplayed({ timeout: COMMAND });
+    await $("[data-first-sandbox-skip]").waitForDisplayed({ timeout: UI_SETTLE });
+    await retry.click();
+    await navButton("/projects").waitForDisplayed({ timeout: COMMAND });
+    assert((await sandboxNames()).includes("hello-world"), "The retry did not create hello-world.");
+  });
+
+  it("lets the user leave the progress page without opening the sandbox", async () => {
+    await removeFirstSandbox();
+    await configureMock("podman.create", { kind: "delay", ms: 3000, calls: 1 });
+    await setOnboarded(false);
+    await openStory();
+    await skipTour();
+
+    const cancel = await $("[data-welcome-cancel]");
+    await cancel.waitForClickable({ timeout: UI_SETTLE });
+    await cancel.click();
+    await navButton("/projects").waitForDisplayed({ timeout: COMMAND });
+
+    await browser.waitUntil(async () => (await sandboxNames()).includes("hello-world"), {
+      timeout: COMMAND,
+      timeoutMsg: "The create stopped when the user left the progress page; it must keep running in the background.",
+    });
+    await browser.pause(2000);
+    const state = await invokeCmd<{ apps: { sandbox: string }[] }>("workspace_state");
+    assert(
+      !state.apps.some((a) => a.sandbox === "hello-world"),
+      "hello-world was opened automatically after the user chose to go to the sandbox list.",
+    );
   });
 
   it("flags a failed background step and offers a way to the setup cards", async () => {

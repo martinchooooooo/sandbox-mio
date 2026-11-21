@@ -3,6 +3,7 @@
 
 ## in-progress
 
+* [fastest-time-to-wow](fastest-time-to-wow/index.md) - Reshape first-run onboarding around one metric, the fastest time to a local-model wow: story-voiced setup, a local model downloaded with consent, a pre-built hello-world sandbox with pi, and one consistent word for models.
 * [github-cli-auth](github-cli-auth/index.md) - Log in to GitHub once through the GitHub CLI in the auth container, then apply that token to every sandbox's gh and git, at create and to existing sandboxes, with a per-sandbox opt-out.
 * [host-tool-ssh-access](host-tool-ssh-access/index.md) - Let host SSH clients (e.g. the Claude Code desktop app) attach to a sandbox over the existing exec transport.
 * [native-terminal](native-terminal/index.md) - Faster terminal startup: render the sandbox terminal in the main webview over a Rust-owned SSH session that attaches zellij, replacing the zellij web child webview.
@@ -12,7 +13,6 @@
 
 ## planned
 
-* [fastest-time-to-wow](fastest-time-to-wow/index.md) - Reshape first-run onboarding around one metric, the fastest time to a local-model wow: story-voiced setup, a local model downloaded with consent, a pre-built hello-world sandbox with pi, and one consistent word for models.
 * [proxy-toggle-management](proxy-toggle-management/index.md) - App-global proxy default and turning the proxy on or off for an existing sandbox by recreating it.
 * [tailscale-access](tailscale-access/index.md) - Join deployed sandboxes to the user's tailnet so their web services are reachable from other devices.
 

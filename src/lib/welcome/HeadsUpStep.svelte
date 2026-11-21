@@ -2,7 +2,7 @@
     import Button from "$lib/components/ui/button/button.svelte";
     import { Text } from "$lib/components/ui/text";
     import AdvancedSection from "$lib/components/AdvancedSection.svelte";
-    import { modelOffer } from "$lib/onboarding/setup.svelte";
+    import { modelOffer, specsProbed } from "$lib/onboarding/setup.svelte";
 
     let {
         onconfirm,
@@ -14,6 +14,8 @@
     } = $props();
 
     const offer = $derived(modelOffer());
+    // The low-RAM consent depends on the probe, so confirming waits for it.
+    const checking = $derived(!specsProbed());
     const sizeGb = $derived(offer?.descriptor.llama ? (offer.descriptor.llama.sizeBytes / 1024 ** 3).toFixed(1) : null);
 </script>
 
@@ -36,8 +38,9 @@
             {#if sizeGb}It is a {sizeGb} GB download.{/if}
             You can read the tour while it happens.
         </p>
+        {#if checking}<p class="text-muted-foreground text-sm" aria-live="polite" data-welcome-checking>Checking your computer…</p>{/if}
         <div class="flex flex-col items-center gap-2">
-            <Button onclick={onconfirm} data-welcome-begin>Start the tour and get set up</Button>
+            <Button onclick={onconfirm} disabled={checking} data-welcome-begin>Start the tour and get set up</Button>
             <Button variant="link" size="sm" onclick={ondecline} data-welcome-decline>Set up without a Model</Button>
         </div>
     {/if}

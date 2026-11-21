@@ -21,7 +21,7 @@ State shared across routes lives in `.svelte.ts` files under `src/lib/` with mod
 - `src/lib/proxy/status.svelte.ts` — per-sandbox `proxy_status` cache (5 s freshness) shared by the Manage dashboard's Overview summary, Network and Traffic sections; call `refreshProxyStatus` after any sidecar-changing command.
 - `src/lib/agents/authStatus.svelte.ts` — per-sandbox coding-agent login status, checked concurrently and kept across dashboard remounts.
 - `src/lib/workspace/dashboard.svelte.ts` — the Manage dashboard section last opened per sandbox (frontend memory; survives the dashboard remount on sandbox switch).
-- `src/lib/onboarding/setup.svelte.ts` — first-run setup (machine, then base image) as one shared run, started in the background by the welcome flow and rendered by its two setup cards.
+- `src/lib/onboarding/setup.svelte.ts` — first-run setup (machine, base image, model and the first sandbox) as one shared run, started in the background by the welcome flow and rendered by the four cards of `SetupProgress.svelte`.
 - `src/lib/registry.svelte.ts` — mise package registry cache (also the smallest reference example of the pattern).
 
 Event flow is one-directional: Rust emits (`activity://task-updated`, `workspace://state`, container events), one store subscribes, components read accessors. Components must not call `listen()` for a stream a store already owns.

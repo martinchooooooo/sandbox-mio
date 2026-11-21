@@ -1,4 +1,6 @@
 <script lang="ts">
+    import { toast } from "svelte-sonner";
+    import { parseError } from "$lib/errors";
     import Button from "$lib/components/ui/button/button.svelte";
     import { Text } from "$lib/components/ui/text";
     import MioHero from "./MioHero.svelte";
@@ -37,12 +39,14 @@
 
     let cancelling = $state(false);
 
-    // Leaves for the sandbox list; the first sandbox keeps building in the background.
+    // Leaves for the sandbox list at any point of the wait; unfinished jobs keep running in their module-scoped store.
     async function cancelHandoffToList() {
         cancelling = true;
         cancelHandoff();
         try {
             await completeOnboarding();
+        } catch (e) {
+            toast.error(parseError(e).message);
         } finally {
             cancelling = false;
         }
@@ -66,7 +70,8 @@
     }
 
     // The first sandbox is built in the background as soon as machine and image are ready, in
-    // parallel with the model; the effect also covers a machine or image retried from its card.
+    // parallel with the model. A machine or image retried from its card chains on through
+    // `startBackgroundSetup`, so this effect catches whichever of them finishes last.
     $effect(() => {
         if (variant === "onboarding" && firstSandboxWanted() && setupComplete()) void startFirstSandbox();
     });
@@ -131,7 +136,7 @@
         <div class="w-full max-w-3xl space-y-6 pb-16">
             <!-- TODO(i18n) -->
             <Text as="h1" class="text-center">Getting things ready</Text>
-            <SetupProgress showModel={variant === "onboarding"} />
+            <SetupProgress showModel={variant === "onboarding"} onleave={variant === "onboarding" ? cancelHandoffToList : undefined} />
             {#if variant === "onboarding" && firstSandboxReady()}
                 <!-- TODO(i18n) -->
                 <div class="text-center space-y-2" data-welcome-handoff={handoffPhase()}>
@@ -146,7 +151,7 @@
             <div class="flex items-center justify-center gap-3">
                 <!-- TODO(i18n) -->
                 <Button variant="outline" onclick={() => (step = "story")} data-welcome-back-to-story>← Back to the tour</Button>
-                {#if variant === "onboarding" && firstSandboxReady()}
+                {#if variant === "onboarding"}
                     <Button variant="outline" loading={cancelling} onclick={cancelHandoffToList} data-welcome-cancel>Go to my sandbox list</Button>
                 {/if}
             </div>

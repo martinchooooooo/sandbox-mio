@@ -139,7 +139,8 @@
         }
     }
 
-    let deleteFirstSandbox = $state(true);
+    // Off by default: the sandbox may hold the user's work.
+    let deleteFirstSandbox = $state(false);
 
     async function restartOnboardingFlow() {
         await action.run("restart-onboarding", async () => {
@@ -147,8 +148,7 @@
                 await refreshSandboxState();
                 // Without the sandbox, the handoff creates it afresh instead of opening the old one.
                 if (sandboxesList().some((p) => p.name === FIRST_SANDBOX)) {
-                    // TODO(i18n)
-                    const confirmForce = (message: string) => confirm(`${message}\n\nDestroy anyway and discard them?`);
+                    const confirmForce = (message: string) => confirm(m.settings_debugging_restart_onboarding_force_confirm({ message }));
                     if (!(await destroySandbox(FIRST_SANDBOX, { confirmForce }))) return;
                     // The reload below resets webview state, but the sandbox's native panes live on the Rust side.
                     await closeSandbox(FIRST_SANDBOX);

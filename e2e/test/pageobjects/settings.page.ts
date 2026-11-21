@@ -78,6 +78,17 @@ class SettingsPage extends AppPage {
     await (await this.savedMarker).waitForDisplayed({ timeout: COMMAND });
   }
 
+  /** Switches the "delete hello-world" option on or off, then clicks "Restart onboarding". */
+  async restartOnboarding(deleteFirstSandbox: boolean): Promise<void> {
+    await this.#expand(this.troubleshootingTrigger);
+    const toggle = await $("[data-restart-onboarding-delete-sandbox]");
+    await toggle.waitForClickable({ timeout: COMMAND });
+    if (((await toggle.getAttribute("data-state")) === "checked") !== deleteFirstSandbox) await toggle.click();
+    const btn = await $("[data-settings-restart-onboarding]");
+    await btn.waitForClickable({ timeout: COMMAND });
+    await btn.click();
+  }
+
   async resetPodmanMachine(): Promise<void> {
     await this.#expand(this.troubleshootingTrigger);
     const btn = await this.resetPodmanMachineButton;
