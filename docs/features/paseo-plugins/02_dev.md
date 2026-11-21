@@ -5,7 +5,7 @@ feature: paseo-plugins
 ---
 # Paseo Plugins: Build Plan
 
-This document is the build plan for shipping app-owned Paseo plugins to every sandbox's Paseo daemon, continuing `docs/features/paseo-plugins/01_ideas.md` and the spike in `docs/features/paseo-plugins/spike/spike.md`. Scope is the delivery pipeline plus one probe plugin, `mio-probe`; real Agents-pane plugins are later features and user-written plugins are deferred (`04_improvements.md`). Status: planned, no phase implemented.
+This document is the build plan for shipping app-owned Paseo plugins to every sandbox's Paseo daemon, continuing `docs/features/paseo-plugins/01_ideas.md` and the spike in `docs/features/paseo-plugins/spike/spike.md`. Scope is the delivery pipeline plus one probe plugin, `mio-probe`; real Agents-pane plugins are later features and user-written plugins are deferred (`04_improvements.md`). Status: Phases A to C implemented; Phase D remains: the microsandbox and deployed-sandbox manual checks, which need a real microsandbox VM and a deployed sandbox.
 
 ## The Concrete Model
 
@@ -14,7 +14,7 @@ This document is the build plan for shipping app-owned Paseo plugins to every sa
 - **Staleness check without an extra exec.** `prepare_agent_web()` in `src-tauri/src/runtime/mod.rs` passes the expected bundle hash to `paseo-up.sh` (`src-tauri/resources/agent-web/paseo-up.sh`). The script compares it with the marker file `/usr/local/lib/mio/paseo-plugins/.bundle-hash` and exits with a new code, 12, when they differ. This mirrors the existing exit-10 "install the tools" handshake, so an Agents-tab open whose plugins are current costs no additional exec.
 - **Delivery.** On exit 12, `prepare_agent_web()` streams the archive over `MachineProvider::exec_piped()` (`src-tauri/src/provider/types.rs`). A delivery script extracts it with `tar --no-same-owner` into a staging directory, writes `.bundle-hash`, and swaps the staging directory into `/usr/local/lib/mio/paseo-plugins/`. Then `prepare_agent_web()` runs `paseo-up.sh` again.
 - **Registration.** `paseo-up.sh` adds the plugin on/off state (the sorted list of delivered plugin ids, plus the global switch value the app writes) to its `want` hash. When the on/off state changes, the existing restart branch runs (Resolved Decision 1). Inside that branch, between `paseo daemon stop` and the launch, a `mise exec -- node` step merges `~/.paseo/config.json`. The merge sets `pluginsEnabled: true`, writes one `{source: "directory", path}` entry per delivered id, removes `mio-*` entries without a folder, and preserves every other key.
-- **Content reload.** When the daemon is running and the id set is unchanged, `paseo-up.sh` compares `.bundle-hash` with `$HOME/.paseo/mio-plugins-loaded`. When they differ, it runs `paseo plugin reload <id>` for each delivered id, then records the hash. A reload failure is printed to stderr and does not fail the script. `prepare_agent_web()` already logs stderr from a successful run as a warning.
+- **Content reload.** When the daemon is running and the id set is unchanged, `paseo-up.sh` compares `.bundle-hash` with `$HOME/.paseo/mio-plugins-loaded`. When they differ, it runs `paseo plugin reload <id>` for each delivered id, then records the hash once every reload succeeded. A reload failure is printed to stderr and does not fail the script. `prepare_agent_web()` already logs stderr from a successful run as a warning.
 
 ```mermaid
 sequenceDiagram
@@ -44,9 +44,9 @@ sequenceDiagram
 7. **Staleness check placement (new).** The hash comparison lives in `paseo-up.sh` as exit code 12, not in a separate exec. A Podman exec costs about 1.4 s to set up (`src-tauri/src/agent_host/mod.rs`), and the Agents-tab open path already runs one exec per attempt.
 8. **Archive determinism (new).** Headers carry uid 0, gid 0, mtime 0 and mode 0644 for files and 0755 for directories, and entries are sorted. The same sources then always produce the same hash, whichever machine or checkout built them. Extraction still passes `--no-same-owner` as defence against a stray header.
 
-## Remaining: Phase A — Plugin Source Tree and Probe Plugin
+## Implemented: Phase A — Plugin Source Tree and Probe Plugin
 
-- Create `paseo-plugins/package.json`, a private pnpm package. It has a `typecheck` script (`tsc --noEmit`). Its dev dependencies are `@getpaseo/plugin`, `@getpaseo/client` and `@getpaseo/protocol` at the pinned Paseo version, plus `react`, `@types/react`, `react-native`, `zod` and `typescript` within the `@getpaseo/plugin` peer ranges.
+- Create `paseo-plugins/package.json`, a private pnpm package. It has a `typecheck` script (`tsc --noEmit`). Its dev dependencies are `@getpaseo/plugin`, `@getpaseo/client` and `@getpaseo/protocol` at the pinned Paseo version, plus `react`, `@types/react`, `react-native`, `zod` and `typescript` within the `@getpaseo/plugin` peer ranges. `@tanstack/react-query` and `@types/node` are added too, for the probe panel's query and the server entry's `node:os` import.
 - Create `paseo-plugins/tsconfig.json`. It uses no `DOM` lib, per the `paseo-plugin` skill's mobile rules.
 - Add `paseo-plugins` to `packages` in `pnpm-workspace.yaml`.
 - Create the probe plugin `paseo-plugins/mio-probe/`, starting from `docs/features/paseo-plugins/spike/probe-plugin/`:
@@ -59,13 +59,13 @@ sequenceDiagram
   - Add a repo-map row for `paseo-plugins/`.
   - Add `pnpm --filter paseo-plugins typecheck` to Verification Commands, required after any `paseo-plugins/` change.
 
-## Remaining: Phase B — Bundle Builder
+## Implemented: Phase B — Bundle Builder
 
-- Create `src-tauri/src/runtime/plugin_archive.rs`, a dependency-light module holding `build_plugin_archive(dir) -> (Vec<u8>, Vec<String>)`. It returns the archive bytes and the sorted plugin ids, from `mio-*` subdirectories that contain a `paseo-plugin.json`.
+- Create `src-tauri/src/runtime/plugin_archive.rs`, a dependency-light module holding `build_plugin_archive(dir) -> io::Result<(Vec<u8>, Vec<String>)>`. It returns the archive bytes and the sorted plugin ids, from `mio-*` subdirectories that contain a `paseo-plugin.json`.
 - Include the same file from `src-tauri/build.rs` through a `#[path]` module, so the build-time and runtime archives cannot diverge.
-- `src-tauri/build.rs` writes `$OUT_DIR/paseo-plugins.tar` and emits `cargo:rerun-if-changed=../paseo-plugins` before calling `tauri_build::build()`.
+- `src-tauri/build.rs` writes `$OUT_DIR/paseo-plugins.tar` and `$OUT_DIR/paseo-plugin-ids.txt` (the ids, one per line, so the release build need not parse the archive) and emits `cargo:rerun-if-changed=../paseo-plugins` before calling `tauri_build::build()`.
 - Add the `tar` crate to both `[dependencies]` and `[build-dependencies]` in `src-tauri/Cargo.toml`. `sha2` is already a dependency.
-- Create `src-tauri/src/runtime/paseo_plugins.rs` with `PluginBundle { archive, hash, ids }` and `plugin_bundle() -> Result<PluginBundle, RuntimeError>`:
+- Create `src-tauri/src/runtime/paseo_plugins.rs` with `PluginBundle { archive, hash, ids }` and `plugin_bundle() -> Result<Arc<PluginBundle>, RuntimeError>`:
   - Under `cfg(debug_assertions)` it reads `concat!(env!("CARGO_MANIFEST_DIR"), "/../paseo-plugins")` at runtime.
   - Otherwise it uses `include_bytes!(concat!(env!("OUT_DIR"), "/paseo-plugins.tar"))`.
   - The release bundle is computed once in a `OnceLock`. The debug bundle is rebuilt on every call.
@@ -74,33 +74,34 @@ sequenceDiagram
   - `node_modules` and dotfiles are excluded.
   - Headers carry uid 0 and mtime 0.
   - The ids are sorted.
-  - The version coupling test from Resolved Decision 4, which reads `paseo-plugins/package.json` and the manifests through `CARGO_MANIFEST_DIR`.
+  - The version coupling test from Resolved Decision 4, which reads `paseo-plugins/package.json` and the manifests through `CARGO_MANIFEST_DIR`. It also requires each manifest's `id` to equal its directory name.
 
-## Remaining: Phase C — Delivery and Registration
+## Implemented: Phase C — Delivery and Registration
 
 - `src-tauri/src/runtime/mod.rs`:
   - Add the constant `PASEO_PLUGIN_DIR` (`/usr/local/lib/mio/paseo-plugins`) and the exit code `PASEO_UP_PLUGINS_STALE` (12).
   - `paseo_up_env()` gains `MIO_PASEO_PLUGIN_DIR`, `MIO_PASEO_PLUGIN_HASH` and `MIO_PASEO_PLUGIN_IDS` (space-separated). `paseo_up_env()` therefore takes the `PluginBundle`.
   - `prepare_agent_web()` calls `plugin_bundle()` once per call.
   - Its retry loop handles `Some(PASEO_UP_PLUGINS_STALE) if !delivered` by running the delivery script, then loops. A second exit 12 after delivery is an `AgentWebUnavailable` error naming the marker mismatch.
-- Create `src-tauri/resources/agent-web/paseo-plugins-deliver.sh`, embedded with `include_str!` and run through `exec_piped()` with `sh -c`. It takes the archive on stdin and the plugin directory and hash as arguments. It extracts with `tar --no-same-owner -xf - -C <staging>`, writes `.bundle-hash` into the staging directory, and swaps the staging directory with the live directory through a rename. It cleans up any staging directory left by an earlier failure. `.gitattributes` already pins `src-tauri/resources/**/*.sh` to LF.
+  - `PASEO_UP_ATTEMPTS` rises from 5 to 6, so the delivery run does not shorten the wait for a cold start.
+- Create `src-tauri/resources/agent-web/paseo-plugins-deliver.sh`, embedded with `include_str!` and run through `exec_piped()` with `sh -c`. It takes the archive on stdin and the plugin directory and hash as arguments. It extracts with `tar --no-same-owner -xf - -C <staging>`, writes `.bundle-hash` into the staging directory, and swaps the staging directory with the live directory through a rename. It cleans up any staging directory left by an earlier failure. It holds `paseo-up.sh`'s lock (`~/.paseo/mio-up.lock`), because a pre-warm and an Agents-tab open can both deliver at once. `.gitattributes` already pins `src-tauri/resources/**/*.sh` to LF.
 - `src-tauri/resources/agent-web/paseo-up.sh`:
   - After the lock and the tool checks, compare `MIO_PASEO_PLUGIN_HASH` with the marker and exit 12 on mismatch.
   - Unset the three new variables along with the existing ones, so the daemon and its agents do not inherit them.
   - Add `MIO_PASEO_PLUGIN_IDS` to the `want` input, and bump `launch_rev`.
-  - In the launch branch, after the stop and before the launch, merge `config.json` (The Concrete Model, Registration) and record the bundle hash in `$HOME/.paseo/mio-plugins-loaded`.
-  - In the already-running path, after the readiness wait, run `paseo plugin reload <id>` per id when `mio-plugins-loaded` differs from the bundle hash, then update `mio-plugins-loaded`.
+  - In the launch branch, after the stop and before the launch, merge `config.json` (The Concrete Model, Registration) and record the bundle hash in `$HOME/.paseo/mio-plugins-loaded`. A failed merge is printed to stderr and the daemon still launches.
+  - In the already-running path, after the readiness wait, run `paseo plugin reload <id>` per id when `mio-plugins-loaded` differs from the bundle hash. `mio-plugins-loaded` is updated only when every reload succeeded, so a failed reload is retried on the next open.
   - The header comment lists exit code 12 and the new inputs.
 - `MiseRuntime` keeps its `RuntimeManager` signature (`src-tauri/src/runtime/types.rs`). Callers in `src-tauri/src/services/panes.rs` (`prepare_agent_web_pane()`, `prewarm_agent_web()`) are unchanged.
 
 ## Remaining: Phase D — Verification and Architecture
 
 - **Manual check (closes the spike gap):**
-  - Open the Agents tab of a Podman sandbox. Find "mio-probe" in Paseo's Command Center (Ctrl+K) and open the probe panel.
-  - Edit the probe's panel text, then close and reopen the Agents tab. Confirm the new text appears without a daemon restart: the pid in `~/.paseo/paseo.pid` is unchanged.
+  - Open the Agents tab of a Podman sandbox, start a conversation, find "probe" in Paseo's Command Center (Ctrl+K) and open the probe panel. Done 2026-11-20: the plugin loaded and the item appeared once a conversation existed, and the panel showed the workspace name plus the `probe.info` RPC answer (daemon host, Node v24.19.0, server start time), so the client-to-server RPC path works inside the sandbox.
+  - Edit the probe's panel text, then close and reopen the Agents tab. Confirm the new text appears without a daemon restart: the pid in `~/.paseo/paseo.pid` is unchanged. Done 2026-11-20 on Podman: the panel title changed, `paseo plugin logs mio-probe` showed an in-place stop and load, and the supervisor pid stayed the same. An earlier attempt restarted the daemon because a `jq` install had changed `mise.toml` between the two pid reads, which is the intended restart rule.
   - Repeat the open on a microsandbox sandbox and on a deployed sandbox.
-- **Architecture.** Update `docs/architecture/agents.md` under "Agent Web UI (Paseo)". App-owned plugins ship in the app and are registered at daemon launch. Add an invariant: app-owned plugins live outside the workspace.
-- **E2E.** `03_e2e.md` plans the `standard` spec.
+- **Architecture (done).** Update `docs/architecture/agents.md` under "Agent Web UI (Paseo)". App-owned plugins ship in the app and are registered at daemon launch. Add an invariant: app-owned plugins live outside the workspace.
+- **E2E (done).** `e2e/test/specs/standard/agent-web-plugins.spec.ts` covers delivery, registration, reload, redelivery and restart on Podman (`03_e2e.md`); it passed on 2026-11-20.
 
 ## Lifecycle and Cross-Cutting Concerns
 
@@ -122,4 +123,6 @@ sequenceDiagram
 | `cargo test` fails on the version coupling test after bumping Paseo | `PASEO_CLI_TOOL` in `src-tauri/src/runtime/mod.rs` changed without `paseo-plugins/package.json` and every `paseo-plugin.json` `requirements.paseo` | Update the `@getpaseo/plugin` dev dependency and each manifest's `requirements.paseo` to the new version in the same change |
 | A `mio-*` plugin shows `failed` in Paseo's Settings → Plugins with an unresolved import | The sandbox copy of `paseo-plugins/<id>/` has no `node_modules`; Paseo supplies only the plugin SDK, React, React Native, TanStack Query and Zod | Remove the third-party import, or plan third-party dependencies first (`docs/features/paseo-plugins/04_improvements.md`) |
 | A new plugin directory under `paseo-plugins/` is silently not shipped | `build_plugin_archive()` in `src-tauri/src/runtime/plugin_archive.rs` includes only `mio-*` directories containing a `paseo-plugin.json` | Name the directory `mio-<name>` and give it a `paseo-plugin.json` whose `id` equals the directory name |
+| A `mio-*` Command Center item is missing from Ctrl+K although Settings → Plugins shows the plugin enabled | Items registered with `context: "workspace"` appear only inside a workspace, and Paseo creates a workspace only when a conversation starts; search also matches only the title and `keywords` | Start a conversation first, and give every item `keywords` that include the plugin id, as `paseo-plugins/mio-probe/index.client.tsx` does |
+| A plugin content edit restarts the daemon (new pid in `~/.paseo/paseo.pid`) instead of reloading in place | Something else changed `mise.toml` since the last open, for example a tool install; `mise.toml` is part of the restart key in `src-tauri/resources/agent-web/paseo-up.sh`, so the restart branch wins | Expected; check `daemon.log` for `supervisor_received_SIGTERM` and the `mise.toml` mtime before suspecting the plugin pipeline |
 | Plugins report `disabled` after the user flips Paseo's global switch off | Paseo's `pluginsEnabled` in `~/.paseo/config.json` is only re-set to `true` by the merge in `paseo-up.sh` when the daemon restarts | Turn the switch back on in Paseo's Settings → Plugins, or trigger a daemon restart (an id-set or `mise.toml` change) |

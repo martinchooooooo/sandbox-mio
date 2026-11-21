@@ -3,13 +3,14 @@ type: architecture
 title: "Coding Agents and Credentials"
 description: "The agent catalogue, installing agents into sandboxes, logging in once and reusing the login everywhere, local-model wiring, and the Paseo agent web UI."
 generated:
-  by: claude-code/sonnet-5-5
-  at: 2026-11-19T18:00:00+11:00
+  by: claude-code/opus-5-5
+  at: 2026-11-19T12:00:00+11:00
 stale_after: 2027-02-17T00:00:00+11:00
 code:
   - src/lib/agents/
   - src-tauri/src/agents/
   - src-tauri/src/agent_host/
+  - paseo-plugins/
   - src-tauri/resources/agent-host/
   - src-tauri/resources/agent-web/
   - src/lib/agent-chat/
@@ -33,6 +34,7 @@ sources:
   - resource: docs/features/techdebt-sweep/02_dev.md
   - resource: docs/features/github-cli-auth/02_dev.md
   - resource: docs/features/proxy-credential-secrets/02_dev.md
+  - resource: docs/features/paseo-plugins/02_dev.md
 ---
 # Coding Agents and Credentials
 
@@ -69,8 +71,9 @@ The app installs coding agents (Claude Code, OpenCode, pi) into a sandbox, lets 
 
 ## Agent Web UI (Paseo)
 
-- Paseo runs in-sandbox as a pinned mise tool behind a forward ([Workspace UI](workspace-ui.md)); its project is the workspace.
-- The daemon restarts only when `mise.toml` or the password changes.
+- Paseo runs in-sandbox as a pinned mise tool behind a forward ([Workspace UI](workspace-ui.md)); the workspace is its project, named after the sandbox.
+- The daemon restarts only when `mise.toml`, the password or the set of app plugins changes; starting a Paseo-using sandbox pre-starts it.
+- App plugins ship in the binary, are streamed outside the workspace when stale, and reload in place.
 
 ## Native Chat (pi)
 
