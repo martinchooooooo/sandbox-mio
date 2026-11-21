@@ -8,7 +8,7 @@ class SettingsPage extends AppPage {
     return $("[data-active-engine]");
   }
 
-  // The engine/provider picker and the reset-machine button sit behind two separate
+  // The engine picker and the reset-machine button sit behind two separate
   // AdvancedSection disclosures, closed by default on every page visit
   // (docs/features/desktop-app-feel/02_dev.md Phase D) — `data-advanced-section` scopes each
   // instance's own root so its trigger button can be found without depending on copy.

@@ -22,8 +22,7 @@ export type FlowEntry = {
     wouldBlock: boolean;
 };
 
-// Must equal FLOW_LOG_MAX_LINES in src-tauri/src/proxy/flowlog.rs and
-// src-tauri/resources/mitm_flowlog_addon.py.
+// Must equal FLOW_LOG_MAX_LINES in src-tauri/src/proxy/flowlog.rs.
 const FLOW_LOG_MAX_LINES = 500;
 
 const EVENT_NAME = "proxy://flows-changed";

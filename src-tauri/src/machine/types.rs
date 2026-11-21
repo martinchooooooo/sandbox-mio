@@ -55,7 +55,7 @@ impl SetupStep {
 
 /// Streamed per-step progress from [`MachineReadinessProvider::prepare`], mirroring
 /// `inference::types::RuntimeSetupEvent`. `RebootRequired` is Podman-only (a fresh WSL2 install
-/// needs a restart); no microsandbox setup step ever emits it.
+/// needs a restart).
 #[derive(serde::Serialize, Clone)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum MachineSetupEvent {
@@ -130,19 +130,14 @@ pub struct BringUpFailure {
 pub struct MachineReadiness {
     pub ready: bool,
     /// True when the machine has never been set up. Drives "Create"/"Set up" vs. "Start" copy in
-    /// `CreateVmStep.svelte`. Microsandbox has no distinct "exists but stopped" state, so
-    /// `MsbMachineManager` reports this as `true` whenever `ready` is `false`.
+    /// `CreateVmStep.svelte`.
     pub needs_setup: bool,
 }
 
-/// Provider-neutral welcome-flow readiness contract (`docs/features/microsandbox-provider/01_ideas.md`,
-/// "Provider readiness replacing `MachineManager`'s Podman shape"). Additive alongside
-/// [`MachineManager`] rather than a narrowing of it: `MachineManager` remains Podman's own
-/// recovery-gate contract backing `src/routes/projects/+page.svelte`, verified end-to-end by
-/// `e2e/test/specs/standard/podman-startup-recovery.spec.ts` against a real machine, which this
-/// phase has no way to re-verify. This trait backs only the welcome flow's first-run checklist
-/// (`src/lib/welcome/CreateVmStep.svelte`), a surface with no existing e2e coverage to break
-/// (`docs/features/microsandbox-provider/02_dev.md`, Phase I).
+/// Provider-neutral welcome-flow readiness contract. Additive alongside [`MachineManager`], which
+/// remains Podman's own recovery-gate contract backing `src/routes/projects/+page.svelte`, verified
+/// end-to-end by `e2e/test/specs/standard/podman-startup-recovery.spec.ts`. This trait backs only
+/// the welcome flow's first-run checklist (`src/lib/welcome/CreateVmStep.svelte`).
 #[async_trait::async_trait]
 pub trait MachineReadinessProvider: Send + Sync {
     /// Ordered plan for `prepare`. Pure metadata (no side effects) so the UI can render the full

@@ -390,7 +390,7 @@ async fn apply_policy_locked(
         return Err(fail(e));
     }
     remove_stale_secret_files(&secrets, &written);
-    let applied = net_policy::AppliedPolicy { policy, chained_proxy: false, guest_env };
+    let applied = net_policy::AppliedPolicy { policy, guest_env };
     net_policy::write_applied(app, sandbox, &applied).map_err(policy_err)?;
     if !missing_secrets.is_empty() {
         tracing::warn!(target: "proxy", %sandbox, ?missing_secrets, "bindings without a stored secret were not applied");

@@ -30,7 +30,6 @@ use crate::workspace::types::WorkspaceRegistry;
 pub struct Bootstrap {
     mock_director: Arc<mockctl::types::MockDirector>,
     podman_runner: Arc<dyn ProcessRunner>,
-    msb_runner: Arc<dyn ProcessRunner>,
     machine: Arc<dyn machine::types::MachineManager>,
 }
 
@@ -42,13 +41,8 @@ pub fn build() -> Bootstrap {
     } else {
         Arc::new(process::types::SystemPodmanRunner)
     };
-    let msb_runner: Arc<dyn ProcessRunner> = if backends::mock_backend_enabled() {
-        Arc::new(mockctl::types::ScriptedMsbRunner::new(mock_director.clone()))
-    } else {
-        Arc::new(process::types::SystemMsbRunner)
-    };
     let machine = machine::default_machine_manager(podman_runner.clone());
-    Bootstrap { mock_director, podman_runner, msb_runner, machine }
+    Bootstrap { mock_director, podman_runner, machine }
 }
 
 impl Bootstrap {
@@ -63,18 +57,11 @@ impl Bootstrap {
         app.manage(init_logging(app.handle()));
         tracing::info!(target: "process", cleared, "cleared inheritable handles at startup");
         app.manage(self.machine);
-        app.manage(machine::MachineRunners {
-            podman: self.podman_runner.clone(),
-            msb: self.msb_runner.clone(),
-        });
+        app.manage(machine::MachineRunners { podman: self.podman_runner.clone() });
         app.manage(self.mock_director.clone());
         // One registry shared by every subsystem, so a sandbox resolves to the same provider
         // instance (and the same base-image build lock) wherever it is addressed from.
-        let registry = provider::default_registry(
-            self.podman_runner.clone(),
-            self.msb_runner.clone(),
-            Arc::new(crate::services::start_env::AppStartEnv::new(app.handle().clone())),
-        );
+        let registry = provider::default_registry(self.podman_runner.clone());
         app.manage(registry.clone());
         app.manage(runtime::default_runtime(
             registry.clone(),
@@ -91,7 +78,6 @@ impl Bootstrap {
         if !backends::mock_backend_enabled() {
             if let Ok(resource_dir) = app.path().resource_dir() {
                 backends::set_podman_resource_dir(resource_dir.join("podman"));
-                process::set_msb_resource_dir(staged_msb_dir(app.handle(), resource_dir.join("msb")));
             }
         }
         let mutagen_runner: Arc<dyn ProcessRunner> = if backends::mock_backend_enabled() {
@@ -137,19 +123,6 @@ impl Bootstrap {
         }
         Ok(())
     }
-}
-
-/// The directory `msb` runs from: the bundle staged under app data, so a running VM supervisor
-/// never locks the build output. Falls back to the bundled directory itself, which is still the
-/// bundled `msb`, when staging fails.
-fn staged_msb_dir(app: &tauri::AppHandle, bundled: std::path::PathBuf) -> std::path::PathBuf {
-    let staged = crate::paths::app_data_root(app)
-        .map_err(std::io::Error::other)
-        .and_then(|root| process::stage_msb(&bundled, &root.join("msb")));
-    staged.unwrap_or_else(|e| {
-        tracing::warn!(target: "process", error = %e, "staging the msb bundle failed; running it in place");
-        bundled
-    })
 }
 
 /// Stops the active inference server, closes its forwards, ends every chat attach stream and

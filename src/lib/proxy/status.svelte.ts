@@ -11,11 +11,7 @@ export interface ProxyStatus {
     running: boolean;
     proxyIp: string;
     network: string;
-    provider: "podman" | "microsandbox";
-    /** The microsandbox sidecar's SOCKS5 port; null for Podman. */
-    hostPort: number | null;
-    /** Whether a running microsandbox sidecar answers; null for Podman or a stopped sidecar. */
-    healthy: boolean | null;
+    provider: "podman";
     /** Mirrors Rust `proxy::types::ProxyEngine`; a Podman sidecar reporting "mitmproxy" is a legacy one. */
     engine: "iron-proxy" | "mitmproxy";
 }

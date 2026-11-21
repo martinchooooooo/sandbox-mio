@@ -21,34 +21,14 @@ fn settings_path(app: &AppHandle) -> Result<std::path::PathBuf, SettingsError> {
     Ok(dir.join("settings.json"))
 }
 
-/// Load persisted settings verbatim, returning defaults when the file is absent. No
-/// `MIO_MACHINE_PROVIDER` override applied — this is what `get_settings` and `set_settings`'s
-/// round-trip must see, so the override never gets written back into the developer's real file.
+/// Load persisted settings, returning defaults when the file is absent. A key no longer in
+/// [`AppSettings`] is ignored here and dropped on the next save.
 pub fn load(app: &AppHandle) -> Result<AppSettings, SettingsError> {
     let path = settings_path(app)?;
     match std::fs::read_to_string(&path) {
         Ok(s) => serde_json::from_str(&s).map_err(|e| SettingsError::Parse(e.to_string())),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(AppSettings::default()),
         Err(e) => Err(SettingsError::Io(e.to_string())),
-    }
-}
-
-/// The provider the create flow should default to: `MIO_MACHINE_PROVIDER` if set and valid,
-/// else the persisted `default_provider`. Never persisted — an e2e run can point the create
-/// flow at a provider without that choice leaking into the developer's settings.json.
-pub fn resolve_default_provider(
-    app: &AppHandle,
-) -> Result<crate::provider::types::ProviderId, SettingsError> {
-    let persisted = load(app)?.default_provider;
-    match std::env::var("MIO_MACHINE_PROVIDER") {
-        Ok(tag) => match tag.parse() {
-            Ok(provider) => Ok(provider),
-            Err(_) => {
-                tracing::warn!(target: "settings", %tag, "ignoring unknown MIO_MACHINE_PROVIDER");
-                Ok(persisted)
-            }
-        },
-        Err(_) => Ok(persisted),
     }
 }
 

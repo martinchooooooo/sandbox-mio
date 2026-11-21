@@ -2,7 +2,7 @@
 //! (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 4). The sidecar's
 //! `k8s-file` log is truncated to zero at its size cap, so it is only a transport: each poll
 //! translates the lines logged since `audit.cursor` and appends them to the host-side
-//! `flows.ndjson`, which [`super::flowlog`] reads exactly as it reads a mitmproxy log.
+//! `flows.ndjson`, which [`super::flowlog`] reads.
 //!
 //! The record shape is iron-proxy 0.56.0's, captured in
 //! `docs/features/podman-egress-boundary/spike/fixtures/podman-logs-timestamps.txt`; the README's
@@ -156,7 +156,7 @@ pub async fn ingest(provider: &dyn MachineProvider, sidecar: &str, state_dir: &P
 }
 
 /// Appends `rows`, or, once the file would pass the cap, atomically replaces it with its newest
-/// [`FLOW_LOG_MAX_LINES`] rows (the cap `mitm_flowlog_addon.py` keeps).
+/// [`FLOW_LOG_MAX_LINES`] rows.
 fn append(flows: &Path, existing: &str, rows: &[String]) -> Result<bool, ProxyError> {
     if rows.is_empty() {
         return Ok(false);

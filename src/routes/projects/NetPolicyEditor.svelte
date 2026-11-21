@@ -5,18 +5,15 @@
     import type { ProviderId } from "$lib/providers";
     import { Switch } from "$lib/components/ui/switch";
     import PencilIcon from "@lucide/svelte/icons/pencil";
-    import { workspaceApps } from "$lib/workspace/state.svelte";
     import { m } from "$lib/paraglide/messages.js";
 
     // Mirrors Rust `net_policy::NetPolicy` (camelCase, `.mio/net-policy.json` on disk).
-    type Port = number | string;
     interface NetRule {
         action: "allow" | "deny";
         host?: string;
         cidr?: string;
         group?: "public" | "private" | "host";
         protocol?: "tcp" | "udp";
-        ports?: Port[];
     }
     interface SecretBinding {
         secretId: string;
@@ -26,15 +23,12 @@
         query: boolean;
         body: boolean;
     }
-    type ViolationAction = "block" | "block-and-log" | "block-and-terminate";
     interface NetPolicy {
         version: number;
         egress: "open" | "allowlist";
         rules: NetRule[];
         strictHostnames: boolean;
         secrets: SecretBinding[];
-        violationAction: ViolationAction;
-        denyMessage?: string;
         interactive?: boolean;
     }
 
@@ -42,20 +36,10 @@
         sandboxName,
         workspacePath,
         provider,
-        sidecar,
-        viewerOn,
-        onReapplied,
     }: {
         sandboxName: string;
         workspacePath: string;
         provider: ProviderId;
-        /**
-         * The iron-proxy dialect: host allows and CIDR denies only, applied without a recreate, no
-         * violation actions (docs/features/podman-egress-boundary/02_dev.md, Resolved Decision 6).
-         */
-        sidecar: boolean;
-        viewerOn: boolean;
-        onReapplied: () => void;
     } = $props();
 
     // Mirrors Rust `proxy::iron::ApplyReport` and `net_policy::UnstampedBinding`.
@@ -70,61 +54,13 @@
     let unstamped = $state<UnstampedBinding[]>([]);
     const unstampedByVar = $derived(new Map(unstamped.map((u) => [u.envVar, u.placeholder])));
 
-    // Mirrors Rust `provider::types::SecretViolation`.
-    interface SecretViolation {
-        ts: string;
-        action: string;
-        envVar: string;
-        host: string;
-        method: string;
-        path: string;
-        location: string;
-    }
-    const VIOLATION_POLL_MS = 5000;
-    let violations = $state<SecretViolation[]>([]);
-
-    $effect(() => {
-        const name = sandboxName;
-        if (sidecar) return;
-        const poll = async () => {
-            try {
-                violations = await invoke<SecretViolation[]>("net_policy_violations", { name });
-            } catch {
-                /* the list is advisory; a failed poll keeps the last one */
-            }
-        };
-        poll();
-        const timer = setInterval(poll, VIOLATION_POLL_MS);
-        return () => clearInterval(timer);
-    });
-
-    // Re-apply recreates the VM (docs/features/microsandbox-network-policy/02_dev.md, Phase G).
-    // Writable derived: follows the prop, and the switch overrides it until the prop changes.
-    let wantViewer = $derived(viewerOn);
-    let confirming = $state(false);
-    const openPanes = $derived(workspaceApps().filter((a) => a.sandbox === sandboxName).map((a) => a.label));
-    const viewerChange = $derived(wantViewer !== viewerOn);
-
-    async function reapply() {
-        busy = true;
-        editorError = null;
-        try {
-            await invoke("reapply_sandbox_network", { name: sandboxName, viewer: wantViewer });
-            confirming = false;
-            await refresh();
-            onReapplied();
-        } catch (e) {
-            editorError = parseError(e).message;
-        } finally {
-            busy = false;
-        }
-    }
-
     // Hosts known to echo request headers back, which would reflect a substituted secret into the
     // guest (docs/features/microsandbox-network-policy/02_dev.md, Secret handling invariants).
     const ECHO_HOSTS = ["httpbin.org", "postman-echo.com"];
 
-    const SIDECAR_TARGET_PLACEHOLDER = "host, *.suffix, or CIDR to deny"; // TODO(i18n)
+    // The iron-proxy dialect: host allows and CIDR denies only, applied without a recreate
+    // (docs/features/podman-egress-boundary/02_dev.md, Resolved Decision 6).
+    const TARGET_PLACEHOLDER = "host, *.suffix, or CIDR to deny"; // TODO(i18n)
 
     let policy = $state<NetPolicy | null>(null);
     let drift = $state(false);
@@ -134,7 +70,6 @@
 
     let newAction = $state<"allow" | "deny">("allow");
     let newTarget = $state("");
-    let newPorts = $state("443");
 
     // One form serves adding and editing; `editingVar` names the binding being edited, if any.
     let editingVar = $state<string | null>(null);
@@ -153,9 +88,7 @@
             [policy, drift, unstamped] = await Promise.all([
                 invoke<NetPolicy>("get_net_policy", { workspacePath }),
                 invoke<boolean>("net_policy_drift", { name, workspacePath }),
-                sidecar
-                    ? invoke<UnstampedBinding[]>("net_policy_unstamped_bindings", { name, workspacePath })
-                    : Promise.resolve([]),
+                invoke<UnstampedBinding[]>("net_policy_unstamped_bindings", { name, workspacePath }),
             ]);
             dirty = false;
         } catch (e) {
@@ -175,12 +108,8 @@
         busy = true;
         editorError = null;
         try {
-            if (sidecar) {
-                if (dirty) await invoke("set_net_policy", { workspacePath, policy, provider });
-                report = await invoke<ApplyReport>("apply_sandbox_policy", { name: sandboxName, workspacePath });
-            } else {
-                await invoke("set_net_policy", { workspacePath, policy, provider });
-            }
+            if (dirty) await invoke("set_net_policy", { workspacePath, policy, provider });
+            report = await invoke<ApplyReport>("apply_sandbox_policy", { name: sandboxName, workspacePath });
             await refresh();
         } catch (e) {
             editorError = parseError(e).message;
@@ -193,29 +122,13 @@
         return rule.host ?? rule.cidr ?? (rule.group ? `@${rule.group}` : "?");
     }
 
-    function portsLabel(rule: NetRule): string {
-        const proto = rule.protocol ?? "any";
-        return rule.ports?.length ? `${proto}:${rule.ports.join(",")}` : proto;
-    }
-
-    function parsePorts(text: string): Port[] | undefined {
-        const parts = text.split(",").map((p) => p.trim()).filter(Boolean);
-        if (parts.length === 0) return undefined;
-        return parts.map((p) => (/^\d+$/.test(p) ? Number(p) : p));
-    }
-
     function addRule() {
         const target = newTarget.trim();
         if (!target) return;
-        const ports = sidecar ? undefined : parsePorts(newPorts);
         const rule: NetRule = { action: newAction };
         if (["public", "private", "host"].includes(target)) rule.group = target as NetRule["group"];
         else if (/^[0-9a-fA-F:.]+(\/\d+)?$/.test(target) && /[\d:]/.test(target[0])) rule.cidr = target;
         else rule.host = target;
-        if (ports) {
-            rule.protocol = "tcp";
-            rule.ports = ports;
-        }
         mutate((p) => p.rules.push(rule));
         newTarget = "";
     }
@@ -255,7 +168,7 @@
 
     /** Mirrors `NetRule::starter_allow` in `src-tauri/src/net_policy.rs`. */
     function allowRule(host: string): NetRule {
-        return sidecar ? { action: "allow", host } : { action: "allow", host, protocol: "tcp", ports: [443] };
+        return { action: "allow", host };
     }
 
     /**
@@ -279,10 +192,8 @@
             if (store) await invoke("set_proxy_secret", store);
             // The sidecar reads values only at an apply
             // (docs/features/podman-egress-boundary/02_dev.md, Resolved Decision 15).
-            if (sidecar) report = await invoke<ApplyReport>("apply_sandbox_policy", { name: sandboxName, workspacePath });
-            // A microsandbox keeps starting from its applied policy until re-applied, and a start
-            // refuses a binding without a value, so only the sidecar drops a removed value.
-            if (removedId && sidecar) await invoke("delete_proxy_secret", { secretId: removedId });
+            report = await invoke<ApplyReport>("apply_sandbox_policy", { name: sandboxName, workspacePath });
+            if (removedId) await invoke("delete_proxy_secret", { secretId: removedId });
             await refresh();
             return true;
         } catch (e) {
@@ -389,11 +300,7 @@
 
     {#if drift}
         <span class="rounded bg-amber-100 px-2 py-1 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200" data-net-policy-drift>
-            {#if sidecar}
-                The workspace file differs from what the sidecar runs; save to apply it. <!-- TODO(i18n) -->
-            {:else}
-                {m.netpolicy_drift()}
-            {/if}
+            The workspace file differs from what the sidecar runs; save to apply it. <!-- TODO(i18n) -->
         </span>
     {/if}
 
@@ -413,14 +320,10 @@
         </div>
 
         <span class="text-muted-foreground text-xs">
-            {#if policy.egress === "allowlist" && sidecar}
+            {#if policy.egress === "allowlist"}
                 Only hosts allowed below are reachable. <!-- TODO(i18n) -->
-            {:else if policy.egress === "allowlist"}
-                {m.netpolicy_mode_allowlist_hint()}
-            {:else if sidecar}
-                Every public host is reachable; the traffic panel marks requests an allowlist would block. <!-- TODO(i18n) -->
             {:else}
-                {m.netpolicy_mode_open_hint()}
+                Every public host is reachable; the traffic panel marks requests an allowlist would block. <!-- TODO(i18n) -->
             {/if}
         </span>
 
@@ -430,9 +333,6 @@
                     <div class="flex items-center gap-2 rounded bg-muted px-2 py-1 text-xs" data-net-policy-rule>
                         <span class={rule.action === "deny" ? "text-destructive" : ""}>{rule.action}</span>
                         <span class="flex-1 truncate font-mono">{targetLabel(rule)}</span>
-                        {#if !sidecar}
-                            <span class="text-muted-foreground font-mono">{portsLabel(rule)}</span>
-                        {/if}
                         <Button variant="ghost" size="icon" disabled={busy || i === 0} onclick={() => moveRule(i, -1)}>↑</Button>
                         <Button variant="ghost" size="icon" disabled={busy || i === policy.rules.length - 1} onclick={() => moveRule(i, 1)}>↓</Button>
                         <Button variant="ghost" size="icon" disabled={busy}
@@ -448,21 +348,15 @@
             <Button size="sm" variant="outline" disabled={busy}
                 onclick={() => (newAction = newAction === "allow" ? "deny" : "allow")}>{newAction}</Button>
             <input class="w-40 rounded border bg-background px-2 py-1 text-xs disabled:opacity-50"
-                placeholder={sidecar ? SIDECAR_TARGET_PLACEHOLDER : m.netpolicy_target_placeholder()}
+                placeholder={TARGET_PLACEHOLDER}
                 bind:value={newTarget} disabled={busy} data-net-policy-target />
-            {#if !sidecar}
-                <input class="w-20 rounded border bg-background px-2 py-1 text-xs disabled:opacity-50"
-                    placeholder={m.netpolicy_ports_placeholder()} bind:value={newPorts} disabled={busy} />
-            {/if}
             <Button size="sm" disabled={busy} onclick={addRule} data-net-policy-add-rule>
                 {m.rule_add()}
             </Button>
         </div>
-        {#if sidecar}
-            <span class="text-muted-foreground text-xs" data-net-policy-sidecar-hint>
-                Allow rules take hostnames and deny rules take CIDR ranges. An allowed host is reachable on every port, and *.example.com also allows example.com. <!-- TODO(i18n) -->
-            </span>
-        {/if}
+        <span class="text-muted-foreground text-xs" data-net-policy-sidecar-hint>
+            Allow rules take hostnames and deny rules take CIDR ranges. An allowed host is reachable on every port, and *.example.com also allows example.com. <!-- TODO(i18n) -->
+        </span>
 
         <span class="text-muted-foreground mt-2 border-t pt-2 text-xs shrink-0" data-secrets-heading>
             {m.dashboard_secrets_title()}
@@ -498,32 +392,13 @@
             </span>
         {/if}
 
-        {#if !sidecar}
-        <div class="flex items-center gap-2">
-            <span class="text-muted-foreground text-xs">{m.netpolicy_violation_action_label()}</span>
-            {#each [["block", m.netpolicy_violation_block()], ["block-and-log", m.netpolicy_violation_block_and_log()], ["block-and-terminate", m.netpolicy_violation_block_and_stop()]] as const as [value, label] (value)}
-                <Button
-                    aria-pressed={policy.violationAction === value}
-                    variant={policy.violationAction === value ? "default" : "outline"}
-                    size="sm"
-                    disabled={busy}
-                    onclick={() => mutate((p) => (p.violationAction = value))}
-                >{label}</Button>
-            {/each}
-        </div>
-        {/if}
-
         <div class="flex items-center gap-2">
             <!-- Sidecar drift is applied by saving the file unchanged, so it needs no edit first. -->
-            <Button size="sm" disabled={busy || !(dirty || (sidecar && drift))} onclick={save} data-net-policy-save>
+            <Button size="sm" disabled={busy || !(dirty || drift)} onclick={save} data-net-policy-save>
                 {m.netpolicy_save()}
             </Button>
             <span class="text-muted-foreground text-xs">
-                {#if sidecar}
-                    Saving applies the policy to the running sidecar at once. <!-- TODO(i18n) -->
-                {:else}
-                    {m.netpolicy_save_hint()}
-                {/if}
+                Saving applies the policy to the running sidecar at once. <!-- TODO(i18n) -->
             </span>
         </div>
 
@@ -537,51 +412,6 @@
             </span>
         {/if}
 
-        {#if violations.length > 0}
-            <div class="flex flex-col gap-1" data-net-policy-violations>
-                <span class="text-xs text-destructive">{m.netpolicy_violations_title()}</span>
-                {#each violations as v, i (v.ts + i)}
-                    <div class="flex items-center gap-2 rounded bg-muted px-2 py-1 text-xs font-mono" data-net-policy-violation>
-                        <span class="text-muted-foreground">{v.ts.slice(11, 19)}</span>
-                        <span>${v.envVar}</span>
-                        <span class="flex-1 truncate">{v.method} {v.host}{v.path} ({v.location})</span>
-                        <span class="text-muted-foreground">{v.action}</span>
-                    </div>
-                {/each}
-            </div>
-        {/if}
-
-        {#if !sidecar}
-        <div class="flex flex-col gap-1.5 border-t pt-2" data-net-policy-reapply>
-            <div class="flex items-center gap-2">
-                <span class="text-muted-foreground text-xs">{m.proxy_inspect_traffic()}</span>
-                <Switch data-net-policy-viewer checked={wantViewer} disabled={busy}
-                    onCheckedChange={(v) => (wantViewer = v)} />
-            </div>
-            {#if !confirming}
-                <Button size="sm" variant="outline" disabled={busy || dirty || (!drift && !viewerChange)}
-                    onclick={() => (confirming = true)} data-net-policy-reapply-button>
-                    {m.netpolicy_reapply()}
-                </Button>
-            {:else}
-                <span class="text-xs" data-net-policy-reapply-confirm>
-                    {m.netpolicy_reapply_confirm()}
-                    {#if openPanes.length > 0}
-                        {m.netpolicy_reapply_open_panes({ panes: openPanes.join(", ") })}
-                    {/if}
-                </span>
-                <div class="flex gap-2">
-                    <Button size="sm" variant="destructive" loading={busy} disabled={busy} onclick={reapply}
-                        data-net-policy-reapply-confirm-button>
-                        {m.netpolicy_recreate()}
-                    </Button>
-                    <Button size="sm" variant="ghost" disabled={busy} onclick={() => (confirming = false)}>
-                        {m.projects_cancel()}
-                    </Button>
-                </div>
-            {/if}
-        </div>
-        {/if}
     {/if}
 
     {#if editorError}

@@ -9,5 +9,4 @@ pub mod resources;
 pub mod routing;
 pub mod sandbox;
 pub mod ssh_access;
-pub mod start_env;
 pub mod toolchain_secrets;

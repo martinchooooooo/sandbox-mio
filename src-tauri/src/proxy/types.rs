@@ -1,4 +1,4 @@
-//! Types for the per-sandbox mitmproxy sidecar: the subsystem's own error, the attachment
+//! Types for the per-sandbox proxy sidecar: the subsystem's own error, the attachment
 //! `SandboxBackend::create` needs to build a proxy-enabled `InstanceSpec`, and the frontend-facing
 //! status shape. See `docs/features/network-proxy/02_dev.md`.
 
@@ -28,17 +28,13 @@ impl From<ProxyError> for BackendError {
 /// `credentials::types::AUTH_CONTAINER_PREFIX` filters out throwaway auth containers.
 pub const PROXY_CONTAINER_SUFFIX: &str = "-proxy";
 
-/// What `SandboxBackend::create` needs to chain a sandbox through its proxy sidecar.
+/// What `SandboxBackend::create` needs to route a sandbox through its proxy sidecar.
 pub enum ProxyAttachment {
     /// Podman: the internal network to join *instead of* `pasta`, the environment (proxy vars, CA
     /// trust vars) to stamp on the sandbox container at create time, and the sidecar address the
     /// sandbox resolves every name through
     /// (`docs/features/podman-egress-boundary/02_dev.md`, Concrete Model).
     PodmanBridge { network: String, env: Vec<(String, String)>, dns: String },
-    /// Microsandbox: the sidecar's SOCKS5 port on host loopback, the variable the agent `msb`
-    /// child reads its password from, and the sidecar CA the agent trusts upstream
-    /// (`docs/features/microsandbox-network-policy/02_dev.md`, The Concrete Model).
-    MsbChain { host_port: u16, password_env: String, upstream_ca_path: String },
 }
 
 /// Frontend-facing proxy status. Derived from the `<sandbox>-proxy` sidecar's presence rather
@@ -52,16 +48,11 @@ pub struct ProxyStatus {
     pub proxy_ip: String,
     pub network: String,
     pub provider: crate::provider::types::ProviderId,
-    /// The SOCKS5 port a microsandbox sidecar publishes; `None` for Podman.
-    pub host_port: Option<u16>,
-    /// Whether a running microsandbox sidecar answers a SOCKS5 greeting; `None` for Podman or a
-    /// stopped sidecar.
-    pub healthy: Option<bool>,
     pub engine: ProxyEngine,
 }
 
 /// The proxy program a sidecar runs, recorded as `meta.json`'s `engine` by iron-proxy sidecars
-/// only. A Podman sidecar running mitmproxy is a legacy one without the network boundary
+/// only. A sidecar running mitmproxy is a pre-boundary one without the network boundary
 /// (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 8).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]

@@ -11,12 +11,11 @@ use crate::provider::types::ProviderId;
 use crate::provider::ProviderRegistry;
 use crate::runtime::types::RuntimeManager;
 use crate::services;
-use crate::settings;
 use crate::sync::types::SyncEngine;
 
-/// Create a sandbox on `provider`, defaulting to the persisted `default_provider` setting. `proxy`
-/// opts the sandbox into a per-sandbox traffic-inspection sidecar (`docs/features/network-proxy/02_dev.md`);
-/// defaults to off. `egress` and `starter_hosts` are the independent network-policy choice
+/// Create a sandbox on `provider` (Podman when omitted). `proxy` opts the sandbox into a
+/// per-sandbox proxy sidecar (`docs/features/network-proxy/02_dev.md`); defaults to off. `egress`
+/// and `starter_hosts` are the independent network-policy choice
 /// (`docs/features/microsandbox-network-policy/02_dev.md`, Resolved Decision 5).
 #[tauri::command]
 pub async fn create_sandbox(
@@ -28,14 +27,10 @@ pub async fn create_sandbox(
     starter_hosts: Option<Vec<String>>,
     store: State<'_, Arc<dyn SandboxBackend>>,
     runtime: State<'_, Arc<dyn RuntimeManager>>,
-    engine: State<'_, Arc<dyn SyncEngine>>,
     registry: State<'_, Arc<ProviderRegistry>>,
     app: tauri::AppHandle,
 ) -> Result<Sandbox, AppError> {
-    let provider = match provider {
-        Some(p) => p,
-        None => settings::resolve_default_provider(&app)?,
-    };
+    let provider = provider.unwrap_or(ProviderId::Podman);
     let egress = egress.map(|mode| crate::backends::types::EgressRequest {
         mode: Some(mode),
         starter_hosts: starter_hosts.unwrap_or_default(),
@@ -48,7 +43,6 @@ pub async fn create_sandbox(
         egress.as_ref(),
         &store,
         &runtime,
-        &engine,
         &registry,
         &app,
     )
@@ -80,8 +74,8 @@ pub async fn stop_sandbox(
     store: State<'_, Arc<dyn SandboxBackend>>,
     network: State<'_, Arc<dyn NetworkManager>>,
 ) -> Result<(), AppError> {
-    // Order is load-bearing: a live forward keeps dialling the stopped sandbox, booting a microsandbox
-    // VM (`docs/features/local-llm-reachability/02_dev.md`, Resolved Decision 1).
+    // Order is load-bearing: a live forward keeps dialling the stopped sandbox, which would wake it
+    // (`docs/features/local-llm-reachability/02_dev.md`, Resolved Decision 1).
     services::inference_reach::close_for_sandbox(&network, &name).await;
     Ok(store.stop(&name).await?)
 }

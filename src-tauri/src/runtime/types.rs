@@ -36,9 +36,6 @@ impl From<crate::provider::types::ProviderError> for RuntimeError {
         match e {
             crate::provider::types::ProviderError::CommandFailed(m) => RuntimeError::CommandFailed(m),
             crate::provider::types::ProviderError::ParseError(m) => RuntimeError::CommandFailed(m),
-            crate::provider::types::ProviderError::PodmanUnavailable(m) => {
-                RuntimeError::CommandFailed(m)
-            }
             // No distinct `RuntimeError` variant: nothing on the runtime path branches on the
             // condition, and the message already names it. The kind survives where it is acted on
             // (`BackendError::PodmanUnresponsive`).
@@ -110,8 +107,7 @@ pub trait ToolchainSecrets: Send + Sync {
 /// `prepare_agent_web`) resolve it directly; the name-only methods resolve the
 /// sandbox's owner through `ProviderRegistry::provider_of`.
 pub struct MiseRuntime {
-    /// Resolves each call to the provider running the sandbox
-    /// (`docs/features/microsandbox-provider/02_dev.md`, Phase J).
+    /// Resolves each call to the provider running the sandbox.
     pub providers: std::sync::Arc<crate::provider::ProviderRegistry>,
     pub registry_cache: tokio::sync::OnceCell<Vec<RegistryEntry>>,
     /// Carried by every call that resolves or downloads tools.

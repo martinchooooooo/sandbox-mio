@@ -107,7 +107,6 @@ describe("Podman egress boundary — bounded sandbox on a real machine", functio
 
     await ProjectsPage.open();
     await ProjectsPage.ensurePodmanReady();
-    await ProjectsPage.chooseProvider("podman");
     assert(
       !(await ProjectsPage.egressOption("allowlist").isExisting()),
       "the egress picker must stay hidden for Podman while the proxy switch is off",

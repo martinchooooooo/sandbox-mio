@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -8,7 +8,7 @@ import workspaceDashboard from "../../pageobjects/workspace-dashboard.page.js";
 import { captureDiagOnFailure } from "../../../lib/diag.js";
 import { invokeCmd } from "../../../lib/mock.js";
 import { LOCAL_CONNECTION, podman } from "../../../lib/podman-connection.js";
-import { APP_DATA_ROOT, MSB_PATH } from "../../../lib/run-identity.js";
+import { APP_DATA_ROOT } from "../../../lib/run-identity.js";
 import { BASE_IMAGE_BUILD, COMMAND, PACKAGE_INSTALL, PANEL_RENDER, SUBPROCESS } from "../../../lib/timeouts.js";
 
 // STANDARD spec for docs/features/proxy-credential-secrets (03_e2e.md): a Podman sandbox behind an
@@ -135,7 +135,6 @@ describe("GitHub placeholder swap — sidecar sandbox on a real machine", functi
 
   const stamp = Date.now();
   const A = `e2e-gps-${stamp}`;
-  const B = `e2e-gps-msb-${stamp}`;
   const sidecar = `${A}-proxy`;
   const tokenFile = path.join(APP_DATA_ROOT, "proxy", A, "secrets", "mio-github");
   const stateFile = (name: string) => path.join(APP_DATA_ROOT, "github", `${name}.json`);
@@ -149,9 +148,9 @@ describe("GitHub placeholder swap — sidecar sandbox on a real machine", functi
   });
 
   after(async () => {
-    // The credential store lives under the run's isolated app-data root; clear it and both sandboxes.
+    // The credential store lives under the run's isolated app-data root; clear it and the sandbox.
     await invokeCmd("delete_credential_bundle", { serviceId: "github" }).catch(() => undefined);
-    for (const name of [A, B]) await invokeCmd("destroy_sandbox", { name, force: true }).catch(() => undefined);
+    await invokeCmd("destroy_sandbox", { name: A, force: true }).catch(() => undefined);
   });
 
   async function waitForCardState(state: string): Promise<void> {
@@ -203,7 +202,6 @@ describe("GitHub placeholder swap — sidecar sandbox on a real machine", functi
   it("1. creates sandbox A behind an iron-proxy sidecar", async () => {
     await ProjectsPage.open();
     await ProjectsPage.ensurePodmanReady();
-    await ProjectsPage.chooseProvider("podman");
     await ProjectsPage.enableProxy();
     // Open egress already reaches GitHub's hosts, so no policy needs seeding for this spec.
     const row = await ProjectsPage.createProject(A, { timeout: PACKAGE_INSTALL });
@@ -310,25 +308,6 @@ describe("GitHub placeholder swap — sidecar sandbox on a real machine", functi
     await waitForTokenFile(null);
     await browser.waitUntil(async () => ghApiUser(A).status !== 0, { timeout: SUBPROCESS, timeoutMsg: "gh api user still works after opt-out" });
     assert(!hostsYmlHolds(A, TOKEN), "hosts.yml must not hold the token after opt-out");
-  });
-
-  it("8b. keeps the real token in a plaintext-mode microsandbox", async () => {
-    await ProjectsPage.open();
-    await ProjectsPage.chooseProvider("microsandbox");
-    const row = await ProjectsPage.createProject(B, { timeout: BASE_IMAGE_BUILD });
-    await row.waitForRunning();
-
-    const metaFile = path.join(APP_DATA_ROOT, "proxy", B, "meta.json");
-    const engine = fs.existsSync(metaFile) ? JSON.parse(fs.readFileSync(metaFile, "utf8")).engine : null;
-    assert.notEqual(engine, "iron-proxy", "sandbox B must not sit behind an iron-proxy sidecar");
-
-    await openOverview(B);
-    await waitForCardState("applied");
-    assert.equal(await card().getAttribute("data-github-mode"), "plaintext");
-    assert((await $("[data-github-access-text]").getText()).includes("token stored in sandbox"), "the card must say the token is stored in the sandbox");
-
-    const hosts = execFileSync(MSB_PATH, ["exec", B, "--", "sh", "-c", `cat ${HOSTS_YML}`], { encoding: "utf8", timeout: SUBPROCESS });
-    assert(hosts.includes(TOKEN), "the plaintext sandbox's hosts.yml must hold the token");
   });
 
   it("8c. migrates a sandbox holding the plaintext token to the placeholder", async () => {

@@ -5,18 +5,15 @@
     import { ensureTrafficState, flowsFor, unwatchFlows, watchFlows, type FlowEntry } from "$lib/proxy/traffic.svelte";
     import { ensureProxyStatus, proxyStatusFor, refreshProxyStatus } from "$lib/proxy/status.svelte";
     import type { createActionRunner } from "$lib/actions.svelte";
-    import type { ProviderId } from "$lib/providers";
     import { m } from "$lib/paraglide/messages.js";
 
     // `workspacePath`/`action` are declared to match `ProxyPanel.svelte`'s prop shape (and the
     // dashboard's call site); this panel reads neither.
     let {
         sandboxName,
-        provider,
     }: {
         sandboxName: string;
         workspacePath: string;
-        provider?: ProviderId;
         action: ReturnType<typeof createActionRunner>;
     } = $props();
 
@@ -112,15 +109,6 @@
                     {m.traffic_restart()}
                 </Button>
             </div>
-        {:else if status.healthy === false}
-            <span class="text-xs text-destructive" data-traffic-unhealthy>
-                {m.traffic_unhealthy()}
-            </span>
-        {/if}
-        {#if status.provider === "microsandbox"}
-            <span class="text-muted-foreground text-xs" data-traffic-scope>
-                {m.traffic_scope_msb()}
-            </span>
         {/if}
 
         <div class="flex flex-wrap items-center gap-1">
@@ -222,11 +210,7 @@
     </div>
 {:else if status}
     <span class="text-muted-foreground text-xs" data-traffic-disabled>
-        {#if provider === "microsandbox"}
-            {m.proxy_off_msb()}
-        {:else}
-            {m.proxy_off_podman()}
-        {/if}
+        {m.proxy_off_podman()}
     </span>
 {:else if statusEntry.error}
     <span class="text-xs text-red-500">{statusEntry.error}</span>

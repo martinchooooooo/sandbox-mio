@@ -1,26 +1,22 @@
-//! The workspace network policy (`.mio/net-policy.json`) and its applied snapshot
-//! (`docs/features/microsandbox-network-policy/02_dev.md`, Phase D).
+//! The workspace network policy (`.mio/net-policy.json`) and its applied snapshot.
 
 use std::sync::Arc;
 
 use tauri::State;
 
-use crate::backends::types::{BackendError, Sandbox, SandboxBackend};
+use crate::backends::types::BackendError;
 use crate::error::AppError;
 use crate::net_policy::{self, NetPolicy};
 use crate::provider::types::ProviderId;
 use crate::provider::ProviderRegistry;
-use crate::runtime::types::RuntimeManager;
-use crate::sync::types::SyncEngine;
-use crate::network::types::NetworkManager;
 
 #[tauri::command]
 pub fn get_net_policy(workspace_path: String) -> Result<NetPolicy, AppError> {
     Ok(net_policy::load(&workspace_path).map_err(BackendError::from)?)
 }
 
-/// Validates and saves the workspace file. Never recreates the sandbox: a running microsandbox
-/// sandbox keeps its create-time policy until it is re-applied.
+/// Validates and saves the workspace file. Never touches the running sandbox: the policy takes
+/// effect only through `apply_sandbox_policy`.
 #[tauri::command]
 pub fn set_net_policy(
     workspace_path: String,
@@ -87,38 +83,4 @@ pub async fn apply_sandbox_policy(
     Ok(crate::proxy::iron::apply_policy(&app, &registry, &name, policy)
         .await
         .map_err(BackendError::from)?)
-}
-
-/// Recreates `name` so its current policy file and the requested viewer state take effect;
-/// `viewer: None` keeps the viewer as it is. Reported through the activity center.
-#[allow(clippy::too_many_arguments)]
-#[tauri::command]
-pub async fn reapply_sandbox_network(
-    name: String,
-    viewer: Option<bool>,
-    store: State<'_, Arc<dyn SandboxBackend>>,
-    runtime: State<'_, Arc<dyn RuntimeManager>>,
-    engine: State<'_, Arc<dyn SyncEngine>>,
-    network: State<'_, Arc<dyn NetworkManager>>,
-    registry: State<'_, Arc<ProviderRegistry>>,
-    app: tauri::AppHandle,
-) -> Result<Sandbox, AppError> {
-    let (store, runtime, engine, network, registry) =
-        (store.inner().clone(), runtime.inner().clone(), engine.inner().clone(), network.inner().clone(), registry.inner().clone());
-    let id = format!("network-reapply-{name}");
-    let kind = crate::activity::types::TaskKind::NetworkReapply;
-    crate::activity::scope(&app.clone(), &id, kind, Some(name.clone()), |_scope| async move {
-        crate::services::sandbox::reapply_network(
-            &name, viewer, &store, &runtime, &engine, &network, &registry, &app,
-        )
-        .await
-        .map_err(crate::activity::TaskFailure::same)
-    })
-    .await
-}
-
-/// The newest blocked secret uses microsandbox logged for `name`, newest first.
-#[tauri::command]
-pub fn net_policy_violations(name: String) -> Vec<crate::provider::types::SecretViolation> {
-    crate::provider::msb::secret_violations(&name, 50)
 }

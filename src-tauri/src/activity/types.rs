@@ -16,13 +16,10 @@ pub enum TaskKind {
     #[allow(dead_code)]
     AgentInstall,
     PodmanStartup,
-    /// The mitmproxy sidecar image's first pull (~200 MB), reported explicitly rather than left to
+    /// The proxy sidecar image's first pull (~200 MB), reported explicitly rather than left to
     /// look like a hung sandbox create (`docs/features/network-proxy/02_dev.md`, Resolved
     /// Decision 10).
     ProxyImagePull,
-    /// Recreating a microsandbox sandbox to apply its network policy or viewer change
-    /// (`docs/features/microsandbox-network-policy/02_dev.md`, Phase G).
-    NetworkReapply,
     /// Bringing a provider's machine online from the welcome flow's checklist (`prepare_machine`).
     MachineSetup,
     /// Building the base image on its own, ahead of the first sandbox (`build_base_image`).

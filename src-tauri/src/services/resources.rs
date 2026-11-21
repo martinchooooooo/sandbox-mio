@@ -313,7 +313,7 @@ impl ResourceMonitor {
             let mut state = self.state.lock().unwrap();
             state.tick = state.tick.wrapping_add(1);
             let running = |p: ProviderId| state.known.values().any(|&(id, run)| id == p && run);
-            let running = [ProviderId::Podman, ProviderId::Microsandbox].map(|p| (p, running(p)));
+            let running = [ProviderId::Podman].map(|p| (p, running(p)));
             let rollup_due = state.tick % TICKS_PER_ROLLUP == 0;
             (running, rollup_due, state.pool.is_none() || rollup_due)
         };
@@ -381,7 +381,6 @@ impl ResourceMonitor {
                     }
                     let allotted = s.allotted_cpus.or(match id {
                         ProviderId::Podman => state.pool.map(|p| p.cpus),
-                        ProviderId::Microsandbox => None,
                     });
                     let t = state.tracked.entry(s.name.clone()).or_insert_with(|| Tracked {
                         provider: id,
@@ -505,7 +504,7 @@ impl ResourceMonitor {
 }
 
 /// Every local sandbox by name with its provider and running state, asking each provider on its
-/// own so a stopped Podman machine does not hide microsandbox sandboxes.
+/// own, so one provider's stopped machine does not hide another's sandboxes.
 async fn known_sandboxes(registry: &Arc<ProviderRegistry>) -> HashMap<String, (ProviderId, bool)> {
     let mut known = HashMap::new();
     for (id, provider) in registry.all() {
@@ -650,14 +649,14 @@ mod tests {
         acc.add(&sample(None, 50));
         acc.add(&sample(Some(0.2), 90));
         acc.add(&sample(Some(0.4), 95));
-        let r = acc.take(60, ProviderId::Microsandbox, false).unwrap();
+        let r = acc.take(60, ProviderId::Podman, false).unwrap();
         assert_eq!(r.high, 2);
         assert_eq!(r.mem, 78);
         assert_eq!(r.mem_max, 95);
         assert_eq!(r.limit, 100);
         assert_eq!(r.cpu, Some(0.3));
         assert_eq!(r.cpu_max, Some(0.4));
-        assert!(acc.take(120, ProviderId::Microsandbox, false).is_none(), "the accumulator resets");
+        assert!(acc.take(120, ProviderId::Podman, false).is_none(), "the accumulator resets");
     }
 
     #[test]

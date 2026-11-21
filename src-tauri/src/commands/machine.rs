@@ -131,7 +131,7 @@ pub async fn reset_stuck_podman_machine(
 }
 
 /// Provider-neutral welcome-flow checklist plan (`CreateVmStep.svelte`), distinct from the Podman-only
-/// recovery gate above (`docs/features/microsandbox-provider/02_dev.md`, Phase I).
+/// recovery gate above.
 #[tauri::command]
 pub fn machine_setup_steps(
     provider: ProviderId,

@@ -19,8 +19,7 @@ pub fn base_image_version() -> u32 {
 
 /// Stages the base image on its own, without creating a sandbox: the onboarding flow's "download
 /// necessities" step. Deliberately skips `create_sandbox`'s `runtime.init` — no workspace exists yet.
-/// `provider` defaults to Podman, whose image every provider's base image is built from
-/// (`docs/features/microsandbox-provider/02_dev.md`, Resolved Decision 2).
+/// `provider` defaults to Podman.
 /// Reported as an activity task: the first build takes minutes and may run in the background.
 #[tauri::command]
 pub async fn build_base_image(

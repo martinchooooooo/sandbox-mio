@@ -7,7 +7,6 @@ export type TaskKind =
   | "agent-install"
   | "podman-startup"
   | "proxy-image-pull"
-  | "network-reapply"
   | "machine-setup"
   | "base-image-build"
   | "sandbox-create";

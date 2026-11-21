@@ -118,16 +118,6 @@ pub(super) enum SyncStrategy {
     Local,
     /// Remote: bind-mount is on remote host, mirrored via sync engine over SSH.
     Remote(ConnectionInfo),
-    /// A Mutagen-managed volume owned by the provider itself, not a bind-mountable directory (a
-    /// microsandbox sandbox's disk volume). No payload: the sync `beta` URL is `<name>:<mount>`
-    /// (`backends::msb_sync_beta`), resolved entirely through the sandbox's own `SshAlias::Proxied`
-    /// (`ensure_msb_sandbox_alias`) — unlike `Remote`, there is no separate host/port/user/identity
-    /// to carry, since the alias's `ProxyCommand` already is the full connection.
-    /// `docs/features/mutagen-transport/02_dev.md` originally sketched this as `Volume(ConnectionInfo)`;
-    /// corrected in `docs/features/microsandbox-provider/02_dev.md`, Phase H, once a concrete
-    /// consumer showed `ConnectionInfo`'s host/port/identity fields don't apply here.
-    #[allow(dead_code)]
-    Volume,
 }
 
 /// Live SSH endpoint for a Podman connection (read fresh, port changes at each boot).
@@ -157,12 +147,12 @@ pub trait SandboxBackend: Send + Sync {
         provider: crate::provider::types::ProviderId,
     ) -> Result<bool, BackendError>;
     /// Create a stopped instance on `provider` with the workspace reachable at `/root/work` — a
-    /// host bind mount for Podman, a synced disk volume for microsandbox. With `existing_path:
+    /// host bind mount for Podman. With `existing_path:
     /// None`, uses `<Documents>/sandbox-mio/<name>`; with Some, validates and uses it. `proxy`,
     /// when `Some`, attaches the sandbox to its proxy sidecar's network and environment in place of
     /// the provider's default network mode (`docs/features/network-proxy/02_dev.md`).
     /// `egress` is the create dialog's network choice; only a provider that enforces
-    /// `.mio/net-policy.json` itself accepts it (`docs/features/microsandbox-network-policy/02_dev.md`).
+    /// `.mio/net-policy.json` itself accepts it.
     async fn create(
         &self,
         name: &str,
@@ -172,8 +162,9 @@ pub trait SandboxBackend: Send + Sync {
         egress: Option<&EgressRequest>,
     ) -> Result<Sandbox, BackendError>;
     /// Replace `name`'s instance under the same name around its preserved workspace, with the
-    /// current `.mio/net-policy.json` and the given viewer attachment. Microsandbox only for now
-    /// (`docs/features/microsandbox-network-policy/02_dev.md`, Phase G).
+    /// current `.mio/net-policy.json` and the given viewer attachment. Refused for every provider
+    /// until `docs/features/proxy-toggle-management/02_dev.md` builds the Podman recreate.
+    #[allow(dead_code)]
     async fn recreate(
         &self,
         name: &str,
@@ -228,8 +219,7 @@ pub trait SandboxBackend: Send + Sync {
 /// `connection` directly — hence `Cli`, not `Podman`, in the name.
 pub(super) struct CliBackend {
     pub connection: String,
-    /// Resolves each operation to the provider that owns the sandbox
-    /// (`docs/features/microsandbox-provider/02_dev.md`, Phase J).
+    /// Resolves each operation to the provider that owns the sandbox.
     pub(super) registry: std::sync::Arc<crate::provider::ProviderRegistry>,
     /// The process seam the still-Podman-only `&self` calls route through (host registry, event
     /// stream, connection lookup) — real in production, scripted under `MIO_MOCK_BACKEND=1`.
@@ -246,7 +236,7 @@ pub(super) struct CliBackend {
 
 /// The create dialog's network choice for [`SandboxBackend::create`]. `mode: None` keeps whatever
 /// the workspace's `.mio/net-policy.json` says; `starter_hosts` are agent API hosts merged into a
-/// new allowlist (`docs/features/microsandbox-network-policy/02_dev.md`, Resolved Decision 13).
+/// new allowlist.
 #[derive(Debug, Clone, Default)]
 pub struct EgressRequest {
     pub mode: Option<crate::net_policy::EgressMode>,

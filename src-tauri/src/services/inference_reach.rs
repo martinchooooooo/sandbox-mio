@@ -32,8 +32,7 @@ pub async fn ensure_for_sandbox(app: &AppHandle, name: &str) {
             return;
         }
     };
-    // Dialling a stopped microsandbox sandbox's alias tries to boot its VM without the app's start
-    // environment (`docs/features/local-llm-reachability/spike/01_mutagen-reverse-msb.md`).
+    // A stopped sandbox has no sshd to tunnel to, so a forward created now would only fail.
     if !sandboxes.iter().any(|s| s.name == name && is_running(s)) {
         return;
     }

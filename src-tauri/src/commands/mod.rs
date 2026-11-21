@@ -131,8 +131,6 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         net_policy::set_net_policy,
         net_policy::net_policy_drift,
         net_policy::apply_sandbox_policy,
-        net_policy::net_policy_unstamped_bindings,
-        net_policy::reapply_sandbox_network,
-        net_policy::net_policy_violations
+        net_policy::net_policy_unstamped_bindings
     ]
 }

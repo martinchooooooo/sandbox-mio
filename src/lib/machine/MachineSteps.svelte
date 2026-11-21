@@ -5,7 +5,7 @@
     // `steps` is the provider's ordered checklist (from `machine_setup_steps`). `events` is the
     // running stream from `prepare_machine`, which ticks each row pending → running → done/skipped/
     // failed — same shape as `$lib/models/RuntimeSteps.svelte`, just against a different id space
-    // (Podman's four machine-lifecycle steps, or microsandbox's four).
+    // (Podman's four machine-lifecycle steps).
     let {
         steps,
         events = [],
@@ -20,20 +20,12 @@
         "machine-init": m.machine_step_machine_init_title,
         "machine-start": m.machine_step_machine_start_title,
         "socket-activate": m.machine_step_socket_activate_title,
-        "msb-binary": m.machine_step_msb_binary_title,
-        "msb-version": m.machine_step_msb_version_title,
-        "hypervisor-platform": m.machine_step_hypervisor_platform_title,
-        "msb-doctor": m.machine_step_msb_doctor_title,
     };
     const explains: Record<string, () => string> = {
         "wsl-install": m.machine_step_wsl_install_explain,
         "machine-init": m.machine_step_machine_init_explain,
         "machine-start": m.machine_step_machine_start_explain,
         "socket-activate": m.machine_step_socket_activate_explain,
-        "msb-binary": m.machine_step_msb_binary_explain,
-        "msb-version": m.machine_step_msb_version_explain,
-        "hypervisor-platform": m.machine_step_hypervisor_platform_explain,
-        "msb-doctor": m.machine_step_msb_doctor_explain,
     };
 
     type Status = "pending" | "running" | "done" | "skipped" | "failed";

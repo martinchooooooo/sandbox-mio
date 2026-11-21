@@ -4,26 +4,18 @@
     import { Input } from "$lib/components/ui/input";
     import AdvancedSection from "$lib/components/AdvancedSection.svelte";
     import { Switch } from "$lib/components/ui/switch";
-    import { invoke } from "@tauri-apps/api/core";
     import { open } from "@tauri-apps/plugin-dialog";
     import { m } from "$lib/paraglide/messages.js";
     import { createSandbox } from "$lib/sandbox/lifecycle.svelte";
-    import {
-        PROVIDERS,
-        providerCapabilities,
-        providerLabel,
-        type ProviderCapabilities,
-        type ProviderId,
-    } from "$lib/providers";
+    import { providerCapabilities, type ProviderCapabilities } from "$lib/providers";
     import { allAgentApiHosts } from "$lib/agents/catalogue";
-    import { onMount } from "svelte";
     import { checkPodman, podmanUnavailable } from "$lib/podman/setup.svelte";
     import { createFocusRequested, takeCreateFocus } from "$lib/workspace/navigation.svelte";
 
     let mode = $state<"name" | "folder">("name");
     let name = $state("");
     let existingPath = $state<string | undefined>(undefined);
-    let provider = $state<ProviderId>("podman");
+    const provider = "podman";
     // Off by default (docs/features/network-proxy/02_dev.md, Resolved Decision 3).
     let proxy = $state(false);
     // Open by default (docs/features/microsandbox-network-policy/02_dev.md, Resolved Decision 3).
@@ -53,17 +45,6 @@
         if (createFocusRequested() && nameInput && takeCreateFocus()) {
             card?.scrollIntoView({ block: "nearest" });
             nameInput.focus();
-        }
-    });
-
-    // Seeded from the persisted `defaultProvider` setting; the picker below overrides it per
-    // sandbox without writing the choice back.
-    onMount(async () => {
-        try {
-            const s = await invoke<{ defaultProvider?: ProviderId }>("get_settings");
-            if (s.defaultProvider) provider = s.defaultProvider;
-        } catch {
-            /* keep the podman default */
         }
     });
 
@@ -151,20 +132,6 @@
                 {/if}
             </Field.Field>
             <AdvancedSection>
-                <Field.Field>
-                    <Field.Label>{m.projects_runs_on_label()}</Field.Label>
-                    <div data-provider-picker class="flex gap-2">
-                        {#each PROVIDERS as option (option)}
-                            <Button
-                                data-provider-option={option}
-                                aria-pressed={provider === option}
-                                variant={provider === option ? "default" : "outline"}
-                                size="sm"
-                                onclick={() => (provider = option)}
-                            >{providerLabel(option)}</Button>
-                        {/each}
-                    </div>
-                </Field.Field>
                 <Field.Field orientation="horizontal">
                     <Field.Label>
                         {m.proxy_inspect_traffic()}
@@ -175,11 +142,7 @@
                         onCheckedChange={(v) => (proxy = v)}
                     />
                 </Field.Field>
-                {#if proxy && provider === "microsandbox"}
-                    <Field.Description data-proxy-msb-hint>
-                        {m.create_proxy_msb_hint()}
-                    </Field.Description>
-                {:else if proxy && caps?.sidecarEgress}
+                {#if proxy && caps?.sidecarEgress}
                     <Field.Description data-proxy-podman-hint>
                         Every request goes through the proxy sidecar; traffic that ignores it (raw sockets, git over SSH) is blocked. <!-- TODO(i18n) -->
                     </Field.Description>

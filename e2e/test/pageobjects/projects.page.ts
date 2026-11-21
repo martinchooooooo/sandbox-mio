@@ -40,31 +40,10 @@ class ProjectsPage extends AppPage {
     await (await this.useExistingFolderLink).click();
   }
 
-  // docs/features/microsandbox-provider — the create row's provider picker. Keyed on the attribute
-  // rather than the label, which is still a hard-coded English literal pending the i18n pass.
-  providerOption(provider: string): Element {
-    return this.createRow.$(`button[data-provider-option='${provider}']`);
-  }
-
-  // The picker sits behind the shared AdvancedSection disclosure, closed by default on every page
-  // visit (docs/features/desktop-app-feel/02_dev.md Phase C) — this is its trigger.
+  // The proxy and egress controls sit behind the shared AdvancedSection disclosure, closed by default
+  // on every page visit (docs/features/desktop-app-feel/02_dev.md Phase C) — this is its trigger.
   get advancedTrigger(): Element {
     return this.createRow.$("button=Advanced");
-  }
-
-  /** Select which provider the next `createProject()` creates on. */
-  async chooseProvider(provider: string): Promise<void> {
-    await showHome();
-    const opt = await this.providerOption(provider);
-    const visible = (await opt.isExisting()) && (await opt.isDisplayed());
-    if (!visible) {
-      const trigger = await this.advancedTrigger;
-      await trigger.waitForClickable({ timeout: UI_SETTLE });
-      await trigger.click();
-    }
-    const btn = await this.providerOption(provider);
-    await btn.waitForClickable({ timeout: UI_SETTLE });
-    await btn.click();
   }
 
   /**
@@ -91,8 +70,8 @@ class ProjectsPage extends AppPage {
     return this.createRow.$("[data-proxy-podman-hint]");
   }
 
-  // docs/features/microsandbox-network-policy — the egress choice, shown only for a provider whose
-  // ProviderCapabilities.egressPolicy is true. Call after chooseProvider(), which opens Advanced.
+  // The egress choice, shown only once the proxy switch is on; call after enableProxy(), which
+  // opens Advanced.
   egressOption(mode: string): Element {
     return this.createRow.$(`button[data-egress-option='${mode}']`);
   }

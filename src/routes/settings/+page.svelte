@@ -14,7 +14,6 @@
     import { HugeiconsIcon } from "@hugeicons/svelte";
     import { SunIcon, MoonIcon } from "@hugeicons/core-free-icons";
     import { locales, getLocale, setLocale } from "$lib/paraglide/runtime.js";
-    import { PROVIDERS, providerLabel, type ProviderId } from "$lib/providers";
     import AdvancedSection from "$lib/components/AdvancedSection.svelte";
     import ResourceUsageCard from "$lib/settings/ResourceUsageCard.svelte";
     import { Switch } from "$lib/components/ui/switch";
@@ -34,7 +33,6 @@
         inferenceEngine: EngineKind;
         llamaGpuLayers: number | null;
         llamaCtxSize: number | null;
-        defaultProvider: ProviderId;
         // `set_settings` replaces the whole file, and any field this page omits comes back as its
         // serde default — which would silently un-onboard the user (`onboardingCompleted`).
         [key: string]: unknown;
@@ -50,7 +48,6 @@
     let installLog = $state<string[]>([]);
     let installing = $state(false);
     let saved = $state(false);
-    let defaultProvider = $state<ProviderId>("podman");
 
     // The last full object read from `get_settings`, so `save()` can round-trip the fields this
     // page does not edit instead of dropping them.
@@ -58,7 +55,6 @@
         inferenceEngine: "llama",
         llamaGpuLayers: null,
         llamaCtxSize: null,
-        defaultProvider: "podman",
     };
 
     async function loadSteps(forEngine: EngineKind) {
@@ -81,7 +77,6 @@
             inferenceEngine: engine,
             llamaGpuLayers: gpuLayers.trim() === "" ? null : Number(gpuLayers),
             llamaCtxSize: ctxSize.trim() === "" ? null : Number(ctxSize),
-            defaultProvider,
         };
         if (await action.run("save", () => invoke("set_settings", { settings }))) {
             saved = true;
@@ -114,7 +109,6 @@
             engine = s.inferenceEngine;
             gpuLayers = s.llamaGpuLayers === null ? "" : String(s.llamaGpuLayers);
             ctxSize = s.llamaCtxSize === null ? "" : String(s.llamaCtxSize);
-            defaultProvider = s.defaultProvider ?? "podman";
         } catch {
             /* defaults */
         }
@@ -186,20 +180,6 @@
     <Field.Set>
         <Field.Legend>{m.settings_advanced()}</Field.Legend>
         <Field.Group>
-            <Field.Field>
-                <Field.Label>{m.settings_default_provider_label()}</Field.Label>
-                <div class="flex flex-col gap-2" data-default-provider={defaultProvider}>
-                    {#each PROVIDERS as option (option)}
-                        <Button
-                            data-provider={option}
-                            variant={defaultProvider === option ? "default" : "outline"}
-                            onclick={() => { defaultProvider = option; saved = false; }}
-                            class="justify-start"
-                        >{providerLabel(option)}</Button>
-                    {/each}
-                </div>
-            </Field.Field>
-
             <Field.Field>
                 <Field.Label>{m.settings_engine_label()}</Field.Label>
                 <div class="flex flex-col gap-2" data-active-engine={engine}>

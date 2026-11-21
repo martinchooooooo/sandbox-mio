@@ -5,7 +5,6 @@
 //! (`src-tauri/src/backends/mod.rs`) — deliberately: a connection may name a remote SSH endpoint,
 //! against which `podman machine start`/`wsl --unregister` are meaningless or destructive.
 
-pub mod msb;
 pub mod types;
 
 use std::process::Output;
@@ -337,7 +336,6 @@ async fn socket_step<F: FnMut(BringUpEvent) + Send>(
 /// different meanings, since Tauri state is keyed by type.
 pub struct MachineRunners {
     pub podman: Arc<dyn ProcessRunner>,
-    pub msb: Arc<dyn ProcessRunner>,
 }
 
 /// Construct the [`MachineReadinessProvider`] for `provider`, mirroring `inference::engine_for`'s
@@ -348,7 +346,6 @@ pub fn readiness_provider_for(
 ) -> Arc<dyn MachineReadinessProvider> {
     match provider {
         ProviderId::Podman => Arc::new(PodmanMachineManager { runner: runners.podman.clone() }),
-        ProviderId::Microsandbox => Arc::new(msb::MsbMachineManager::new(runners.msb.clone())),
     }
 }
 

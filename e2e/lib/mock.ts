@@ -73,7 +73,7 @@ export interface RecordedCall {
   env_names: string[];
 }
 
-/** Journalled calls for `key` (e.g. `msb.create`) since the last reset, oldest first. */
+/** Journalled calls for `key` (e.g. `podman.create`) since the last reset, oldest first. */
 export async function mockCalls(key: string): Promise<RecordedCall[]> {
   return invokeCmd<RecordedCall[]>("mock_calls", { key });
 }

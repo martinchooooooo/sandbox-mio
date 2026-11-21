@@ -102,19 +102,13 @@ async fn resolve_machine(
     engine: &Arc<dyn SyncEngine>,
     registry: &Arc<ProviderRegistry>,
 ) -> Result<MachineRef, AppError> {
-    if provider != ProviderId::Podman {
-        // Only Podman has remote targets (`ProviderCapabilities.remote_targets`). A microsandbox
-        // sandbox's Mutagen session syncs its workspace volume rather than marking a deploy, and is
-        // named apart from the sandbox for exactly that reason (`backends::msb_sync_session`).
-        return Ok(registry.local_ref(provider));
-    }
     Ok(engine
         .sessions()
         .await?
         .into_iter()
         .find(|s| s.name == name)
-        .map(|s| MachineRef { provider: ProviderId::Podman, id: s.host })
-        .unwrap_or_else(|| registry.local_ref(ProviderId::Podman)))
+        .map(|s| MachineRef { provider, id: s.host })
+        .unwrap_or_else(|| registry.local_ref(provider)))
 }
 
 /// Writes the managed `~/.ssh` block for the sandbox's own alias. Rewrites it on every call —
@@ -125,10 +119,6 @@ async fn ensure_forward_alias(
     app: &tauri::AppHandle,
 ) -> Result<(), AppError> {
     match machine.provider {
-        ProviderId::Microsandbox => {
-            let identity_path = crate::backends::ensure_sandbox_identity(app, name)?;
-            crate::backends::ensure_msb_sandbox_alias(name, &identity_path).await?;
-        }
         ProviderId::Podman => {
             let identity_path = crate::backends::ensure_sandbox_identity(app, name)?;
             crate::backends::ensure_sandbox_alias(name, &machine.id, &identity_path).await?;

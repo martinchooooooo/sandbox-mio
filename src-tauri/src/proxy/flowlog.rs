@@ -1,8 +1,8 @@
 //! Poll loop over the proxy sidecar's NDJSON flow log
 //! (`docs/features/proxy-traffic-viewer/02_dev.md`). One detached task per watched sandbox parses
-//! only newly appended lines and pushes them to the frontend as `proxy://flows-changed`. A mitmproxy
-//! sidecar's addon writes the file; for an iron-proxy sidecar each tick first ingests the audit
-//! stream into it ([`super::audit`]).
+//! only newly appended lines and pushes them to the frontend as `proxy://flows-changed`. Each tick
+//! first ingests the iron-proxy audit stream into the file ([`super::audit`]); a pre-boundary
+//! mitmproxy sidecar's own log is still read as written.
 
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
@@ -15,8 +15,7 @@ use crate::provider::ProviderRegistry;
 
 const EVENT_NAME: &str = "proxy://flows-changed";
 
-/// Cap on retained flows. Must equal `FLOW_LOG_MAX_LINES` in
-/// `src-tauri/resources/mitm_flowlog_addon.py` and `src/lib/proxy/traffic.svelte.ts`.
+/// Cap on retained flows. Must equal `FLOW_LOG_MAX_LINES` in `src/lib/proxy/traffic.svelte.ts`.
 pub const FLOW_LOG_MAX_LINES: usize = 500;
 
 /// Matches `PORTS_FILE_POLL_INTERVAL` (`src-tauri/src/network/mod.rs`): a bind-mounted file read is
@@ -24,8 +23,8 @@ pub const FLOW_LOG_MAX_LINES: usize = 500;
 /// (Resolved Decision 6).
 const FLOW_LOG_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
-/// One finished flow as written by `mitm_flowlog_addon.py` or translated from iron-proxy's audit
-/// stream. Metadata only — never headers, bodies,
+/// One finished flow translated from iron-proxy's audit stream (or written by a pre-boundary
+/// mitmproxy sidecar). Metadata only — never headers, bodies,
 /// or an injected secret value (`docs/features/proxy-traffic-viewer/01_ideas.md`, Capture Scope).
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]

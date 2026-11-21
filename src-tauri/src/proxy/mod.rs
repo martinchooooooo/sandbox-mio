@@ -4,11 +4,9 @@
 //! pattern — every external call already crosses the `ProcessRunner` seam through the provider, so
 //! the e2e `light` tier is covered with no new trait.
 //!
-//! Provider-aware: a Podman sidecar runs iron-proxy as the only exit of the sandbox's internal
-//! network (`docs/features/podman-egress-boundary/02_dev.md`), a microsandbox sidecar runs
-//! mitmproxy as a second VM the agent chains to over host loopback
-//! (`docs/features/microsandbox-network-policy/02_dev.md`, Phase F). Which provider and engine a
-//! sidecar runs is recorded in its `meta.json`; state written before those features is Podman's.
+//! A Podman sidecar runs iron-proxy as the only exit of the sandbox's internal network
+//! (`docs/features/podman-egress-boundary/02_dev.md`). Its `meta.json` records the engine and the
+//! provider; a sidecar without an engine predates the boundary and runs mitmproxy.
 
 pub mod audit;
 pub mod flowlog;
@@ -24,16 +22,9 @@ use tauri::AppHandle;
 
 use crate::activity::types::TaskKind;
 use crate::activity::TaskFailure;
-use crate::provider::msb_policy::{SOCKS_PASSWORD_ENV, SOCKS_USERNAME};
-use crate::provider::types::{
-    InstanceNetwork, MachineProvider, PortPublish, ProviderError, ProviderId, SidecarMount,
-    SidecarReadiness, SidecarSpec,
-};
+use crate::provider::types::{InstanceNetwork, MachineProvider, ProviderId, SidecarMount, SidecarSpec};
 use crate::provider::ProviderRegistry;
 use types::{ProxyAttachment, ProxyEngine, ProxyError, ProxyStatus};
-
-/// Pinned mitmproxy release, never `latest` (Resolved Decision 10). Overridable for tests.
-const MITMPROXY_IMAGE_DEFAULT: &str = "docker.io/mitmproxy/mitmproxy:11.1.3";
 
 pub const PROXY_PORT: u16 = 8080;
 
@@ -43,30 +34,11 @@ pub const CONTAINER_CA_PATH: &str = "/usr/local/share/ca-certificates/mio-proxy.
 
 const SUBNET_INDEX_MAX: u16 = 255;
 
-/// The SOCKS5 port mitmdump listens on inside a microsandbox sidecar.
-const MSB_SOCKS_GUEST_PORT: u16 = 1080;
-
-/// `create_proxy` retries a microsandbox sidecar on a fresh port this many times
-/// (`docs/features/microsandbox-network-policy/02_dev.md`, Resolved Decision 8).
-const PORT_ATTEMPTS: usize = 3;
-
-/// Bodies above this size are streamed, not buffered: a buffered ~150 MB download OOM-killed a
-/// 512 MiB msb sidecar.
-const STREAM_LARGE_BODIES: &str = "stream_large_bodies=1m";
-
-pub fn mitmproxy_image() -> String {
-    std::env::var("MIO_PROXY_IMAGE")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| MITMPROXY_IMAGE_DEFAULT.to_string())
-}
-
-/// The sidecar image for `provider_id`: iron-proxy for Podman, mitmproxy for microsandbox
+/// The sidecar image for `provider_id`: iron-proxy
 /// (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 9).
 pub fn proxy_image(provider_id: ProviderId) -> String {
     match provider_id {
         ProviderId::Podman => iron::iron_proxy_image(),
-        ProviderId::Microsandbox => mitmproxy_image(),
     }
 }
 
@@ -98,12 +70,10 @@ fn certs_dir(app: &AppHandle, sandbox: &str) -> Result<PathBuf, ProxyError> {
     Ok(dir)
 }
 
-/// The CA the sandbox must trust: the app-generated `ca.pem` an iron-proxy sidecar mounts, or the
-/// one mitmproxy writes into its confdir.
+/// The CA the sandbox must trust: the app-generated `ca.pem` an iron-proxy sidecar mounts.
 fn ca_pem_path(app: &AppHandle, sandbox: &str, provider_id: ProviderId) -> Result<PathBuf, ProxyError> {
     let file = match provider_id {
         ProviderId::Podman => "ca.pem",
-        ProviderId::Microsandbox => "mitmproxy-ca-cert.pem",
     };
     Ok(certs_dir(app, sandbox)?.join(file))
 }
@@ -114,31 +84,22 @@ fn host_path(p: &std::path::Path) -> String {
     p.to_string_lossy().replace('\\', "/")
 }
 
-/// The flow-log addon script, embedded so an app upgrade refreshes the copy written at every
-/// `create_proxy` with no image rebuild (`docs/features/proxy-traffic-viewer/02_dev.md`).
-const FLOWLOG_SCRIPT: &str = include_str!("../../resources/mitm_flowlog_addon.py");
-
-/// The NDJSON flow log `mitm_flowlog_addon.py` appends to and `flowlog::watch_flows` polls. A
-/// microsandbox sidecar writes it inside its `flows/` directory mount; a Podman sidecar keeps its
-/// single-file mount at the state root.
+/// The NDJSON flow log the sidecar appends to and `flowlog::watch_flows` polls, a single-file
+/// mount at the state root.
 pub fn flows_path(app: &AppHandle, sandbox: &str) -> Result<PathBuf, ProxyError> {
     let dir = state_dir(app, sandbox)?;
     Ok(match sidecar_provider_id(app, sandbox) {
-        ProviderId::Microsandbox => dir.join("flows").join("flows.ndjson"),
         ProviderId::Podman => dir.join("flows.ndjson"),
     })
 }
 
-/// The provider `sandbox`'s sidecar runs on, from its `meta.json`; Podman when none records it.
+/// The provider `sandbox`'s sidecar runs on, from `meta.json`'s `provider` tag; Podman when the
+/// file or tag is missing, which every sidecar created before the tag was written lacks.
 pub fn sidecar_provider_id(app: &AppHandle, sandbox: &str) -> ProviderId {
-    let Some(meta) = meta_path_if_exists(app, sandbox).and_then(|p| crate::mio_files::read_value(&p))
-    else {
-        return ProviderId::Podman;
-    };
-    match meta["provider"].as_str() {
-        Some("msb") => ProviderId::Microsandbox,
-        _ => ProviderId::Podman,
-    }
+    meta_path_if_exists(app, sandbox)
+        .and_then(|p| crate::mio_files::read_value(&p))
+        .and_then(|meta| meta["provider"].as_str().and_then(|tag| tag.parse().ok()))
+        .unwrap_or_default()
 }
 
 /// `meta.json`'s path when it exists, without creating the state directory as a side effect.
@@ -149,7 +110,7 @@ fn meta_path_if_exists(app: &AppHandle, sandbox: &str) -> Option<PathBuf> {
 
 /// Root of the app-global secret-value store: `<app_data_root>/proxy/secrets.json`. Written by
 /// `set_proxy_secret`/`delete_proxy_secret`, never read back over IPC; only the iron-proxy apply
-/// and microsandbox's start environment read it.
+/// reads it.
 fn secrets_path(app: &AppHandle) -> Result<PathBuf, ProxyError> {
     let root = crate::paths::app_data_root(app)
         .map_err(|e| ProxyError::CommandFailed(e.to_string()))?
@@ -225,24 +186,6 @@ async fn allocate_network(
     )))
 }
 
-/// Polls for `certs/mitmproxy-ca-cert.pem` to appear — `mitmdump` writes its CA keypair into the
-/// bind-mounted confdir on first run, and the agent must never pin it before it exists.
-async fn wait_for_ca(app: &AppHandle, sandbox: &str) -> Result<(), ProxyError> {
-    let path = ca_pem_path(app, sandbox, ProviderId::Microsandbox)?;
-    const ATTEMPTS: u32 = 100;
-    const INTERVAL_MS: u64 = 100;
-    for _ in 0..ATTEMPTS {
-        if path.exists() {
-            return Ok(());
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(INTERVAL_MS)).await;
-    }
-    Err(ProxyError::CommandFailed(format!(
-        "timed out waiting for {} to appear",
-        path.to_string_lossy()
-    )))
-}
-
 pub fn read_ca_pem(
     app: &AppHandle,
     sandbox: &str,
@@ -305,7 +248,7 @@ pub async fn inject_ca(
 ///
 /// Policy starts empty: this runs *before* `SandboxBackend::create`, so the sandbox's workspace (and
 /// therefore its `.mio/net-policy.json`) does not exist yet. A caller applies it afterward through
-/// `iron::apply_policy` (Podman) or `write_secret_hosts` (microsandbox).
+/// `iron::apply_policy`.
 pub async fn create_proxy(
     app: &AppHandle,
     provider: &Arc<dyn MachineProvider>,
@@ -314,7 +257,6 @@ pub async fn create_proxy(
 ) -> Result<ProxyAttachment, ProxyError> {
     match provider_id {
         ProviderId::Podman => create_podman_proxy(app, provider, sandbox).await,
-        ProviderId::Microsandbox => create_msb_proxy(app, provider, sandbox).await,
     }
 }
 
@@ -372,6 +314,7 @@ async fn create_podman_proxy(
         sandbox,
         &serde_json::json!({
             "engine": ProxyEngine::IronProxy,
+            "provider": ProviderId::Podman.to_string(),
             "network": network,
             "proxyIp": proxy_ip,
         }),
@@ -392,179 +335,6 @@ fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> Result<(), ProxyError> 
     std::fs::rename(&tmp, path).map_err(|e| io_err(path, e))
 }
 
-/// An OS-assigned free port on host loopback. Duplicates `allocate_ephemeral_port` in
-/// `src-tauri/src/network/mod.rs`, because subsystems never depend on each other.
-fn allocate_socks_port() -> Result<u16, ProxyError> {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0")
-        .map_err(|e| ProxyError::CommandFailed(format!("no free loopback port: {e}")))?;
-    listener
-        .local_addr()
-        .map(|a| a.port())
-        .map_err(|e| ProxyError::CommandFailed(format!("no free loopback port: {e}")))
-}
-
-/// An htpasswd line mitmproxy's `--proxyauth @file` accepts, so the sidecar's msb config holds a
-/// path and the file holds a hash, never the plaintext (Resolved Decision 7).
-fn htpasswd_line(username: &str, password: &str) -> String {
-    use base64::Engine;
-    use sha1::Digest;
-    let digest = sha1::Sha1::digest(password.as_bytes());
-    format!("{username}:{{SHA}}{}\n", base64::engine::general_purpose::STANDARD.encode(digest))
-}
-
-fn msb_readiness(host_port: u16, password: &str) -> SidecarReadiness {
-    SidecarReadiness {
-        host_port,
-        socks5_auth: Some((SOCKS_USERNAME.to_string(), password.to_string())),
-        budget_ms: crate::provider::probe::DEFAULT_BUDGET_MS,
-    }
-}
-
-/// A microsandbox sidecar VM: addons read-only, flows and the mitmproxy confdir read-write, SOCKS5
-/// published on a fresh loopback port. `certs/` survives a recreate, since every agent chained to
-/// the sidecar pins its CA (`docs/features/microsandbox-network-policy/02_dev.md`, Phase F).
-async fn create_msb_proxy(
-    app: &AppHandle,
-    provider: &Arc<dyn MachineProvider>,
-    sandbox: &str,
-) -> Result<ProxyAttachment, ProxyError> {
-    let dir = state_dir(app, sandbox)?;
-    let certs = certs_dir(app, sandbox)?;
-    let addons = dir.join("addons");
-    let flows = dir.join("flows");
-    for d in [&addons, &flows] {
-        std::fs::create_dir_all(d).map_err(|e| io_err(d, e))?;
-    }
-    let flowlog_path = addons.join("flowlog_addon.py");
-    std::fs::write(&flowlog_path, FLOWLOG_SCRIPT).map_err(|e| io_err(&flowlog_path, e))?;
-    let rules_path = addons.join("rules.json");
-    crate::mio_files::write_compact(&rules_path, &serde_json::Value::Array(Vec::new()))
-        .map_err(|e| ProxyError::CommandFailed(e.to_string()))?;
-    let password = uuid::Uuid::new_v4().simple().to_string();
-    let htpasswd = addons.join("htpasswd");
-    std::fs::write(&htpasswd, htpasswd_line(SOCKS_USERNAME, &password))
-        .map_err(|e| io_err(&htpasswd, e))?;
-    // Create-if-absent: a re-run against an existing state directory keeps the captured history.
-    let flows_file = flows.join("flows.ndjson");
-    if !flows_file.exists() {
-        std::fs::write(&flows_file, b"").map_err(|e| io_err(&flows_file, e))?;
-    }
-    let ca = ca_pem_path(app, sandbox, ProviderId::Microsandbox)?;
-    if crate::backends::mock_backend_enabled() && !ca.exists() {
-        // Stands in for mitmdump's first start, which never happens on the light tier.
-        std::fs::write(&ca, b"-----BEGIN CERTIFICATE-----\nmock\n-----END CERTIFICATE-----\n")
-            .map_err(|e| io_err(&ca, e))?;
-    }
-
-    let name = proxy_container_name(sandbox);
-    let mut last_err = None;
-    for _ in 0..PORT_ATTEMPTS {
-        let host_port = allocate_socks_port()?;
-        // Written before the VM exists so the startup sweep can always attribute it to this app's
-        // data root (Resolved Decision 20).
-        write_meta(
-            app,
-            sandbox,
-            &serde_json::json!({ "provider": "msb", "hostPort": host_port, "socksPassword": password }),
-        )?;
-        let spec = SidecarSpec {
-            name: name.clone(),
-            image: proxy_image(ProviderId::Microsandbox),
-            network: None,
-            extra_networks: Vec::new(),
-            log_max_size: None,
-            mounts: vec![
-                SidecarMount {
-                    host_path: host_path(&certs),
-                    dest: "/home/mitmproxy/.mitmproxy".to_string(),
-                    read_only: false,
-                },
-                SidecarMount { host_path: host_path(&addons), dest: "/addons".to_string(), read_only: true },
-                SidecarMount { host_path: host_path(&flows), dest: "/flows".to_string(), read_only: false },
-            ],
-            publish: vec![PortPublish {
-                bind: "127.0.0.1".to_string(),
-                host_port,
-                guest_port: MSB_SOCKS_GUEST_PORT,
-            }],
-            env: vec![
-                ("MIO_FLOWS_PATH".to_string(), "/flows/flows.ndjson".to_string()),
-                ("MIO_RULES_PATH".to_string(), "/addons/rules.json".to_string()),
-            ],
-            command: vec![
-                "mitmdump".to_string(),
-                "--set".to_string(),
-                "confdir=/home/mitmproxy/.mitmproxy".to_string(),
-                "--set".to_string(),
-                STREAM_LARGE_BODIES.to_string(),
-                "--mode".to_string(),
-                format!("socks5@0.0.0.0:{MSB_SOCKS_GUEST_PORT}"),
-                "--proxyauth".to_string(),
-                "@/addons/htpasswd".to_string(),
-                "-s".to_string(),
-                "/addons/flowlog_addon.py".to_string(),
-            ],
-            labels: Vec::new(),
-        };
-        match provider.create_sidecar(&spec).await {
-            Ok(_) => {
-                provider.start(&name).await?;
-                wait_for_ca(app, sandbox).await?;
-                crate::provider::probe::wait_sidecar_ready(&msb_readiness(host_port, &password)).await?;
-                return Ok(ProxyAttachment::MsbChain {
-                    host_port,
-                    password_env: SOCKS_PASSWORD_ENV.to_string(),
-                    upstream_ca_path: host_path(&ca),
-                });
-            }
-            Err(e @ ProviderError::PortInUse(_)) => last_err = Some(e),
-            Err(e) => return Err(e.into()),
-        }
-    }
-    Err(last_err.map(ProxyError::from).unwrap_or_else(|| {
-        ProxyError::CommandFailed("no free port for the proxy sidecar".to_string())
-    }))
-}
-
-/// The chain attachment for an existing microsandbox sidecar, rebuilt from its `meta.json` and
-/// `certs/` so a recreated agent pins the same port and CA.
-pub fn msb_attachment(app: &AppHandle, sandbox: &str) -> Result<ProxyAttachment, ProxyError> {
-    let host_port = read_meta_host_port(app, sandbox)
-        .ok_or_else(|| ProxyError::CommandFailed(format!("no proxy port recorded for {sandbox}")))?;
-    let ca = ca_pem_path(app, sandbox, ProviderId::Microsandbox)?;
-    if !ca.exists() {
-        return Err(ProxyError::CommandFailed(format!("{} is missing", ca.to_string_lossy())));
-    }
-    Ok(ProxyAttachment::MsbChain {
-        host_port,
-        password_env: SOCKS_PASSWORD_ENV.to_string(),
-        upstream_ca_path: host_path(&ca),
-    })
-}
-
-/// Marks flows to every host a secret is bound to as `secretInjected`, through the flow-log
-/// addon's existing host matcher — "a secret is bound to this host", since mitmproxy cannot see
-/// microsandbox's substitution (Resolved Decision 10). Takes effect at the sidecar's next start.
-pub fn write_secret_hosts(
-    app: &AppHandle,
-    sandbox: &str,
-    applied: &crate::net_policy::AppliedPolicy,
-) -> Result<(), ProxyError> {
-    let mut hosts: Vec<&str> = Vec::new();
-    for binding in &applied.policy.secrets {
-        for h in &binding.hosts {
-            if !hosts.contains(&h.as_str()) {
-                hosts.push(h);
-            }
-        }
-    }
-    let entries: Vec<serde_json::Value> =
-        hosts.iter().map(|h| serde_json::json!({ "host": h, "path_prefix": "" })).collect();
-    let path = state_dir(app, sandbox)?.join("addons").join("rules.json");
-    crate::mio_files::write_compact(&path, &serde_json::Value::Array(entries))
-        .map_err(|e| ProxyError::CommandFailed(e.to_string()))
-}
-
 /// The proxy's own network name and pinned IP, cached beside its state so `status` can report them
 /// without a `podman network inspect` round trip — the container's presence, not this file, remains
 /// the source of truth for whether the proxy is enabled (Resolved Decision 3).
@@ -581,14 +351,6 @@ fn read_meta(app: &AppHandle, sandbox: &str) -> Option<serde_json::Value> {
     crate::mio_files::read_value(&meta_path_if_exists(app, sandbox)?)
 }
 
-fn read_meta_host_port(app: &AppHandle, sandbox: &str) -> Option<u16> {
-    meta_host_port(&read_meta(app, sandbox)?)
-}
-
-fn meta_host_port(meta: &serde_json::Value) -> Option<u16> {
-    meta["hostPort"].as_u64().and_then(|p| u16::try_from(p).ok())
-}
-
 /// Mitmproxy when `meta` records no engine: only iron-proxy sidecars write one.
 fn meta_engine(meta: &serde_json::Value) -> ProxyEngine {
     serde_json::from_value(meta["engine"].clone()).unwrap_or(ProxyEngine::Mitmproxy)
@@ -596,13 +358,6 @@ fn meta_engine(meta: &serde_json::Value) -> ProxyEngine {
 
 pub fn sidecar_engine(app: &AppHandle, sandbox: &str) -> ProxyEngine {
     read_meta(app, sandbox).map_or(ProxyEngine::Mitmproxy, |m| meta_engine(&m))
-}
-
-/// The chained-proxy SOCKS5 password a microsandbox sidecar's `meta.json` records, read by
-/// `services::start_env::AppStartEnv` for the agent's start environment.
-pub fn read_socks_password(app: &AppHandle, sandbox: &str) -> Option<String> {
-    let path = meta_path_if_exists(app, sandbox)?;
-    crate::mio_files::read_value(&path)?["socksPassword"].as_str().map(str::to_string)
 }
 
 /// The sidecar's provider id and handle, resolved from `meta.json`.
@@ -617,8 +372,8 @@ pub fn sidecar_provider(
 
 /// Whether `instance` is a proxy sidecar rather than a sandbox. The name suffix alone is not enough:
 /// a sandbox created before the suffix was reserved can be called `x-proxy`. Sandboxes run the
-/// versioned `sandbox-mio/base:<n>` image and so carry an `image_version`; the mitmproxy (`11.1.3`)
-/// and iron-proxy (`0.56.0`) tags must never parse as one
+/// versioned `sandbox-mio/base:<n>` image and so carry an `image_version`; the sidecar image tags
+/// (iron-proxy `0.56.0`, or mitmproxy `11.1.3` on a pre-boundary sidecar) must never parse as one
 /// (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 10).
 pub fn is_sidecar(instance: &crate::backends::types::Sandbox) -> bool {
     instance.name.ends_with(types::PROXY_CONTAINER_SUFFIX) && instance.image_version.is_none()
@@ -635,34 +390,20 @@ pub async fn exists(app: &AppHandle, registry: &Arc<ProviderRegistry>, sandbox: 
         .unwrap_or(false)
 }
 
-/// Restarts the proxy sidecar so it re-reads its mounted state: `config.yaml` for iron-proxy, the
-/// secret-host `rules.json` for mitmproxy. A microsandbox sidecar is probed again before returning,
-/// since its agent fails closed until the listener is back.
+/// Restarts the proxy sidecar so it re-reads its mounted `config.yaml`.
 pub async fn restart_proxy_container(
     app: &AppHandle,
     registry: &Arc<ProviderRegistry>,
     sandbox: &str,
 ) -> Result<(), ProxyError> {
-    let (id, provider) = sidecar_provider(app, registry, sandbox);
+    let (_, provider) = sidecar_provider(app, registry, sandbox);
     let name = proxy_container_name(sandbox);
     // A crashed sidecar may refuse the stop, so only the start decides the outcome.
     let stopped = provider.stop_sidecar(&name).await;
     match provider.start(&name).await {
-        Ok(()) => {}
-        Err(ProviderError::PortInUse(_)) => {
-            return Err(ProxyError::CommandFailed(
-                "proxy port taken — re-apply the network settings to recreate".to_string(),
-            ))
-        }
-        Err(e) => return Err(stopped.err().unwrap_or(e).into()),
+        Ok(()) => Ok(()),
+        Err(e) => Err(stopped.err().unwrap_or(e).into()),
     }
-    if id == ProviderId::Microsandbox {
-        let port = read_meta_host_port(app, sandbox)
-            .ok_or_else(|| ProxyError::CommandFailed(format!("no proxy port recorded for {sandbox}")))?;
-        let password = read_socks_password(app, sandbox).unwrap_or_default();
-        crate::provider::probe::wait_sidecar_ready(&msb_readiness(port, &password)).await?;
-    }
-    Ok(())
 }
 
 /// Removes the proxy container, its network, and its state directory, in that order — Podman
@@ -701,9 +442,7 @@ pub async fn remove_proxy(
 }
 
 /// Removes every `<name>-proxy` sidecar (and its network/state directory) whose base sandbox name
-/// is absent from `live`. A microsandbox sidecar is swept only when this app's data root holds its
-/// `meta.json`: the msb store is host-global, and another worktree's sidecar exists before its
-/// agent does (`docs/features/microsandbox-network-policy/02_dev.md`, Resolved Decision 20).
+/// is absent from `live`.
 pub async fn sweep(app: &AppHandle, registry: &Arc<ProviderRegistry>, live: &[String]) {
     for (id, provider) in registry.all() {
         let Ok(instances) = provider.list_instances().await else {
@@ -714,9 +453,6 @@ pub async fn sweep(app: &AppHandle, registry: &Arc<ProviderRegistry>, live: &[St
                 continue;
             };
             if live.iter().any(|n| n == base) {
-                continue;
-            }
-            if id == ProviderId::Microsandbox && sidecar_provider_id(app, base) != id {
                 continue;
             }
             remove_proxy(app, &provider, id, base).await;
@@ -734,9 +470,8 @@ pub async fn status(
     let (id, provider) = sidecar_provider(app, registry, sandbox);
     let container_name = proxy_container_name(sandbox);
     let instances = provider.list_instances().await?;
-    let network = if id == ProviderId::Podman { proxy_network_name(sandbox) } else { String::new() };
+    let network = proxy_network_name(sandbox);
     let meta = read_meta(app, sandbox).unwrap_or_default();
-    let host_port = if id == ProviderId::Microsandbox { meta_host_port(&meta) } else { None };
     let engine = meta_engine(&meta);
     let Some(instance) = instances.into_iter().find(|s| s.name == container_name && is_sidecar(s)) else {
         return Ok(ProxyStatus {
@@ -745,27 +480,16 @@ pub async fn status(
             proxy_ip: String::new(),
             network,
             provider: id,
-            host_port,
-            healthy: None,
             engine,
         });
     };
     let running = instance.status == "running";
-    let healthy = match (id, host_port, running) {
-        (ProviderId::Microsandbox, Some(port), true) => {
-            let password = read_socks_password(app, sandbox).unwrap_or_default();
-            Some(crate::provider::probe::sidecar_healthy(&msb_readiness(port, &password)).await)
-        }
-        _ => None,
-    };
     Ok(ProxyStatus {
         exists: true,
         running,
         proxy_ip: meta["proxyIp"].as_str().unwrap_or_default().to_string(),
         network,
         provider: id,
-        host_port,
-        healthy,
         engine,
     })
 }
@@ -781,7 +505,7 @@ mod tests {
             status: "running".to_string(),
             workspace_path: String::new(),
             image_version,
-            provider: ProviderId::Microsandbox,
+            provider: ProviderId::Podman,
         }
     }
 
@@ -802,11 +526,5 @@ mod tests {
         ));
         assert!(crate::backends::validate_new_name("proxy-micro").is_ok());
         assert!(crate::backends::validate_new_name("micro").is_ok());
-    }
-
-    /// The exact line real mitmproxy 11.1.3 accepted for `pw-123` on 0.7.12 (Phase F verification).
-    #[test]
-    fn htpasswd_line_is_an_apache_sha_entry() {
-        assert_eq!(htpasswd_line("mio", "pw-123"), "mio:{SHA}aKAUJxJMDStxTTMOHvkBWjDBPVY=\n");
     }
 }

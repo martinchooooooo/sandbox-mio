@@ -179,12 +179,9 @@ pub async fn ensure_auth_container(
 ) -> Result<(), CredentialError> {
     let exists = backend.list().await?.iter().any(|s| s.name == name);
     if !exists {
-        // Pinned to Podman rather than the user's `default_provider`: an auth container is a
-        // throwaway the app creates and destroys around one login, so it has no reason to pay a
-        // microsandbox sandbox's volume-plus-sync setup.
+        // An auth container is a throwaway the app creates and destroys around one login.
         backend.ensure_base_image(ProviderId::Podman).await?;
-        // An auth container is a throwaway the app creates and destroys around one login; it is
-        // never proxied.
+        // Never proxied.
         let sandbox = backend.create(name, None, ProviderId::Podman, None, None).await?;
         runtime.init(&sandbox.workspace_path).await?;
     }

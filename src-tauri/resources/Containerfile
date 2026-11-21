@@ -113,7 +113,6 @@ RUN echo 'eval "$(mise activate bash)"' > /root/.bashrc
 WORKDIR /root/work
 
 # PID 1 must reap: without tini, exited `sshd -i` sessions linger as zombies for the container's
-# lifetime. Podman-only — microsandbox boots its own guest init and does not run the image's
-# ENTRYPOINT or CMD (docs/features/microsandbox-network-policy/spike/04_msb-mitm-sidecar.md).
+# lifetime.
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["/bin/bash"]

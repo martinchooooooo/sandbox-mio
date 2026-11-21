@@ -16,13 +16,9 @@ pub enum ProviderError {
     /// Failed to parse the engine's JSON or text output.
     #[error("{0}")]
     ParseError(String),
-    /// `MsbProvider::ensure_base_image` needs Podman to build/export the image
-    /// (`docs/features/microsandbox-provider/02_dev.md`, Resolved Decision 2) and no working Podman
-    /// machine is reachable. A distinct variant so this fails loudly instead of surfacing as a
-    /// generic command failure.
-    #[error("microsandbox base image requires a working Podman machine: {0}")]
-    PodmanUnavailable(String),
-    /// A published host port was already taken when the engine tried to bind it.
+    /// A published host port was already taken when the engine tried to bind it. No current
+    /// provider raises it; it is the contract for one that publishes sidecar ports.
+    #[allow(dead_code)]
     #[error("host port already in use by {0}")]
     PortInUse(String),
 }
@@ -33,7 +29,6 @@ impl From<ProviderError> for BackendError {
             ProviderError::CommandFailed(m) => BackendError::CommandFailed(m),
             ProviderError::Unresponsive(m) => BackendError::PodmanUnresponsive(m),
             ProviderError::ParseError(m) => BackendError::ParseError(m),
-            ProviderError::PodmanUnavailable(m) => BackendError::CommandFailed(m),
             e @ ProviderError::PortInUse(_) => BackendError::CommandFailed(e.to_string()),
         }
     }
@@ -56,8 +51,7 @@ pub struct InstanceSpec {
     /// with a second `--network`).
     pub network: Option<InstanceNetwork>,
     /// Outbound policy enforced by the engine itself. Only providers whose
-    /// `capabilities().egress_policy` is true accept `Some`
-    /// (`docs/features/microsandbox-network-policy/02_dev.md`).
+    /// `capabilities().egress_policy` is true accept `Some`.
     pub egress: Option<EgressPolicy>,
 }
 
@@ -127,7 +121,7 @@ pub struct EgressRule {
 }
 
 /// A secret the engine substitutes on the way out. Carries the guest variable name only — the value
-/// reaches the engine through [`StartEnvSource`], never through this shape.
+/// never travels in this shape.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SecretBindingSpec {
     pub env_var: String,
@@ -137,18 +131,6 @@ pub struct SecretBindingSpec {
     pub headers: Vec<String>,
     pub query: bool,
     pub body: bool,
-}
-
-/// An upstream proxy every outbound connection is dialled through — the network-proxy traffic
-/// viewer's sidecar, reached on host loopback.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ChainedProxy {
-    pub host_port: u16,
-    pub username: String,
-    /// Name of the variable in the engine process's environment that holds the proxy password.
-    pub password_env: String,
-    /// Host path of the CA the proxy re-signs upstream TLS with.
-    pub upstream_ca_path: String,
 }
 
 /// Provider-neutral outbound policy for [`InstanceSpec::egress`], built from
@@ -162,22 +144,6 @@ pub struct EgressPolicy {
     pub secrets: Vec<SecretBindingSpec>,
     pub violation_action: ViolationAction,
     pub deny_message: Option<String>,
-    pub proxy: Option<ChainedProxy>,
-}
-
-/// One blocked secret use microsandbox logged: a placeholder sent somewhere its binding does not
-/// allow. Carries the variable name, never the value or the placeholder.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SecretViolation {
-    pub ts: String,
-    pub action: String,
-    pub env_var: String,
-    pub host: String,
-    pub method: String,
-    pub path: String,
-    /// `header`, `query` or `body`.
-    pub location: String,
 }
 
 /// A network attachment for [`InstanceSpec`], optionally pinned to a static IP — needed because the
@@ -205,33 +171,21 @@ pub struct PortPublish {
     pub guest_port: u16,
 }
 
-/// How to tell a sidecar's listener is actually serving: engines report an instance running
-/// seconds before the process inside listens (`docs/features/microsandbox-network-policy/spike/
-/// 04_msb-mitm-sidecar.md`, Item 6). Probed by `provider::probe::wait_sidecar_ready`.
-pub struct SidecarReadiness {
-    pub host_port: u16,
-    /// SOCKS5 username/password to complete sub-negotiation with; `None` probes no-auth SOCKS5.
-    pub socks5_auth: Option<(String, String)>,
-    pub budget_ms: u64,
-}
-
 /// Provider-neutral inputs for a sidecar container — a shape [`InstanceSpec`] cannot express: an
 /// arbitrary number of mounts at caller-chosen destinations, a caller-chosen launch command, no
-/// implicit `/bin/sh` entrypoint. Used only by the network-proxy mitmproxy container
+/// implicit `/bin/sh` entrypoint. Used only by the network-proxy sidecar container
 /// (`docs/features/network-proxy/02_dev.md`); every sandbox is still created through
 /// [`MachineProvider::create_instance`].
 pub struct SidecarSpec {
     pub name: String,
     pub image: String,
-    /// Required by Podman; microsandbox chains over host loopback and ignores it.
+    /// The network the sidecar is pinned to, where the provider has per-instance networks.
     pub network: Option<InstanceNetwork>,
     /// Networks joined after `network` without a pinned address: the egress sidecar's route out of
     /// an internal network (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 3).
-    /// Microsandbox ignores it.
     pub extra_networks: Vec<String>,
     /// Caps the container log and selects a file-backed log driver, so `sidecar_logs` can read it
-    /// back (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 4). Microsandbox
-    /// ignores it.
+    /// back (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 4).
     pub log_max_size: Option<String>,
     pub mounts: Vec<SidecarMount>,
     /// Ports published to the host.
@@ -259,7 +213,7 @@ pub struct ExecOpts {
 
 /// Feature differences between provider engines, returned once by `capabilities()` rather than
 /// probed per-operation (only `host_bind_mount` is genuinely runtime-dependent, and no provider
-/// probes it yet — see `docs/features/microsandbox-provider/02_dev.md`).
+/// probes it yet).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderCapabilities {
@@ -272,7 +226,7 @@ pub struct ProviderCapabilities {
     /// Whether the workspace can be a direct host bind mount rather than a synced volume.
     pub host_bind_mount: bool,
     /// Whether `create_instance` enforces [`InstanceSpec::egress`] with the engine's own network
-    /// stack (`docs/features/microsandbox-network-policy/02_dev.md`).
+    /// stack. No current provider does; the flag is the seam a future one fills.
     pub egress_policy: bool,
     /// Whether the proxy sidecar enforces `.mio/net-policy.json` when the sandbox has one, rather
     /// than the engine (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 14).
@@ -281,26 +235,23 @@ pub struct ProviderCapabilities {
 
 /// Which engine a [`MachineRef`] names. Also crosses IPC directly as a command parameter
 /// (`machine_setup_steps`/`machine_readiness`/`prepare_machine` in `src-tauri/src/commands/machine.rs`), which is
-/// why it derives `Serialize`/`Deserialize` on top of the `MachineRef` prefix-string form below —
-/// the two serializations are independent and allowed to diverge (`"microsandbox"` here vs. `"msb"`
-/// in `tag()`).
+/// why it derives `Serialize`/`Deserialize` on top of the `MachineRef` prefix-string form below;
+/// both use the lowercase name. A new provider is a variant here, a registry field, one arm per
+/// `match` over this enum, and a `MachineProvider` implementation.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
 )]
 #[serde(rename_all = "lowercase")]
 pub enum ProviderId {
-    /// The default everywhere a provider is unstated: every install has Podman, and an
-    /// `AppSettings` file written before this feature deserializes to it.
+    /// The default everywhere a provider is unstated.
     #[default]
     Podman,
-    Microsandbox,
 }
 
 impl ProviderId {
     const fn tag(self) -> &'static str {
         match self {
             ProviderId::Podman => "podman",
-            ProviderId::Microsandbox => "msb",
         }
     }
 }
@@ -317,7 +268,6 @@ impl std::str::FromStr for ProviderId {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "podman" => Ok(ProviderId::Podman),
-            "msb" => Ok(ProviderId::Microsandbox),
             other => Err(ProviderError::ParseError(format!("unknown provider id {other:?}"))),
         }
     }
@@ -325,8 +275,7 @@ impl std::str::FromStr for ProviderId {
 
 /// A provider-tagged machine handle, replacing the untyped `connection: &str` threaded through
 /// `RuntimeManager`/`NetworkManager`/`sync` today. Serializes as a prefixed string (`podman:
-/// mio-tests`, `msb:local`) so IPC payloads and persisted `.mio/` JSON stay plain strings; see
-/// `docs/features/microsandbox-provider/02_dev.md`. Resolved to a provider by
+/// mio-tests`) so IPC payloads and persisted `.mio/` JSON stay plain strings. Resolved to a provider by
 /// `ProviderRegistry::provider_for` (`src-tauri/src/provider/mod.rs`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MachineRef {
@@ -362,7 +311,6 @@ mod machine_ref_tests {
     fn round_trips_through_display_and_from_str() {
         let refs = [
             MachineRef { provider: ProviderId::Podman, id: "mio-tests".to_string() },
-            MachineRef { provider: ProviderId::Microsandbox, id: "local".to_string() },
         ];
         for r in refs {
             let s = r.to_string();
@@ -384,29 +332,6 @@ mod machine_ref_tests {
     #[test]
     fn rejects_empty_id() {
         assert!("podman:".parse::<MachineRef>().is_err());
-    }
-}
-
-/// Resolves the environment a start-capable engine call (`create`, `start`, `exec`) must carry for
-/// one instance: bound secret values and a chained proxy's password. Implemented by
-/// `services::start_env::AppStartEnv`; injected into `MsbProvider` so the provider never reads app
-/// state itself (`docs/features/microsandbox-network-policy/02_dev.md`, Phase C).
-///
-/// Contract: an instance with no applied policy snapshot (a sidecar, a sandbox predating the
-/// feature) gets an empty list. A bound secret with no stored value is an error, never an omitted
-/// variable, so the engine cannot fall back to a same-named variable inherited from the app.
-pub trait StartEnvSource: Send + Sync {
-    fn env_for(&self, instance: &str) -> Result<Vec<(String, String)>, ProviderError>;
-}
-
-/// A [`StartEnvSource`] that never adds anything, for providers built without app state.
-#[cfg(test)]
-pub struct NoStartEnv;
-
-#[cfg(test)]
-impl StartEnvSource for NoStartEnv {
-    fn env_for(&self, _instance: &str) -> Result<Vec<(String, String)>, ProviderError> {
-        Ok(Vec::new())
     }
 }
 
@@ -460,14 +385,15 @@ pub trait MachineProvider: Send + Sync {
     /// Create a sidecar from `spec` — a shape `create_instance` cannot express. A published port
     /// that turns out to be taken is [`ProviderError::PortInUse`].
     async fn create_sidecar(&self, spec: &SidecarSpec) -> Result<String, ProviderError>;
-    /// Stop a sidecar, forcing it if the engine cannot stop its launched command gracefully
-    /// (microsandbox's `--init` sidecars hang in `draining` otherwise).
+    /// Stop a sidecar, forcing it if the engine cannot stop its launched command gracefully.
     async fn stop_sidecar(&self, name: &str) -> Result<(), ProviderError>;
     /// Replace the instance named `spec.name` with a new one from `spec`, keeping its workspace
-    /// data. The old instance is fully removed before the new one is created.
+    /// data. The old instance is fully removed before the new one is created. Unused until
+    /// `docs/features/proxy-toggle-management/02_dev.md` builds the sandbox recreate on top of it.
+    #[allow(dead_code)]
     async fn recreate_instance(&self, spec: &InstanceSpec) -> Result<String, ProviderError>;
     /// Pull `image` if not already present locally. Unlike `ensure_base_image`, never builds —
-    /// always pulls from a registry. Used for the mitmproxy sidecar image, which this app never
+    /// always pulls from a registry. Used for the proxy sidecar image, which this app never
     /// builds itself (`docs/features/network-proxy/02_dev.md`, Resolved Decision 10).
     async fn pull_image(&self, image: &str) -> Result<(), ProviderError>;
     /// List all instances (running and stopped) as the provider-neutral [`Sandbox`] shape.
@@ -517,8 +443,8 @@ pub trait MachineProvider: Send + Sync {
     /// A sidecar's log lines, each prefixed with the engine's timestamp: stdout's lines, then
     /// stderr's, each stream oldest first. `since` is an engine timestamp and is inclusive, but
     /// Podman 5.8 truncates it to the whole second, so earlier lines of that second come back too.
-    /// Readable from a stopped sidecar. Only Podman sidecars log this way; microsandbox's keep the
-    /// file-based flow log (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 4).
+    /// Readable from a stopped sidecar. The audit stream is the traffic record
+    /// (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 4).
     async fn sidecar_logs(
         &self,
         name: &str,

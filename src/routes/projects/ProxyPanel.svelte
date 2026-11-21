@@ -2,7 +2,7 @@
     import type { createActionRunner } from "$lib/actions.svelte";
     import type { ProviderId } from "$lib/providers";
     import NetPolicyEditor from "./NetPolicyEditor.svelte";
-    import { ensureProxyStatus, proxyStatusFor, refreshProxyStatus } from "$lib/proxy/status.svelte";
+    import { ensureProxyStatus, proxyStatusFor } from "$lib/proxy/status.svelte";
     import { m } from "$lib/paraglide/messages.js";
 
     let {
@@ -16,8 +16,6 @@
         provider?: ProviderId;
         action: ReturnType<typeof createActionRunner>;
     } = $props();
-
-    const msb = $derived(provider === "microsandbox");
 
     const statusEntry = $derived(proxyStatusFor(sandboxName));
     const status = $derived(statusEntry.value);
@@ -36,18 +34,10 @@
 
     {#if status && !status.exists}
         <span class="text-muted-foreground text-xs" data-proxy-disabled>
-            {#if msb}
-                {m.proxy_off_msb()}
-            {:else}
-                {m.proxy_off_podman()}
-            {/if}
+            {m.proxy_off_podman()}
         </span>
     {:else if status && !status.running}
         <span class="text-xs text-destructive" data-proxy-stopped>{m.proxy_stopped()}</span>
-    {:else if status?.running && msb}
-        <span class="text-muted-foreground text-xs" data-proxy-msb-chain>
-            {m.proxy_chained()}
-        </span>
     {:else if status?.running}
         <span class="text-muted-foreground text-xs" data-proxy-network>
             {m.proxy_network({ network: status.network })}
@@ -72,7 +62,6 @@
 </div>
 
 <!-- A stopped iron-proxy sidecar keeps the editor: saving starts it (docs/features/podman-egress-boundary/02_dev.md, Resolved Decision 13). -->
-{#if provider && (msb || (iron && status?.exists))}
-    <NetPolicyEditor {sandboxName} {workspacePath} {provider} sidecar={iron}
-        viewerOn={status?.exists ?? false} onReapplied={() => refreshProxyStatus(sandboxName)} />
+{#if provider && iron && status?.exists}
+    <NetPolicyEditor {sandboxName} {workspacePath} {provider} />
 {/if}

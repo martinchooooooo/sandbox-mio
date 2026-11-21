@@ -37,7 +37,6 @@ import {
   PORT_WINDOW_BASE,
   PORT_WINDOW_INDEX,
   MIO_PORT_BASE,
-  MSB_HOME,
 } from "./lib/run-identity.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
@@ -59,12 +58,6 @@ const MIO_REMOTE_REMOVE = process.env.MIO_REMOTE_REMOVE === "1";
 // profile is auto-mounted into the podman VM (needed by the standard tier's bind mount). Read via
 // SANDBOX_WORKSPACE_ROOT in src-tauri/src/backends/.
 process.env.SANDBOX_WORKSPACE_ROOT = WORKSPACE_ROOT;
-
-// MSB_HOME isolates microsandbox's own state (db, sandboxes, cache, logs) per worktree, mirroring
-// SANDBOX_WORKSPACE_ROOT above, and is read by the `msb` binary itself (upstream `resolve_home()`).
-// No MSB_PATH export: the app always runs its bundled `msb` and overrides the variable itself
-// (docs/features/microsandbox-provider/02_dev.md, "Implemented: bundled `msb` runtime").
-process.env.MSB_HOME = MSB_HOME;
 
 // Test-only GGUF for the `test_model` command, kept out of the shipped catalogue (see
 // docs/features/local-llm/03_e2e.md). Set in process.env so the spawned app sees it too.
@@ -111,7 +104,7 @@ function killStaleDevProcesses(): void {
     [
       "-NoProfile",
       "-Command",
-      "Get-Process -Name podman,msb,win-sshproxy,gvproxy,sandbox-mio,mutagen -ErrorAction SilentlyContinue | " +
+      "Get-Process -Name podman,win-sshproxy,gvproxy,sandbox-mio,mutagen -ErrorAction SilentlyContinue | " +
         "Where-Object { $_.Path -and $_.Path.StartsWith($env:MIO_DEBUG_DIR, [StringComparison]::OrdinalIgnoreCase) } | " +
         "Stop-Process -Force -ErrorAction SilentlyContinue",
     ],
@@ -581,9 +574,8 @@ async function waitForDriverReady(
 
 // Allocates the session's port, spawns msedgedriver on it, and assigns it to `config.port`.
 //
-// msedgedriver is spawned directly rather than through tauri-driver: tauri-driver puts itself and
-// every descendant in a Windows job object that denies breakaway, and `msb create` must break away
-// to start its VM supervisor (docs/features/microsandbox-provider/03_e2e.md, Step 0).
+// msedgedriver is spawned directly rather than through tauri-driver, for the port-retry control
+// below.
 //
 // Allocation lives here, not in onPrepare, because this hook owns the config the WebdriverIO
 // session is built from: a retry that rebinds the driver to a different port must move the client

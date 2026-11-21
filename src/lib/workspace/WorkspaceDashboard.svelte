@@ -107,7 +107,7 @@
                         {:else if section.id === "network"}
                             <ProxyPanel {sandboxName} {workspacePath} {provider} {action} />
                         {:else if section.id === "traffic"}
-                            <TrafficPanel {sandboxName} {workspacePath} {provider} {action} />
+                            <TrafficPanel {sandboxName} {workspacePath} {action} />
                         {:else if section.id === "remote" && provider}
                             <RemoteManager {sandboxName} {workspacePath} {provider} {action} />
                         {:else if section.id === "danger"}

@@ -26,10 +26,6 @@ pub struct AppSettings {
     /// Unix milliseconds of the first launch, the zero point of the first-run milestones; absent
     /// until the first onboarding launch records it (`docs/features/fastest-time-to-wow/02_dev.md`, Phase H).
     pub first_opened_at_ms: Option<u64>,
-    /// Which engine the create-sandbox flow selects by default. Absent from an existing settings
-    /// file, which therefore keeps creating Podman sandboxes
-    /// (`docs/features/microsandbox-provider/02_dev.md`, Phase J).
-    pub default_provider: crate::provider::types::ProviderId,
     /// Per-sandbox override of the native chat's learning mode (sandbox name to on or off). A
     /// sandbox with no entry follows the frontend's default (`docs/features/chat-agent-anatomy/02_dev.md`).
     pub chat_learning_mode: std::collections::BTreeMap<String, bool>,

@@ -49,12 +49,12 @@ pub(crate) struct ScriptedOutput {
 #[derive(Default)]
 pub struct MockDirector {
     pub(super) overrides: Mutex<std::collections::HashMap<String, Behaviour>>,
-    /// Every scripted `msb` call since the last reset, so a light spec can assert rendered argv.
+    /// Every scripted call since the last reset, so a light spec can assert rendered argv.
     pub(super) calls: Mutex<Vec<RecordedCall>>,
 }
 
 /// One journalled call. Carries the names of the extra environment variables the call was given,
-/// never their values (`docs/features/microsandbox-network-policy/02_dev.md`, Phase C).
+/// never their values.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct RecordedCall {
     pub key: String,
@@ -89,33 +89,4 @@ pub struct ScriptedPodmanRunner {
 /// `mutagen.sync-list` directly.
 pub struct ScriptedMutagenRunner {
     pub(super) director: Arc<MockDirector>,
-}
-
-/// One `msb create`d instance, tracked only so the built-in `msb.ls` default (no override
-/// installed) can report it back — the microsandbox sibling of [`TrackedContainer`]. Status is
-/// PascalCase (`Running`/`Stopped`), matching real `msb ls --format json` output rather than
-/// Podman's lowercase vocabulary.
-pub(super) struct TrackedMsbInstance {
-    pub(super) name: String,
-    pub(super) workspace_label: String,
-    pub(super) running: bool,
-    /// The `name:tag` the instance was created from, so `msb.ls` reports an `image` that parses
-    /// into a `Sandbox::image_version` — the Podman side gets this for free from a real image.
-    pub(super) image: String,
-}
-
-/// Scripted `msb` invocations, mirroring [`ScriptedPodmanRunner`]'s create→list→start→stop→list
-/// round trip against `msb`-shaped JSON instead of Podman's.
-pub struct ScriptedMsbRunner {
-    pub(super) director: Arc<MockDirector>,
-    pub(super) instances: Mutex<Vec<TrackedMsbInstance>>,
-    /// Workspace volume names, tracked separately from `instances` because a volume outlives a
-    /// failed `msb create` on the real binary — the leftover `MsbProvider::create_instance` rolls
-    /// back. Modelled here so `msb volume create` can reject a duplicate name the way real `msb`
-    /// 0.7.12 does (exit 1, `volume already exists: <name>`).
-    pub(super) volumes: Mutex<Vec<String>>,
-    /// Image references `msb load --tag <ref>` has imported, reported back by `msb image ls
-    /// --format json` so `MsbProvider`'s base-image check is idempotent under mock the way
-    /// `podman.image-exists` is for the Podman path.
-    pub(super) images: Mutex<Vec<String>>,
 }

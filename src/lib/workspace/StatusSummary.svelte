@@ -28,9 +28,7 @@
         if (!status) return "…";
         if (!status.exists) return m.dashboard_summary_network_off();
         if (!status.running) return m.dashboard_summary_network_stopped();
-        return status.healthy === false
-            ? m.dashboard_summary_network_unhealthy()
-            : m.dashboard_summary_network_recorded();
+        return m.dashboard_summary_network_recorded();
     });
     const portCount = $derived(
         openForwardsFor(sandboxName).filter((f) => f.kind.kind === "exposed").length,

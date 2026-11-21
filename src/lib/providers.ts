@@ -2,17 +2,17 @@ import { invoke } from "@tauri-apps/api/core";
 import { m } from "$lib/paraglide/messages.js";
 
 /** Which engine runs a sandbox (mirrors Rust `provider::types::ProviderId`). */
-export type ProviderId = "podman" | "microsandbox";
+export type ProviderId = "podman";
 
-/** Every selectable provider, in the order the create-sandbox picker offers them. */
-export const PROVIDERS: ProviderId[] = ["podman", "microsandbox"];
+/** Every provider the app knows; a future provider is one more entry. */
+export const PROVIDERS: ProviderId[] = ["podman"];
 
 /** Feature differences between engines (mirrors Rust `provider::types::ProviderCapabilities`). */
 export interface ProviderCapabilities {
     remoteTargets: boolean;
     eventStream: boolean;
     hostBindMount: boolean;
-    /** Whether the engine enforces `.mio/net-policy.json` itself (microsandbox). */
+    /** Whether the engine enforces `.mio/net-policy.json` itself (no current provider). */
     egressPolicy: boolean;
     /** Whether the proxy sidecar enforces `.mio/net-policy.json` when the sandbox has one (Podman). */
     sidecarEgress: boolean;
@@ -20,7 +20,6 @@ export interface ProviderCapabilities {
 
 const LABELS: Record<ProviderId, () => string> = {
     podman: m.provider_podman_label,
-    microsandbox: m.provider_microsandbox_label,
 };
 
 export function providerLabel(provider: ProviderId): string {

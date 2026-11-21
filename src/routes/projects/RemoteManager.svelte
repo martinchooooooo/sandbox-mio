@@ -28,8 +28,7 @@
     const deployment = $derived(deploymentFor(sandboxName));
 
     // Hidden rather than disabled for a provider with no remote-target concept: there is nothing
-    // the user could do to make it available (`docs/features/microsandbox-provider/02_dev.md`,
-    // Phase J).
+    // the user could do to make it available.
     const canDeploy = $derived(capabilitiesFor(provider)?.remoteTargets ?? false);
 
     // Whether the host picker is open, and the host chosen within it.

@@ -1,6 +1,3 @@
-pub mod msb;
-pub mod msb_policy;
-pub mod probe;
 pub mod types;
 
 use std::process::Output;
@@ -25,14 +22,8 @@ const CONTAINERFILE: &str = include_str!("../../resources/Containerfile");
 /// `existing_path` sandbox's workspace, which is not reconstructible from the name alone.
 pub(crate) const WORKSPACE_LABEL: &str = "sandbox-mio.workspace";
 
-/// The id half of the one microsandbox machine there is (`msb:local`). Microsandbox runs its
-/// instances on the host itself and has no connection registry, so unlike Podman there is nothing
-/// to name — but [`MachineRef`] still needs an id to round-trip through its `provider:id` string.
-const MSB_LOCAL_ID: &str = "local";
-
-/// Resolves a [`MachineRef`] to the provider driving it. Replaces the single managed
-/// `Arc<dyn MachineProvider>` Phases A–I wired into Tauri state, which could only ever be Podman's
-/// (`docs/features/microsandbox-provider/02_dev.md`, Phase J).
+/// Resolves a [`MachineRef`] to the provider driving it. Adding a provider means a field here and
+/// one arm in each method below.
 pub struct ProviderRegistry {
     podman_runner: Arc<dyn ProcessRunner>,
     /// The Podman system connection a locally-created sandbox lives on. Read once at startup, like
@@ -41,7 +32,6 @@ pub struct ProviderRegistry {
     /// Cached rather than rebuilt per call so every local Podman operation shares one base-image
     /// build lock — a fresh `PodmanProvider` per call would each hold their own and race the build.
     local_podman: Arc<dyn MachineProvider>,
-    msb: Arc<dyn MachineProvider>,
 }
 
 impl ProviderRegistry {
@@ -49,7 +39,6 @@ impl ProviderRegistry {
     pub fn local_ref(&self, provider: ProviderId) -> MachineRef {
         let id = match provider {
             ProviderId::Podman => self.local_connection.clone(),
-            ProviderId::Microsandbox => MSB_LOCAL_ID.to_string(),
         };
         MachineRef { provider, id }
     }
@@ -60,7 +49,6 @@ impl ProviderRegistry {
         match machine.provider {
             ProviderId::Podman if machine.id == self.local_connection => self.local_podman.clone(),
             ProviderId::Podman => default_provider(self.podman_runner.clone(), machine.id.clone()),
-            ProviderId::Microsandbox => self.msb.clone(),
         }
     }
 
@@ -71,8 +59,7 @@ impl ProviderRegistry {
 
     /// The provider running an instance named `name`, found by asking each in turn. Falls back to
     /// Podman when no provider lists it, so an operation on a vanished sandbox surfaces the engine's
-    /// own "no such container" rather than an error of this app's invention. Podman is asked first,
-    /// which short-circuits the microsandbox lookup's per-instance `msb inspect` for the common case.
+    /// own "no such container" rather than an error of this app's invention.
     pub async fn provider_of(&self, name: &str) -> (ProviderId, Arc<dyn MachineProvider>) {
         for (id, provider) in self.all() {
             match provider.list_instances().await {
@@ -95,25 +82,17 @@ impl ProviderRegistry {
 
     /// Every provider, for the cross-provider operations (`list`, name-uniqueness) that have to ask
     /// all of them rather than one.
-    pub fn all(&self) -> [(ProviderId, Arc<dyn MachineProvider>); 2] {
-        [
-            (ProviderId::Podman, self.local_podman.clone()),
-            (ProviderId::Microsandbox, self.msb.clone()),
-        ]
+    pub fn all(&self) -> [(ProviderId, Arc<dyn MachineProvider>); 1] {
+        [(ProviderId::Podman, self.local_podman.clone())]
     }
 }
 
-/// Construct the [`ProviderRegistry`] for Tauri state. Both runners come from `src-tauri/src/bootstrap.rs`, so
+/// Construct the [`ProviderRegistry`] for Tauri state. The runner comes from `src-tauri/src/bootstrap.rs`, so
 /// scripted and real calls stay on the one director the rest of the app shares.
-pub fn default_registry(
-    podman_runner: Arc<dyn ProcessRunner>,
-    msb_runner: Arc<dyn ProcessRunner>,
-    start_env: Arc<dyn types::StartEnvSource>,
-) -> Arc<ProviderRegistry> {
+pub fn default_registry(podman_runner: Arc<dyn ProcessRunner>) -> Arc<ProviderRegistry> {
     let local_connection = crate::backends::connection_name();
     let local_podman = default_provider(podman_runner.clone(), local_connection.clone());
-    let msb = msb::default_msb_provider(msb_runner, local_podman.clone(), start_env);
-    Arc::new(ProviderRegistry { podman_runner, local_connection, local_podman, msb })
+    Arc::new(ProviderRegistry { podman_runner, local_connection, local_podman })
 }
 
 /// Construct the Podman-backed [`MachineProvider`] pinned to `connection`. Remote-target operations

@@ -42,7 +42,6 @@ describe("Podman egress boundary — editor gating and failure paths (mock backe
     await ProjectsPage.goHome();
     await ProjectsPage.open();
     await ProjectsPage.ensurePodmanReady();
-    await ProjectsPage.chooseProvider("podman");
     assert(!(await ProjectsPage.egressOption("allowlist").isExisting()), "egress picker shown with the proxy off");
     await ProjectsPage.enableProxy();
     await ProjectsPage.egressOption("allowlist").waitForDisplayed({ timeout: COMMAND });

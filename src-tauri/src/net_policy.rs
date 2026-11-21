@@ -10,7 +10,7 @@ use tauri::{AppHandle, Runtime};
 use crate::backends::types::BackendError;
 use crate::mio_files;
 use crate::provider::types::{
-    ChainedProxy, EgressPolicy, EgressRule, EgressTarget, ProviderCapabilities, SecretBindingSpec,
+    EgressPolicy, EgressRule, EgressTarget, ProviderCapabilities, SecretBindingSpec,
 };
 
 pub use crate::provider::types::{EgressMode, NetGroup, NetProtocol, RuleAction, ViolationAction};
@@ -34,9 +34,8 @@ pub const STARTER_BASE_HOSTS: &[&str] = &[
     "mise-versions.jdx.dev",
 ];
 
-/// Variable names a secret binding may not claim: the guest shell needs the first two, the chained
-/// proxy owns the third, and microsandbox reserves the `MSB_` prefix for its placeholders.
-const RESERVED_ENV: &[&str] = &["PATH", "HOME", crate::provider::msb_policy::SOCKS_PASSWORD_ENV];
+/// Variable names a secret binding may not claim: the guest shell needs them.
+const RESERVED_ENV: &[&str] = &["PATH", "HOME"];
 
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
@@ -233,8 +232,7 @@ fn valid_exact_host(host: &str) -> bool {
     host.len() <= 253 && host.contains('.') && host.split('.').all(valid_label)
 }
 
-/// An exact hostname, or `*.suffix` whose suffix has at least two labels (microsandbox rejects
-/// `*.com`).
+/// An exact hostname, or `*.suffix` whose suffix has at least two labels (`*.com` is refused).
 fn validate_host(host: &str) -> Result<(), NetPolicyError> {
     let ok = match host.strip_prefix("*.") {
         Some(suffix) => valid_exact_host(suffix),
@@ -269,8 +267,8 @@ fn valid_env_var(name: &str) -> bool {
 }
 
 /// Whether an allow rule covers `host` (exactly, or through a `*.suffix` rule). `wildcard_apex`
-/// follows the enforcer: iron-proxy's `*.example.com` also matches `example.com`, microsandbox's
-/// does not (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 6).
+/// follows the enforcer: iron-proxy's `*.example.com` also matches `example.com`, an engine-enforced
+/// dialect's may not (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 6).
 fn allowed_by_rule(policy: &NetPolicy, host: &str, wildcard_apex: bool) -> bool {
     policy.rules.iter().any(|r| {
         r.action == RuleAction::Allow
@@ -360,7 +358,7 @@ pub fn validate(policy: &NetPolicy, caps: ProviderCapabilities) -> Result<(), Ne
                 "invalid variable name {var:?} (use A-Z, 0-9 and _, not starting with a digit)"
             )));
         }
-        if RESERVED_ENV.contains(&var.as_str()) || var.starts_with("MSB_") {
+        if RESERVED_ENV.contains(&var.as_str()) {
             return Err(NetPolicyError(format!("variable name {var:?} is reserved")));
         }
         if !seen.insert(var.clone()) {
@@ -412,10 +410,7 @@ pub fn placeholder(env_var: &str) -> String {
 
 /// The provider-neutral rendering input. Call [`validate`] first: an invalid rule is an error here
 /// too, never silently dropped.
-pub fn to_egress(
-    policy: &NetPolicy,
-    proxy: Option<ChainedProxy>,
-) -> Result<EgressPolicy, NetPolicyError> {
+pub fn to_egress(policy: &NetPolicy) -> Result<EgressPolicy, NetPolicyError> {
     let rules = policy
         .rules
         .iter()
@@ -445,19 +440,15 @@ pub fn to_egress(
             .collect(),
         violation_action: policy.violation_action,
         deny_message: policy.deny_message.clone(),
-        proxy,
     })
 }
 
-/// What a sandbox was created with, or last applied for a Podman sandbox: the policy, whether a
-/// chained proxy was attached, and a Podman sandbox's create-time variables. Drives the start
-/// environment and drift detection (Resolved Decision 18).
+/// What a sandbox was created with, or last applied: the policy and the create-time variables.
+/// Drives drift detection.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppliedPolicy {
     pub policy: NetPolicy,
-    #[serde(default)]
-    pub chained_proxy: bool,
     /// The binding variables a Podman sandbox received placeholders for at create; kept across
     /// applies, since placeholders exist only from create
     /// (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 7).
@@ -474,7 +465,7 @@ pub struct UnstampedBinding {
 }
 
 /// The bindings of `policy` that `applied` did not stamp into the guest at create. Empty for a
-/// sandbox that records no create-time variables (microsandbox, or a sandbox predating them).
+/// sandbox that records no create-time variables (one predating them).
 pub fn unstamped_bindings(policy: &NetPolicy, applied: &AppliedPolicy) -> Vec<UnstampedBinding> {
     let Some(stamped) = &applied.guest_env else {
         return Vec::new();
@@ -534,7 +525,8 @@ pub fn remove_applied<R: Runtime>(app: &AppHandle<R>, sandbox: &str) {
 mod tests {
     use super::*;
 
-    const MSB: ProviderCapabilities = ProviderCapabilities {
+    /// A provider that enforces the policy with its own network stack; none ships today.
+    const ENGINE: ProviderCapabilities = ProviderCapabilities {
         remote_targets: false,
         event_stream: false,
         host_bind_mount: false,
@@ -543,7 +535,7 @@ mod tests {
     };
 
     const PODMAN: ProviderCapabilities =
-        ProviderCapabilities { egress_policy: false, sidecar_egress: true, ..MSB };
+        ProviderCapabilities { egress_policy: false, sidecar_egress: true, ..ENGINE };
 
     fn binding(host: &str) -> SecretBinding {
         SecretBinding {
@@ -568,59 +560,59 @@ mod tests {
         assert_eq!(p.secrets[0].headers, ["authorization"]);
         assert_eq!(p.violation_action, ViolationAction::BlockAndTerminate);
         assert_eq!(p.rules[0].port_ranges().unwrap(), [(443, 443), (8000, 8100)]);
-        validate(&p, MSB).unwrap();
+        validate(&p, ENGINE).unwrap();
     }
 
     #[test]
     fn starter_is_allowlist_with_deduplicated_hosts() {
-        let p = starter(MSB, &["api.anthropic.com".to_string(), "GitHub.com".to_string()]);
+        let p = starter(ENGINE, &["api.anthropic.com".to_string(), "GitHub.com".to_string()]);
         assert_eq!(p.egress, EgressMode::Allowlist);
         assert_eq!(p.rules.len(), STARTER_BASE_HOSTS.len() + 1);
         assert!(p.rules.iter().all(|r| r.protocol == Some(NetProtocol::Tcp)));
-        validate(&p, MSB).unwrap();
+        validate(&p, ENGINE).unwrap();
     }
 
     #[test]
     fn rejects_bad_targets_and_ports() {
-        let mut p = starter(MSB, &[]);
+        let mut p = starter(ENGINE, &[]);
         p.rules[0].host = Some("*.com".to_string());
-        assert!(validate(&p, MSB).is_err());
-        let mut p = starter(MSB, &[]);
+        assert!(validate(&p, ENGINE).is_err());
+        let mut p = starter(ENGINE, &[]);
         p.rules[0].cidr = Some("10.0.0.0/8".to_string());
-        assert!(validate(&p, MSB).is_err(), "two targets on one rule");
-        let mut p = starter(MSB, &[]);
+        assert!(validate(&p, ENGINE).is_err(), "two targets on one rule");
+        let mut p = starter(ENGINE, &[]);
         p.rules[0].ports = Some(vec![PortSpec::Range("90-80".to_string())]);
-        assert!(validate(&p, MSB).is_err());
-        let mut p = starter(MSB, &[]);
+        assert!(validate(&p, ENGINE).is_err());
+        let mut p = starter(ENGINE, &[]);
         p.rules[0].host = None;
         p.rules[0].cidr = Some("10.0.0.0/33".to_string());
-        assert!(validate(&p, MSB).is_err());
+        assert!(validate(&p, ENGINE).is_err());
     }
 
     #[test]
     fn rejects_bad_secret_bindings() {
-        let base = starter(MSB, &[]);
+        let base = starter(ENGINE, &[]);
         let with = |b: SecretBinding| NetPolicy { secrets: vec![b], ..base.clone() };
-        validate(&with(binding("api.github.com")), MSB).unwrap();
-        assert!(validate(&with(binding("example.com")), MSB).is_err(), "not allowed by a rule");
-        assert!(validate(&with(binding("*.github.com")), MSB).is_err(), "wildcard secret host");
-        for var in ["PATH", "MIO_SOCKS_PASSWORD", "MSB_X", "lower", "1ABC"] {
+        validate(&with(binding("api.github.com")), ENGINE).unwrap();
+        assert!(validate(&with(binding("example.com")), ENGINE).is_err(), "not allowed by a rule");
+        assert!(validate(&with(binding("*.github.com")), ENGINE).is_err(), "wildcard secret host");
+        for var in ["PATH", "HOME", "lower", "1ABC"] {
             let b = SecretBinding { env_var: var.to_string(), ..binding("github.com") };
-            assert!(validate(&with(b), MSB).is_err(), "{var} must be refused");
+            assert!(validate(&with(b), ENGINE).is_err(), "{var} must be refused");
         }
         let twice = NetPolicy {
             secrets: vec![binding("github.com"), binding("api.github.com")],
             ..base.clone()
         };
-        assert!(validate(&twice, MSB).is_err());
+        assert!(validate(&twice, ENGINE).is_err());
         let open = NetPolicy { secrets: vec![binding("example.com")], ..NetPolicy::default() };
-        validate(&open, MSB).unwrap();
+        validate(&open, ENGINE).unwrap();
     }
 
     #[test]
     fn interactive_is_refused_for_every_provider() {
         let p = NetPolicy { interactive: Some(true), ..NetPolicy::default() };
-        assert!(validate(&p, MSB).is_err());
+        assert!(validate(&p, ENGINE).is_err());
         assert!(validate(&p, PODMAN).is_err());
         let p = NetPolicy { interactive: Some(false), ..NetPolicy::default() };
         validate(&p, PODMAN).unwrap();
@@ -648,7 +640,7 @@ mod tests {
         for (what, r) in refused {
             let p = NetPolicy { rules: vec![r.clone()], ..NetPolicy::default() };
             assert!(validate(&p, PODMAN).is_err(), "{what} must be refused for Podman");
-            validate(&p, MSB).unwrap_or_else(|e| panic!("{what} is valid for microsandbox: {e}"));
+            validate(&p, ENGINE).unwrap_or_else(|e| panic!("{what} is valid for an engine-enforced provider: {e}"));
         }
         for action in [ViolationAction::Block, ViolationAction::BlockAndTerminate] {
             let p = NetPolicy { violation_action: action, ..NetPolicy::default() };
@@ -656,7 +648,7 @@ mod tests {
         }
         let p = NetPolicy { deny_message: Some("blocked by IT".to_string()), ..NetPolicy::default() };
         assert!(validate(&p, PODMAN).is_err(), "a deny message must be refused for Podman");
-        validate(&p, MSB).unwrap();
+        validate(&p, ENGINE).unwrap();
         let p = NetPolicy { strict_hostnames: false, ..NetPolicy::default() };
         validate(&p, PODMAN).unwrap();
     }
@@ -670,13 +662,13 @@ mod tests {
             ..NetPolicy::default()
         };
         validate(&p, PODMAN).unwrap();
-        assert!(validate(&p, MSB).is_err(), "microsandbox's suffix rule does not cover the apex");
+        assert!(validate(&p, ENGINE).is_err(), "an engine-enforced suffix rule does not cover the apex");
     }
 
     #[test]
     fn converts_to_the_provider_shape() {
-        let p = NetPolicy { secrets: vec![binding("api.github.com")], ..starter(MSB, &[]) };
-        let e = to_egress(&p, None).unwrap();
+        let p = NetPolicy { secrets: vec![binding("api.github.com")], ..starter(ENGINE, &[]) };
+        let e = to_egress(&p).unwrap();
         assert_eq!(e.mode, EgressMode::Allowlist);
         assert_eq!(e.rules.len(), p.rules.len());
         assert_eq!(e.secrets[0].env_var, "GH_TOKEN");

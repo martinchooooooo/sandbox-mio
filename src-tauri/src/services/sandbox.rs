@@ -87,7 +87,6 @@ pub async fn create(
     egress: Option<&EgressRequest>,
     store: &Arc<dyn SandboxBackend>,
     runtime: &Arc<dyn RuntimeManager>,
-    engine: &Arc<dyn SyncEngine>,
     registry: &Arc<ProviderRegistry>,
     app: &tauri::AppHandle,
 ) -> Result<Sandbox, AppError> {
@@ -105,7 +104,7 @@ pub async fn create(
 
     let id = format!("sandbox-create:{name}");
     activity::scope(app, &id, TaskKind::SandboxCreate, Some(name.to_string()), |task| async move {
-        create_steps(&task, name, existing_path, provider, proxy, egress, store, runtime, engine, registry, app)
+        create_steps(&task, name, existing_path, provider, proxy, egress, store, runtime, registry, app)
             .await
             .map_err(TaskFailure::same)
     })
@@ -122,19 +121,16 @@ async fn create_steps(
     egress: Option<&EgressRequest>,
     store: &Arc<dyn SandboxBackend>,
     runtime: &Arc<dyn RuntimeManager>,
-    engine: &Arc<dyn SyncEngine>,
     registry: &Arc<ProviderRegistry>,
     app: &tauri::AppHandle,
 ) -> Result<Sandbox, AppError> {
-    // Stage markers, so a failed create is attributable to a step from the log alone. The
-    // microsandbox path spans four subsystems (provider, ssh, runtime, sync) and its failures
+    // Stage markers, so a failed create is attributable to a step from the log alone: failures
     // surface as one flattened string in the UI toast, which cannot say how far it got.
     tracing::info!(target: "create", %name, %provider, "create_sandbox: ensuring base image");
     task.progress(None, "Preparing base image");
     store.ensure_base_image(provider).await?;
 
-    // The sidecar runs on the sandbox's own provider
-    // (`docs/features/microsandbox-network-policy/02_dev.md`, Resolved Decision 2).
+    // The sidecar runs on the sandbox's own provider.
     let sidecar = registry.local(provider);
     let attachment = if proxy {
         tracing::info!(target: "create", %name, "create_sandbox: ensuring proxy image");
@@ -155,7 +151,7 @@ async fn create_steps(
 
     tracing::info!(target: "create", %name, "create_sandbox: creating instance");
     task.progress(None, "Creating container");
-    let mut sandbox = match store.create(name, existing_path, provider, attachment.as_ref(), egress).await {
+    let sandbox = match store.create(name, existing_path, provider, attachment.as_ref(), egress).await {
         Ok(s) => s,
         Err(e) => {
             // The proxy container and network exist ahead of the sandbox they attach to
@@ -167,19 +163,7 @@ async fn create_steps(
             return Err(e.into());
         }
     };
-    if proxy && provider == ProviderId::Microsandbox {
-        // No CA injection: the guest already trusts microsandbox's own interception CA
-        // (`docs/features/microsandbox-network-policy/spike/01_egress-baseline.md`, Item 1).
-        if let Err(e) = mark_secret_hosts(app, registry, name).await {
-            tracing::error!(target: "create", %name, error = %e, "create_sandbox: secret-host marking failed, rolling back");
-            if store.destroy(name).await.is_ok() {
-                cleanup_host_state(name, app);
-            }
-            crate::net_policy::remove_applied(app, name);
-            crate::proxy::remove_proxy(app, &sidecar, provider, name).await;
-            return Err(e);
-        }
-    } else if proxy {
+    if proxy {
         // Order is load-bearing: the sidecar denies everything until the first apply (Resolved
         // Decision 18), and the policy can only be read once `store.create` resolved the workspace.
         task.progress(None, "Applying network policy");
@@ -205,128 +189,8 @@ async fn create_steps(
     );
     task.progress(None, "Setting up runtime");
     runtime.init(&sandbox.workspace_path).await?;
-    if provider == ProviderId::Microsandbox {
-        task.progress(None, "Starting sandbox");
-        // A microsandbox workspace lives in a VM disk volume, not a host bind mount, so it exists
-        // only once Mutagen syncs into it — and the instance must already be running for `msb ssh
-        // serve` (the alias's ProxyCommand) to answer (`docs/features/microsandbox-provider/02_dev.md`, Phase H).
-        store.start(name).await?;
-        let session = backends::msb_sync_session(name);
-        let beta = backends::msb_sync_beta(name);
-        task.progress(None, "Syncing files");
-        tracing::info!(
-            target: "create",
-            %name,
-            %session,
-            alpha = %sandbox.workspace_path,
-            %beta,
-            "create_sandbox: creating workspace sync session"
-        );
-        if let Err(e) = engine.create(&session, &sandbox.workspace_path, &beta).await {
-            // Mutagen reports a beta it cannot reach as one flattened chain (`unable to connect to
-            // beta: ... unable to run SCP process: exit status 1`) whose root cause is always the
-            // SSH transport; logging it beside the alias's `ProxyCommand` makes the two diagnosable together.
-            tracing::error!(target: "create", %name, %beta, error = %e, "create_sandbox: sync create failed");
-            // Mutagen never shows what the transport actually said, so ask the transport directly
-            // while the sandbox is still up. Purely diagnostic — the original error is what the
-            // user gets either way.
-            crate::ssh::probe_alias(name).await;
-            // Match the provider's own rollback discipline: leaving the instance behind means a
-            // retry under the same name hits `NameTaken` instead of the sync error above.
-            match store.destroy(name).await {
-                Ok(()) => cleanup_host_state(name, app),
-                Err(destroy_err) => tracing::error!(
-                    target: "create", %name, error = %destroy_err,
-                    "create_sandbox: rollback after sync failure also failed"
-                ),
-            }
-            return Err(e.into());
-        }
-        tracing::info!(target: "create", %name, "create_sandbox: sync session created");
-        sandbox.status = "running".to_string();
-    }
     super::inference_reach::spawn_ensure_for_sandbox(app, name);
     super::github_access::spawn_reconcile(app, name);
-    Ok(sandbox)
-}
-
-/// Recreates a microsandbox sandbox around its preserved workspace volume so the current
-/// `.mio/net-policy.json` and the requested viewer state (`viewer: None` keeps it) take effect —
-/// microsandbox fixes network rules at create (`docs/features/microsandbox-network-policy/02_dev.md`,
-/// Phase G). Toolchains installed outside `/root/work` are reinstalled from the mise lock.
-#[allow(clippy::too_many_arguments)]
-pub async fn reapply_network(
-    name: &str,
-    viewer: Option<bool>,
-    store: &Arc<dyn SandboxBackend>,
-    runtime: &Arc<dyn RuntimeManager>,
-    engine: &Arc<dyn SyncEngine>,
-    network: &Arc<dyn NetworkManager>,
-    registry: &Arc<ProviderRegistry>,
-    app: &tauri::AppHandle,
-) -> Result<Sandbox, AppError> {
-    let (provider, _) = registry.provider_of(name).await;
-    if provider != ProviderId::Microsandbox {
-        return Err(crate::backends::types::BackendError::CommandFailed(format!(
-            "{name:?}: re-applying network settings is only supported for microsandbox sandboxes"
-        ))
-        .into());
-    }
-    let had_viewer = crate::proxy::exists(app, registry, name).await;
-    let want_viewer = viewer.unwrap_or(had_viewer);
-    let sidecar = registry.local(provider);
-    // Order is load-bearing: a new sidecar must exist before the agent, which pins its port and CA.
-    let attachment = match (want_viewer, had_viewer) {
-        (true, true) => Some(crate::proxy::msb_attachment(app, name)?),
-        (true, false) => {
-            crate::proxy::ensure_proxy_image(app, &sidecar, provider).await?;
-            match crate::proxy::create_proxy(app, &sidecar, provider, name).await {
-                Ok(a) => Some(a),
-                Err(e) => {
-                    crate::proxy::remove_proxy(app, &sidecar, provider, name).await;
-                    return Err(e.into());
-                }
-            }
-        }
-        (false, _) => None,
-    };
-
-    close_panes_and_forwards(name, network, app).await;
-    let session = backends::msb_sync_session(name);
-    // Pull guest edits back to the host before the old VM goes away.
-    let _ = engine.flush(&session).await;
-    let _ = engine.terminate(&session).await;
-
-    let sandbox = match store.recreate(name, attachment.as_ref(), None).await {
-        Ok(s) => s,
-        Err(e) => {
-            if want_viewer && !had_viewer {
-                crate::proxy::remove_proxy(app, &sidecar, provider, name).await;
-            }
-            return Err(e.into());
-        }
-    };
-    if had_viewer && !want_viewer {
-        // Removed only after the agent: a stopped sidecar makes the agent fail closed, never bypass.
-        crate::proxy::remove_proxy(app, &sidecar, provider, name).await;
-    }
-    if want_viewer {
-        let applied = crate::net_policy::read_applied(app, name)
-            .map_err(crate::backends::types::BackendError::from)?
-            .unwrap_or_else(|| crate::net_policy::AppliedPolicy {
-                policy: crate::net_policy::NetPolicy::default(),
-                chained_proxy: true,
-                guest_env: None,
-            });
-        crate::proxy::write_secret_hosts(app, name, &applied)?;
-        crate::proxy::restart_proxy_container(app, registry, name).await?;
-    }
-
-    runtime.init(&sandbox.workspace_path).await?;
-    store.start(name).await?;
-    engine.create(&session, &sandbox.workspace_path, &backends::msb_sync_beta(name)).await?;
-    runtime.reproduce_remote(name, &registry.local_ref(provider), &sandbox.workspace_path).await?;
-    super::inference_reach::spawn_ensure_for_sandbox(app, name);
     Ok(sandbox)
 }
 
@@ -346,22 +210,6 @@ async fn apply_policy_and_inject_ca(
     tracing::info!(target: "create", %name, "create_sandbox: injecting proxy CA");
     let pem = crate::proxy::read_ca_pem(app, name, ProviderId::Podman)?;
     crate::proxy::inject_ca(podman, name, &pem).await?;
-    Ok(())
-}
-
-/// Writes the sidecar's secret-host marker file from the applied policy and restarts the sidecar
-/// so the addon reads it, only when a secret is bound (Resolved Decision 10).
-async fn mark_secret_hosts(
-    app: &tauri::AppHandle,
-    registry: &Arc<ProviderRegistry>,
-    name: &str,
-) -> Result<(), AppError> {
-    let applied = crate::net_policy::read_applied(app, name).map_err(crate::backends::types::BackendError::from)?;
-    let Some(applied) = applied.filter(|a| !a.policy.secrets.is_empty()) else {
-        return Ok(());
-    };
-    crate::proxy::write_secret_hosts(app, name, &applied)?;
-    crate::proxy::restart_proxy_container(app, registry, name).await?;
     Ok(())
 }
 
@@ -433,10 +281,6 @@ pub async fn destroy(
         store.destroy(name).await?;
         crate::net_policy::remove_applied(app, name);
         cleanup_host_state(name, app);
-        // Best-effort, and a no-op for a Podman sandbox, which has no workspace session: a
-        // microsandbox sandbox's volume is gone with the instance, so its sync has nothing left to
-        // reconcile and would otherwise keep retrying a dead ProxyCommand.
-        let _ = engine.terminate(&backends::msb_sync_session(name)).await;
         remove_proxy_if_present(app, registry, name).await;
         return Ok(());
     };

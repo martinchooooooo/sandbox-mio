@@ -231,8 +231,8 @@ impl CliBackend {
     }
 
     /// Reject a name any provider already runs an instance under. Names must be unique across the
-    /// union of both providers, not per provider, because every other command addresses a sandbox
-    /// by name alone (`docs/features/microsandbox-provider/02_dev.md`, Phase J).
+    /// union of providers, not per provider, because every other command addresses a sandbox by
+    /// name alone.
     async fn ensure_name_available(&self, name: &str) -> Result<(), BackendError> {
         match self.list().await?.into_iter().find(|s| s.name == name) {
             Some(existing) => Err(BackendError::NameTaken {
@@ -270,10 +270,8 @@ impl CliBackend {
 
     /// Copies `<identity_path>.pub` into the container at the fixed path
     /// `sshd_config.container`'s `AuthorizedKeysFile` references, via the given provider so remote
-    /// deploys use a target-pinned provider. For Podman the container need only exist, not be
-    /// running (`podman cp` works against a created-but-stopped container); microsandbox's
-    /// `copy_in` goes through `msb exec` and does need a running instance, which it always has,
-    /// since `msb create` auto-starts what it creates.
+    /// deploys use a target-pinned provider. The container need only exist, not be running
+    /// (`podman cp` works against a created-but-stopped container).
     async fn install_sandbox_key(
         &self,
         provider: &Arc<dyn crate::provider::types::MachineProvider>,
@@ -359,20 +357,13 @@ impl CliBackend {
             %identity_path,
             "installing sandbox ssh key"
         );
-        // The key install is provider-neutral: both aliases tunnel to the base image's own
-        // `mio-sshd`, so both need the pubkey at the path its `sshd_config.container` names.
-        // Notably *not* `msb ssh authorize` for microsandbox — that authorizes against
-        // microsandbox's own SSH server, which `ensure_msb_sandbox_alias` no longer uses.
+        // The alias tunnels to the base image's own `mio-sshd`, so the pubkey must sit at the path
+        // its `sshd_config.container` names.
         self.install_sandbox_key(provider, name, &identity_path).await?;
-        // Only microsandbox is running by now: `podman create` leaves the container stopped, which
-        // `exec` cannot reach, so a Podman sandbox is pinned on its first start instead
-        // (`services::ssh_access::spawn_pin_host_keys`).
-        if provider_id == ProviderId::Microsandbox {
-            seed_sandbox_host_keys(provider, name, &identity_path).await;
-        }
+        // `podman create` leaves the container stopped, which `exec` cannot reach, so the host key
+        // is pinned on the first start instead (`services::ssh_access::spawn_pin_host_keys`).
         match provider_id {
             ProviderId::Podman => ensure_sandbox_alias(name, &self.connection, &identity_path).await?,
-            ProviderId::Microsandbox => ensure_msb_sandbox_alias(name, &identity_path).await?,
         }
         tracing::info!(target: "backends", %name, "ssh key installed and alias written");
         Ok(())
@@ -381,14 +372,13 @@ impl CliBackend {
     /// Settles a policy-enforcing sandbox's policy before its create: loads the workspace file, seeds
     /// the starter allowlist when the dialog chose allowlist and the file has no rules, applies the
     /// dialog's mode (an imported workspace's file wins otherwise), validates, and snapshots it as
-    /// `applied.json` (`docs/features/microsandbox-network-policy/02_dev.md`, Phase D).
+    /// `applied.json`.
     fn prepare_egress(
         &self,
         name: &str,
         workspace: &str,
         request: Option<&types::EgressRequest>,
         caps: crate::provider::types::ProviderCapabilities,
-        chain: Option<crate::provider::types::ChainedProxy>,
     ) -> Result<crate::provider::types::EgressPolicy, BackendError> {
         use crate::net_policy;
         let mut policy = net_policy::load(workspace)?;
@@ -406,9 +396,9 @@ impl CliBackend {
         }
         let guest_env =
             caps.sidecar_egress.then(|| policy.secrets.iter().map(|b| b.env_var.clone()).collect());
-        let applied = net_policy::AppliedPolicy { policy, chained_proxy: chain.is_some(), guest_env };
+        let applied = net_policy::AppliedPolicy { policy, guest_env };
         net_policy::write_applied(&self.app, name, &applied)?;
-        Ok(net_policy::to_egress(&applied.policy, chain)?)
+        Ok(net_policy::to_egress(&applied.policy)?)
     }
 
     async fn resolve_create_workspace(
@@ -487,37 +477,15 @@ fn progress(channel: &Channel<serde_json::Value>, step: &str, status: &str, mess
 /// A Podman bridge attachment: network, sandbox environment, and DNS server.
 type Bridge = (String, Vec<(String, String)>, String);
 
-/// Splits a proxy attachment into the Podman bridge and the microsandbox chain. A microsandbox
-/// attachment never maps onto the bridge, which `MsbProvider` refuses.
-fn split_attachment(
-    name: &str,
-    provider_id: ProviderId,
-    proxy: Option<&crate::proxy::types::ProxyAttachment>,
-) -> Result<(Option<Bridge>, Option<crate::provider::types::ChainedProxy>), BackendError> {
+/// Reduces a proxy attachment to the Podman bridge. A provider with its own attachment shape
+/// adds a variant to `ProxyAttachment` and an arm here.
+fn split_attachment(proxy: Option<&crate::proxy::types::ProxyAttachment>) -> Option<Bridge> {
     use crate::proxy::types::ProxyAttachment;
     match proxy {
-        None => Ok((None, None)),
-        Some(ProxyAttachment::PodmanBridge { network, env, dns })
-            if provider_id == ProviderId::Podman =>
-        {
-            Ok((Some((network.clone(), env.clone(), dns.clone())), None))
+        None => None,
+        Some(ProxyAttachment::PodmanBridge { network, env, dns }) => {
+            Some((network.clone(), env.clone(), dns.clone()))
         }
-        Some(ProxyAttachment::MsbChain { host_port, password_env, upstream_ca_path })
-            if provider_id == ProviderId::Microsandbox =>
-        {
-            Ok((
-                None,
-                Some(crate::provider::types::ChainedProxy {
-                    host_port: *host_port,
-                    username: crate::provider::msb_policy::SOCKS_USERNAME.to_string(),
-                    password_env: password_env.clone(),
-                    upstream_ca_path: upstream_ca_path.clone(),
-                }),
-            ))
-        }
-        Some(_) => Err(BackendError::CommandFailed(format!(
-            "{name:?}: the proxy attachment does not match the {provider_id} provider"
-        ))),
     }
 }
 
@@ -541,7 +509,7 @@ impl SandboxBackend for CliBackend {
     ) -> Result<Sandbox, BackendError> {
         validate_new_name(name)?;
         let caps = self.registry.local(provider_id).capabilities();
-        let (bridge, chain) = split_attachment(name, provider_id, proxy)?;
+        let bridge = split_attachment(proxy);
         // A Podman sidecar enforces the policy only for a sandbox behind it
         // (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 14).
         let sidecar_enforced = caps.sidecar_egress && bridge.is_some();
@@ -554,17 +522,16 @@ impl SandboxBackend for CliBackend {
         let provider = self.registry.local(provider_id);
         let image = Self::image();
         // Every sandbox is created locally; remoteness is a later deploy action, so the workspace
-        // is always a laptop directory — bind-mounted for Podman, Mutagen-synced into the disk
-        // volume `MsbProvider::create_instance` attaches for microsandbox.
+        // is always a laptop directory.
         let workspace = self.resolve_create_workspace(name, existing_path).await?;
         let mut env = bridge.as_ref().map(|(_, env, _)| env.clone()).unwrap_or_default();
         let egress_policy = if caps.egress_policy {
-            Some(self.prepare_egress(name, &workspace, egress, caps, chain)?)
+            Some(self.prepare_egress(name, &workspace, egress, caps)?)
         } else if sidecar_enforced {
             // Runs even with no request, so `applied.json` always snapshots the workspace file; the
             // sidecar, not the engine, enforces the result. Placeholders exist only from create
             // (Resolved Decision 7).
-            let policy = self.prepare_egress(name, &workspace, egress, caps, None)?;
+            let policy = self.prepare_egress(name, &workspace, egress, caps)?;
             env.extend(
                 policy.secrets.iter().map(|b| (b.env_var.clone(), crate::net_policy::placeholder(&b.env_var))),
             );
@@ -606,47 +573,13 @@ impl SandboxBackend for CliBackend {
     async fn recreate(
         &self,
         name: &str,
-        proxy: Option<&crate::proxy::types::ProxyAttachment>,
-        egress: Option<&types::EgressRequest>,
+        _proxy: Option<&crate::proxy::types::ProxyAttachment>,
+        _egress: Option<&types::EgressRequest>,
     ) -> Result<Sandbox, BackendError> {
-        let (provider_id, provider) = self.registry.provider_of(name).await;
-        let current = self
-            .list()
-            .await?
-            .into_iter()
-            .find(|s| s.name == name)
-            .ok_or_else(|| BackendError::CommandFailed(format!("no sandbox named {name:?}")))?;
-        if provider_id != ProviderId::Microsandbox {
-            // Podman recreate belongs to `docs/features/proxy-toggle-management/02_dev.md`.
-            return Err(BackendError::CommandFailed(format!(
-                "{name:?}: re-applying network settings is only supported for microsandbox sandboxes"
-            )));
-        }
-        let workspace = current.workspace_path.clone();
-        let (_, chain) = split_attachment(name, provider_id, proxy)?;
-        // The snapshot is rewritten from the current workspace file, which is the point of a
-        // re-apply (`docs/features/microsandbox-network-policy/02_dev.md`, Phase G).
-        let egress_policy =
-            self.prepare_egress(name, &workspace, egress, provider.capabilities(), chain)?;
-        let spec = InstanceSpec {
-            name: name.to_string(),
-            image: Self::image(),
-            workspace_source: workspace.clone(),
-            labels: vec![(crate::provider::WORKSPACE_LABEL.to_string(), workspace.clone())],
-            env: Vec::new(),
-            network: None,
-            egress: Some(egress_policy),
-        };
-        let id = provider.recreate_instance(&spec).await?;
-        self.provision_exec_transport(&provider, name, provider_id).await?;
-        Ok(Sandbox {
-            id,
-            name: name.to_string(),
-            status: "running".to_string(),
-            workspace_path: workspace,
-            image_version: Some(BASE_IMAGE_VERSION),
-            provider: provider_id,
-        })
+        // Podman recreate belongs to `docs/features/proxy-toggle-management/02_dev.md`.
+        Err(BackendError::CommandFailed(format!(
+            "{name:?}: recreating a sandbox is not supported yet"
+        )))
     }
 
     async fn list(&self) -> Result<Vec<Sandbox>, BackendError> {
@@ -654,8 +587,8 @@ impl SandboxBackend for CliBackend {
         for (id, provider) in self.registry.all() {
             match provider.list_instances().await {
                 Ok(instances) => all.extend(instances),
-                // Only Podman's failure is fatal: every install has Podman, but `msb` may not be
-                // installed at all, and that must not blank out the Podman sandboxes as well.
+                // Podman's failure is fatal: every install has it. Another provider's may not be
+                // installed at all, and must not blank out the sandboxes of the rest.
                 Err(e) if id == ProviderId::Podman => return Err(e.into()),
                 Err(e) => {
                     tracing::debug!(target: "backends", provider = %id, error = %e, "skipping provider in list")
@@ -962,26 +895,11 @@ pub async fn ensure_sandbox_alias(
     Ok(())
 }
 
-/// Guest-side mount point for a microsandbox sandbox's workspace volume. Kept as its own literal
-/// (matching the crate's existing convention — `runtime::WORKSPACE_MOUNT` and `provider::
-/// WORKSPACE_MOUNT` each keep a private copy too) rather than importing `provider`'s, since it's a
-/// guest-path fact any module may need, not shared mutable state.
-const MSB_WORKSPACE_MOUNT: &str = "/root/work";
-
-/// The literal argv token for `msb`, for embedding in an OpenSSH `ProxyCommand` string — the
-/// counterpart of [`podman_literal_path`], resolved by the same [`crate::process::msb_executable`]
-/// as every other `msb` call so the transport spawns the bundled binary too.
-fn msb_literal_path() -> String {
-    let exe = crate::process::msb_executable();
-    format!("\"{}\"", exe.to_string_lossy().replace('\\', "/"))
-}
-
 /// The `ProxyCommand` a sandbox's own alias pins on `machine`. The single source for both the
 /// alias writes and the string `sandbox_ssh_access` shows the user, so the two cannot diverge.
 pub fn sandbox_proxy_command(name: &str, machine: &crate::provider::types::MachineRef) -> String {
     match machine.provider {
         ProviderId::Podman => podman_proxy_command(name, &machine.id),
-        ProviderId::Microsandbox => msb_proxy_command(name),
     }
 }
 
@@ -993,63 +911,6 @@ fn podman_proxy_command(name: &str, connection: &str) -> String {
         "{} --connection {connection} exec -i {name} mio-sshd",
         podman_literal_path()
     )
-}
-
-/// The `ProxyCommand` [`ensure_msb_sandbox_alias`] pins, split out from the alias write so the
-/// transport choice is assertable without touching `~/.ssh`.
-fn msb_proxy_command(name: &str) -> String {
-    format!("{} exec --stream {name} -- mio-sshd", msb_literal_path())
-}
-
-/// Ensure the SSH alias for a microsandbox sandbox is written to `~/.ssh/sandbox-mio/config`.
-/// Mirrors [`ensure_sandbox_alias`]'s Podman/exec-transport counterpart exactly, down to execing the
-/// image's own `mio-sshd` — only the exec substrate differs (`msb exec --stream` in place of `podman
-/// exec -i`; both are byte-faithful piped stdio with no PTY).
-///
-/// Tunnelling to `mio-sshd` rather than to microsandbox's own `msb ssh serve <name> --stdio` server
-/// is load-bearing, not stylistic. That server answers exec and pty channels but silently drops a
-/// `subsystem sftp` request, and Mutagen installs its remote agent with `scp`, which speaks the SFTP
-/// protocol on OpenSSH 9+ — so every sync against a microsandbox sandbox died with `unable to
-/// install agent: unable to copy agent binary: unable to run SCP process: exit status 1` while a
-/// plain `ssh <alias> <cmd>` worked fine. The base image's `sshd` already configures `Subsystem sftp`
-/// (`src-tauri/resources/Containerfile`), and microsandbox boots that same image, so routing through
-/// it fixes `scp` and costs nothing (confirmed hands-on against real `msb` 0.6.6: `ssh` and `scp`
-/// both exit 0 over this ProxyCommand, `scp` exits 1 over `msb ssh serve`).
-///
-/// `mio-sshd` is referenced by bare name and the bundled `msb` path is forward-slashed, so the
-/// command carries no MSYS-manglable token — see [`ensure_sandbox_alias`] on why that matters for a
-/// pre-existing Mutagen daemon.
-pub async fn ensure_msb_sandbox_alias(name: &str, identity_path: &str) -> Result<(), BackendError> {
-    let command = msb_proxy_command(name);
-    // The exact `ProxyCommand` OpenSSH will run, logged verbatim: the transport is the one part of
-    // the microsandbox path no Rust-side error can describe, since every failure in it surfaces as
-    // an opaque `scp`/`ssh` exit code from inside Mutagen.
-    tracing::info!(target: "backends", %name, %command, %identity_path, "writing microsandbox ssh alias");
-    crate::ssh::write_alias(&crate::ssh::types::SshAlias::Proxied {
-        alias: name.to_string(),
-        command,
-        user: CONTAINER_USER.to_string(),
-        identity: identity_path.to_string(),
-        known_hosts: sandbox_known_hosts_path(identity_path),
-    })?;
-    Ok(())
-}
-
-/// The Mutagen `beta` scp-style URL for syncing a microsandbox sandbox's workspace volume. No
-/// host/port/user: the alias named `name` (written by [`ensure_msb_sandbox_alias`]) resolves the
-/// full connection through its `ProxyCommand`, exactly like the exec-transport `Proxied` alias's
-/// beta URL in `deploy` needs none beyond the alias name (`docs/features/microsandbox-provider/
-/// 02_dev.md`, Phase H).
-pub fn msb_sync_beta(name: &str) -> String {
-    format!("{name}:{MSB_WORKSPACE_MOUNT}")
-}
-
-/// Mutagen session name for a microsandbox sandbox's workspace sync. Deliberately *not* the bare
-/// sandbox name: a session under that name means "deployed to a remote host" everywhere else
-/// (`SessionInfo`, `sandbox_deployments`), and a microsandbox sandbox is never deployed — its
-/// session only keeps the disk volume in step with the laptop directory.
-pub fn msb_sync_session(name: &str) -> String {
-    format!("workspace-{name}")
 }
 
 /// The `UserKnownHostsFile` [`ensure_sandbox_alias`] pins, kept next to the sandbox's own identity.
@@ -1166,24 +1027,8 @@ mod known_hosts_tests {
 }
 
 #[cfg(test)]
-mod msb_sync_tests {
+mod proxy_command_tests {
     use super::*;
-
-    #[test]
-    fn msb_sync_beta_has_no_host_or_port() {
-        assert_eq!(msb_sync_beta("my-sandbox"), "my-sandbox:/root/work");
-    }
-
-    /// The transport must tunnel to the base image's own `mio-sshd`, never to microsandbox's
-    /// `msb ssh serve` server: that server drops the `sftp` subsystem request, which breaks the
-    /// `scp` Mutagen installs its agent with, while leaving a plain `ssh <alias> <cmd>` working —
-    /// so nothing but a sync exercises the difference. See [`ensure_msb_sandbox_alias`].
-    #[test]
-    fn msb_proxy_command_tunnels_to_the_image_sshd() {
-        let command = msb_proxy_command("my-sandbox");
-        assert!(command.ends_with(" exec --stream my-sandbox -- mio-sshd"), "{command}");
-        assert!(!command.contains("ssh serve"), "{command}");
-    }
 
     fn machine(provider: ProviderId, id: &str) -> crate::provider::types::MachineRef {
         crate::provider::types::MachineRef { provider, id: id.to_string() }
@@ -1208,9 +1053,4 @@ mod msb_sync_tests {
         assert!(!command.contains("/usr/local/bin"), "{command}");
     }
 
-    #[test]
-    fn microsandbox_proxy_command_ignores_the_machine_id() {
-        let command = sandbox_proxy_command("my-sandbox", &machine(ProviderId::Microsandbox, "local"));
-        assert_eq!(command, msb_proxy_command("my-sandbox"));
-    }
 }

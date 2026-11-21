@@ -15,11 +15,6 @@ const LLAMA_VERSION: &str = "b9835";
 /// `win-sshproxy` that `backends::podman_command()` resolves at runtime.
 const PODMAN_VERSION: &str = "v5.6.2";
 
-/// microsandbox release whose per-platform bundle (`msb` plus its matching `libkrunfw`) is staged as
-/// the bundled VM runtime (`src-tauri/binaries/msb`), resolved by `msb_executable()` in
-/// `src-tauri/src/process/mod.rs`. Must be at least `MIN_MSB_VERSION` in `src-tauri/src/machine/msb.rs`.
-const MSB_VERSION: &str = "v0.7.12";
-
 /// Mirrors `tauri.conf.json`'s `build.devUrl`. `run_dev_directly` polls this to know when the Vite
 /// dev server it started is ready for the app to load, since the app itself has no retry loop.
 /// `localhost`, not a literal `127.0.0.1`: Vite's default bind can be IPv6-loopback-only, and
@@ -54,7 +49,6 @@ fn main() {
             fetch_mutagen();
             fetch_llama();
             fetch_podman();
-            fetch_msb();
         }
         // The entry point for a fresh worktree, ahead of every other arm: nothing else — `dev`,
         // `e2e`, `package` — can run until this has staged the gitignored assets.
@@ -66,11 +60,7 @@ fn main() {
             set_dev_diagnostics_env();
             stage_llama();
             stage_podman();
-            // Fetched here, not only in `--setup`: `tauri.conf.json` lists `binaries/msb` as a
-            // resource, so `cargo build` fails in a checkout staged before msb was bundled.
-            fetch_msb();
             move_aside_locked_dev_files();
-            stage_msb();
             stage_mutagen_agents();
             run_dev_directly();
         }
@@ -110,7 +100,6 @@ fn main() {
             fetch_mutagen();
             fetch_llama();
             fetch_podman();
-            fetch_msb();
             run(root_dir(), "pnpm", &["tauri", "build"]);
         }
         _ => {
@@ -121,12 +110,9 @@ fn main() {
             eprintln!("                       possible) and run `pnpm install` into <path>, defaulting to");
             eprintln!("                       the invoking worktree");
             eprintln!("  build dev          - start the Vite dev server, build, and launch the app directly");
-            eprintln!("                       (not via `tauri dev`/`cargo run`: msb create needs to break away");
-            eprintln!("                       from the Windows Job Object those put the app process in — see");
-            eprintln!("                       `run_dev_directly`'s doc comment. Rerun after a Rust change; no");
-            eprintln!("                       auto-relaunch)");
+            eprintln!("                       (not via `tauri dev`/`cargo run` — see `run_dev_directly`'s doc");
+            eprintln!("                       comment. Rerun after a Rust change; no auto-relaunch)");
             eprintln!("  build dev --setup  - install app dependencies and stage the Mutagen sidecar + llama.cpp engine + Podman");
-            eprintln!("                       + microsandbox (msb + libkrunfw for the host OS/arch)");
             eprintln!("  build e2e          - run `pnpm test` in the e2e folder, first re-staging");
             eprintln!("                       tools/msedgedriver.exe if it no longer matches WebView2");
             eprintln!("  build e2e --setup  - install e2e test dependencies");
@@ -340,7 +326,7 @@ fn record_staged_version(key: &str, version: &str) {
 }
 
 fn record_staged_version_in(binaries: &Path, key: &str, version: &str) {
-    let mut entries: Vec<(String, String)> = ["mutagen", "llama", "podman", "msb"]
+    let mut entries: Vec<(String, String)> = ["mutagen", "llama", "podman"]
         .iter()
         .filter_map(|k| staged_version(binaries, k).map(|v| (k.to_string(), v)))
         .collect();
@@ -394,13 +380,6 @@ fn asset_groups() -> Vec<AssetGroup> {
             sentinel: "podman/podman.exe",
             paths: vec!["podman".into()],
             fetch: fetch_podman,
-        },
-        AssetGroup {
-            key: "msb",
-            version: MSB_VERSION,
-            sentinel: if cfg!(windows) { "msb/msb.exe" } else { "msb/msb" },
-            paths: vec!["msb".into()],
-            fetch: fetch_msb,
         },
     ]
 }
@@ -658,129 +637,6 @@ fn fetch_podman() {
     println!("Staged Podman: {}", dest_dir.display());
 }
 
-/// The microsandbox release bundle for the host this `build` runs on, as `(asset name, is_zip)`.
-/// Staged for the build host, so an installer carries that host's runtime; cross-target packaging
-/// would have to key this off the Tauri target triple instead.
-fn msb_bundle_asset() -> (String, bool) {
-    let os = match env::consts::OS {
-        "windows" => "windows",
-        "linux" => "linux",
-        "macos" => "darwin",
-        other => panic!("microsandbox publishes no runtime bundle for {}", other),
-    };
-    let arch = match env::consts::ARCH {
-        a @ ("x86_64" | "aarch64") => a,
-        other => panic!("microsandbox publishes no runtime bundle for {}", other),
-    };
-    assert!(
-        !(os == "darwin" && arch == "x86_64"),
-        "microsandbox {} publishes no darwin-x86_64 bundle (Apple Silicon only)",
-        MSB_VERSION
-    );
-    if os == "windows" {
-        (format!("microsandbox-{os}-{arch}.zip"), true)
-    } else {
-        (format!("microsandbox-{os}-{arch}.tar.gz"), false)
-    }
-}
-
-/// Lowercase hex SHA-256 of `file`, via `certutil` on Windows and `shasum` elsewhere — both ship
-/// with the OS, keeping `build` dependency-free like the `curl`/`tar` calls around it.
-fn sha256_of(file: &Path) -> String {
-    let output = if cfg!(windows) {
-        Command::new("certutil").arg("-hashfile").arg(file).arg("SHA256").output()
-    } else {
-        Command::new("shasum").args(["-a", "256"]).arg(file).output()
-    }
-    .unwrap_or_else(|e| panic!("failed to hash {}: {}", file.display(), e));
-    assert!(output.status.success(), "hashing {} failed", file.display());
-    String::from_utf8_lossy(&output.stdout)
-        .split_whitespace()
-        .find(|t| t.len() == 64 && t.chars().all(|c| c.is_ascii_hexdigit()))
-        .map(str::to_ascii_lowercase)
-        .unwrap_or_else(|| panic!("no SHA-256 digest in hash output for {}", file.display()))
-}
-
-/// Download the microsandbox runtime bundle for the host OS/arch, verify it against the release's
-/// `checksums.sha256`, and stage its contents flat into `src-tauri/binaries/msb`: `msb[.exe]` plus
-/// `libkrunfw` under its per-OS name (`libkrunfw.dll`, `libkrunfw.5.dylib`, `libkrunfw.so.<ver>`).
-/// The flat layout is load-bearing: `msb` resolves `libkrunfw` beside its own executable.
-///
-/// Unlike the other `fetch_*` helpers, an existing copy is re-fetched when the recorded version
-/// differs, so bumping `MSB_VERSION` takes effect without deleting the directory by hand.
-fn fetch_msb() {
-    let dest_dir = binaries_dir().join("msb");
-    let exe_name = if cfg!(windows) { "msb.exe" } else { "msb" };
-    if dest_dir.join(exe_name).exists()
-        && staged_version(&binaries_dir(), "msb").as_deref() == Some(MSB_VERSION)
-    {
-        println!("microsandbox {MSB_VERSION} already staged: {}", dest_dir.display());
-        return;
-    }
-    let (asset, is_zip) = msb_bundle_asset();
-    let base =
-        format!("https://github.com/superradcompany/microsandbox/releases/download/{MSB_VERSION}");
-    let work = env::temp_dir().join(format!("microsandbox-{MSB_VERSION}"));
-    let _ = fs::remove_dir_all(&work);
-    let extract = work.join("extract");
-    fs::create_dir_all(&extract).unwrap();
-    let archive = work.join(&asset);
-    let sums = work.join("checksums.sha256");
-
-    let archive_arg = archive.to_string_lossy();
-    let sums_arg = sums.to_string_lossy();
-    let extract_arg = extract.to_string_lossy();
-    println!("Downloading microsandbox {MSB_VERSION} ({asset})...");
-    run(root_dir(), "curl", &["-fsSL", "-o", &archive_arg, &format!("{base}/{asset}")]);
-    run(root_dir(), "curl", &["-fsSL", "-o", &sums_arg, &format!("{base}/checksums.sha256")]);
-
-    let expected = fs::read_to_string(&sums)
-        .unwrap()
-        .lines()
-        .find_map(|line| {
-            let mut parts = line.split_whitespace();
-            let digest = parts.next()?;
-            (parts.next()?.trim_start_matches('*') == asset).then(|| digest.to_ascii_lowercase())
-        })
-        .unwrap_or_else(|| {
-            panic!("{} missing from microsandbox {} checksums.sha256", asset, MSB_VERSION)
-        });
-    assert_eq!(sha256_of(&archive), expected, "checksum mismatch for {asset}");
-
-    let tar = if cfg!(windows) { windows_tar() } else { "tar".to_string() };
-    let flags = if is_zip { "-xf" } else { "-xzf" };
-    run(root_dir(), &tar, &[flags, &archive_arg, "-C", &extract_arg]);
-    assert!(
-        extract.join(exe_name).exists(),
-        "expected {exe_name} in extracted microsandbox bundle at {}",
-        extract.display()
-    );
-    assert!(
-        fs::read_dir(&extract)
-            .unwrap()
-            .flatten()
-            .any(|e| e.file_name().to_string_lossy().starts_with("libkrunfw")),
-        "expected libkrunfw in extracted microsandbox bundle at {}",
-        extract.display()
-    );
-
-    // Removed first, as in the other `fetch_*` helpers: a hard-linked destination from
-    // `setup_worktree()` would otherwise be rewritten in place, changing a sibling's copy too.
-    let _ = fs::remove_dir_all(&dest_dir);
-    fs::create_dir_all(&dest_dir).unwrap();
-    for entry in fs::read_dir(&extract).unwrap().flatten() {
-        fs::copy(entry.path(), dest_dir.join(entry.file_name())).unwrap();
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(dest_dir.join(exe_name), fs::Permissions::from_mode(0o755)).unwrap();
-    }
-    let _ = fs::remove_dir_all(&work);
-    record_staged_version("msb", MSB_VERSION);
-    println!("Staged microsandbox {MSB_VERSION}: {}", dest_dir.display());
-}
-
 /// Recursively search `dir` for a file named `name`, returning its path if found.
 fn find_file(dir: &Path, name: &str) -> Option<PathBuf> {
     for entry in fs::read_dir(dir).ok()? {
@@ -811,10 +667,9 @@ fn find_file(dir: &Path, name: &str) -> Option<PathBuf> {
 /// Suffix marking a `target/debug` file renamed aside by [`move_aside_locked_dev_files`].
 const LOCKED_ASIDE_MARKER: &str = ".locked-aside-";
 
-/// Frees the `target/debug` files tauri-build rewrites (the Mutagen sidecar and the `msb`, `podman`
-/// and `llama` resources) while a process still runs from them: a lingering Mutagen daemon, a
-/// running sandbox's `msb` VM supervisor, or a `podman exec … mio-sshd` relay that the Mutagen
-/// daemon's SSH transport spawned. tauri-build otherwise panics with `Access is denied` (os error 5)
+/// Frees the `target/debug` files tauri-build rewrites (the Mutagen sidecar and the `podman` and
+/// `llama` resources) while a process still runs from them: a lingering Mutagen daemon, or a
+/// `podman exec … mio-sshd` relay that the Mutagen daemon's SSH transport spawned. tauri-build otherwise panics with `Access is denied` (os error 5)
 /// or a sharing violation (os error 32).
 ///
 /// Renamed aside rather than killed: Windows allows renaming an in-use image, the holder keeps
@@ -823,7 +678,7 @@ const LOCKED_ASIDE_MARKER: &str = ".locked-aside-";
 /// deleted once their holder has exited.
 fn move_aside_locked_dev_files() {
     let mut candidates = vec![debug_dir().join(if cfg!(windows) { "mutagen.exe" } else { "mutagen" })];
-    let resource_dirs = ["msb", "podman", "llama"].map(|d| debug_dir().join(d));
+    let resource_dirs = ["podman", "llama"].map(|d| debug_dir().join(d));
     for dir in std::iter::once(debug_dir()).chain(resource_dirs.iter().cloned()) {
         let Ok(entries) = fs::read_dir(&dir) else { continue };
         let is_resource_dir = dir != debug_dir();
@@ -902,25 +757,6 @@ fn stage_podman() {
     copy_dir(&src, &dst)
         .unwrap_or_else(|e| panic!("failed to stage podman to {}: {}", dst.display(), e));
     println!("Staged Podman: {}", dst.display());
-}
-
-/// Stage the bundled microsandbox runtime next to the debug exe so `resource_dir()/msb` resolves
-/// under `build dev`, mirroring `stage_podman`. A running sandbox's VM supervisor holds these files
-/// open; `copy_dir` then keeps the already-staged copy rather than failing.
-fn stage_msb() {
-    let src = binaries_dir().join("msb");
-    if !src.is_dir() {
-        println!(
-            "microsandbox not staged at {}; every msb call will fail, since the app never falls \
-             back to a host install. Run `build dev --setup` to fetch it.",
-            src.display()
-        );
-        return;
-    }
-    let dst = debug_dir().join("msb");
-    copy_dir(&src, &dst)
-        .unwrap_or_else(|e| panic!("failed to stage microsandbox to {}: {}", dst.display(), e));
-    println!("Staged microsandbox: {}", dst.display());
 }
 
 /// Stage the bundled llama.cpp Vulkan engine next to the debug exe so `resource_dir()/llama`
@@ -1054,11 +890,12 @@ fn run_env(dir: PathBuf, cmd: &str, args: &[&str], envs: &[(&str, &Path)]) {
     assert!(status.success(), "`{}` exited with {}", cmd, status);
 }
 
-/// Runs the dev workflow without ever putting the app process in a Windows Job Object, unlike
-/// `pnpm run tauri dev` (`cargo run`, under the hood). `msb create` spawns its own detached VM
-/// supervisor, and that spawn needs to break away from any job the app process itself sits in; the
-/// job `cargo run` assigns on Windows never grants that (`rust-lang/cargo#4841`, open since 2017,
-/// no known workaround besides not going through `cargo run` at all) — confirmed hands-on.
+/// Runs the dev workflow without going through `pnpm run tauri dev` (`cargo run`, under the hood),
+/// which puts the app process in a Windows Job Object. This function carries duties `tauri dev`
+/// does not: the locked-file move-aside and retry around `cargo build`, stdin to the null device
+/// (`docs/features/podman-process-isolation/02_dev.md`, Resolved Decision 5) and the opt-in
+/// `devtools` feature. Returning to `tauri dev` is deferred
+/// (`docs/features/remove-microsandbox/04_improvements.md`).
 ///
 /// Costs `tauri dev`'s auto-rebuild-and-relaunch on Rust file changes: rerun `build dev` after
 /// editing Rust source. Frontend (Svelte/Vite) hot-reload is untouched either way, since it never
@@ -1150,9 +987,6 @@ fn spawn_background(dir: PathBuf, cmd: &str, args: &[&str]) -> std::process::Chi
 /// `pnpm` exiting with `0xc0000005` mid-`e2e` run — no longer orphans the still-running
 /// grandchildren to keep building/testing in the background after `build.rs` has already panicked.
 ///
-/// The job also grants explicit breakaway (not silent breakaway): `msb create` launches its VM
-/// supervisor with `CREATE_BREAKAWAY_FROM_JOB`, which fails with `Access is denied` otherwise
-/// (docs/features/microsandbox-provider/03_e2e.md, Step 0). Every other descendant stays a member.
 #[cfg(windows)]
 mod win_job {
     use std::ffi::c_void;
@@ -1160,7 +994,6 @@ mod win_job {
     use std::process::Child;
     use std::sync::atomic::{AtomicIsize, Ordering};
 
-    const JOB_OBJECT_LIMIT_BREAKAWAY_OK: u32 = 0x0800;
     const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x2000;
     const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS: u32 = 9;
 
@@ -1210,7 +1043,7 @@ mod win_job {
 
     static JOB: AtomicIsize = AtomicIsize::new(0);
 
-    /// Creates the job with kill-on-close and breakaway allowed. A no-op (leaving `JOB` at 0, so
+    /// Creates the job with kill-on-close. A no-op (leaving `JOB` at 0, so
     /// `assign` harmlessly skips) if either Windows API call fails — cleanup then falls back to
     /// whatever each tool's own teardown does, same as before this existed.
     pub fn setup() {
@@ -1219,8 +1052,7 @@ mod win_job {
             return;
         }
         let mut info: JobObjectExtendedLimitInformation = unsafe { std::mem::zeroed() };
-        info.basic_limit_information.limit_flags =
-            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK;
+        info.basic_limit_information.limit_flags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
         let ok = unsafe {
             SetInformationJobObject(
                 handle,
