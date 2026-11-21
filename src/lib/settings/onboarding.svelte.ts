@@ -35,15 +35,10 @@ export function completeOnboarding(): Promise<void> {
     return writeCompleted(true);
 }
 
-/** Debug affordance: replays the welcome screens only. It deliberately does not undo the Podman
- * machine or the base image (docs/features/welcome-onboarding/01_ideas.md). */
-export function resetOnboarding(): Promise<void> {
-    return writeCompleted(false);
-}
-
 /**
  * Debug affordance: returns the app to a first launch, including the first-run milestone clock.
- * The Podman machine, base image and downloaded models stay, as with `resetOnboarding`.
+ * It deliberately keeps the Podman machine, base image and downloaded models
+ * (docs/features/welcome-onboarding/01_ideas.md).
  */
 export async function restartOnboarding(): Promise<void> {
     const settings = await invoke<AppSettings>("get_settings");

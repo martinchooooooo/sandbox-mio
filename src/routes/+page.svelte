@@ -4,11 +4,7 @@
     import { Text } from "$lib/components/ui/text";
     import WelcomeFlow from "$lib/welcome/WelcomeFlow.svelte";
     import { m } from "$lib/paraglide/messages.js";
-    import {
-        ensureOnboardingState,
-        onboardingCompleted,
-        resetOnboarding,
-    } from "$lib/settings/onboarding.svelte";
+    import { ensureOnboardingState, onboardingCompleted } from "$lib/settings/onboarding.svelte";
 
     onMount(ensureOnboardingState);
 </script>
@@ -23,14 +19,4 @@
             <Button href="/projects">{m.home_all_set_cta()}</Button>
         </main>
     {/if}
-
-    <!-- Debug aid, ungated: this route is not reachable from any nav tab once onboarding is
-         complete (docs/features/welcome-onboarding/02_dev.md, Resolved Decisions). -->
-    <Button
-        variant="outline"
-        size="sm"
-        class="fixed bottom-3 left-3 opacity-60"
-        onclick={resetOnboarding}
-        data-restart-onboarding
-    >Restart onboarding</Button>
 </div>
