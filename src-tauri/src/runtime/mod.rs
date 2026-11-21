@@ -4,6 +4,10 @@
 pub mod types;
 
 mod mock;
+mod paseo_plugins;
+/// Release builds embed the archive `src-tauri/build.rs` packs with this same module.
+#[cfg(any(debug_assertions, test))]
+mod plugin_archive;
 
 use std::process::Output;
 
@@ -24,6 +28,7 @@ const PASEO_WEB_PORT: u16 = 6767;
 
 /// Pinned because the launch script and the login seeded by `prepare_agent_web_pane`
 /// (`src-tauri/src/services/panes.rs`) rely on Paseo internals; re-check both when bumping.
+/// The CLI version must equal `@getpaseo/plugin` in `paseo-plugins/package.json` (tested).
 const PASEO_NODE_TOOL: &str = "node@24.19.0";
 const PASEO_CLI_TOOL: &str = "npm:@getpaseo/cli@0.16.1";
 
@@ -34,8 +39,17 @@ const PASEO_UP_SCRIPT: &str = include_str!("../../resources/agent-web/paseo-up.s
 const PASEO_UP_INSTALL_NEEDED: i32 = 10;
 /// [`PASEO_UP_SCRIPT`] exit code: the daemon is still starting; run it again.
 const PASEO_UP_STARTING: i32 = 11;
-/// Each run waits about 15s, so this covers a cold start of about a minute.
-const PASEO_UP_ATTEMPTS: usize = 5;
+/// [`PASEO_UP_SCRIPT`] exit code: the delivered plugins are stale; deliver them and run it again.
+const PASEO_UP_PLUGINS_STALE: i32 = 12;
+/// Each starting run waits about 15s, so with the install and delivery runs this covers a cold
+/// start of about a minute.
+const PASEO_UP_ATTEMPTS: usize = 6;
+
+/// Replaces the in-sandbox plugin directory with the archive on stdin.
+const PASEO_PLUGINS_DELIVER_SCRIPT: &str = include_str!("../../resources/agent-web/paseo-plugins-deliver.sh");
+/// Container-filesystem home of the app-owned Paseo plugins, outside the workspace
+/// (`docs/features/paseo-plugins/01_ideas.md`, Where plugin files live in the sandbox).
+const PASEO_PLUGIN_DIR: &str = "/usr/local/lib/mio/paseo-plugins";
 
 pub fn default_runtime(
     providers: Arc<crate::provider::ProviderRegistry>,
@@ -131,7 +145,7 @@ fn split_tool_spec(spec: &str) -> (&str, &str) {
 }
 
 /// The plain inputs of [`PASEO_UP_SCRIPT`]; the password travels separately as a secret.
-fn paseo_up_env(project_name: &str) -> Vec<(String, String)> {
+fn paseo_up_env(project_name: &str, plugins: &paseo_plugins::PluginBundle) -> Vec<(String, String)> {
     let (node, node_version) = split_tool_spec(PASEO_NODE_TOOL);
     let (cli, cli_version) = split_tool_spec(PASEO_CLI_TOOL);
     [
@@ -141,6 +155,9 @@ fn paseo_up_env(project_name: &str) -> Vec<(String, String)> {
         ("MIO_PASEO_CLI", cli.to_string()),
         ("MIO_PASEO_CLI_VERSION", cli_version.to_string()),
         ("MIO_PASEO_PROJECT_NAME", project_name.to_string()),
+        ("MIO_PASEO_PLUGIN_DIR", PASEO_PLUGIN_DIR.to_string()),
+        ("MIO_PASEO_PLUGIN_HASH", plugins.hash.clone()),
+        ("MIO_PASEO_PLUGIN_IDS", plugins.ids.join(" ")),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v))
@@ -222,14 +239,16 @@ impl RuntimeManager for MiseRuntime {
 
         // The script reads the workspace's `mise.toml`, and its `mise exec` launch puts the
         // workspace's tools on the daemon's PATH and applies `mise.toml [env]` to its agents.
+        let plugins = paseo_plugins::plugin_bundle()?;
         let script_opts = || ExecOpts {
             workdir: Some(WORKSPACE_MOUNT.to_string()),
-            env: paseo_up_env(name),
+            env: paseo_up_env(name, &plugins),
             secret_env: vec![("PASEO_PASSWORD".to_string(), password.to_string())],
             detached: false,
         };
         let argv = ["sh", "-c", PASEO_UP_SCRIPT, "paseo-up"];
         let mut installed = false;
+        let mut delivered = false;
         for _ in 0..PASEO_UP_ATTEMPTS {
             let out = provider.exec(name, &argv, script_opts()).await?;
             let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
@@ -248,6 +267,30 @@ impl RuntimeManager for MiseRuntime {
                             .await?,
                     )?;
                     installed = true;
+                }
+                Some(PASEO_UP_PLUGINS_STALE) if !delivered => {
+                    let deliver = [
+                        "sh",
+                        "-c",
+                        PASEO_PLUGINS_DELIVER_SCRIPT,
+                        "paseo-plugins-deliver",
+                        PASEO_PLUGIN_DIR,
+                        &plugins.hash,
+                    ];
+                    let out = provider.exec_piped(name, &deliver, &plugins.archive).await?;
+                    if !out.status.success() {
+                        return Err(RuntimeError::AgentWebUnavailable(format!(
+                            "delivering Paseo plugins failed: {}",
+                            String::from_utf8_lossy(&out.stderr).trim()
+                        )));
+                    }
+                    delivered = true;
+                }
+                Some(PASEO_UP_PLUGINS_STALE) => {
+                    return Err(RuntimeError::AgentWebUnavailable(format!(
+                        "Paseo plugins were delivered but {PASEO_PLUGIN_DIR}/.bundle-hash still differs from {}",
+                        plugins.hash
+                    )))
                 }
                 Some(PASEO_UP_STARTING) => {}
                 code => {

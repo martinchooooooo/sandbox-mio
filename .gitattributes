@@ -6,3 +6,6 @@ docs/features/log.md merge=union
 src-tauri/resources/**/*.sh text eol=lf
 src-tauri/resources/**/*.py text eol=lf
 src-tauri/resources/Containerfile text eol=lf
+
+# Hashed into the plugin bundle, so a CRLF checkout would change the hash.
+paseo-plugins/** text eol=lf

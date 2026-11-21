@@ -3,11 +3,15 @@
 # POSIX sh, since the image's /bin/sh is dash.
 #
 # Exit codes: 0 ready; 10 the pinned node/paseo are missing from mise.toml or not installed (the
-# caller installs them and runs this again); 11 still starting (the caller runs this again).
-# Anything else is a failure, with the daemon log's tail on stderr.
+# caller installs them and runs this again); 11 still starting (the caller runs this again); 12 the
+# delivered app-owned plugins are not the expected bundle (the caller delivers it with
+# paseo-plugins-deliver.sh and runs this again). Anything else is a failure, with the daemon log's
+# tail on stderr.
 #
 # Inputs: PASEO_PASSWORD (secret), MIO_PASEO_PORT, MIO_PASEO_NODE / MIO_PASEO_NODE_VERSION,
-# MIO_PASEO_CLI / MIO_PASEO_CLI_VERSION (mise tool name and version), MIO_PASEO_PROJECT_NAME.
+# MIO_PASEO_CLI / MIO_PASEO_CLI_VERSION (mise tool name and version), MIO_PASEO_PROJECT_NAME,
+# MIO_PASEO_PLUGIN_DIR / MIO_PASEO_PLUGIN_HASH / MIO_PASEO_PLUGIN_IDS (the delivered plugin
+# directory, the expected bundle hash, and the space-separated plugin ids).
 set -u
 
 port=$MIO_PASEO_PORT
@@ -16,12 +20,15 @@ node_version=$MIO_PASEO_NODE_VERSION
 cli_tool=$MIO_PASEO_CLI
 cli_version=$MIO_PASEO_CLI_VERSION
 project_name=$MIO_PASEO_PROJECT_NAME
+plugin_dir=$MIO_PASEO_PLUGIN_DIR
+plugin_hash=$MIO_PASEO_PLUGIN_HASH
+plugin_ids=$MIO_PASEO_PLUGIN_IDS
 # The daemon inherits this environment, and through it every agent it spawns.
 unset MIO_PASEO_PORT MIO_PASEO_NODE MIO_PASEO_NODE_VERSION MIO_PASEO_CLI MIO_PASEO_CLI_VERSION \
-  MIO_PASEO_PROJECT_NAME
+  MIO_PASEO_PROJECT_NAME MIO_PASEO_PLUGIN_DIR MIO_PASEO_PLUGIN_HASH MIO_PASEO_PLUGIN_IDS
 
 # Bump when the daemon's launch environment below changes, so running daemons pick it up.
-launch_rev=1
+launch_rev=2
 
 home="$HOME/.paseo"
 mkdir -p "$home"
@@ -36,6 +43,32 @@ printf '%s\n' "$current" | grep -qx "$node_tool $node_version" || exit 10
 printf '%s\n' "$current" | grep -qx "$cli_tool $cli_version" || exit 10
 mise where "$node_tool@$node_version" >/dev/null 2>&1 || exit 10
 mise where "$cli_tool@$cli_version" >/dev/null 2>&1 || exit 10
+[ "$(cat "$plugin_dir/.bundle-hash" 2>/dev/null)" = "$plugin_hash" ] || exit 12
+
+# Registers the delivered app-owned plugins in Paseo's config.json, keeping every other key and
+# entry, since the daemon rewrites the file itself. Only read at daemon start, so run while stopped.
+merge_plugins='
+const fs = require("fs");
+const path = require("path");
+const file = process.argv[1];
+const dir = process.env.MIO_PLUGIN_DIR;
+const ids = process.env.MIO_PLUGIN_IDS.split(" ").filter(Boolean);
+let config = {};
+try {
+  config = JSON.parse(fs.readFileSync(file, "utf8"));
+} catch (e) {
+  if (e.code !== "ENOENT") throw e;
+}
+const plugins = config.plugins && typeof config.plugins === "object" ? config.plugins : {};
+for (const id of Object.keys(plugins)) {
+  if (id.startsWith("mio-") && !fs.existsSync(path.join(dir, id))) delete plugins[id];
+}
+for (const id of ids) plugins[id] = { ...plugins[id], source: "directory", path: path.join(dir, id) };
+config.pluginsEnabled = true;
+config.plugins = plugins;
+fs.writeFileSync(file + ".mio-tmp", JSON.stringify(config, null, 2) + "\n");
+fs.renameSync(file + ".mio-tmp", file);
+'
 
 alive() {
   curl -sf -o /dev/null --max-time 2 -H "Authorization: Bearer $PASEO_PASSWORD" \
@@ -47,13 +80,21 @@ running() {
   [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
 }
 
-# mise.toml carries the tools on the daemon's PATH and the [env] its agents inherit.
-want=$( { cat mise.toml 2>/dev/null; printf '%s\n' "$launch_rev" "$cli_version" "$PASEO_PASSWORD"; } \
-  | sha256sum | cut -c1-64)
+# mise.toml carries the tools on the daemon's PATH and the [env] its agents inherit. The plugin
+# ids restart the daemon when the plugin set changes; content changes only reload (02_dev.md of
+# paseo-plugins, Resolved Decision 1).
+want=$( { cat mise.toml 2>/dev/null; printf '%s\n' "$launch_rev" "$cli_version" "$PASEO_PASSWORD" \
+  "$plugin_ids"; } | sha256sum | cut -c1-64)
 
 if [ "$(cat "$home/mio-launch" 2>/dev/null)" != "$want" ] || ! running; then
   if running; then
     mise exec -- paseo daemon stop >/dev/null 2>&1 || true
+  fi
+  if MIO_PLUGIN_DIR="$plugin_dir" MIO_PLUGIN_IDS="$plugin_ids" \
+    mise exec -- node -e "$merge_plugins" "$home/config.json"; then
+    printf '%s' "$plugin_hash" >"$home/mio-plugins-loaded"
+  else
+    echo "paseo plugin registration failed; the daemon starts without app plugins" >&2
   fi
   # `daemon run` is the only launch mode that honours PASEO_* settings from the environment.
   # Dictation is off because its first start downloads speech models.
@@ -66,7 +107,8 @@ if [ "$(cat "$home/mio-launch" 2>/dev/null)" != "$want" ] || ! running; then
   printf '%s' "$want" >"$home/mio-launch"
 fi
 
-# Lock wait, stop, wait and registration together must fit the process layer's 30s exec bound.
+# Lock wait, stop, wait, plugin reload and registration together must fit the process layer's
+# 30s exec bound.
 started=$(date +%s)
 until alive; do
   waited=$(( $(date +%s) - started ))
@@ -80,6 +122,21 @@ until alive; do
   [ "$waited" -ge 15 ] && exit 11
   sleep 0.25
 done
+
+# Same plugin set, new contents: reload in place, so running agent sessions survive. The marker
+# moves only when every reload succeeded, so a failed one is retried on the next open.
+if [ "$(cat "$home/mio-plugins-loaded" 2>/dev/null)" != "$plugin_hash" ]; then
+  reloaded=true
+  for id in $plugin_ids; do
+    if ! mise exec -- paseo plugin reload "$id" >/dev/null 2>&1; then
+      echo "paseo plugin reload $id failed; see 'paseo plugin logs $id'" >&2
+      reloaded=false
+    fi
+  done
+  if [ "$reloaded" = true ]; then
+    printf '%s' "$plugin_hash" >"$home/mio-plugins-loaded"
+  fi
+fi
 
 register_project() {
   created=$(mise exec -- paseo project create "$PWD" --json) || return 1

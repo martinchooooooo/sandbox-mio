@@ -16,6 +16,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+tar = "0.4"
 
 [dependencies]
 # `unstable` gates the multi-webview API (bare `Window` + `add_child` + `Webview` geometry)
@@ -45,6 +46,7 @@ toml = "0.8"
 sysinfo = "0.33"
 reqwest = { version = "0.12", default-features = false, features = ["stream", "json", "native-tls"] }
 sha2 = "0.10"
+tar = "0.4"
 futures-util = "0.3"
 # Structured backend logging. Events are captured by tauri-plugin-devtools (debug builds) and
 # surface in its console; in release builds with no subscriber installed they are cheap no-ops.

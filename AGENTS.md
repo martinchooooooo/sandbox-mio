@@ -7,6 +7,7 @@ Sandbox-mio is a Tauri 2 desktop app (Windows-first) that manages per-project "s
 | `src/` | SvelteKit + Svelte 5 frontend (static adapter, runs in the Tauri webview) | `src/AGENTS.md` |
 | `src-tauri/src/` | Rust backend: Tauri commands + trait-injected subsystems, each with an in-memory mock | `src-tauri/AGENTS.md` |
 | `e2e/` | WebdriverIO tests in three tiers (`light`/`standard`/`heavy`) | `e2e/AGENTS.md` |
+| `paseo-plugins/` | App-owned Paseo plugins (TypeScript) shipped in the binary and loaded by every sandbox's Paseo daemon | `paseo-plugins/AGENTS.md` |
 | `docs/architecture/` | A brief, high-level picture of how the system works today, one document per subsystem; read before planning or changing a subsystem | `docs/architecture/overview.md` |
 | `docs/features/<name>/` | Feature plans and their history: `feature.md` (status), core `01_ideas.md` → `02_dev.md` → `03_e2e.md`, optional `04_improvements.md` and `05_dev_review.md` | `docs/features/README.md` |
 | `messages/` | Paraglide locale files (`en.json`, `de.json`, `ru.json`) | Translations section below |
@@ -33,6 +34,7 @@ Those three documents are the core pipeline. A feature may also carry two option
 How these layers and the e2e harness fit together: `docs/architecture/testing.md`. Run before declaring any change done:
 
 - `pnpm check` (repo root) — svelte-check over the frontend. Required after any `src/` change.
+- `pnpm --filter paseo-plugins typecheck` (repo root) — required after any `paseo-plugins/` change.
 - `cargo check` (in `src-tauri/`) — required after any Rust change. `cargo test` runs the unit tests, which cover pure logic only (argv rendering, policy validation, parsers, the pane registry). The mock control plane deliberately has none: its correctness is proven by light specs instead (`docs/features/scriptable-mock-backend/02_dev.md`, Resolved Decision 9).
 - `./build docs` (repo root) — required after any change under `docs/`. Checks frontmatter, feature statuses, generated indexes, the feature log, links, architecture-document size, and `docs/...` citations from code; the rules are code in `docs_check.rs` (repo root), the single source of truth for them. `./build docs --fix` regenerates the indexes first.
 - `./build e2e light` (repo root; `build.exe` on Windows) — seconds, no Podman needed (`MIO_MOCK_BACKEND=1`); the cheapest end-to-end signal.

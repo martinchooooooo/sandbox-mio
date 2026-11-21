@@ -1,5 +1,6 @@
 packages:
   - "e2e"
+  - "paseo-plugins"
 
 allowBuilds:
   '@hugeicons/svelte': false
