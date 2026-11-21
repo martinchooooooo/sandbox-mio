@@ -26,3 +26,7 @@ App-owned plugins are limited to modules Paseo supplies at runtime. A plugin tha
 ## Debug-build plugin reload action
 
 A debug-only action (a Manage button or a file watcher on `paseo-plugins/`) could re-deliver and reload plugins without closing and reopening the Agents tab. Deferred because reopening the tab already runs the full delivery path in `prepare_agent_web()` (`src-tauri/src/runtime/mod.rs`), which is enough for the first plugins (`docs/features/paseo-plugins/02_dev.md`, Resolved Decision 2).
+
+## Deployed-sandbox check
+
+Plugin delivery has not been checked by hand on a deployed sandbox, because the deploy feature was broken when paseo-plugins closed. Delivery should work unchanged, since `prepare_agent_web()` (`src-tauri/src/runtime/mod.rs`) runs the same scripts through the deployed machine's provider. Once deploys work again, open the Agents tab of a deployed sandbox and confirm the probe panel appears. The microsandbox check was skipped too, because microsandbox is due to be dropped.

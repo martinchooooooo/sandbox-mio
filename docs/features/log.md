@@ -5,6 +5,10 @@ Records feature status changes only: creation (`Create`), reaching `implemented`
 history with at most one `Create` and one `Implement` entry per feature, so seeded dates are
 approximate. New entries go on top.
 
+## 2026-11-21
+
+* **Implement** [paseo-plugins](paseo-plugins/index.md): app-owned plugins are bundled into the binary, delivered on Agents-tab open and registered, reloaded or pruned in the daemon config; the standard spec passes on Podman, and the microsandbox and deployed-sandbox checks were skipped by the user
+
 ## 2026-11-19
 
 * **Implement** [proxy-credential-secrets](proxy-credential-secrets/index.md): the GitHub token stays on the host; sidecar-mode sandboxes hold a placeholder the iron-proxy sidecar swaps on GitHub requests, for gh, git and mise, and the Manage card shows the mode; the e2e specs in `03_e2e.md` are not implemented yet

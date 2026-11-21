@@ -7,7 +7,6 @@
 * [host-tool-ssh-access](host-tool-ssh-access/index.md) - Let host SSH clients (e.g. the Claude Code desktop app) attach to a sandbox over the existing exec transport.
 * [native-terminal](native-terminal/index.md) - Faster terminal startup: render the sandbox terminal in the main webview over a Rust-owned SSH session that attaches zellij, replacing the zellij web child webview.
 * [onboarding-story](onboarding-story/index.md) - Illustrated onboarding book inside the welcome flow, extensible by chapter, with first-run setup running in the background and reported through the activity center.
-* [paseo-plugins](paseo-plugins/index.md) - Ship app-owned Paseo plugins in the binary and register them with each sandbox's Paseo daemon at launch, to extend the Agents pane.
 * [retro-ui-migration](retro-ui-migration/index.md) - Re-skin the UI primitives with the retro-ui-svelte registry (Sunset Orange, rounded).
 * [sandbox-resource-monitor](sandbox-resource-monitor/index.md) - Sample each local sandbox's CPU and memory, show a discrete health indicator with a restart hint, and keep a local usage history that tells the maintainer whether sandboxes need more default memory.
 
@@ -50,6 +49,7 @@
 * [opencode-agent](opencode-agent/index.md) - OpenCode as an installable agent, pre-wired to the host local-LLM inference server.
 * [package-autocomplete](package-autocomplete/index.md) - Registry-backed suggestion dropdown for the sandbox package install input.
 * [parallel-worktree-e2e](parallel-worktree-e2e/index.md) - Run the e2e light tier concurrently from several git worktrees, isolated by a per-worktree run slug.
+* [paseo-plugins](paseo-plugins/index.md) - Ship app-owned Paseo plugins in the binary and register them with each sandbox's Paseo daemon at launch, to extend the Agents pane.
 * [pi-agent](pi-agent/index.md) - pi as a third installable agent, pre-wired to the host local-LLM inference server.
 * [podman-egress-boundary](podman-egress-boundary/index.md) - Fail-closed egress for Podman sandboxes: an internal Podman network with the proxy sidecar as the only exit, and iron-proxy replacing the mitmproxy sidecar for policy, secret swap and the traffic record.
 * [podman-exec-transport](podman-exec-transport/index.md) - Reach containers over an SSH-over-exec transport instead of publishing ports.

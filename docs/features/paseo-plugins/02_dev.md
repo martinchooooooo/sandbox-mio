@@ -5,7 +5,7 @@ feature: paseo-plugins
 ---
 # Paseo Plugins: Build Plan
 
-This document is the build plan for shipping app-owned Paseo plugins to every sandbox's Paseo daemon, continuing `docs/features/paseo-plugins/01_ideas.md` and the spike in `docs/features/paseo-plugins/spike/spike.md`. Scope is the delivery pipeline plus one probe plugin, `mio-probe`; real Agents-pane plugins are later features and user-written plugins are deferred (`04_improvements.md`). Status: Phases A to C implemented; Phase D remains: the microsandbox and deployed-sandbox manual checks, which need a real microsandbox VM and a deployed sandbox.
+This document is the build plan for shipping app-owned Paseo plugins to every sandbox's Paseo daemon, continuing `docs/features/paseo-plugins/01_ideas.md` and the spike in `docs/features/paseo-plugins/spike/spike.md`. Scope is the delivery pipeline plus one probe plugin, `mio-probe`; real Agents-pane plugins are later features and user-written plugins are deferred (`04_improvements.md`). Status: all phases implemented. The microsandbox and deployed-sandbox manual checks were skipped (Phase D).
 
 ## The Concrete Model
 
@@ -94,12 +94,12 @@ sequenceDiagram
   - The header comment lists exit code 12 and the new inputs.
 - `MiseRuntime` keeps its `RuntimeManager` signature (`src-tauri/src/runtime/types.rs`). Callers in `src-tauri/src/services/panes.rs` (`prepare_agent_web_pane()`, `prewarm_agent_web()`) are unchanged.
 
-## Remaining: Phase D — Verification and Architecture
+## Implemented: Phase D — Verification and Architecture
 
 - **Manual check (closes the spike gap):**
   - Open the Agents tab of a Podman sandbox, start a conversation, find "probe" in Paseo's Command Center (Ctrl+K) and open the probe panel. Done 2026-11-20: the plugin loaded and the item appeared once a conversation existed, and the panel showed the workspace name plus the `probe.info` RPC answer (daemon host, Node v24.19.0, server start time), so the client-to-server RPC path works inside the sandbox.
   - Edit the probe's panel text, then close and reopen the Agents tab. Confirm the new text appears without a daemon restart: the pid in `~/.paseo/paseo.pid` is unchanged. Done 2026-11-20 on Podman: the panel title changed, `paseo plugin logs mio-probe` showed an in-place stop and load, and the supervisor pid stayed the same. An earlier attempt restarted the daemon because a `jq` install had changed `mise.toml` between the two pid reads, which is the intended restart rule.
-  - Repeat the open on a microsandbox sandbox and on a deployed sandbox.
+  - Repeat the open on a microsandbox sandbox and on a deployed sandbox. Skipped 2026-11-21: microsandbox is due to be dropped, and deployed sandboxes were broken at the time; tracked in `04_improvements.md`.
 - **Architecture (done).** Update `docs/architecture/agents.md` under "Agent Web UI (Paseo)". App-owned plugins ship in the app and are registered at daemon launch. Add an invariant: app-owned plugins live outside the workspace.
 - **E2E (done).** `e2e/test/specs/standard/agent-web-plugins.spec.ts` covers delivery, registration, reload, redelivery and restart on Podman (`03_e2e.md`); it passed on 2026-11-20.
 
