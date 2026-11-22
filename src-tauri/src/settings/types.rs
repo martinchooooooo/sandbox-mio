@@ -30,4 +30,7 @@ pub struct AppSettings {
     /// file, which therefore keeps creating Podman sandboxes
     /// (`docs/features/microsandbox-provider/02_dev.md`, Phase J).
     pub default_provider: crate::provider::types::ProviderId,
+    /// Per-sandbox override of the native chat's learning mode (sandbox name to on or off). A
+    /// sandbox with no entry follows the frontend's default (`docs/features/chat-agent-anatomy/02_dev.md`).
+    pub chat_learning_mode: std::collections::BTreeMap<String, bool>,
 }
