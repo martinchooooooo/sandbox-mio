@@ -14,10 +14,18 @@ use crate::provider::types::MachineRef;
 const ROUNDTRIP: &str = include_str!("fixtures/01-roundtrip.jsonl");
 const DIALOG: &str = include_str!("fixtures/04b-dialog.jsonl");
 const ANSWER: &str = include_str!("fixtures/04d-answer.jsonl");
+const TOOLCALL: &str = include_str!("fixtures/06-toolcall.jsonl");
+const PARALLEL_TOOLS: &str = include_str!("fixtures/07-parallel-tools.jsonl");
 /// A prompt containing this replays the dialog traces instead of the round trip.
 const DIALOG_TRIGGER: &str = "/spikeconfirm";
+/// A prompt containing this replays one `bash` tool call, then a reply.
+const TOOL_TRIGGER: &str = "/spiketool";
+/// A prompt containing this replays two concurrent `bash` calls, then a reply.
+const PARALLEL_TOOLS_TRIGGER: &str = "/spikeparallel";
 /// Compressed replay timing: the recorded round trip took 6.5 s.
 const RECORD_DELAY: Duration = Duration::from_millis(8);
+/// Held before a tool call's end so the recorded 7 to 90 ms execution stays observable.
+const TOOL_RUN_DELAY: Duration = Duration::from_millis(1500);
 
 #[derive(Default)]
 struct Sandbox {
@@ -88,8 +96,12 @@ impl MockAgentHost {
         let sandboxes = self.sandboxes.clone();
         let name = name.to_string();
         tokio::spawn(async move {
+            let mut previous_ended_tool = false;
             for record in items {
-                tokio::time::sleep(RECORD_DELAY).await;
+                let ends_tool = record["type"] == "tool_execution_end";
+                let delay = if ends_tool && !previous_ended_tool { TOOL_RUN_DELAY } else { RECORD_DELAY };
+                previous_ended_tool = ends_tool;
+                tokio::time::sleep(delay).await;
                 if let Some(sb) = sandboxes.lock().await.get_mut(&name) {
                     sb.emit(record);
                 }
@@ -156,16 +168,22 @@ impl MockAgentHost {
                 if kind != "prompt" {
                     return;
                 }
+                let fixture = if text.contains(PARALLEL_TOOLS_TRIGGER) {
+                    PARALLEL_TOOLS
+                } else if text.contains(TOOL_TRIGGER) {
+                    TOOLCALL
+                } else {
+                    ROUNDTRIP
+                };
                 let items: Vec<Value> =
-                    records(ROUNDTRIP).into_iter().filter(|r| r["type"] != "response").collect();
+                    records(fixture).into_iter().filter(|r| r["type"] != "response").collect();
                 sb.history.push(json!({ "role": "user", "content": [{ "type": "text", "text": text }] }));
-                if let Some(end) = items
-                    .iter()
-                    .rev()
-                    .find(|r| r["type"] == "message_end" && r["message"]["role"] == "assistant")
-                {
-                    sb.history.push(end["message"].clone());
-                }
+                sb.history.extend(items.iter().filter_map(|r| {
+                    let message = &r["message"];
+                    let kept = r["type"] == "message_end"
+                        && (message["role"] == "assistant" || message["role"] == "toolResult");
+                    kept.then(|| message.clone())
+                }));
                 drop(sandboxes);
                 self.replay(name, items);
             }
