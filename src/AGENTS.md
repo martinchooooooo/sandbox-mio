@@ -9,7 +9,8 @@ The `src/` tree is a SvelteKit app (Svelte 5 runes, static adapter, Tailwind 4) 
 - `src/routes/models/` — local LLM catalogue, download, and inference control.
 - `src/routes/agent-auth/`, `src/routes/credentials/` — agent login flow and shared credential bundles.
 - `src/routes/settings/`, `src/routes/intro/` — settings page and first-run intro.
-- `src/lib/onboarding/` — not a route: the illustrated onboarding book the welcome flow (`src/lib/welcome/`) shows, its reusable page kit and animation engine, and the background first-run setup store. See `src/lib/onboarding/AGENTS.md` before adding a chapter.
+- `src/lib/onboarding/` — not a route: the illustrated onboarding book the welcome flow (`src/lib/welcome/`) shows, its reusable page kit, and the background first-run setup store. See `src/lib/onboarding/AGENTS.md` before adding a chapter.
+- `src/lib/story-stage/` — not a route: the whiteboard animation engine shared by the onboarding book and the native chat's live stage. See `src/lib/story-stage/AGENTS.md`.
 - `src/routes/+layout.svelte` — mounts the single `<Toaster />`, the app sidebar (which holds the activity center), and the content area: the sandbox view when a sandbox is in view, otherwise the routed page.
 
 ## Module-Scoped Rune Stores
@@ -22,6 +23,7 @@ State shared across routes lives in `.svelte.ts` files under `src/lib/` with mod
 - `src/lib/agents/authStatus.svelte.ts` — per-sandbox coding-agent login status, checked concurrently and kept across dashboard remounts.
 - `src/lib/workspace/dashboard.svelte.ts` — the Manage dashboard section last opened per sandbox (frontend memory; survives the dashboard remount on sandbox switch).
 - `src/lib/onboarding/setup.svelte.ts` — first-run setup (machine, base image, model and the first sandbox) as one shared run, started in the background by the welcome flow and rendered by the four cards of `SetupProgress.svelte`.
+- `src/lib/agent-chat/learning.svelte.ts` — per-sandbox chat learning-mode overrides from `settings.json`, loaded once by `ensureLearning()`.
 - `src/lib/registry.svelte.ts` — mise package registry cache (also the smallest reference example of the pattern).
 
 Event flow is one-directional: Rust emits (`activity://task-updated`, `workspace://state`, container events), one store subscribes, components read accessors. Components must not call `listen()` for a stream a store already owns.

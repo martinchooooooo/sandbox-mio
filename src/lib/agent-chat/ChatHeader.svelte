@@ -5,11 +5,13 @@
     import * as HoverCard from "$lib/components/ui/hover-card/index.js";
     import { Progress } from "$lib/components/ui/progress/index.js";
     import { Button } from "$lib/components/ui/button/index.js";
+    import { Switch } from "$lib/components/ui/switch/index.js";
+    import { Label } from "$lib/components/ui/label/index.js";
     import type { ChatStore } from "./chat.svelte";
     import { m } from "$lib/paraglide/messages.js";
     import { LOCAL_LLM_PROVIDER_ID } from "$lib/agents/local-llm";
 
-    let { store }: { store: ChatStore } = $props();
+    let { store, onOpenAnatomy }: { store: ChatStore; onOpenAnatomy?: () => void } = $props();
 
     const model = $derived(store.piState?.model as { id?: string; name?: string; provider?: string; reasoning?: boolean } | null | undefined);
     const thinkingLevel = $derived(String(store.piState?.thinkingLevel ?? "off"));
@@ -72,6 +74,19 @@
     {/if}
 
     <div class="flex-1"></div>
+
+    <div class="flex items-center gap-2" data-chat-learning={store.learning}>
+        <Switch
+            id="chat-learning-mode"
+            checked={store.learning}
+            onCheckedChange={(on) => store.setLearning(on)}
+        />
+        <Label for="chat-learning-mode" class="text-xs whitespace-nowrap">Show the Brain and Arms</Label> <!-- TODO(i18n) -->
+    </div>
+
+    {#if onOpenAnatomy}
+        <Button size="sm" variant="outline" onclick={onOpenAnatomy} data-chat-open-anatomy>Brain and Arms</Button> <!-- TODO(i18n) -->
+    {/if}
 
     {#if context}
         <HoverCard.Root>

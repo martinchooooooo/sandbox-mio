@@ -4,14 +4,38 @@
     import * as Bubble from "$lib/components/ai-elements/bubble/index.js";
     import Markdown from "./Markdown.svelte";
     import ReasoningPart from "./ReasoningPart.svelte";
+    import RoleFrame from "./RoleFrame.svelte";
     import ToolPart from "./ToolPart.svelte";
-    import type { ChatMessage, NoticeKind } from "./types";
+    import type { Snippet } from "svelte";
+    import type { ChatStore } from "./chat.svelte";
+    import type { Role } from "./anatomy";
+    import type { NoticeKind } from "./types";
 
-    let { messages }: { messages: ChatMessage[] } = $props();
+    let { store }: { store: ChatStore } = $props();
+
+    const messages = $derived(store.chat.messages);
+    const learning = $derived(store.learning);
+
+    function selectedRole(messageId: string, index: number): Role | null {
+        const sel = store.selected;
+        return sel && sel.messageId === messageId && sel.partIndex === index ? sel.role : null;
+    }
+    const select = (messageId: string, partIndex: number, role: Role) =>
+        (store.selected = selectedRole(messageId, partIndex) === role ? null : { messageId, partIndex, role });
 
     const noticeClass = (kind: NoticeKind) =>
         kind === "error" ? "text-destructive text-xs" : "text-muted-foreground text-xs";
 </script>
+
+{#snippet framed(messageId: string, index: number, role: Role, body: Snippet)}
+    {#if learning}
+        <RoleFrame {role} selected={selectedRole(messageId, index) === role} onselect={() => select(messageId, index, role)}>
+            {@render body()}
+        </RoleFrame>
+    {:else}
+        {@render body()}
+    {/if}
+{/snippet}
 
 <MessageScroller.Provider autoScroll>
     <MessageScroller.Root>
@@ -40,11 +64,27 @@
                                 <Message.Content class="flex min-w-0 flex-col gap-3">
                                     {#each message.parts as part, i (i)}
                                         {#if part.type === "text"}
-                                            <Markdown content={part.text} streaming={part.streaming} />
+                                            {#snippet reply()}
+                                                <Markdown content={part.text} streaming={part.streaming} />
+                                            {/snippet}
+                                            {@render framed(message.id, i, "brain-reply", reply)}
                                         {:else if part.type === "reasoning"}
-                                            <ReasoningPart text={part.text} streaming={part.streaming} />
+                                            {#snippet think()}
+                                                <ReasoningPart
+                                                    text={part.text}
+                                                    streaming={part.streaming}
+                                                    open={learning ? selectedRole(message.id, i) === "brain-think" : undefined}
+                                                />
+                                            {/snippet}
+                                            {@render framed(message.id, i, "brain-think", think)}
                                         {:else if part.type === "tool"}
-                                            <ToolPart {part} />
+                                            <ToolPart
+                                                {part}
+                                                {learning}
+                                                settled={store.chat.run === "idle"}
+                                                selectedRole={selectedRole(message.id, i)}
+                                                onselect={(role) => select(message.id, i, role)}
+                                            />
                                         {:else if part.type === "notice"}
                                             <p class={noticeClass(part.kind)} data-notice={part.kind}>{part.text}</p>
                                         {/if}

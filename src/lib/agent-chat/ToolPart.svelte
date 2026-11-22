@@ -1,10 +1,26 @@
 <script lang="ts">
     import * as Trace from "$lib/components/ai-elements/trace/index.js";
     import * as CodeBlock from "$lib/components/ai-elements/code-block/index.js";
-    import type { ChatPart } from "./types";
+    import RoleFrame from "./RoleFrame.svelte";
+    import { rolesOf, toolKindOf, type Role } from "./anatomy";
+    import { ARMS_WORDS } from "./anatomy-copy";
+    import type { ToolChatPart } from "./types";
 
-    type ToolChatPart = Extract<ChatPart, { type: "tool" }>;
-    let { part }: { part: ToolChatPart } = $props();
+    let {
+        part,
+        learning = false,
+        settled = false,
+        selectedRole = null,
+        onselect = () => {},
+    }: {
+        part: ToolChatPart;
+        /** Splits the call into the Brain's request and the Arms' execution. */
+        learning?: boolean;
+        /** The run ended, so a call still in state `input` was never run. */
+        settled?: boolean;
+        selectedRole?: Role | null;
+        onselect?: (role: Role) => void;
+    } = $props();
 
     const str = (v: unknown) => (typeof v === "string" ? v : "");
     const input = $derived(part.input);
@@ -27,10 +43,12 @@
             ? "running"
             : part.state === "error"
               ? "error"
-              : part.state === "input"
+              : part.state === "input" || part.state === "composing"
                 ? "pending"
                 : undefined,
     );
+    const kind = $derived(toolKindOf(part.toolName));
+    const armsDetail = $derived((kind && ARMS_WORDS[kind]) || part.toolName);
     /** An edit's replacements as removed and added lines. */
     const editLines = $derived.by(() => {
         if (part.toolName !== "edit") return [];
@@ -48,56 +66,113 @@
     });
 </script>
 
-<Trace.Root data-tool={part.toolName} data-tool-state={part.state}>
-    <Trace.Collapsible>
-        <Trace.CollapsibleTrigger>
-            <Trace.Line {status}>
-                <Trace.Title>{part.toolName}</Trace.Title>
-                {#if summary}
-                    <Trace.Description class="truncate font-mono">{summary}</Trace.Description>
-                {/if}
-            </Trace.Line>
-        </Trace.CollapsibleTrigger>
-        <Trace.CollapsibleContent>
-            <div class="flex flex-col gap-2 py-2">
-                {#if part.toolName === "bash"}
-                    <CodeBlock.Root
-                        size="sm"
-                        variant={part.state === "error" ? "destructive" : "default"}
-                        class="bg-neutral-950 text-neutral-100"
-                    >
-                        <CodeBlock.Content class="font-mono" wrap code={`$ ${str(input.command)}\n${part.output}`} />
-                    </CodeBlock.Root>
-                {:else if part.toolName === "edit" && editLines.length > 0}
-                    <CodeBlock.Root size="sm">
-                        <CodeBlock.Header><CodeBlock.Title>{path}</CodeBlock.Title></CodeBlock.Header>
-                        <CodeBlock.Content wrap>
-                            {#each editLines as line, i (i)}
-                                <CodeBlock.Line code={line.code} variant={line.variant} />
-                            {/each}
-                        </CodeBlock.Content>
-                    </CodeBlock.Root>
-                    {#if part.state === "error"}
-                        <p class="text-destructive text-xs whitespace-pre-wrap">{part.output}</p>
+{#snippet details()}
+    <div class="flex flex-col gap-2 py-2">
+        {#if part.toolName === "bash"}
+            <CodeBlock.Root
+                size="sm"
+                variant={part.state === "error" ? "destructive" : "default"}
+                class="bg-neutral-950 text-neutral-100"
+            >
+                <CodeBlock.Content class="font-mono" wrap code={`$ ${str(input.command)}\n${part.output}`} />
+            </CodeBlock.Root>
+        {:else if part.toolName === "edit" && editLines.length > 0}
+            <CodeBlock.Root size="sm">
+                <CodeBlock.Header><CodeBlock.Title>{path}</CodeBlock.Title></CodeBlock.Header>
+                <CodeBlock.Content wrap>
+                    {#each editLines as line, i (i)}
+                        <CodeBlock.Line code={line.code} variant={line.variant} />
+                    {/each}
+                </CodeBlock.Content>
+            </CodeBlock.Root>
+            {#if part.state === "error"}
+                <p class="text-destructive text-xs whitespace-pre-wrap">{part.output}</p>
+            {/if}
+        {:else if part.toolName === "write"}
+            <CodeBlock.Root size="sm">
+                <CodeBlock.Header><CodeBlock.Title>{path}</CodeBlock.Title></CodeBlock.Header>
+                <CodeBlock.Content wrap code={str(input.content)} />
+            </CodeBlock.Root>
+        {:else}
+            {#if part.toolName !== "read"}
+                <CodeBlock.Root size="sm">
+                    <CodeBlock.Content wrap code={JSON.stringify(input, null, 2)} />
+                </CodeBlock.Root>
+            {/if}
+            {#if part.output}
+                <CodeBlock.Root size="sm" variant={part.state === "error" ? "destructive" : "default"}>
+                    <CodeBlock.Content wrap code={part.output} />
+                </CodeBlock.Root>
+            {/if}
+        {/if}
+    </div>
+{/snippet}
+
+{#if !learning}
+    <Trace.Root data-tool={part.toolName} data-tool-state={part.state}>
+        <Trace.Collapsible>
+            <Trace.CollapsibleTrigger>
+                <Trace.Line {status}>
+                    <Trace.Title>{part.toolName}</Trace.Title>
+                    {#if summary}
+                        <Trace.Description class="truncate font-mono">{summary}</Trace.Description>
                     {/if}
-                {:else if part.toolName === "write"}
-                    <CodeBlock.Root size="sm">
-                        <CodeBlock.Header><CodeBlock.Title>{path}</CodeBlock.Title></CodeBlock.Header>
-                        <CodeBlock.Content wrap code={str(input.content)} />
-                    </CodeBlock.Root>
-                {:else}
-                    {#if part.toolName !== "read"}
-                        <CodeBlock.Root size="sm">
-                            <CodeBlock.Content wrap code={JSON.stringify(input, null, 2)} />
-                        </CodeBlock.Root>
-                    {/if}
-                    {#if part.output}
-                        <CodeBlock.Root size="sm" variant={part.state === "error" ? "destructive" : "default"}>
-                            <CodeBlock.Content wrap code={part.output} />
-                        </CodeBlock.Root>
-                    {/if}
-                {/if}
+                </Trace.Line>
+            </Trace.CollapsibleTrigger>
+            <Trace.CollapsibleContent>
+                {@render details()}
+            </Trace.CollapsibleContent>
+        </Trace.Collapsible>
+    </Trace.Root>
+{:else}
+    <div class="flex flex-col gap-1" data-tool={part.toolName} data-tool-state={part.state}>
+        <RoleFrame role="brain-ask" selected={selectedRole === "brain-ask"} onselect={() => onselect("brain-ask")}>
+            <div data-tool-band="ask">
+                <Trace.Root>
+                    <Trace.Line status={part.state === "composing" ? "running" : undefined}>
+                        <!-- TODO(i18n) -->
+                        <Trace.Title>
+                            {part.state === "composing" ? "Brain is asking for:" : "Brain asked:"}
+                            {part.toolName}
+                        </Trace.Title>
+                        {#if summary}
+                            <Trace.Description class="truncate font-mono">{summary}</Trace.Description>
+                        {/if}
+                    </Trace.Line>
+                </Trace.Root>
             </div>
-        </Trace.CollapsibleContent>
-    </Trace.Collapsible>
-</Trace.Root>
+        </RoleFrame>
+        {#if rolesOf(part).includes("arms-act")}
+            <RoleFrame
+                role="arms-act"
+                detail={armsDetail}
+                selected={selectedRole === "arms-act"}
+                onselect={() => onselect("arms-act")}
+            >
+                <div data-tool-band="act">
+                    <Trace.Root>
+                        <Trace.Collapsible>
+                            <Trace.CollapsibleTrigger>
+                                <Trace.Line {status}>
+                                    <!-- TODO(i18n) -->
+                                    <Trace.Title>
+                                        {part.state === "running"
+                                            ? "Running in your sandbox"
+                                            : part.state === "error"
+                                              ? "Ran into an error"
+                                              : "Finished"}
+                                    </Trace.Title>
+                                </Trace.Line>
+                            </Trace.CollapsibleTrigger>
+                            <Trace.CollapsibleContent>
+                                {@render details()}
+                            </Trace.CollapsibleContent>
+                        </Trace.Collapsible>
+                    </Trace.Root>
+                </div>
+            </RoleFrame>
+        {:else if settled && part.state === "input"}
+            <p class="text-muted-foreground px-1 text-xs" data-tool-band="act">Asked, but not run</p> <!-- TODO(i18n) -->
+        {/if}
+    </div>
+{/if}

@@ -7,7 +7,9 @@ import { LOCAL_LLM_PROVIDER_ID } from "$lib/agents/local-llm";
 import { m } from "$lib/paraglide/messages.js";
 import { provisionAgent } from "$lib/agents/provision";
 import type { InferenceStatus } from "$lib/models/types";
+import { ensureLearning, learningMode, setLearningMode } from "./learning.svelte";
 import { applyPiRecord, emptyChatState, messagesFromHistory, resolveDialog, toPendingDialog } from "./pi-events";
+import type { Role } from "./anatomy";
 import type {
     AttachEvent,
     AttachResult,
@@ -50,6 +52,13 @@ export function compareVersions(a: string, b: string): number {
     return 0;
 }
 
+/** The part whose explainer the learning panel shows; a tool part has one entry per band. */
+export interface PartSelection {
+    messageId: string;
+    partIndex: number;
+    role: Role;
+}
+
 /** How a message typed during a run reaches pi. */
 export type DeliveryMode = "steer" | "follow_up";
 
@@ -78,6 +87,10 @@ export class ChatStore {
     /** Set when a run failed and no inference server is running. */
     inferenceDown = $state(false);
     busy = $state<string | null>(null);
+    /** Learning mode's selected part, or null; cleared whenever the message list is rebuilt. */
+    selected = $state<PartSelection | null>(null);
+    /** Bumped each time history is rebuilt from pi, so views can tell a reload from a live update. */
+    epoch = $state(0);
 
     #cursor: Cursor | null = null;
     #channel: Channel<AttachEvent> | null = null;
@@ -88,6 +101,20 @@ export class ChatStore {
 
     constructor(sandbox: string) {
         this.sandbox = sandbox;
+        void ensureLearning();
+    }
+
+    get learning(): boolean {
+        return learningMode(this.sandbox);
+    }
+
+    async setLearning(on: boolean): Promise<void> {
+        try {
+            await setLearningMode(this.sandbox, on);
+            if (!on) this.selected = null;
+        } catch (e) {
+            toast.error(parseError(e).message);
+        }
     }
 
     /** True when the running pi is older than the pinned version the adapter is written against
@@ -197,6 +224,8 @@ export class ChatStore {
         const messages = (await this.request({ type: "get_messages" })) as { messages?: unknown[] };
         this.chat.messages = messagesFromHistory(this.chat, messages?.messages ?? []);
         this.chat.streaming = null;
+        this.selected = null;
+        this.epoch += 1;
         if (state?.isStreaming === true) this.chat.run = "running";
     }
 

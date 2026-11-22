@@ -48,7 +48,8 @@ export interface ChatSession {
     modifiedMs: number;
 }
 
-export type ToolState = "input" | "running" | "output" | "error";
+/** `composing` is the Brain writing the call (`toolcall_start`); `input` is the call complete but not yet run. */
+export type ToolState = "composing" | "input" | "running" | "output" | "error";
 
 export type ChatPart =
     | { type: "text"; text: string; streaming: boolean }
@@ -62,6 +63,8 @@ export type ChatPart =
           output: string;
       }
     | { type: "notice"; kind: NoticeKind; text: string };
+
+export type ToolChatPart = Extract<ChatPart, { type: "tool" }>;
 
 export type NoticeKind = "compaction" | "retry" | "error" | "aborted";
 

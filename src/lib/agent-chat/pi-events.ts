@@ -83,6 +83,10 @@ function assistantParts(content: unknown, previous: ChatPart[]): ChatPart[] {
             case "toolCall": {
                 const id = str(c.id);
                 const shown = tools.get(id);
+                if (shown?.state === "composing") {
+                    shown.input = obj(c.arguments);
+                    shown.state = "input";
+                }
                 return [
                     shown ?? {
                         type: "tool",
@@ -167,9 +171,25 @@ function applyUpdate(state: ChatState, record: PiRecord): void {
         message.parts.push(p);
         return p;
     };
+    // pi holds `thinking_end` until the message ends (docs/features/chat-agent-anatomy/spike/01_tool-call-stream.md).
+    const endReasoning = () => {
+        for (const p of message.parts) if (p.type === "reasoning") p.streaming = false;
+    };
     switch (kind) {
         case "text_start":
+            endReasoning();
             open({ type: "text", text: "", streaming: true });
+            return;
+        case "toolcall_start":
+            endReasoning();
+            open({
+                type: "tool",
+                toolCallId: str(ev.id),
+                toolName: str(ev.toolName),
+                input: {},
+                state: "composing",
+                output: "",
+            });
             return;
         case "thinking_start":
             open({ type: "reasoning", text: "", streaming: true });
@@ -194,7 +214,13 @@ function applyUpdate(state: ChatState, record: PiRecord): void {
         case "toolcall_end": {
             const call = obj(ev.toolCall);
             const toolCallId = str(call.id);
-            if (findTool(state, toolCallId)) return;
+            const shown = part?.type === "tool" ? part : findTool(state, toolCallId);
+            if (shown) {
+                shown.input = obj(call.arguments);
+                if (shown.state === "composing") shown.state = "input";
+                return;
+            }
+            endReasoning();
             open({
                 type: "tool",
                 toolCallId,
