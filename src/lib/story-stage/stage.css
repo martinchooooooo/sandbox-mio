@@ -10,6 +10,9 @@
 	--s-paper: #fff8f1;
 	--s-ok: #bfe8cf;
 	--s-bad: #d32f2f;
+	/* Same values as --brain and --arms in src/app.css. */
+	--s-brain: #7c5cd6;
+	--s-arms: #e8590c;
 	--s-head: var(--font-head);
 	--s-sans: var(--font-sans);
 	--s-mono: ui-monospace, 'Cascadia Mono', Consolas, monospace;
@@ -24,6 +27,15 @@
 /* Height-capped so the page text and navigation stay in view on a short window; the drawing
    letterboxes on the paper instead of pushing them off screen. */
 .story-stage svg { display: block; width: 100%; height: auto; max-height: 34vh; }
+
+/* The native chat's live stage: sized by its panel instead of the book's height cap, with the
+   Brain or Arms outlined while the explainer shows that role. */
+.story-stage.live { border: 2px solid var(--s-ink); border-radius: 0.5rem; overflow: hidden; }
+.story-stage.live svg { max-height: none; }
+.story-stage.live .actor { transition: transform 0.9s cubic-bezier(0.3, 0.9, 0.3, 1), opacity 0.5s, filter 0.3s; }
+.story-stage.live .arms { transition: opacity 0.3s, filter 0.3s; }
+.story-stage.live[data-hl="brain"] .live-brain { filter: drop-shadow(0 0 7px var(--s-brain)) drop-shadow(0 0 2px var(--s-brain)); }
+.story-stage.live[data-hl="arms"] .arms { filter: drop-shadow(0 0 7px var(--s-arms)) drop-shadow(0 0 2px var(--s-arms)); }
 
 /* ---------- drawing ---------- */
 

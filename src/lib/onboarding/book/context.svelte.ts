@@ -1,5 +1,5 @@
 import { getContext, setContext } from "svelte";
-import type { Scene } from "../stage";
+import type { Scene } from "$lib/story-stage";
 
 /** One page as the book sees it. Fields are live getters, so a locale switch re-renders them. */
 export interface PageEntry {

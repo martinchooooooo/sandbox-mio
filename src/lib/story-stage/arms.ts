@@ -4,6 +4,7 @@ import type { Board } from "./board";
 import { isDark, type Look } from "./characters";
 import type { Computers } from "./computers";
 import type { Core } from "./core";
+import type { Tools, ToolKind } from "./tools";
 
 /** A harness badge: brand colour plus a monogram standing in for the real logo. */
 export interface Mark extends Look {
@@ -12,7 +13,7 @@ export interface Mark extends Look {
 
 const ARM_LABEL = "Agent · the arms";
 
-export function createArms(core: Core, board: Board, computers: Computers) {
+export function createArms(core: Core, board: Board, computers: Computers, tools: Tools) {
     const { el, tween } = core;
     const { at, pop, pos, layers, svg } = board;
     const armsG = layers.arms;
@@ -22,6 +23,10 @@ export function createArms(core: Core, board: Board, computers: Computers) {
     const armLabel = el("text", { class: "label", "text-anchor": "middle" }, armsG, ARM_LABEL);
     const arm = { x: 0, y: 0, shown: false };
     armsG.style.opacity = "0";
+
+    /** Tiles carried by the hands and the "+N" count for calls beyond two. */
+    let held: SVGGElement[] = [];
+    const countEl = el("text", { class: "label", "text-anchor": "middle" }, layers.fxBack);
 
     function brainPos(): [number, number, number] {
         const p = pos.brain;
@@ -41,18 +46,29 @@ export function createArms(core: Core, board: Board, computers: Computers) {
             hands[i].setAttribute("cx", String(arm.x));
             hands[i].setAttribute("cy", String(hy));
         });
+        held.forEach((tile, i) => tile.setAttribute("transform", `translate(${arm.x + (i === 0 ? -34 : 34)} ${arm.y - 6})`));
+        countEl.setAttribute("x", String(arm.x));
+        countEl.setAttribute("y", String(arm.y + 52));
         armLabel.setAttribute("x", String((sx + arm.x) / 2));
         armLabel.setAttribute("y", String(Math.min(by - 32 * bs, arm.y - 15) - 26));
     }
 
-    /** Extend the arms (first call) or move the hands to `target` in stage coordinates. */
+    function ensureShown() {
+        if (arm.shown) return;
+        const [bx, by, bs] = brainPos();
+        arm.x = bx + 50 * bs;
+        arm.y = by;
+        arm.shown = true;
+        armsG.style.opacity = "1";
+    }
+
+    /** Extend the arms (first call) or move the hands to `target` in stage coordinates; `ms` 0 jumps there. */
     async function reach(target: [number, number], ms = 800) {
-        if (!arm.shown) {
-            const [bx, by, bs] = brainPos();
-            arm.x = bx + 50 * bs;
-            arm.y = by;
-            arm.shown = true;
-            armsG.style.opacity = "1";
+        ensureShown();
+        if (ms <= 0) {
+            [arm.x, arm.y] = target;
+            drawArms();
+            return;
         }
         const x0 = arm.x;
         const y0 = arm.y;
@@ -61,6 +77,30 @@ export function createArms(core: Core, board: Board, computers: Computers) {
             arm.y = y0 + (target[1] - y0) * t;
             drawArms();
         });
+    }
+
+    /** Draw the hands back to the brain, then hide the arms; `ms` 0 hides them within the same call. */
+    async function retract(ms = 500) {
+        if (!arm.shown) return;
+        const reaching = reach(at("brain", 50, 0), ms);
+        if (ms > 0) await reaching;
+        arm.shown = false;
+        armsG.style.opacity = "0";
+    }
+
+    /** Put one tool tile in each hand (the first two kinds) and keep them moving with the hands. */
+    function carry(kinds: ToolKind[]) {
+        held.forEach((tile) => tile.remove());
+        held = kinds.slice(0, 2).map((kind) => tools.tool(layers.fxBack, kind, "", 0, 0));
+        if (held.length > 0) {
+            ensureShown();
+            drawArms();
+        }
+    }
+
+    /** A "+N" badge beside the hands for tool calls beyond the two they hold; 0 clears it. */
+    function carryCount(extra: number) {
+        countEl.textContent = extra > 0 ? `+${extra}` : "";
     }
 
     /** Toggle the hands' tapping animation. */
@@ -94,6 +134,9 @@ export function createArms(core: Core, board: Board, computers: Computers) {
     }
 
     core.resets.push(() => {
+        held = [];
+        countEl.textContent = "";
+        layers.fxBack.append(countEl);
         svg.insertBefore(armsG, layers.actors);
         arm.shown = false;
         armsG.style.opacity = "0";
@@ -102,5 +145,5 @@ export function createArms(core: Core, board: Board, computers: Computers) {
         typing(false);
     });
 
-    return { reach, typing, keys, armsOver, armsName, harnessMark };
+    return { reach, retract, carry, carryCount, typing, keys, armsOver, armsName, harnessMark };
 }

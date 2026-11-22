@@ -1,6 +1,6 @@
 // Act 3 · Out in the world: many brains, many arms, many tools, and why that makes them hard to compare.
 // TODO(i18n): every caption and label in this file except the product names.
-import type { Scene, StoryStage, ToolKind } from "../../stage";
+import type { Scene, StoryStage, ToolKind } from "$lib/story-stage";
 import { HARNESSES, MAKERS, OPEN, TIED, type Harness, type Maker } from "./copy";
 
 interface Brain {

@@ -1,6 +1,6 @@
 // Act 2 · Then: the brain gets arms (the agent) and drives the computer through a terminal.
 // TODO(i18n): every caption and label in this file.
-import type { Scene, ScreenButton } from "../../stage";
+import type { Scene, ScreenButton } from "$lib/story-stage";
 
 export const armsAppear: Scene = ({ sleep, cap, pc, scrSettings, reach, typing, keys }) => ({
     layout: { you: [80, 215, 0.8, 0.35], chat: [240, 205, 0.7, 0.35], brain: [500, 205], pc: [830, 200] },

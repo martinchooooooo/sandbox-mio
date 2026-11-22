@@ -1,6 +1,6 @@
 // Act 4 · Now: brains make mistakes, so the agent works in a sandbox on your computer, with one shared folder.
 // TODO(i18n): every caption and label in this file.
-import type { FileIcon, Placement, Scene } from "../../stage";
+import type { FileIcon, Placement, Scene } from "$lib/story-stage";
 import { BOX_FILES, MY_FILES, SHARED } from "./copy";
 
 // The shared folder goes last, into the desktop slot nearest the sandbox (see `scrDesktop`).

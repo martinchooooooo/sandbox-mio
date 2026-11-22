@@ -1,7 +1,7 @@
 <script lang="ts">
     import { onDestroy, type Snippet } from "svelte";
     import { Text } from "$lib/components/ui/text";
-    import type { Scene } from "../stage";
+    import type { Scene } from "$lib/story-stage";
     import { actLabel, chapterLabel, getBook, type PageEntry } from "./context.svelte";
 
     // One page of a book: a title, an optional animated scene, and the explanation as children.

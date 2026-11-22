@@ -9,6 +9,8 @@ export interface StageOptions {
     speed?: number;
     /** Receives each caption line; an empty string clears it. */
     onCaption?: (text: string) => void;
+    /** Board size in stage units; default 1000 x 440, the book's landscape board. */
+    size?: { width: number; height: number };
 }
 
 /** Rejection value of a wait whose page was turned; the book swallows it. */

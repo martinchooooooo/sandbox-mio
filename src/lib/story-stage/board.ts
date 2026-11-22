@@ -1,7 +1,7 @@
 // The SVG board: paint layers, the actor registry, placement, and the caption line.
 import type { Core } from "./core";
 
-/** `[x, y, scale = 1, opacity = 1]` in stage coordinates (the viewBox is 1000 x 440). */
+/** `[x, y, scale = 1, opacity = 1]` in stage coordinates (the book's viewBox is 1000 x 440). */
 export type Placement = [number, number, number?, number?];
 
 /** Actor name to placement; an actor missing from the layout is hidden. */
@@ -14,7 +14,12 @@ interface Actor {
     labelText: string;
 }
 
-export function createBoard(svg: SVGSVGElement, core: Core, onCaption: (text: string) => void) {
+export function createBoard(
+    svg: SVGSVGElement,
+    core: Core,
+    onCaption: (text: string) => void,
+    size = { width: 1000, height: 440 },
+) {
     const { el } = core;
 
     // Paint order, back to front.
@@ -32,7 +37,7 @@ export function createBoard(svg: SVGSVGElement, core: Core, onCaption: (text: st
     /** Register an actor; draw its shape into the returned `inner` group, in its own coordinates. */
     function actor(name: string, label: string, labelY: number): SVGGElement {
         const g = el("g", { class: "actor" }, layers.actors);
-        g.style.transform = "translate(500px,220px) scale(0.6)";
+        g.style.transform = `translate(${size.width / 2}px,${size.height / 2}px) scale(0.6)`;
         g.style.opacity = "0";
         const inner = el("g", { class: "inner" }, g);
         const labelEl = label

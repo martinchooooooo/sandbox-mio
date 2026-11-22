@@ -1,6 +1,6 @@
 // Copy reused across several pages of this chapter, so a wording change happens in one place.
 // TODO(i18n): every string in this file except the product names.
-import type { Look, Mark } from "../../stage";
+import type { Look, Mark } from "$lib/story-stage";
 
 export interface Maker extends Look {
     name: string;

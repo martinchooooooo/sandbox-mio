@@ -1,8 +1,8 @@
 <script lang="ts">
-    import "../stage/stage.css";
+    import "$lib/story-stage/stage.css";
     import { onMount, untrack } from "svelte";
     import Button from "$lib/components/ui/button/button.svelte";
-    import { CANCEL, createStage, type Scene, type StoryStage } from "../stage";
+    import { CANCEL, createStage, type Scene, type StoryStage } from "$lib/story-stage";
 
     // The animated whiteboard. Plays `scene` whenever it changes; with no scene it collapses, so
     // a text-only page costs no empty space.

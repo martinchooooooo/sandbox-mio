@@ -1,7 +1,7 @@
 // Act 5 · Beyond the sandbox: one layer of many, and one way an agent can still get out.
 // The recap scene lives here too: it shares the last page's arrangement, so the two read as one.
 // TODO(i18n): every caption and label in this file.
-import type { FileIcon, Placement, Scene } from "../../stage";
+import type { FileIcon, Placement, Scene } from "$lib/story-stage";
 import { MY_FILES, SHARED } from "./copy";
 
 // ----- layers of defence, email then agents -----

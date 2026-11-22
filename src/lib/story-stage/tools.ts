@@ -88,3 +88,5 @@ export function createTools(core: Core) {
 
     return { tool };
 }
+
+export type Tools = ReturnType<typeof createTools>;

@@ -1,6 +1,6 @@
 // Act 1 · At first: the brain, the chat, and doing the work yourself.
 // TODO(i18n): every caption and label in this file.
-import type { Scene, ScreenButton } from "../../stage";
+import type { Scene, ScreenButton } from "$lib/story-stage";
 import { QUESTION, STEPS } from "./copy";
 
 export const meetTheBrain: Scene = ({ el, sleep, cap, think, layers }) => ({

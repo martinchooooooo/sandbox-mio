@@ -22,12 +22,12 @@ export type { ToolKind } from "./tools";
  */
 export function createStage(svg: SVGSVGElement, options: StageOptions = {}) {
     const core = createCore(options);
-    const board = createBoard(svg, core, options.onCaption ?? (() => {}));
+    const board = createBoard(svg, core, options.onCaption ?? (() => {}), options.size);
     const characters = createCharacters(core, board);
     const computers = createComputers(core, board);
     const tools = createTools(core);
     const screens = createScreens(core, board);
-    const arms = createArms(core, board, computers);
+    const arms = createArms(core, board, computers, tools);
     const effects = createEffects(core, board);
     return { ...core, ...board, ...characters, ...computers, ...tools, ...screens, ...arms, ...effects };
 }

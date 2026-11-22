@@ -7,4 +7,4 @@ export { default as Term } from "./Term.svelte";
 export { default as Glossary } from "./Glossary.svelte";
 export { default as GlossaryItem } from "./GlossaryItem.svelte";
 export { default as Callout } from "./Callout.svelte";
-export type { Scene, SceneScript, StoryStage, Layout, Placement } from "../stage";
+export type { Scene, SceneScript, StoryStage, Layout, Placement } from "$lib/story-stage";
