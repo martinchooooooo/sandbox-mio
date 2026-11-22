@@ -28,6 +28,7 @@
 * [activity-center](activity-center/index.md) - App-wide registry and UI for long-running background tasks (downloads, installs, provisioning) with notifications.
 * [agent-setup](agent-setup/index.md) - Curated catalogue of coding agents installed into a sandbox via mise, with a guided Claude Code auth flow.
 * [agent-web-ui](agent-web-ui/index.md) - Browser-based agent UI (Paseo) for OpenCode, Pi and Claude Code as an alternative to the terminal TUI.
+* [chat-agent-anatomy](chat-agent-anatomy/index.md) - A learning mode for the native chat that outlines each part of a live agent run as Brain or Arms and plays an animated brain-and-arms stage beside the messages, reusing the onboarding book's stage engine.
 * [consolidate-app-container](consolidate-app-container/index.md) - Collapse the AppContainer's chrome webviews into one NavigationPanel document.
 * [credentials-inline-auth](credentials-inline-auth/index.md) - Claude Code OAuth login as an inline expandable card on the Credentials page instead of a separate window.
 * [desktop-app-feel](desktop-app-feel/index.md) - Frontend-only UI/UX changes that make the app feel like a native desktop app.

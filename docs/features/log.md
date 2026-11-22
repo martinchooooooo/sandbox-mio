@@ -5,8 +5,13 @@ Records feature status changes only: creation (`Create`), reaching `implemented`
 history with at most one `Create` and one `Implement` entry per feature, so seeded dates are
 approximate. New entries go on top.
 
+## 2026-11-22
+
+* **Implement** [chat-agent-anatomy](chat-agent-anatomy/index.md): the native chat gains a per-sandbox learning mode that outlines parts as Brain or Arms, splits tool calls into ask and act, and plays a live brain-and-arms stage in a companion panel; translations (Phase G) wait for approval
+
 ## 2026-11-21
 
+* **Create** [chat-agent-anatomy](chat-agent-anatomy/index.md): ideation drafted; a learning mode for the native chat that outlines parts as Brain or Arms, splits tool calls into ask and act, and plays a live brain-and-arms stage in a left panel, reusing the onboarding stage engine; on by default in `hello-world`
 * **Implement** [paseo-plugins](paseo-plugins/index.md): app-owned plugins are bundled into the binary, delivered on Agents-tab open and registered, reloaded or pruned in the daemon config; the standard spec passes on Podman, and the microsandbox and deployed-sandbox checks were skipped by the user
 
 ## 2026-11-19

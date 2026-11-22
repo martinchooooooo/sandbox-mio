@@ -4,7 +4,7 @@ title: "Workspace UI: Window, Panes and Tabs"
 description: "The single app window, the Rust-owned registry of embedded terminal, agent web UI and native chat panes, the Manage tab and launchable apps, and terminal auto-login."
 generated:
   by: claude-code/sonnet-5-5
-  at: 2026-11-17T12:00:00+11:00
+  at: 2026-11-22T12:00:00+11:00
 stale_after: 2027-02-17T00:00:00+11:00
 code:
   - src-tauri/src/workspace/
@@ -12,6 +12,7 @@ code:
   - src-tauri/src/services/panes.rs
   - src/lib/workspace/
   - src/lib/agent-chat/
+  - src/lib/story-stage/
   - src/routes/+layout.svelte
 sources:
   - resource: docs/features/embedded-windows/02_dev.md
@@ -24,6 +25,7 @@ sources:
   - resource: docs/features/techdebt-sweep/02_dev.md
   - resource: docs/features/unified-sidebar-nav/02_dev.md
   - resource: docs/features/native-agent-ui/02_dev.md
+  - resource: docs/features/chat-agent-anatomy/02_dev.md
 ---
 # Workspace UI: Window, Panes and Tabs
 
@@ -40,7 +42,7 @@ The app runs in one OS window. One webview renders the whole SvelteKit frontend 
 
 - A Rust registry is the source of truth for the open panes (terminal, agent web UI or native chat, per sandbox), the active app, the collapsed flag, and each sandbox's last active pane. Every change is pushed to the frontend as one state event.
 - Opening a web pane starts the service inside the sandbox (Herdr, through the native terminal, or the Paseo agent UI), forwards it to a fresh host loopback port ([Transport](transport.md)), and mounts a webview on that port. Opening a pane that already exists switches to it instead.
-- The native chat pane has no webview, forward or URL: the main webview renders it like Manage, and activating it hides any overlay webview. Its connection is described in [Agents](agents.md).
+- The native chat pane has no webview, forward or URL: the main webview renders it like Manage, and activating it hides any overlay webview. Its connection is in [Agents](agents.md). Learning mode labels parts Brain or Arms beside an animated stage.
 - Closing a pane removes its webview and ends its forward, or ends the chat's attach; closing a sandbox's workspace closes all of its panes.
 
 ## Tabs: Manage and Launchable Apps
