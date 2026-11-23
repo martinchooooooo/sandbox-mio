@@ -1,6 +1,6 @@
 # Story Stage Orientation
 
-`src/lib/story-stage/` is the whiteboard animation engine: the cast, placement, timing, screens, arms, effects and `stage.css`. Two consumers mount it: the onboarding book (`src/lib/onboarding/book/Stage.svelte`, a landscape 1000 x 440 board) and the native chat's live stage (`src/lib/agent-chat/LiveStage.svelte`, a portrait board, see `docs/features/chat-agent-anatomy/02_dev.md`). The root `AGENTS.md` and `src/AGENTS.md` rules apply here.
+`src/lib/story-stage/` is the whiteboard animation engine: the cast, placement, timing, screens, arms, effects and `stage.css`. The onboarding book mounts it (`src/lib/onboarding/book/Stage.svelte`, a landscape 1000 x 440 board). The native chat's learning mode reuses only the book's vocabulary and does not mount the engine (`docs/features/chat-agent-anatomy/02_dev.md`, Resolved Decision 14); `retract()`, `carry()`, `carryCount()` and the `.story-stage.live` rules stay unused for reuse. The root `AGENTS.md` and `src/AGENTS.md` rules apply here.
 
 ## Writing a scene
 

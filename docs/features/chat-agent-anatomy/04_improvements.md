@@ -9,20 +9,16 @@ Work deferred out of the first build of `chat-agent-anatomy` ([01_ideas.md](01_i
 
 ## Guided hands-on checklist
 
-A short list of tasks in the companion panel (`src/lib/agent-chat/AnatomyPanel.svelte`), such as "Ask something that needs no tools", "Ask the agent to create a file" and "Open the Brain's thinking", each ticked off by watching the roles the anatomy classifier (`src/lib/agent-chat/anatomy.ts`) reports. Deferred because the checklist needs its own copy, progress state and completion rules, and the panel teaches without the checklist.
+A short list of tasks, such as "Ask something that needs no tools", "Ask the agent to create a file" and "Open the Brain's thinking", each ticked off by watching the roles the anatomy classifier (`src/lib/agent-chat/anatomy.ts`) reports. Deferred because the checklist needs its own copy, progress state, completion rules and a place to live now that the companion panel is gone, and the margin avatars teach without it.
 
 ## Links from the explainer into the book
 
-An explainer entry links to the matching page of the onboarding book, for example "Meet the Brain (AKA Model)" for a `brain-think` part. Deferred because the book renders inside the welcome flow and the `/intro` route only (`src/lib/onboarding/OnboardingBook.svelte`), with no way to open it at a given page from elsewhere.
+A hover card entry (`src/lib/agent-chat/RoleExplainer.svelte`) links to the matching page of the onboarding book, for example "Meet the Brain (AKA Model)" for a `brain-think` part. Deferred because the book renders inside the welcome flow and the `/intro` route only (`src/lib/onboarding/OnboardingBook.svelte`), with no way to open it at a given page from elsewhere.
 
-## Replaying a past part on the stage
+## Replaying a past part's animation
 
-Clicking a past tool call replays that call's beats on the live stage, so a user can study a step after the run finished. Deferred because the first build animates live records only, and replay needs the beat queue to accept historical beats without disturbing a run in progress.
+Clicking a past avatar plays its part's animation again, so a user can study a step after the run finished. Deferred because history avatars are static (`src/lib/agent-chat/AgentAvatar.svelte` animates only the live part) and a replay needs a scripted sequence per part, not only the end state.
 
-## Use the `sheet` component for the narrow-width panel
+## Pin one explainer at a time
 
-Below 896 px the companion panel opens in `Dialog.Content` restyled as a left drawer (`src/lib/agent-chat/ChatView.svelte`), because `src/lib/components/ui/sheet/` does not exist in the tree although the root `AGENTS.md` lists it. Deferred because adding it needs the retro-ui-svelte registry fetched over the network; swap to `sheet` once it is added.
-
-## Show a "+N" count for many requested tools while asking
-
-The live stage's `asking` beat draws at most two requested tool tiles beside the Brain (`src/lib/agent-chat/anatomy-driver.ts`); only the `acting` beat shows the "+N" count. Deferred because requests beyond two are rare and the count reads best next to the hands.
+Each info icon (`src/lib/agent-chat/RoleExplainer.svelte`) pins its own hover card, so a user can pin several. Deferred because an outside click or Escape closes a pinned card and no overlap was seen to matter; a shared pinned role in the chat store would make it one at a time.

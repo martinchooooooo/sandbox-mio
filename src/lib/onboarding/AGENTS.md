@@ -9,7 +9,7 @@
 | `chapters.ts` | The ordered list of chapters the book shows. The only file a new chapter must touch outside its own directory. |
 | `chapters/<chapter>/` | One chapter: a Svelte component made of `<Page>`s, plus its scene scripts and shared copy. |
 | `book/` | The reusable kit every chapter is written with: `Book`, `Chapter`, `Act`, `Page`, `Term`, `Glossary`, `GlossaryItem`, `Callout`. Import from `book/index.ts`. |
-| `../story-stage/` | The whiteboard animation engine scenes draw with, shared with the native chat's live stage; see `src/lib/story-stage/AGENTS.md`. |
+| `../story-stage/` | The whiteboard animation engine scenes draw with; see `src/lib/story-stage/AGENTS.md`. |
 | `OnboardingBook.svelte` | Renders every registered chapter in one `Book`. |
 | `setup.svelte.ts` | Background first-run setup (machine, base image, model and the first sandbox), shared with the setup progress page in `src/lib/welcome/`. `handoff.svelte.ts` opens the first sandbox once setup is ready. |
 

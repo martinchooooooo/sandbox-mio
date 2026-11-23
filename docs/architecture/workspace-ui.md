@@ -42,7 +42,7 @@ The app runs in one OS window. One webview renders the whole SvelteKit frontend 
 
 - A Rust registry is the source of truth for the open panes (terminal, agent web UI or native chat, per sandbox), the active app, the collapsed flag, and each sandbox's last active pane. Every change is pushed to the frontend as one state event.
 - Opening a web pane starts the service inside the sandbox (Herdr, through the native terminal, or the Paseo agent UI), forwards it to a fresh host loopback port ([Transport](transport.md)), and mounts a webview on that port. Opening a pane that already exists switches to it instead.
-- The native chat pane has no webview, forward or URL: the main webview renders it like Manage, and activating it hides any overlay webview. Its connection is in [Agents](agents.md). Learning mode labels parts Brain or Arms beside an animated stage.
+- The native chat pane has no webview, forward or URL: the main webview renders it like Manage, and activating it hides any overlay webview. Its connection is in [Agents](agents.md). Learning mode labels parts with Brain or Arms avatars.
 - Closing a pane removes its webview and ends its forward, or ends the chat's attach; closing a sandbox's workspace closes all of its panes.
 
 ## Tabs: Manage and Launchable Apps
