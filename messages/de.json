@@ -16,7 +16,7 @@
   "workspace_expand": "Panel ausklappen",
   "workspace_tab_manage": "Dashboard",
   "workspace_tab_terminal": "Terminal",
-  "workspace_tab_agents": "Agenten",
+  "workspace_tab_agents": "Profi-Agent",
   "workspace_open_folder": "Ordner öffnen",
   "workspace_more_actions": "Weitere Aktionen",
   "workspace_restart": "Neu starten",
@@ -291,7 +291,7 @@
   "sidebar_activity": "Aktivität",
   "sandbox_header_apps_label": "Apps in dieser Sandbox",
   "home_intro": "Jede Sandbox ist ein sicherer, abgetrennter Bereich, in dem KI-Helfer an einem Projekt arbeiten können, ohne den Rest deines Computers zu berühren.",
-  "workspace_tab_chat": "Chat",
+  "workspace_tab_chat": "Einfacher Agent",
   "agent_chat_deployed_title": "Der Chat ist für eine bereitgestellte Sandbox nicht verfügbar",
   "agent_chat_deployed_description": "Diese Sandbox läuft auf einem Remote-Host. Nutze stattdessen das Terminal oder die Agent-Web-Oberfläche.",
   "agent_chat_stopped_title": "Der Agent ist gestoppt",
@@ -363,9 +363,9 @@
   "workspace_delete_body": "Dadurch werden der Container der Sandbox und die darin installierten Tools gelöscht. Die Dateien im Arbeitsordner bleiben auf deinem Computer erhalten.",
   "workspace_delete_confirm": "Löschen",
   "workspace_launcher_close": "Schließen",
-  "app_terminal_desc": "Eine Kommandozeile in deiner Sandbox, um Befehle und Tools auszuführen.",
-  "app_agents_desc": "Arbeite mit KI-Coding-Agenten, die die Dateien in deiner Sandbox lesen und ändern.",
-  "app_agents_unavailable": "Installiere unten einen Coding-Agenten, um dies zu nutzen.",
-  "app_chat_desc": "Chatte mit dem Pi-Agenten und sieh ihm bei der Arbeit an deinem Projekt zu.",
-  "app_chat_unavailable": "Installiere unten den Pi-Agenten, um dies zu nutzen."
+  "app_terminal_desc": "Ein Textfenster, in dem du Befehle eingibst. Am besten, wenn du mit technischen Tools vertraut bist.",
+  "app_agents_desc": "Leistungsstarke KI-Agenten für größere Aufgaben. Sie schreiben und bearbeiten die Dateien deines Projekts für dich.",
+  "app_agents_unavailable": "Füge unten einen Agenten hinzu, um dies zu aktivieren.",
+  "app_chat_desc": "Ein unkomplizierter Chat mit einem KI-Agenten. Bitte ihn in einfachen Worten, etwas zu bauen oder zu ändern, und sieh ihm bei der Arbeit zu.",
+  "app_chat_unavailable": "Füge unten den Pi-Agenten hinzu, um dies zu aktivieren."
 }

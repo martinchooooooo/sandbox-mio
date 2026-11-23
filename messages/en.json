@@ -16,7 +16,7 @@
   "workspace_expand": "Expand panel",
   "workspace_tab_manage": "Dashboard",
   "workspace_tab_terminal": "Terminal",
-  "workspace_tab_agents": "Agents",
+  "workspace_tab_agents": "Pro Agent",
   "workspace_open_folder": "Open folder",
   "workspace_more_actions": "More actions",
   "workspace_restart": "Restart",
@@ -291,7 +291,7 @@
   "sidebar_activity": "Activity",
   "sandbox_header_apps_label": "Apps in this sandbox",
   "home_intro": "Each sandbox is a safe, separate space where AI helpers can work on a project without touching the rest of your computer.",
-  "workspace_tab_chat": "Chat",
+  "workspace_tab_chat": "Simple Agent",
   "agent_chat_deployed_title": "Chat is not available for a deployed sandbox",
   "agent_chat_deployed_description": "This sandbox runs on a remote host. Use the terminal or the agent web UI instead.",
   "agent_chat_stopped_title": "The agent is stopped",
@@ -363,9 +363,9 @@
   "workspace_delete_body": "This deletes the sandbox's container and the tools installed in it. The files in its workspace folder stay on your computer.",
   "workspace_delete_confirm": "Delete",
   "workspace_launcher_close": "Close",
-  "app_terminal_desc": "A command line inside your sandbox, for running commands and tools.",
-  "app_agents_desc": "Work with AI coding agents that read and change the files in your sandbox.",
-  "app_agents_unavailable": "Install a coding agent below to use this.",
-  "app_chat_desc": "Chat with the Pi agent and watch it work on your project.",
-  "app_chat_unavailable": "Install the Pi agent below to use this."
+  "app_terminal_desc": "A text window where you type commands. Best if you're comfortable with technical tools.",
+  "app_agents_desc": "Full-featured AI agents for bigger jobs. They write and edit the files in your project for you.",
+  "app_agents_unavailable": "Add an agent below to turn this on.",
+  "app_chat_desc": "A friendly chat with an AI agent. Ask it in plain language to build or change things and watch it work.",
+  "app_chat_unavailable": "Add the Pi agent below to turn this on."
 }

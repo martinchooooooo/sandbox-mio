@@ -26,13 +26,14 @@ export const HOME_APP = {
 /** The set of apps a sandbox can launch from its dashboard, and each one's availability rule. */
 export const LAUNCHABLE_APPS: AppDescriptor[] = [
     {
-        kind: "terminal",
-        title: m.workspace_tab_terminal,
-        icon: TerminalIcon,
-        command: "open_terminal_pane",
-        description: m.app_terminal_desc,
-        unavailableHint: () => "",
-        available: () => true,
+        kind: "agentchat",
+        title: m.workspace_tab_chat,
+        icon: AiChat02Icon,
+        command: "open_agent_chat",
+        description: m.app_chat_desc,
+        unavailableHint: m.app_chat_unavailable,
+        // The native chat drives pi only (docs/features/native-agent-ui/02_dev.md).
+        available: (ctx) => ctx.installedAgents.some((a) => a.id === "pi"),
     },
     {
         kind: "agentweb",
@@ -44,13 +45,12 @@ export const LAUNCHABLE_APPS: AppDescriptor[] = [
         available: (ctx) => ctx.installedAgents.length > 0,
     },
     {
-        kind: "agentchat",
-        title: m.workspace_tab_chat,
-        icon: AiChat02Icon,
-        command: "open_agent_chat",
-        description: m.app_chat_desc,
-        unavailableHint: m.app_chat_unavailable,
-        // The native chat drives pi only (docs/features/native-agent-ui/02_dev.md).
-        available: (ctx) => ctx.installedAgents.some((a) => a.id === "pi"),
+        kind: "terminal",
+        title: m.workspace_tab_terminal,
+        icon: TerminalIcon,
+        command: "open_terminal_pane",
+        description: m.app_terminal_desc,
+        unavailableHint: () => "",
+        available: () => true,
     },
 ];
