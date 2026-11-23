@@ -8,7 +8,6 @@
     import type { ProviderId } from "$lib/providers";
     import {
         deploymentFor,
-        hostsList,
         capabilitiesFor,
         refreshSandboxState,
     } from "$lib/sandbox/state.svelte";
@@ -31,30 +30,9 @@
     // the user could do to make it available.
     const canDeploy = $derived(capabilitiesFor(provider)?.remoteTargets ?? false);
 
-    // Whether the host picker is open, and the host chosen within it.
-    let picking = $state(false);
-    let chosenHost = $state("");
-
     // The toggle is optimistic: Mutagen does not surface a "paused" status, so on/off is tracked
     // locally, defaulting on for a freshly listed deployment.
     let syncOn = $state(true);
-
-    function openPicker() {
-        picking = true;
-        chosenHost = hostsList()[0] ?? "";
-    }
-
-    async function deploy() {
-        if (!chosenHost) return;
-        if (await action.run(
-            "deploy",
-            () => invoke("deploy_sandbox", { name: sandboxName, host: chosenHost }),
-            { message: m.projects_status_deploying({ host: chosenHost }) }
-        )) {
-            picking = false;
-            await refreshSandboxState();
-        }
-    }
 
     async function undeploy() {
         if (await action.run(
@@ -101,29 +79,12 @@
             </span>
         </div>
     {:else if canDeploy}
-        {#if picking}
-            <div class="flex items-center gap-2">
-                {#if hostsList().length === 0}
-                    <span class="text-muted-foreground text-xs flex-1">{m.projects_no_hosts()}</span>
-                {:else}
-                    <select bind:value={chosenHost} class="flex-1 rounded border bg-background px-2 py-1 text-xs">
-                        {#each hostsList() as host}
-                            <option value={host}>{host}</option>
-                        {/each}
-                    </select>
-                    <Button size="sm" loading={action.busy === "deploy"} disabled={action.busy !== null} onclick={deploy}>
-                        {m.projects_deploy_confirm()}
-                    </Button>
-                {/if}
-                <Button size="sm" variant="outline" disabled={action.busy !== null} onclick={() => (picking = false)}>
-                    {m.projects_cancel()}
-                </Button>
-            </div>
-        {:else}
-            <Button variant="ghost" size="sm" onclick={openPicker} disabled={action.busy !== null}>
-                {m.projects_deploy()}
-            </Button>
-        {/if}
+        <!-- Every sandbox has a proxy sidecar, which has no remote counterpart yet
+             (docs/features/proxy-remote-deploy/feature.md). -->
+        <div class="flex items-center gap-2" data-remote-deploy-unavailable>
+            <Button variant="ghost" size="sm" disabled>{m.projects_deploy()}</Button>
+            <span class="text-muted-foreground text-xs">Not available yet. <!-- TODO(i18n) --></span>
+        </div>
     {:else}
         <span class="text-muted-foreground text-xs">{m.projects_no_remote_target()}</span>
     {/if}

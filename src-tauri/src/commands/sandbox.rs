@@ -13,16 +13,14 @@ use crate::runtime::types::RuntimeManager;
 use crate::services;
 use crate::sync::types::SyncEngine;
 
-/// Create a sandbox on `provider` (Podman when omitted). `proxy` opts the sandbox into a
-/// per-sandbox proxy sidecar (`docs/features/network-proxy/02_dev.md`); defaults to off. `egress`
-/// and `starter_hosts` are the independent network-policy choice
-/// (`docs/features/microsandbox-network-policy/02_dev.md`, Resolved Decision 5).
+/// Create a sandbox on `provider` (Podman when omitted), always with a proxy sidecar
+/// (`docs/features/network-proxy/02_dev.md`). `egress` and `starter_hosts` are the network-policy
+/// choice (`docs/features/microsandbox-network-policy/02_dev.md`, Resolved Decision 5).
 #[tauri::command]
 pub async fn create_sandbox(
     name: String,
     existing_path: Option<String>,
     provider: Option<ProviderId>,
-    proxy: Option<bool>,
     egress: Option<crate::net_policy::EgressMode>,
     starter_hosts: Option<Vec<String>>,
     store: State<'_, Arc<dyn SandboxBackend>>,
@@ -39,7 +37,6 @@ pub async fn create_sandbox(
         &name,
         existing_path.as_deref(),
         provider,
-        proxy.unwrap_or(false),
         egress.as_ref(),
         &store,
         &runtime,

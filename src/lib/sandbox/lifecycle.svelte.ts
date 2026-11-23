@@ -117,7 +117,6 @@ export interface CreateArgs {
     existingPath?: string;
     /** Omitted means the backend resolves the default provider. */
     provider?: ProviderId;
-    proxy: boolean;
     /** Present only when the provider supports an egress policy. */
     network?: { egress: "open" | "allowlist"; starterHosts: string[] };
     /** Agent ids to install after create; omitted means plan from host state (`planPreinstall`). */
@@ -217,7 +216,6 @@ async function runCreate(name: string): Promise<void> {
             name,
             existingPath: args.existingPath,
             provider: args.provider,
-            proxy: args.proxy,
             ...args.network,
         });
         args.onCreated?.();

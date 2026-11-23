@@ -8,13 +8,13 @@ import { invokeCmd, useMockControl } from "../../../lib/mock.js";
 import { COMMAND, PANEL_RENDER } from "../../../lib/timeouts.js";
 
 // LIGHT companion to standard/github-placeholder-swap.spec.ts (docs/features/proxy-credential-secrets/03_e2e.md,
-// Scenario 9): the Manage card's plaintext mode and its opt-out/no-credential states. The mock backend writes no
-// sidecar meta.json, so the card is always in plaintext mode here; the standard spec proves sidecar mode.
+// Scenario 9): the Manage card's opt-out/no-credential states and its sidecar wording; the standard spec proves the
+// real placeholder swap behind it.
 
 const SENTINEL = "ghp_light_spec_sentinel_value";
-const PLAINTEXT_TEXT = "token stored in sandbox";
+const SIDECAR_TEXT = "token kept securely";
 
-describe("GitHub access card — plaintext mode and opt-out (mock backend)", function () {
+describe("GitHub access card — sidecar wording and opt-out (mock backend)", function () {
   this.timeout(60000);
   captureDiagOnFailure();
   useMockControl();
@@ -34,14 +34,14 @@ describe("GitHub access card — plaintext mode and opt-out (mock backend)", fun
     await invokeCmd("destroy_sandbox", { name, force: true }).catch(() => undefined);
   });
 
-  it("shows plaintext mode, toggles opt-out, and reports no credential after delete", async () => {
+  it("shows the sidecar wording, toggles opt-out, and reports no credential after delete", async () => {
     await ProjectsPage.goHome();
     await ProjectsPage.open();
     await ProjectsPage.ensurePodmanReady();
     await ProjectsPage.createProject(name);
 
-    // The card only applies to a running sandbox; before that its state stays "pending".
-    await ProjectsPage.row(name).start();
+    // The card only applies to a running sandbox; create leaves it running (the proxy CA injection
+    // starts it).
     await ProjectsPage.row(name).openWorkspace();
     await workspaceDashboard.waitForRendered(name);
     await sandboxHeader.waitForRunning(name);
@@ -52,12 +52,10 @@ describe("GitHub access card — plaintext mode and opt-out (mock backend)", fun
     await card().waitForExist({ timeout: PANEL_RENDER });
 
     await waitForState("applied");
-    assert.strictEqual(await card().getAttribute("data-github-mode"), "plaintext");
-    assert((await $("[data-github-access-text]").getText()).includes(PLAINTEXT_TEXT), "plaintext text is missing from the card");
+    assert((await $("[data-github-access-text]").getText()).includes(SIDECAR_TEXT), "sidecar text is missing from the card");
 
     await $("[data-github-access-switch]").click();
     await waitForState("opted-out");
-    assert.strictEqual(await card().getAttribute("data-github-mode"), "plaintext");
 
     await $("[data-github-access-switch]").click();
     await waitForState("applied");

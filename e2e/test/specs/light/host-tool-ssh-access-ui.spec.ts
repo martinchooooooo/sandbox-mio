@@ -21,7 +21,6 @@ describe("SSH access panel renders the handoff (mock backend)", function () {
   it("shows the run-unique alias and the running state for a started sandbox", async () => {
     await ProjectsPage.open();
     await ProjectsPage.createProject(name);
-    await row.start();
     await row.waitForRunning();
     await row.openWorkspace();
     await workspaceDashboard.waitForRendered(name);

@@ -350,7 +350,6 @@ async function runFirstSandbox(): Promise<void> {
             // pi does not wait for the model: it is pointed at the model once both are done.
             const started = createSandbox({
                 name: FIRST_SANDBOX,
-                proxy: false,
                 agents: model.skipped ? [] : ["pi"],
                 // The handoff owns the open, so a cancel can really prevent it.
                 autoOpen: false,

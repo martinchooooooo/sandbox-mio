@@ -616,8 +616,8 @@ impl SandboxBackend for CliBackend {
         target_connection: &str,
     ) -> Result<RemoteDeployment, BackendError> {
         validate_name(name)?;
-        // Refused rather than silently deployed unproxied: deploy has no target-side proxy story
-        // yet (`docs/features/network-proxy/02_dev.md`, Resolved Decision 6).
+        // Refused rather than silently deployed unproxied: every sandbox has a sidecar and deploy has
+        // no target-side proxy story yet (`docs/features/proxy-remote-deploy/feature.md`).
         if crate::proxy::exists(&self.app, &self.registry, name).await {
             return Err(BackendError::ProxyDeployUnsupported { name: name.to_string() });
         }

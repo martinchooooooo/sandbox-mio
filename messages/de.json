@@ -24,8 +24,6 @@
   "workspace_close_tab_label": "{title} schließen",
   "projects_deploy": "Deployen",
   "projects_destroy": "Löschen",
-  "projects_no_hosts": "Keine Hosts registriert — bitte zuerst einen hinzufügen.",
-  "projects_deploy_confirm": "Deployen",
   "projects_cancel": "Abbrechen",
   "projects_packages": "Pakete",
   "projects_package_placeholder": "Paketname",
@@ -233,9 +231,7 @@
   "netpolicy_secret_exists": "${envVar} hat bereits ein Secret; bearbeite stattdessen dieses.",
   "netpolicy_echo_warning": "{hosts} spiegelt Anfragen zurück, daher würde der echte Wert eines gebundenen Secrets die Sandbox erreichen.",
   "netpolicy_save": "Richtlinie speichern",
-  "proxy_inspect_traffic": "Datenverkehr prüfen",
   "proxy_title": "Datenverkehrsprüfung",
-  "proxy_off_podman": "Aus. Erstelle diese Sandbox mit aktivierter Prüfung neu, um sie einzuschalten.",
   "proxy_stopped": "Der Proxy-Sidecar ist gestoppt. Ausgehende Anfragen der Sandbox schlagen fehl, bis er neu gestartet wird.",
   "proxy_network": "Proxy-Netzwerk: {network}",
   "proxy_unmonitored": "Datenverkehr, der den Proxy umgeht (rohe Sockets, Git über SSH), wird nicht geprüft.",
@@ -360,7 +356,5 @@
   "github_failed": "Fehlgeschlagen: {reason}",
   "github_account": "GitHub: {login}",
   "github_token_sidecar": "Token sicher verwahrt",
-  "github_token_plaintext": "Token in der Sandbox gespeichert",
-  "github_out_of_date": "Veraltet; wird beim nächsten Start angewendet",
   "github_pending": "Wird angewendet, wenn die Sandbox läuft"
 }

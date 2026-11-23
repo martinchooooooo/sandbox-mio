@@ -111,7 +111,8 @@ describe("Sandbox runtime management (mise)", function () {
     );
   });
 
-  it("deploys to the remote and the remote container starts", async () => {
+  // Skipped: every sandbox has a proxy sidecar, so remote deploy is blocked (docs/features/proxy-remote-deploy/feature.md).
+  it.skip("deploys to the remote and the remote container starts", async () => {
     // Generous: the deploy reproduces software from the lockfile, whose first remote install
     // fetches the pinned binary from the upstream release host over the network.
     await row.deployTo(REMOTE_CONNECTION, { timeout: 300000 });
@@ -129,7 +130,8 @@ describe("Sandbox runtime management (mise)", function () {
     );
   });
 
-  it("reproduces the package on the remote from the lockfile, not a committed image", async () => {
+  // Skipped: every sandbox has a proxy sidecar, so remote deploy is blocked (docs/features/proxy-remote-deploy/feature.md).
+  it.skip("reproduces the package on the remote from the lockfile, not a committed image", async () => {
     const out = podman(REMOTE_CONNECTION, [
       "exec",
       "--workdir",
@@ -156,7 +158,8 @@ describe("Sandbox runtime management (mise)", function () {
     );
   });
 
-  it("carries the manifest into the remote workspace", async () => {
+  // Skipped: every sandbox has a proxy sidecar, so remote deploy is blocked (docs/features/proxy-remote-deploy/feature.md).
+  it.skip("carries the manifest into the remote workspace", async () => {
     const remoteManifest = podman(REMOTE_CONNECTION, [
       "exec",
       projectName,

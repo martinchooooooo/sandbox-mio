@@ -1,5 +1,5 @@
 //! The GitHub token: verifying and saving it on the host, and applying it to a sandbox's `gh`
-//! (`docs/features/github-cli-auth/02_dev.md`). The token reaches a sandbox only on stdin.
+//! (`docs/features/github-cli-auth/02_dev.md`). A sandbox only ever receives the placeholder.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -117,7 +117,7 @@ const EXIT_NO_GH: i32 = 64;
 /// Longest `Failed` reason kept, so one noisy stderr line cannot bloat the state file or the card.
 pub(crate) const MAX_REASON_CHARS: usize = 200;
 
-/// Runs with the token on stdin. The hosts file is cleared first so a re-login as another account
+/// Runs with the placeholder on stdin. The hosts file is cleared first so a re-login as another account
 /// replaces the old token instead of adding a second account
 /// (`docs/features/github-cli-auth/02_dev.md`, Resolved Decision 8).
 const APPLY_SCRIPT: &str = "[ -x /usr/local/bin/gh ] || exit 64; rm -f /root/.config/gh/hosts.yml; /usr/local/bin/gh auth login --with-token --hostname github.com --git-protocol https || exit $?; /usr/local/bin/gh auth setup-git";
@@ -129,14 +129,9 @@ const REMOVE_SCRIPT: &str = "rm -f /root/.config/gh/hosts.yml";
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum ApplyOutcome {
-    /// gh holds the credential captured at `captured_at_ms`. `swapped` is true when gh holds the
-    /// placeholder that a sidecar swaps, false when it holds the real token; state files from
-    /// before the sidecar swap load as false.
-    Applied {
-        captured_at_ms: u64,
-        #[serde(default)]
-        swapped: bool,
-    },
+    /// gh holds the placeholder the sidecar swaps for the credential captured at `captured_at_ms`.
+    /// A `swapped` key in older state files is ignored on load.
+    Applied { captured_at_ms: u64 },
     /// The sandbox's image predates gh; recreating it over its workspace fixes that.
     NeedsImage,
     /// gh or the sandbox refused; `reason` is gh's first stderr line.
@@ -177,23 +172,17 @@ fn first_line(stderr: &[u8]) -> String {
 }
 
 /// Logs gh into `name` with `token`, and wires git to gh. `captured_at_ms` is the credential's
-/// manifest stamp, recorded so the card can tell a current apply from an older one. `token` is the
-/// real token or the placeholder; `swapped` records which one the caller passed.
-pub async fn apply(
-    provider: &Arc<dyn MachineProvider>,
-    name: &str,
-    token: &str,
-    captured_at_ms: u64,
-    swapped: bool,
-) -> ApplyOutcome {
-    let out = match provider.exec_piped(name, &["sh", "-c", APPLY_SCRIPT], token.as_bytes()).await {
+/// manifest stamp, recorded so the card can tell a current apply from an older one. Only the
+/// placeholder ever goes in, so the real token never enters the sandbox.
+pub async fn apply(provider: &Arc<dyn MachineProvider>, name: &str, captured_at_ms: u64) -> ApplyOutcome {
+    let out = match provider.exec_piped(name, &["sh", "-c", APPLY_SCRIPT], GITHUB_PLACEHOLDER.as_bytes()).await {
         Ok(out) => out,
         Err(e) => {
             return ApplyOutcome::Failed { reason: e.to_string().chars().take(MAX_REASON_CHARS).collect(), captured_at_ms }
         }
     };
     match out.status.code() {
-        Some(0) => ApplyOutcome::Applied { captured_at_ms, swapped },
+        Some(0) => ApplyOutcome::Applied { captured_at_ms },
         Some(EXIT_NO_GH) => ApplyOutcome::NeedsImage,
         _ => ApplyOutcome::Failed { reason: first_line(&out.stderr), captured_at_ms },
     }
@@ -229,10 +218,10 @@ more"), "error validating token: HTTP 401");
     }
 
     #[test]
-    fn an_applied_outcome_without_swapped_loads_as_plaintext() {
-        let json = r#"{"kind":"applied","capturedAtMs":3}"#;
+    fn an_applied_outcome_from_an_older_state_file_still_loads() {
+        let json = r#"{"kind":"applied","capturedAtMs":3,"swapped":true}"#;
         let outcome: ApplyOutcome = serde_json::from_str(json).expect("parses");
-        assert_eq!(outcome, ApplyOutcome::Applied { captured_at_ms: 3, swapped: false });
+        assert_eq!(outcome, ApplyOutcome::Applied { captured_at_ms: 3 });
     }
 
     #[test]

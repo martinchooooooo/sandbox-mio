@@ -107,13 +107,8 @@ describe("Podman egress boundary — bounded sandbox on a real machine", functio
 
     await ProjectsPage.open();
     await ProjectsPage.ensurePodmanReady();
-    assert(
-      !(await ProjectsPage.egressOption("allowlist").isExisting()),
-      "the egress picker must stay hidden for Podman while the proxy switch is off",
-    );
-    await ProjectsPage.enableProxy();
+    await ProjectsPage.openAdvanced();
     await ProjectsPage.egressOption("allowlist").waitForDisplayed({ timeout: COMMAND });
-    assert(await ProjectsPage.podmanProxyHint.isDisplayed(), "the Podman proxy hint is missing");
     // The dialog always sends its mode and the default `open` would overwrite the seeded allowlist.
     await ProjectsPage.chooseEgress("allowlist");
 

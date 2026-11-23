@@ -195,7 +195,7 @@ pub fn read_ca_pem(
     std::fs::read(&path).map_err(|e| ProxyError::Io { path: path.to_string_lossy().to_string(), error: e.to_string() })
 }
 
-/// The full `--env` list for a proxy-enabled sandbox: the proxy URL under both casings, `no_proxy`
+/// The full `--env` list for a sandbox behind its sidecar: the proxy URL under both casings, `no_proxy`
 /// under both spellings (loopback included, which also carries local-LLM inference through the
 /// sandbox's own inference forward), and the per-runtime CA trust overrides pointing at
 /// `CONTAINER_CA_PATH` (Resolved Decision 8). `CONTAINER_CA_PATH` is also referenced by `inject_ca`;
@@ -337,7 +337,7 @@ fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> Result<(), ProxyError> 
 
 /// The proxy's own network name and pinned IP, cached beside its state so `status` can report them
 /// without a `podman network inspect` round trip — the container's presence, not this file, remains
-/// the source of truth for whether the proxy is enabled (Resolved Decision 3).
+/// the source of truth for whether the sidecar exists (Resolved Decision 3).
 fn meta_path(app: &AppHandle, sandbox: &str) -> Result<PathBuf, ProxyError> {
     Ok(state_dir(app, sandbox)?.join("meta.json"))
 }

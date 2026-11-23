@@ -6,14 +6,13 @@ import { containerStatusFor } from "$lib/activity/activity.svelte";
 import { allCapabilities, type ProviderCapabilities, type ProviderId } from "$lib/providers";
 
 // Module-scoped store (mirrors src/lib/workspace/state.svelte.ts): the shared sandbox-list,
-// deployment, host, and capability data read by the app sidebar, the Home page
+// deployment, and capability data read by the app sidebar, the Home page
 // (src/routes/projects/+page.svelte), the sandbox header and the Manage dashboard. None of them is
 // an ancestor of another, so a Destroy or Deploy/Undeploy/Sync triggered from the Dashboard has no
 // direct prop path back to the lists — this store is that path.
 
 let projects = $state<Project[]>([]);
 let deployments = $state<Record<string, Deployment>>({});
-let hosts = $state<string[]>([]);
 let capabilities = $state<Record<ProviderId, ProviderCapabilities> | undefined>(undefined);
 let loadError = $state("");
 
@@ -33,14 +32,6 @@ async function loadDeployments() {
     try {
         const list = await invoke<Deployment[]>("sandbox_deployments");
         deployments = Object.fromEntries(list.map((d) => [d.name, d]));
-    } catch (e) {
-        loadError = parseError(e).message;
-    }
-}
-
-async function loadHosts() {
-    try {
-        hosts = await invoke<string[]>("list_sandbox_hosts");
     } catch (e) {
         loadError = parseError(e).message;
     }
@@ -71,10 +62,6 @@ export function deploymentFor(name: string): Deployment | undefined {
     return deployments[name];
 }
 
-export function hostsList(): string[] {
-    return hosts;
-}
-
 export function capabilitiesFor(provider: ProviderId): ProviderCapabilities | undefined {
     return capabilities?.[provider];
 }
@@ -91,7 +78,7 @@ export async function refreshSandboxState(): Promise<void> {
     await Promise.all([loadProjects(), loadDeployments()]);
 }
 
-// Hydrates and keeps sandbox-list/deployment/host/capability data live via a 3 s poll, gated
+// Hydrates and keeps sandbox-list/deployment/capability data live via a 3 s poll, gated
 // behind Podman readiness so a down Podman is never flooded with failing invocations. Callers
 // (the sidebar, Home, WorkspaceDashboard) may not have already probed Podman themselves, so this
 // takes that gating responsibility itself rather than trusting the caller did — idempotent and
@@ -109,7 +96,6 @@ export async function ensureSandboxRemoteState(): Promise<void> {
         started = false;
         return;
     }
-    loadHosts();
     loadCapabilities();
     await refreshSandboxState();
     pollId = setInterval(refreshSandboxState, 3000);

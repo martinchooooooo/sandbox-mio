@@ -11,7 +11,7 @@
     // Mirrors `ApplyOutcome` and `GithubSandboxStatus` in src-tauri/src/credentials/github.rs and
     // src-tauri/src/services/github_access.rs.
     type Outcome =
-        | { kind: "applied"; capturedAtMs: number; swapped: boolean }
+        | { kind: "applied"; capturedAtMs: number }
         | { kind: "needsImage" }
         | { kind: "failed"; reason: string; capturedAtMs: number };
     interface GithubStatus {
@@ -20,7 +20,6 @@
         credentialCapturedAtMs: number | null;
         accountLogin: string | null;
         deployed: boolean;
-        sidecarMode: boolean;
     }
 
     let { sandboxName }: { sandboxName: string } = $props();
@@ -32,7 +31,7 @@
     let switchKey = $state(0);
     let error = $state<string | null>(null);
 
-    type Display = "deployed" | "no-credential" | "opted-out" | "needs-image" | "failed" | "applied" | "out-of-date" | "pending";
+    type Display = "deployed" | "no-credential" | "opted-out" | "needs-image" | "failed" | "applied" | "pending";
 
     const display = $derived.by<Display | null>(() => {
         const s = status;
@@ -42,13 +41,8 @@
         if (s.optedOut) return "opted-out";
         if (s.outcome?.kind === "needsImage") return "needs-image";
         if (s.outcome?.kind === "failed") return "failed";
-        if (s.outcome?.kind === "applied") {
-            // Behind a sidecar the placeholder never changes, so a rotation does not make gh stale.
-            const current =
-                s.outcome.swapped === s.sidecarMode &&
-                (s.sidecarMode || s.outcome.capturedAtMs === s.credentialCapturedAtMs);
-            return current ? "applied" : "out-of-date";
-        }
+        // The placeholder never changes, so a rotation does not make gh stale.
+        if (s.outcome?.kind === "applied") return "applied";
         return "pending";
     });
 
@@ -109,7 +103,6 @@
         class="flex items-center justify-between gap-2 rounded-lg border p-3 text-xs"
         data-github-access
         data-state={display}
-        data-github-mode={status.sidecarMode ? "sidecar" : "plaintext"}
     >
         <div class="min-w-0">
             <div class="text-sm font-medium">{m.github_card_title()}</div>
@@ -128,11 +121,7 @@
                 {:else if display === "failed" && status.outcome?.kind === "failed"}
                     {m.github_failed({ reason: status.outcome.reason })}
                 {:else if display === "applied"}
-                    {`${status.accountLogin ? m.github_account({ login: status.accountLogin }) : m.github_card_title()} · ${
-                        status.sidecarMode ? m.github_token_sidecar() : m.github_token_plaintext()
-                    }`}
-                {:else if display === "out-of-date"}
-                    {m.github_out_of_date()}
+                    {`${status.accountLogin ? m.github_account({ login: status.accountLogin }) : m.github_card_title()} · ${m.github_token_sidecar()}`}
                 {:else}
                     {m.github_pending()}
                 {/if}

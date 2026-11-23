@@ -208,10 +208,6 @@
             <span class="text-xs text-red-500">{panelError ?? statusEntry.error}</span>
         {/if}
     </div>
-{:else if status}
-    <span class="text-muted-foreground text-xs" data-traffic-disabled>
-        {m.proxy_off_podman()}
-    </span>
 {:else if statusEntry.error}
     <span class="text-xs text-red-500">{statusEntry.error}</span>
 {/if}

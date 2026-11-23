@@ -16,6 +16,8 @@ describe("Sandbox start failure — error line and retry (mock backend)", functi
     await ProjectsPage.open();
     await ProjectsPage.ensurePodmanReady();
     await ProjectsPage.createProject(name);
+    // Create leaves the sandbox running; stop it so Start is offered.
+    await row.stop();
 
     await configureMock("podman.start", {
       kind: "fail-once",

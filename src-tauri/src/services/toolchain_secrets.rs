@@ -2,9 +2,10 @@
 //! in-sandbox `mise` calls (`docs/features/techdebt-sweep/02_dev.md`, Resolved Decision 3). Values
 //! never leave the returned list; callers log variable names only.
 //!
-//! A sandbox behind an iron-proxy sidecar gets the placeholder only while its GitHub binding is
-//! staged in the sidecar, and nothing when opted out or the binding is missing; the binding's hosts include `raw.githubusercontent.com`, where mise
-//! sends the token (`docs/features/proxy-credential-secrets/02_dev.md`, Resolved Decision 15).
+//! A sandbox gets the placeholder only while its GitHub binding is staged in the sidecar, and
+//! nothing when opted out or the binding is missing; the binding's hosts include
+//! `raw.githubusercontent.com`, where mise sends the token
+//! (`docs/features/proxy-credential-secrets/02_dev.md`, Resolved Decision 15).
 
 use tauri::AppHandle;
 
@@ -23,11 +24,7 @@ impl AppToolchainSecrets {
 
 impl ToolchainSecrets for AppToolchainSecrets {
     fn env(&self, sandbox: &str) -> Vec<(String, String)> {
-        if super::github_access::github_sidecar_mode(&self.app, sandbox) {
-            let live = crate::proxy::iron::github_binding_live(&self.app, sandbox);
-            return sidecar_env(sandbox, live);
-        }
-        crate::credentials::github_secret_env(&self.app)
+        sidecar_env(sandbox, crate::proxy::iron::github_binding_live(&self.app, sandbox))
     }
 }
 

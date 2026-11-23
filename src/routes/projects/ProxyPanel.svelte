@@ -32,11 +32,7 @@
 <div class="flex flex-col gap-1.5" data-proxy-panel>
     <span class="text-muted-foreground text-xs shrink-0">{m.proxy_title()}</span>
 
-    {#if status && !status.exists}
-        <span class="text-muted-foreground text-xs" data-proxy-disabled>
-            {m.proxy_off_podman()}
-        </span>
-    {:else if status && !status.running}
+    {#if status && !status.running}
         <span class="text-xs text-destructive" data-proxy-stopped>{m.proxy_stopped()}</span>
     {:else if status?.running}
         <span class="text-muted-foreground text-xs" data-proxy-network>
@@ -48,7 +44,7 @@
             </span>
         {:else}
             <span class="rounded bg-amber-100 px-2 py-1 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200" data-proxy-legacy>
-                This sandbox uses the old proxy, which has no network boundary and no policy. Recreate the sandbox with inspection enabled to get both. <!-- TODO(i18n) -->
+                This sandbox uses the old proxy, which has no network boundary and no policy. Recreate the sandbox to get both. <!-- TODO(i18n) -->
             </span>
             <span class="text-muted-foreground text-xs">
                 {m.proxy_unmonitored()}

@@ -38,14 +38,13 @@ describe("Podman egress boundary — editor gating and failure paths (mock backe
     for (const n of [name, legacyName]) await invokeCmd("destroy_sandbox", { name: n, force: true }).catch(() => undefined);
   });
 
-  it("shows the egress picker for Podman only once the proxy switch is on", async () => {
+  it("shows the egress picker for Podman in Advanced, with no proxy switch", async () => {
     await ProjectsPage.goHome();
     await ProjectsPage.open();
     await ProjectsPage.ensurePodmanReady();
-    assert(!(await ProjectsPage.egressOption("allowlist").isExisting()), "egress picker shown with the proxy off");
-    await ProjectsPage.enableProxy();
+    await ProjectsPage.openAdvanced();
     await ProjectsPage.egressOption("allowlist").waitForDisplayed({ timeout: COMMAND });
-    assert(await ProjectsPage.podmanProxyHint.isDisplayed(), "the Podman proxy hint is missing");
+    assert(!(await $("[data-proxy-toggle]").isExisting()), "the proxy is implicit, so no switch is shown");
     await ProjectsPage.chooseEgress("allowlist");
     await ProjectsPage.createProject(name);
 

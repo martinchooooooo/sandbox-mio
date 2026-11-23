@@ -24,8 +24,6 @@
   "workspace_close_tab_label": "Закрыть {title}",
   "projects_deploy": "Развернуть",
   "projects_destroy": "Удалить",
-  "projects_no_hosts": "Нет зарегистрированных хостов — сначала добавьте один.",
-  "projects_deploy_confirm": "Развернуть",
   "projects_cancel": "Отмена",
   "projects_packages": "Пакеты",
   "projects_package_placeholder": "имя пакета",
@@ -233,9 +231,7 @@
   "netpolicy_secret_exists": "Для ${envVar} уже есть секрет; измените его.",
   "netpolicy_echo_warning": "{hosts} возвращает запросы обратно, поэтому настоящее значение привязанного секрета попало бы в песочницу.",
   "netpolicy_save": "Сохранить политику",
-  "proxy_inspect_traffic": "Инспекция трафика",
   "proxy_title": "Инспекция трафика",
-  "proxy_off_podman": "Выключено. Пересоздайте песочницу с включённой инспекцией, чтобы включить её.",
   "proxy_stopped": "Прокси-сайдкар остановлен. Исходящие запросы песочницы не проходят, пока он не будет перезапущен.",
   "proxy_network": "Сеть прокси: {network}",
   "proxy_unmonitored": "Трафик в обход прокси (сырые сокеты, git через SSH) не инспектируется.",
@@ -360,7 +356,5 @@
   "github_failed": "Сбой: {reason}",
   "github_account": "GitHub: {login}",
   "github_token_sidecar": "токен надёжно хранится",
-  "github_token_plaintext": "токен хранится в песочнице",
-  "github_out_of_date": "Устарело; применится при следующем запуске",
   "github_pending": "Применится, когда песочница запущена"
 }

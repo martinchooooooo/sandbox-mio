@@ -9,7 +9,8 @@ import { captureDiagOnFailure } from "../../../lib/diag.js";
 //
 // Unlike base-image-build.spec.ts, this only touches the remote connection, so it has no ordering
 // constraint with the rest of the suite.
-describe("Base image bootstrap (remote)", () => {
+// Skipped: every sandbox has a proxy sidecar, so remote deploy is blocked (docs/features/proxy-remote-deploy/feature.md).
+describe.skip("Base image bootstrap (remote)", () => {
   captureDiagOnFailure();
 
   it("builds the mise base image on first remote deploy when it is absent on the target", async function () {

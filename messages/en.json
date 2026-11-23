@@ -24,8 +24,6 @@
   "workspace_close_tab_label": "Close {title}",
   "projects_deploy": "deploy",
   "projects_destroy": "delete",
-  "projects_no_hosts": "No registered hosts — add one first.",
-  "projects_deploy_confirm": "Deploy",
   "projects_cancel": "Cancel",
   "projects_packages": "Packages",
   "projects_package_placeholder": "package name",
@@ -233,9 +231,7 @@
   "netpolicy_secret_exists": "${envVar} already has a secret; edit it instead.",
   "netpolicy_echo_warning": "{hosts} echoes requests back, so a bound secret's real value would reach the sandbox.",
   "netpolicy_save": "Save policy",
-  "proxy_inspect_traffic": "Inspect traffic",
   "proxy_title": "Traffic inspection",
-  "proxy_off_podman": "Off. Recreate this sandbox with inspection enabled to turn it on.",
   "proxy_stopped": "The proxy sidecar is stopped. The sandbox's outbound requests fail until it restarts.",
   "proxy_network": "Proxy network: {network}",
   "proxy_unmonitored": "Traffic that ignores the proxy (raw sockets, git-over-SSH) is not inspected.",
@@ -360,7 +356,5 @@
   "github_failed": "Failed: {reason}",
   "github_account": "GitHub: {login}",
   "github_token_sidecar": "token kept securely",
-  "github_token_plaintext": "token stored in sandbox",
-  "github_out_of_date": "Out of date; applies on next start",
   "github_pending": "Applies when the sandbox runs"
 }

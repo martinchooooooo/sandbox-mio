@@ -126,24 +126,9 @@ pub fn load_secret(app: &AppHandle, service_id: &str) -> Result<String, Credenti
     read_secret(&store_dir(app)?.join(service_id), service_id)
 }
 
-/// The mise variables carrying `token`, which may be the placeholder in sidecar mode.
+/// The mise variables carrying `token`, which is the sidecar placeholder, never the real token.
 pub fn github_env(token: &str) -> Vec<(String, String)> {
     GITHUB_TOKEN_ENV.iter().map(|name| (name.to_string(), token.to_string())).collect()
-}
-
-/// The secret environment a sandbox-side `mise` call carries to lift GitHub's unauthenticated rate
-/// limit: empty when no token is saved, so behaviour is unchanged (`docs/features/techdebt-sweep/
-/// 02_dev.md`, Resolved Decision 3). A store that cannot be read is logged and treated as empty,
-/// because a missing token must never fail a package install.
-pub fn github_secret_env(app: &AppHandle) -> Vec<(String, String)> {
-    match load_secret(app, GITHUB_SERVICE) {
-        Ok(token) if !token.is_empty() => github_env(&token),
-        Ok(_) | Err(CredentialError::NotFound(_)) => Vec::new(),
-        Err(e) => {
-            tracing::warn!(target: "credentials", error = %e, "GitHub token unreadable");
-            Vec::new()
-        }
-    }
 }
 
 pub fn list(app: &AppHandle) -> Result<Vec<(String, CredentialManifest)>, CredentialError> {

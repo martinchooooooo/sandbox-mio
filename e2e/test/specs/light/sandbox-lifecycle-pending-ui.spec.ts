@@ -17,6 +17,8 @@ describe("Sandbox lifecycle — pending state is shared across surfaces (mock ba
     await ProjectsPage.open();
     await ProjectsPage.ensurePodmanReady();
     await ProjectsPage.createProject(name);
+    // Create leaves the sandbox running; stop it so Start is offered.
+    await row.stop();
 
     await configureMock("podman.start", { kind: "delay", ms: 3000, calls: 1 });
     await row.start();

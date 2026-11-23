@@ -21,7 +21,6 @@ describe("Dashboard package list follows the active sandbox on direct switch (mo
   it("installs a package into sandbox A's Dashboard", async () => {
     await ProjectsPage.open();
     await ProjectsPage.createProject(nameA);
-    await rowA.start();
     await rowA.waitForRunning();
     await rowA.openWorkspace();
     await workspaceDashboard.waitForRendered(nameA);
@@ -31,7 +30,6 @@ describe("Dashboard package list follows the active sandbox on direct switch (mo
 
   it("switching directly to sandbox B's Dashboard does not show A's package", async () => {
     await ProjectsPage.createProject(nameB);
-    await rowB.start();
     await rowB.waitForRunning();
     // Neither sandbox has opened a Terminal/AgentWeb pane, so `active_app` stays null throughout
     // this click — the exact transition that never remounted WorkspaceDashboard pre-fix.

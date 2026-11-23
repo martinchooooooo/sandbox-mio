@@ -137,7 +137,6 @@ describe("GitHub placeholder swap — sidecar sandbox on a real machine", functi
   const A = `e2e-gps-${stamp}`;
   const sidecar = `${A}-proxy`;
   const tokenFile = path.join(APP_DATA_ROOT, "proxy", A, "secrets", "mio-github");
-  const stateFile = (name: string) => path.join(APP_DATA_ROOT, "github", `${name}.json`);
   const card = () => $("[data-github-access]");
 
   before(function () {
@@ -160,15 +159,15 @@ describe("GitHub placeholder swap — sidecar sandbox on a real machine", functi
     });
   }
 
-  /** The reconcile has finished applying the placeholder (or the migration to it), judged host-side. */
-  async function waitForApplied(name: string, swapped: boolean): Promise<void> {
+  /** The reconcile has finished applying the placeholder, judged host-side. */
+  async function waitForApplied(name: string): Promise<void> {
     await browser.waitUntil(
       async () => {
-        const s = await invokeCmd<{ outcome: { kind: string; swapped?: boolean } | null; optedOut: boolean }>(
+        const s = await invokeCmd<{ outcome: { kind: string } | null; optedOut: boolean }>(
           "github_sandbox_status",
           { name },
         );
-        return !s.optedOut && s.outcome?.kind === "applied" && s.outcome.swapped === swapped;
+        return !s.optedOut && s.outcome?.kind === "applied";
       },
       { timeout: SUBPROCESS, timeoutMsg: "the GitHub login was never applied to the sandbox" },
     );
@@ -202,7 +201,6 @@ describe("GitHub placeholder swap — sidecar sandbox on a real machine", functi
   it("1. creates sandbox A behind an iron-proxy sidecar", async () => {
     await ProjectsPage.open();
     await ProjectsPage.ensurePodmanReady();
-    await ProjectsPage.enableProxy();
     // Open egress already reaches GitHub's hosts, so no policy needs seeding for this spec.
     const row = await ProjectsPage.createProject(A, { timeout: PACKAGE_INSTALL });
     await row.waitForRunning();
@@ -213,11 +211,10 @@ describe("GitHub placeholder swap — sidecar sandbox on a real machine", functi
     assert(names.includes(sidecar), "the iron-proxy sidecar is not listed by podman ps");
   });
 
-  it("2. saves the token and the card reports sidecar mode", async () => {
+  it("2. saves the token and the card says it is kept securely", async () => {
     await invokeCmd("set_github_token", { token: TOKEN });
     await openOverview(A);
     await waitForCardState("applied");
-    assert.equal(await card().getAttribute("data-github-mode"), "sidecar");
     const text = await $("[data-github-access-text]").getText();
     assert(text.includes("token kept securely"), "the card must say the token is kept securely");
     assert(!text.includes("token stored in sandbox"), "the card must not say the token is stored in the sandbox");
@@ -302,35 +299,11 @@ describe("GitHub placeholder swap — sidecar sandbox on a real machine", functi
   it("8a. opts A out: no token file, no login", async () => {
     await invokeCmd("set_github_token", { token: TOKEN });
     await waitForTokenFile(TOKEN);
-    await waitForApplied(A, true);
+    await waitForApplied(A);
     await invokeCmd("set_github_sandbox_access", { name: A, enabled: false });
     await waitForCardState("opted-out");
     await waitForTokenFile(null);
     await browser.waitUntil(async () => ghApiUser(A).status !== 0, { timeout: SUBPROCESS, timeoutMsg: "gh api user still works after opt-out" });
     assert(!hostsYmlHolds(A, TOKEN), "hosts.yml must not hold the token after opt-out");
-  });
-
-  it("8c. migrates a sandbox holding the plaintext token to the placeholder", async () => {
-    await invokeCmd("set_github_sandbox_access", { name: A, enabled: true });
-    await waitForApplied(A, true);
-
-    // Recreate the pre-upgrade state: the real token in hosts.yml and an outcome that says so.
-    const write = guestSh(
-      A,
-      `read -r t; mkdir -p /root/.config/gh; printf 'github.com:\\n    oauth_token: %s\\n    user: e2e\\n' "$t" > ${HOSTS_YML}`,
-      `${TOKEN}\n`,
-    );
-    assert.equal(write.status, 0, `seeding hosts.yml failed: ${write.stderr}`);
-    const state = JSON.parse(fs.readFileSync(stateFile(A), "utf8"));
-    state.outcome = { ...state.outcome, kind: "applied", swapped: false };
-    fs.writeFileSync(stateFile(A), JSON.stringify(state, null, 2));
-    assert(hostsYmlHolds(A, TOKEN), "the seeded hosts.yml must hold the token before the migration");
-
-    await invokeCmd("set_github_sandbox_access", { name: A, enabled: true });
-    await waitForApplied(A, true);
-    assert(hostsYmlHolds(A, PLACEHOLDER), "hosts.yml must hold the placeholder after the migration");
-    const leaks = leakCount(A, TOKEN);
-    assert(leaks.files === 0 && leaks.env === 0, "the token is still in the guest after the migration");
-    await waitForGhApiUser(A);
   });
 });

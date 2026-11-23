@@ -40,38 +40,24 @@ class ProjectsPage extends AppPage {
     await (await this.useExistingFolderLink).click();
   }
 
-  // The proxy and egress controls sit behind the shared AdvancedSection disclosure, closed by default
+  // The egress controls sit behind the shared AdvancedSection disclosure, closed by default
   // on every page visit (docs/features/desktop-app-feel/02_dev.md Phase C) — this is its trigger.
   get advancedTrigger(): Element {
     return this.createRow.$("button=Advanced");
   }
 
-  /**
-   * Turn the proxy switch on for the next `createProject()`. For Podman this makes a bounded sandbox
-   * (docs/features/podman-egress-boundary) and reveals the egress picker. Opens Advanced if closed.
-   */
-  async enableProxy(): Promise<void> {
+  /** Open the create form's Advanced section (revealing the egress picker) if it is closed. */
+  async openAdvanced(): Promise<void> {
     await showHome();
-    const toggle = this.createRow.$("[data-proxy-toggle]");
-    if (!((await toggle.isExisting()) && (await toggle.isDisplayed()))) {
+    const picker = this.createRow.$("[data-egress-picker]");
+    if (!((await picker.isExisting()) && (await picker.isDisplayed()))) {
       const trigger = await this.advancedTrigger;
       await trigger.waitForClickable({ timeout: UI_SETTLE });
       await trigger.click();
     }
-    await toggle.waitForClickable({ timeout: UI_SETTLE });
-    if ((await toggle.getAttribute("aria-checked")) !== "true") await toggle.click();
-    await browser.waitUntil(async () => (await toggle.getAttribute("aria-checked")) === "true", {
-      timeout: UI_SETTLE,
-      timeoutMsg: "proxy switch did not turn on",
-    });
   }
 
-  get podmanProxyHint(): Element {
-    return this.createRow.$("[data-proxy-podman-hint]");
-  }
-
-  // The egress choice, shown only once the proxy switch is on; call after enableProxy(), which
-  // opens Advanced.
+  // The egress choice, shown inside Advanced; call after openAdvanced().
   egressOption(mode: string): Element {
     return this.createRow.$(`button[data-egress-option='${mode}']`);
   }

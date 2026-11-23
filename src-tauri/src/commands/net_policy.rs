@@ -30,8 +30,8 @@ pub fn set_net_policy(
 }
 
 /// Whether the workspace file differs from what `name` was created with, or last applied for a
-/// Podman sandbox. A sandbox with no snapshot (no proxy, or created before this feature) never
-/// reports drift.
+/// Podman sandbox. A sandbox with no snapshot (created before this feature) never reports
+/// drift.
 #[tauri::command]
 pub fn net_policy_drift(
     name: String,

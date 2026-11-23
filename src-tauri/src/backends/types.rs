@@ -59,10 +59,10 @@ pub enum BackendError {
     /// Error from SSH config management.
     #[error(transparent)]
     Ssh(#[from] SshError),
-    /// `deploy` was asked for a sandbox that has a proxy sidecar. Remote proxy creation is out of
-    /// scope for v1 (`docs/features/network-proxy/02_dev.md`, Resolved Decision 6) and deploying
-    /// without the proxy would silently move an inspected sandbox onto an uninspected network.
-    #[error("{name:?} has traffic inspection enabled, which cannot be deployed to a remote host")]
+    /// `deploy` is refused for every sandbox: each has a proxy sidecar and no remote counterpart
+    /// exists yet, and deploying without it would silently move the sandbox onto an unbounded
+    /// network (`docs/features/proxy-remote-deploy/feature.md`).
+    #[error("remote deploy of {name:?} is temporarily unavailable")]
     ProxyDeployUnsupported { name: String },
 }
 

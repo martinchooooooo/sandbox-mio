@@ -73,9 +73,9 @@ pub async fn list_user(store: &Arc<dyn SandboxBackend>) -> Result<Vec<Sandbox>, 
         .collect())
 }
 
-/// Creates a sandbox on `provider` and brings its workspace up. `proxy` opts the sandbox into a
-/// per-sandbox proxy sidecar (`docs/features/network-proxy/02_dev.md`); for Podman that is the
-/// iron-proxy egress boundary (`docs/features/podman-egress-boundary/02_dev.md`).
+/// Creates a sandbox on `provider` and brings its workspace up. Every sandbox gets a per-sandbox
+/// proxy sidecar (`docs/features/network-proxy/02_dev.md`); for Podman that is the iron-proxy
+/// egress boundary (`docs/features/podman-egress-boundary/02_dev.md`).
 ///
 /// Runs as the `sandbox-create:<name>` activity task once the name is known to be usable, so the
 /// UI can show the current step; a rejected name fails fast without opening a task.
@@ -83,7 +83,6 @@ pub async fn create(
     name: &str,
     existing_path: Option<&str>,
     provider: ProviderId,
-    proxy: bool,
     egress: Option<&EgressRequest>,
     store: &Arc<dyn SandboxBackend>,
     runtime: &Arc<dyn RuntimeManager>,
@@ -104,7 +103,7 @@ pub async fn create(
 
     let id = format!("sandbox-create:{name}");
     activity::scope(app, &id, TaskKind::SandboxCreate, Some(name.to_string()), |task| async move {
-        create_steps(&task, name, existing_path, provider, proxy, egress, store, runtime, registry, app)
+        create_steps(&task, name, existing_path, provider, egress, store, runtime, registry, app)
             .await
             .map_err(TaskFailure::same)
     })
@@ -117,7 +116,6 @@ async fn create_steps(
     name: &str,
     existing_path: Option<&str>,
     provider: ProviderId,
-    proxy: bool,
     egress: Option<&EgressRequest>,
     store: &Arc<dyn SandboxBackend>,
     runtime: &Arc<dyn RuntimeManager>,
@@ -132,54 +130,46 @@ async fn create_steps(
 
     // The sidecar runs on the sandbox's own provider.
     let sidecar = registry.local(provider);
-    let attachment = if proxy {
-        tracing::info!(target: "create", %name, "create_sandbox: ensuring proxy image");
-        task.progress(None, "Preparing network proxy");
-        crate::proxy::ensure_proxy_image(app, &sidecar, provider).await?;
-        tracing::info!(target: "create", %name, "create_sandbox: creating proxy sidecar");
-        task.progress(None, "Starting network proxy");
-        match crate::proxy::create_proxy(app, &sidecar, provider, name).await {
-            Ok(a) => Some(a),
-            Err(e) => {
-                crate::proxy::remove_proxy(app, &sidecar, provider, name).await;
-                return Err(e.into());
-            }
+    tracing::info!(target: "create", %name, "create_sandbox: ensuring proxy image");
+    task.progress(None, "Preparing network proxy");
+    crate::proxy::ensure_proxy_image(app, &sidecar, provider).await?;
+    tracing::info!(target: "create", %name, "create_sandbox: creating proxy sidecar");
+    task.progress(None, "Starting network proxy");
+    let attachment = match crate::proxy::create_proxy(app, &sidecar, provider, name).await {
+        Ok(a) => a,
+        Err(e) => {
+            crate::proxy::remove_proxy(app, &sidecar, provider, name).await;
+            return Err(e.into());
         }
-    } else {
-        None
     };
 
     tracing::info!(target: "create", %name, "create_sandbox: creating instance");
     task.progress(None, "Creating container");
-    let sandbox = match store.create(name, existing_path, provider, attachment.as_ref(), egress).await {
+    let sandbox = match store.create(name, existing_path, provider, Some(&attachment), egress).await {
         Ok(s) => s,
         Err(e) => {
             // The proxy container and network exist ahead of the sandbox they attach to
             // (`docs/features/network-proxy/02_dev.md`, Concrete Model); a failed sandbox create
             // must not strand them.
-            if proxy {
-                crate::proxy::remove_proxy(app, &sidecar, provider, name).await;
-            }
+            crate::proxy::remove_proxy(app, &sidecar, provider, name).await;
             return Err(e.into());
         }
     };
-    if proxy {
-        // Order is load-bearing: the sidecar denies everything until the first apply (Resolved
-        // Decision 18), and the policy can only be read once `store.create` resolved the workspace.
-        task.progress(None, "Applying network policy");
-        if let Err(e) = apply_policy_and_inject_ca(app, registry, &sidecar, name, &sandbox.workspace_path).await {
-            tracing::error!(target: "create", %name, error = %e, "create_sandbox: proxy setup failed, rolling back");
-            match store.destroy(name).await {
-                Ok(()) => cleanup_host_state(name, app),
-                Err(destroy_err) => tracing::error!(
-                    target: "create", %name, error = %destroy_err,
-                    "create_sandbox: rollback after proxy setup failure also failed"
-                ),
-            }
-            crate::net_policy::remove_applied(app, name);
-            crate::proxy::remove_proxy(app, &sidecar, provider, name).await;
-            return Err(e);
+    // Order is load-bearing: the sidecar denies everything until the first apply (Resolved
+    // Decision 18), and the policy can only be read once `store.create` resolved the workspace.
+    task.progress(None, "Applying network policy");
+    if let Err(e) = apply_policy_and_inject_ca(app, registry, &sidecar, name, &sandbox.workspace_path).await {
+        tracing::error!(target: "create", %name, error = %e, "create_sandbox: proxy setup failed, rolling back");
+        match store.destroy(name).await {
+            Ok(()) => cleanup_host_state(name, app),
+            Err(destroy_err) => tracing::error!(
+                target: "create", %name, error = %destroy_err,
+                "create_sandbox: rollback after proxy setup failure also failed"
+            ),
         }
+        crate::net_policy::remove_applied(app, name);
+        crate::proxy::remove_proxy(app, &sidecar, provider, name).await;
+        return Err(e);
     }
     tracing::info!(
         target: "create",
@@ -211,16 +201,6 @@ async fn apply_policy_and_inject_ca(
     let pem = crate::proxy::read_ca_pem(app, name, ProviderId::Podman)?;
     crate::proxy::inject_ca(podman, name, &pem).await?;
     Ok(())
-}
-
-/// Removes `name`'s proxy sidecar (container, network, state directory) if one exists. Checked
-/// first rather than called unconditionally, so destroying the overwhelming majority of
-/// non-proxied sandboxes doesn't log a "container not found" warning on every teardown.
-async fn remove_proxy_if_present(app: &tauri::AppHandle, registry: &Arc<ProviderRegistry>, name: &str) {
-    if crate::proxy::exists(app, registry, name).await {
-        let (id, provider) = crate::proxy::sidecar_provider(app, registry, name);
-        crate::proxy::remove_proxy(app, &provider, id, name).await;
-    }
 }
 
 /// Closes panes and forwards before anything touches the SSH channel they run over, which would
@@ -281,7 +261,9 @@ pub async fn destroy(
         store.destroy(name).await?;
         crate::net_policy::remove_applied(app, name);
         cleanup_host_state(name, app);
-        remove_proxy_if_present(app, registry, name).await;
+        // Best-effort, so the leftovers of a half-created sandbox are cleaned up too.
+        let (id, provider) = crate::proxy::sidecar_provider(app, registry, name);
+        crate::proxy::remove_proxy(app, &provider, id, name).await;
         return Ok(());
     };
     let _ = engine.flush(name).await;

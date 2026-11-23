@@ -11,7 +11,8 @@ import { captureDiagOnFailure } from "../../../lib/diag.js";
 // is only supported on async element matchers, not on plain JS value assertions — node:assert's
 // second argument carries the diagnostic message for free.
 
-describe("Deploy sandbox to remote machine", () => {
+// Skipped: every sandbox has a proxy sidecar, so remote deploy is blocked (docs/features/proxy-remote-deploy/feature.md).
+describe.skip("Deploy sandbox to remote machine", () => {
   const { projectName, row, workspaceDir } = useSandboxWorkspace("e2e-deploy");
 
   after(() => {

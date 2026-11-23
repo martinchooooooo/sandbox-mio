@@ -3,7 +3,6 @@
     import * as Field from "$lib/components/ui/field";
     import { Input } from "$lib/components/ui/input";
     import AdvancedSection from "$lib/components/AdvancedSection.svelte";
-    import { Switch } from "$lib/components/ui/switch";
     import { open } from "@tauri-apps/plugin-dialog";
     import { m } from "$lib/paraglide/messages.js";
     import { createSandbox } from "$lib/sandbox/lifecycle.svelte";
@@ -16,14 +15,12 @@
     let name = $state("");
     let existingPath = $state<string | undefined>(undefined);
     const provider = "podman";
-    // Off by default (docs/features/network-proxy/02_dev.md, Resolved Decision 3).
-    let proxy = $state(false);
     // Open by default (docs/features/microsandbox-network-policy/02_dev.md, Resolved Decision 3).
     let egress = $state<"open" | "allowlist">("open");
     let caps = $state<ProviderCapabilities | null>(null);
-    // A Podman policy is enforced by the proxy sidecar, so it exists only with the proxy on
+    // A Podman policy is enforced by the proxy sidecar every new sandbox gets
     // (docs/features/podman-egress-boundary/02_dev.md, Resolved Decision 5).
-    const egressSupported = $derived(!!caps && (caps.egressPolicy || (caps.sidecarEgress && proxy)));
+    const egressSupported = $derived(!!caps && (caps.egressPolicy || caps.sidecarEgress));
 
     $effect(() => {
         const p = provider;
@@ -76,7 +73,7 @@
         await checkPodman();
         if (podmanUnavailable()) return;
         const network = egressSupported ? { egress, starterHosts: allAgentApiHosts() } : undefined;
-        const started = createSandbox({ name: trimmed, existingPath, provider, proxy, network });
+        const started = createSandbox({ name: trimmed, existingPath, provider, network });
         if (!started) {
             // TODO(i18n)
             error = `A sandbox named "${trimmed}" already exists or is being created.`;
@@ -131,23 +128,8 @@
                     {/if}
                 {/if}
             </Field.Field>
-            <AdvancedSection>
-                <Field.Field orientation="horizontal">
-                    <Field.Label>
-                        {m.proxy_inspect_traffic()}
-                    </Field.Label>
-                    <Switch
-                        data-proxy-toggle
-                        checked={proxy}
-                        onCheckedChange={(v) => (proxy = v)}
-                    />
-                </Field.Field>
-                {#if proxy && caps?.sidecarEgress}
-                    <Field.Description data-proxy-podman-hint>
-                        Every request goes through the proxy sidecar; traffic that ignores it (raw sockets, git over SSH) is blocked. <!-- TODO(i18n) -->
-                    </Field.Description>
-                {/if}
-                {#if egressSupported}
+            {#if egressSupported}
+                <AdvancedSection>
                     <Field.Field>
                         <Field.Label>
                             {m.create_network_access_label()}
@@ -159,7 +141,7 @@
                                     aria-pressed={egress === value}
                                     variant={egress === value ? "default" : "outline"}
                                     size="sm"
-                                        onclick={() => (egress = value)}
+                                    onclick={() => (egress = value)}
                                 >{label}</Button>
                             {/each}
                         </div>
@@ -171,8 +153,8 @@
                             {/if}
                         </Field.Description>
                     </Field.Field>
-                {/if}
-            </AdvancedSection>
+                </AdvancedSection>
+            {/if}
         </Field.Group>
     </Field.Set>
 
