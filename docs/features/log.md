@@ -8,6 +8,7 @@ approximate. New entries go on top.
 ## 2026-11-22
 
 * **Implement** [remove-mitmproxy](remove-mitmproxy/index.md): the legacy pre-boundary mitmproxy sidecar path is removed; ProxyEngine stays with one variant as the seam, and a sidecar without an engine is treated as iron-proxy
+* **Create** [local-models-ux](local-models-ux/index.md): ideation drafted; the Models page adopts the onboarding's voice and components, re-homes the runtime teaching steps behind "For those who know", and describes every model in plain terms with a reason for each one this computer cannot run; no spike run
 * **Abandon** [proxy-toggle-management](proxy-toggle-management/index.md): every sandbox now always has a proxy sidecar, so there is nothing to turn on or off per sandbox
 * **Create** [workspace-ux](workspace-ux/index.md): the sandbox header is removed so the left sidebar is the only app chrome, with the in-view sandbox's apps nested in it, a dashboard title bar, horizontal section tabs and an Open folder that opens the sandbox folder; implemented but awaiting user approval and e2e
 * **Implement** [chat-agent-anatomy](chat-agent-anatomy/index.md): the native chat gains a per-sandbox learning mode that outlines parts as Brain or Arms, splits tool calls into ask and act, and plays a live brain-and-arms stage in a companion panel; translations (Phase G) wait for approval
