@@ -60,6 +60,7 @@
 * [remote-sync](remote-sync/index.md) - Run a sandbox on a remote host while mirroring its workspace to the laptop with Mutagen.
 * [remote-terminal](remote-terminal/index.md) - The in-app Zellij web terminal for sandboxes deployed on a remote host, via a Mutagen forward.
 * [remove-microsandbox](remove-microsandbox/index.md) - Remove the microsandbox provider and make Podman the only provider, keeping the provider, capability, process and net-policy seams so a future provider is a small addition.
+* [remove-mitmproxy](remove-mitmproxy/index.md) - Remove the legacy pre-boundary mitmproxy sidecar path, keeping ProxyEngine with one variant as the seam for another proxy engine.
 * [responsive-panel](responsive-panel/index.md) - Make the embedded workspace's global panel content adapt to narrow widths.
 * [sandbox-list-create](sandbox-list-create/index.md) - Inline create-sandbox item at the bottom of the sandbox list, with an existing-folder option.
 * [sandbox-runtime-management](sandbox-runtime-management/index.md) - Record installed software with mise and reproduce it on a remote host at deploy.

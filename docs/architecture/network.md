@@ -44,8 +44,6 @@ One policy format is shared across providers; Podman enforces it with a sidecar.
 | Changing the policy after create | Applied live by reloading the sidecar |
 | Remote deploy | Blocked for every sandbox until the sidecar can be recreated remotely |
 
-A Podman sidecar created before the boundary existed records traffic but has no boundary or policy until the sandbox is recreated.
-
 ## Where State Lives
 
 - **Workspace** (`.mio/`, visible inside the sandbox): the egress policy and secret bindings, which reference secrets by id only.
