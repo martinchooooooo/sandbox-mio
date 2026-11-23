@@ -26,6 +26,7 @@ sources:
   - resource: docs/features/unified-sidebar-nav/02_dev.md
   - resource: docs/features/native-agent-ui/02_dev.md
   - resource: docs/features/chat-agent-anatomy/02_dev.md
+  - resource: docs/features/workspace-ux/02_dev.md
 ---
 # Workspace UI: Window, Panes and Tabs
 
@@ -34,8 +35,8 @@ The app runs in one OS window. One webview renders the whole SvelteKit frontend 
 ## Window Layout
 
 - One app sidebar sits on the left, expanded or collapsed to an icon rail. It lists every sandbox, a way to create one, the app's pages (Home, AI models, Accounts and logins, Settings, Guide) and the activity center.
-- The content area to its right shows exactly one thing: a routed page at full width, or one sandbox. A sandbox shows a header (name, status, Start or Stop, Folder, close, and that sandbox's app tabs) above either its Manage dashboard or a pane.
-- Pane webviews fill the rectangle beside the sidebar and below the sandbox header. Rust computes that rectangle in logical pixels from the window size and the collapsed state, and repositions every pane on resize or collapse.
+- The content area to its right shows exactly one thing: a routed page at full width, or one sandbox. The sandbox in view nests its apps (Dashboard, the apps opened so far, Open folder) under its sidebar row (grouped icons in the icon rail), which is the only app chrome; the content area is either its dashboard (the Manage tab, labelled "Dashboard"; title bar with status and actions, then section tabs) or a pane.
+- Pane webviews fill the rectangle beside the sidebar at full height. Rust computes that rectangle in logical pixels from the window size and the collapsed state, and repositions every pane on resize or collapse.
 - Opening a page while a pane shows hides the pane and leaves it running; selecting the sandbox in the sidebar restores its last view. 
 
 ## Panes and the Registry
@@ -47,11 +48,11 @@ The app runs in one OS window. One webview renders the whole SvelteKit frontend 
 
 ## Tabs: Manage and Launchable Apps
 
-- Opening a sandbox lands on its Manage tab, which is always present and cannot be closed. Manage is an Overview (app launchers, coding agents and a one-line status summary) plus a sidebar of sections for tools, ports, network policy, traffic, remote deploys and destroying the sandbox.
+- Opening a sandbox lands on its Manage tab, which is always present and cannot be closed. Manage is an Overview (app cards, coding agents, a status summary) plus horizontal section tabs (tools, ports, network, traffic, remote); deleting the sandbox is a confirmed menu action.
 - Only the shown section is mounted, so it loads its data when opened. The last section shown is remembered per sandbox.
 - Manage is part of the main webview, not a pane, so showing Manage means hiding the active pane. Whether the dashboard, a page or the chat shows is derived from the active app Rust reports.
 - One catalogue declares the apps Manage can launch and when each is available; for example, the agent web UI needs an installed agent.
-- The sandbox header's tabs cover only the sandbox in view; the sidebar switches sandboxes.
+- The sidebar's nested apps cover only the sandbox in view; its rows switch sandboxes.
 
 ## Terminal Login
 
@@ -62,7 +63,8 @@ The terminal pane is Herdr inside the sandbox. Before the webview opens, the app
 - Only panes backed by a forward have a webview or URL, and only they are positioned, from the Rust layout computation.
 - No pane login secret is written into the workspace.
 - Dashboard and page visibility follow the active app Rust reports and are never set before a command resolves.
-- The sidebar width, rail width and sandbox header height in the frontend equal the Rust layout constants.
+- The sidebar width and rail width in the frontend equal the Rust layout constants.
 - One frontend store owns the pane-state subscription; components read from that store.
+- No menu is anchored in the sidebar, because a pane webview covers content beside it; menus live in the dashboard.
 - A new launchable app is added to the catalogue, not special-cased in components.
 - A Manage section fetches only while it is shown; a new section is added to the section catalogue.

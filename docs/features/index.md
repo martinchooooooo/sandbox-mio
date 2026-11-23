@@ -10,6 +10,7 @@
 * [onboarding-story](onboarding-story/index.md) - Illustrated onboarding book inside the welcome flow, extensible by chapter, with first-run setup running in the background and reported through the activity center.
 * [retro-ui-migration](retro-ui-migration/index.md) - Re-skin the UI primitives with the retro-ui-svelte registry (Sunset Orange, rounded).
 * [sandbox-resource-monitor](sandbox-resource-monitor/index.md) - Sample each local sandbox's CPU and memory, show a discrete health indicator with a restart hint, and keep a local usage history that tells the maintainer whether sandboxes need more default memory.
+* [workspace-ux](workspace-ux/index.md) - Make the in-sandbox workspace friendlier for non-technical users by making the left app sidebar the only app chrome, so hosted apps feel like the app itself.
 
 ## planned
 
