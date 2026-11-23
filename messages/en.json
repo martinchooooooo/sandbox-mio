@@ -234,7 +234,6 @@
   "proxy_title": "Traffic inspection",
   "proxy_stopped": "The proxy sidecar is stopped. The sandbox's outbound requests fail until it restarts.",
   "proxy_network": "Proxy network: {network}",
-  "proxy_unmonitored": "Traffic that ignores the proxy (raw sockets, git-over-SSH) is not inspected.",
   "traffic_title": "Network activity",
   "traffic_filter_placeholder": "Filter host or path",
   "traffic_secret_badge": "secret",

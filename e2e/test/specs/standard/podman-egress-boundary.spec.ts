@@ -169,7 +169,6 @@ describe("Podman egress boundary — bounded sandbox on a real machine", functio
       timeout: COMMAND,
       timeoutMsg: "the non-HTTP-blocked line never appeared (ProxyPanel needs a running iron-proxy sidecar status)",
     });
-    assert(!(await $("[data-proxy-legacy]").isExisting()), "a new sandbox must not show the legacy notice");
 
     await workspaceDashboard.editSecret(ENV_VAR, { value: secretValue });
     await workspaceDashboard.netPolicyApplyReport.waitForExist({ timeout: SUBPROCESS });

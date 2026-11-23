@@ -19,8 +19,6 @@
 
     const statusEntry = $derived(proxyStatusFor(sandboxName));
     const status = $derived(statusEntry.value);
-    // A Podman sidecar created before the iron-proxy switch keeps running without the boundary
-    // (docs/features/podman-egress-boundary/02_dev.md, Resolved Decision 8).
     const iron = $derived(status?.engine === "iron-proxy");
 
     $effect(() => {
@@ -41,13 +39,6 @@
         {#if iron}
             <span class="text-muted-foreground text-xs" data-proxy-non-http-blocked>
                 Traffic that ignores the proxy (raw sockets, git over SSH) is blocked: the sidecar is the sandbox's only way out. <!-- TODO(i18n) -->
-            </span>
-        {:else}
-            <span class="rounded bg-amber-100 px-2 py-1 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200" data-proxy-legacy>
-                This sandbox uses the old proxy, which has no network boundary and no policy. Recreate the sandbox to get both. <!-- TODO(i18n) -->
-            </span>
-            <span class="text-muted-foreground text-xs">
-                {m.proxy_unmonitored()}
             </span>
         {/if}
     {/if}

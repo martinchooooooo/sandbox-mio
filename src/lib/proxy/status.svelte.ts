@@ -12,8 +12,8 @@ export interface ProxyStatus {
     proxyIp: string;
     network: string;
     provider: "podman";
-    /** Mirrors Rust `proxy::types::ProxyEngine`; a Podman sidecar reporting "mitmproxy" is a legacy one. */
-    engine: "iron-proxy" | "mitmproxy";
+    /** Mirrors Rust `proxy::types::ProxyEngine`. */
+    engine: "iron-proxy";
 }
 
 type Entry = { value: ProxyStatus | null; error: string | null; fetchedAt: number; loading: boolean };

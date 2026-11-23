@@ -1,8 +1,7 @@
 //! Poll loop over the proxy sidecar's NDJSON flow log
 //! (`docs/features/proxy-traffic-viewer/02_dev.md`). One detached task per watched sandbox parses
 //! only newly appended lines and pushes them to the frontend as `proxy://flows-changed`. Each tick
-//! first ingests the iron-proxy audit stream into the file ([`super::audit`]); a pre-boundary
-//! mitmproxy sidecar's own log is still read as written.
+//! first ingests the iron-proxy audit stream into the file ([`super::audit`]).
 
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
@@ -12,6 +11,8 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
 use crate::provider::ProviderRegistry;
+
+use super::types::ProxyEngine;
 
 const EVENT_NAME: &str = "proxy://flows-changed";
 
@@ -23,9 +24,8 @@ pub const FLOW_LOG_MAX_LINES: usize = 500;
 /// (Resolved Decision 6).
 const FLOW_LOG_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
-/// One finished flow translated from iron-proxy's audit stream (or written by a pre-boundary
-/// mitmproxy sidecar). Metadata only — never headers, bodies,
-/// or an injected secret value (`docs/features/proxy-traffic-viewer/01_ideas.md`, Capture Scope).
+/// One finished flow translated from iron-proxy's audit stream. Metadata only — never headers,
+/// bodies, or an injected secret value (`docs/features/proxy-traffic-viewer/01_ideas.md`, Capture Scope).
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FlowEntry {
@@ -117,19 +117,21 @@ async fn watch_flows(app: AppHandle, providers: Arc<ProviderRegistry>, sandbox: 
     let Ok(path) = super::flows_path(&app, &sandbox) else {
         return;
     };
-    let iron = super::sidecar_engine(&app, &sandbox) == super::types::ProxyEngine::IronProxy;
+    let engine = super::sidecar_engine(&app, &sandbox);
     let sidecar = super::proxy_container_name(&sandbox);
     let mut offset: u64 = 0;
     let mut last_id: u64 = 0;
     loop {
         tokio::time::sleep(FLOW_LOG_POLL_INTERVAL).await;
 
-        let ingest_rewrote = match (iron, path.parent()) {
-            (true, Some(dir)) => {
-                let (_, provider) = super::sidecar_provider(&app, &providers, &sandbox);
-                super::audit::ingest(provider.as_ref(), &sidecar, dir).await
-            }
-            _ => false,
+        let ingest_rewrote = match engine {
+            ProxyEngine::IronProxy => match path.parent() {
+                Some(dir) => {
+                    let (_, provider) = super::sidecar_provider(&app, &providers, &sandbox);
+                    super::audit::ingest(provider.as_ref(), &sidecar, dir).await
+                }
+                None => false,
+            },
         };
         let len = match std::fs::metadata(&path) {
             Ok(meta) => meta.len(),

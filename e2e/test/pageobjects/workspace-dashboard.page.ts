@@ -5,7 +5,7 @@ import { AGENT_INSTALL, COMMAND, PACKAGE_INSTALL, PANEL_RENDER, SUBPROCESS } fro
 // switching needed (docs/features/consolidate-app-container/02_dev.md Phase C).
 type DashboardSectionId = "overview" | "tools" | "ports" | "network" | "traffic" | "remote" | "danger";
 
-// iron-proxy logs a CONNECT row's host as `host:port`; mitmproxy rows carry the bare host.
+// iron-proxy logs a CONNECT row's host as `host:port`; request rows carry the bare host.
 const stripPort = (host: string): string => host.replace(/:\d+$/, "");
 
 class WorkspaceDashboardPage {

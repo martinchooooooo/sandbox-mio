@@ -6,7 +6,7 @@
 //!
 //! A Podman sidecar runs iron-proxy as the only exit of the sandbox's internal network
 //! (`docs/features/podman-egress-boundary/02_dev.md`). Its `meta.json` records the engine and the
-//! provider; a sidecar without an engine predates the boundary and runs mitmproxy.
+//! provider; a sidecar without an engine is treated as iron-proxy.
 
 pub mod audit;
 pub mod flowlog;
@@ -351,13 +351,13 @@ fn read_meta(app: &AppHandle, sandbox: &str) -> Option<serde_json::Value> {
     crate::mio_files::read_value(&meta_path_if_exists(app, sandbox)?)
 }
 
-/// Mitmproxy when `meta` records no engine: only iron-proxy sidecars write one.
+/// Iron-proxy when `meta` records no engine or one that does not parse.
 fn meta_engine(meta: &serde_json::Value) -> ProxyEngine {
-    serde_json::from_value(meta["engine"].clone()).unwrap_or(ProxyEngine::Mitmproxy)
+    serde_json::from_value(meta["engine"].clone()).unwrap_or(ProxyEngine::IronProxy)
 }
 
 pub fn sidecar_engine(app: &AppHandle, sandbox: &str) -> ProxyEngine {
-    read_meta(app, sandbox).map_or(ProxyEngine::Mitmproxy, |m| meta_engine(&m))
+    read_meta(app, sandbox).map_or(ProxyEngine::IronProxy, |m| meta_engine(&m))
 }
 
 /// The sidecar's provider id and handle, resolved from `meta.json`.
@@ -373,7 +373,7 @@ pub fn sidecar_provider(
 /// Whether `instance` is a proxy sidecar rather than a sandbox. The name suffix alone is not enough:
 /// a sandbox created before the suffix was reserved can be called `x-proxy`. Sandboxes run the
 /// versioned `sandbox-mio/base:<n>` image and so carry an `image_version`; the sidecar image tags
-/// (iron-proxy `0.56.0`, or mitmproxy `11.1.3` on a pre-boundary sidecar) must never parse as one
+/// (iron-proxy `0.56.0`) must never parse as one
 /// (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 10).
 pub fn is_sidecar(instance: &crate::backends::types::Sandbox) -> bool {
     instance.name.ends_with(types::PROXY_CONTAINER_SUFFIX) && instance.image_version.is_none()

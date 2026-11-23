@@ -21,7 +21,6 @@ describe("Podman egress boundary — editor gating and failure paths (mock backe
 
   const stamp = Date.now();
   const name = `e2e-pebui-${stamp}`;
-  const legacyName = `e2e-pebui-legacy-${stamp}`;
   const workspacePath = path.join(WORKSPACE_ROOT, name);
   const policyFile = path.join(workspacePath, ".mio", "net-policy.json");
   const stateDir = path.join(APP_DATA_ROOT, "proxy", name);
@@ -35,7 +34,7 @@ describe("Podman egress boundary — editor gating and failure paths (mock backe
   }
 
   after(async () => {
-    for (const n of [name, legacyName]) await invokeCmd("destroy_sandbox", { name: n, force: true }).catch(() => undefined);
+    await invokeCmd("destroy_sandbox", { name, force: true }).catch(() => undefined);
   });
 
   it("shows the egress picker for Podman in Advanced, with no proxy switch", async () => {
@@ -64,7 +63,6 @@ describe("Podman egress boundary — editor gating and failure paths (mock backe
     assert(!(await $("[data-net-policy-reapply]").isExisting()), "the recreate block is not for the sidecar dialect");
     assert(!(await $("[data-net-policy-viewer]").isExisting()), "the viewer switch is not for the sidecar dialect");
     assert(!(await $("button=block-and-log").isExisting()), "violation actions are not for the sidecar dialect");
-    assert(!(await $("[data-proxy-legacy]").isExisting()), "a new sidecar must not show the legacy notice");
   });
 
   it("shows drift and an unstamped binding after an on-disk edit, and lists its missing value on apply", async () => {
@@ -144,17 +142,5 @@ describe("Podman egress boundary — editor gating and failure paths (mock backe
     await workspaceDashboard.openSection("traffic");
     await workspaceDashboard.waitForFlowHost("www.wikipedia.org", { rejected: true });
     assert(await $("[data-flow-would-block]").isExisting(), "no would-block row rendered");
-  });
-
-  it("shows the legacy notice and no editor for a sidecar without an engine", async () => {
-    await invokeCmd("create_sandbox", { name: legacyName, provider: "podman", proxy: true });
-    const metaFile = path.join(APP_DATA_ROOT, "proxy", legacyName, "meta.json");
-    const meta = JSON.parse(fs.readFileSync(metaFile, "utf8"));
-    delete meta.engine;
-    fs.writeFileSync(metaFile, JSON.stringify(meta));
-
-    await openNetwork(legacyName);
-    await $("[data-proxy-legacy]").waitForExist({ timeout: COMMAND });
-    assert(!(await $("[data-net-policy-editor]").isExisting()), "a legacy sidecar must not get the editor");
   });
 });

@@ -51,12 +51,10 @@ pub struct ProxyStatus {
     pub engine: ProxyEngine,
 }
 
-/// The proxy program a sidecar runs, recorded as `meta.json`'s `engine` by iron-proxy sidecars
-/// only. A sidecar running mitmproxy is a pre-boundary one without the network boundary
-/// (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 8).
+/// The proxy program a sidecar runs, recorded as `meta.json`'s `engine`. One variant today; kept
+/// as the seam for another engine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProxyEngine {
     IronProxy,
-    Mitmproxy,
 }
