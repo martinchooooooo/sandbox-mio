@@ -86,8 +86,6 @@ This project uses [shadcn-svelte](https://shadcn-svelte.com) for UI primitives, 
 When building UI features, always check `src/lib/components/ui/` first and reach for an existing component before writing custom markup.
 
 Currently available components:
-- `alert` (Root, Title, Description)
-- `badge`
 - `button`
 - `card` (Root, Header, Title, Description, Action, Content, Footer)
 - `collapsible`
@@ -100,21 +98,14 @@ Currently available components:
 - `input`
 - `input-group` — retro-ui-svelte has no `input-group` registry item either; same hand-restyle situation as `field`
 - `item` (Root, Group, Media, Content, Title, Description, Actions, Header, Footer, Separator) — retro-ui-svelte has no `item` registry item; pulled from shadcn-svelte and hand-restyled, like `field`
-- `kbd` (Root, Group) — retro-ui-svelte has no `kbd` registry item; pulled from shadcn-svelte and hand-restyled, like `field`
 - `label`
-- `loader` (retro-ui-svelte's animated loading indicator)
 - `nav-list` (Root, Group, Item) — the app sidebar's vertical navigation list: buttons with an icon and label, collapsing to an icon rail with tooltips; hand-built in the `section-nav` item style (shared base classes in `section-nav/styles.ts`), since retro-ui-svelte has no `sidebar` item (see `docs/features/unified-sidebar-nav/02_dev.md`)
-- `popover`
 - `progress`
-- `scroll-area` — retro-ui-svelte has no `scroll-area` registry item; pulled from shadcn-svelte and hand-restyled, like `field`
 - `section-nav` (Root, List, Item, Separator, Content) — vertical section list that collapses to icons with tooltips by container width and mounts only the active section; retro-ui-svelte has no `sidebar` item, so it is hand-built on bits-ui vertical `Tabs` and hand-restyled, like `field` and `input-group` (see `docs/features/manage-dashboard-redesign/02_dev.md`)
-- `select`
 - `separator`
-- `sheet`
 - `sonner` (toast notifications; mount a single `<Toaster />` in `src/routes/+layout.svelte`, call `toast.success`/`toast.error` from `svelte-sonner`)
 - `spinner` — retro-ui-svelte has no `spinner` registry item; pulled from shadcn-svelte as-is (a spinning icon, nothing to restyle)
 - `switch`
-- `tabs`
 - `text` (retro-ui-svelte typography; `as` picks the element and the `font-head` heading style; use it for every heading, and `card` titles render through it)
 - `textarea`
 - `tooltip`
