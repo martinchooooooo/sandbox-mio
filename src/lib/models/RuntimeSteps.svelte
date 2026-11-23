@@ -1,4 +1,12 @@
 <script lang="ts">
+    import { HugeiconsIcon } from "@hugeicons/svelte";
+    import {
+        ArrowRight02Icon,
+        Cancel01Icon,
+        CircleIcon,
+        Loading03Icon,
+        Tick02Icon,
+    } from "@hugeicons/core-free-icons";
     import { m } from "$lib/paraglide/messages.js";
     import type { SetupStep, RuntimeSetupEvent } from "./types";
 
@@ -14,6 +22,7 @@
         events?: RuntimeSetupEvent[];
     } = $props();
 
+    // Plain-language mirror: PLAIN_STEP_TITLES in src/lib/models/copy.ts.
     // Step ids are engine-owned (Rust); copy lives in Paraglide. Paraglide generates one function
     // per key, so an explicit id→message map is required rather than dynamic indexing of `m`.
     // A new step id with no entry here renders blank — guarded by the e2e checklist assertion.
@@ -86,21 +95,18 @@
 
     const live = $derived(events.length > 0);
 
-    function icon(status: Status | undefined): string {
-        switch (status) {
-            case "running": return "◐";
-            case "done": return "✓";
-            case "skipped": return "↷";
-            case "failed": return "✗";
-            default: return "○";
-        }
-    }
+    const ICONS = {
+        running: Loading03Icon,
+        done: Tick02Icon,
+        skipped: ArrowRight02Icon,
+        failed: Cancel01Icon,
+        pending: CircleIcon,
+    };
     function iconClass(status: Status | undefined): string {
         switch (status) {
             case "done":
             case "skipped": return "text-emerald-600 dark:text-emerald-400";
             case "failed": return "text-destructive";
-            case "running": return "text-blue-600 dark:text-blue-400";
             default: return "text-muted-foreground";
         }
     }
@@ -111,7 +117,11 @@
         {@const state = rowStates[step.id]}
         <li class="flex gap-2 text-sm" data-step-id={step.id}>
             {#if live}
-                <span class={iconClass(state?.status) + " shrink-0 w-4 text-center"}>{icon(state?.status)}</span>
+                <HugeiconsIcon
+                    icon={ICONS[state?.status ?? "pending"]}
+                    size={16}
+                    class={[iconClass(state?.status), "mt-0.5 shrink-0", state?.status === "running" && "animate-spin"]}
+                />
             {/if}
             <div class="flex flex-col">
                 <span class="font-medium" data-step-title>{title(step.id)}</span>

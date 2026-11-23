@@ -1,4 +1,4 @@
-import { invoke, Channel } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { parseError, type AppErrorKind } from "$lib/errors";
 import type { ActivityHeadline } from "$lib/activity/types";
 import { miseKey } from "$lib/agents/catalogue";
@@ -6,8 +6,9 @@ import { installAgentInSandbox } from "$lib/agents/install";
 import { agentsById } from "$lib/agents/preinstall";
 import { reprovisionInstalledAgents } from "$lib/agents/reprovision";
 import { MODELS, testModelFromEnv } from "$lib/models/catalogue";
+import { downloadModel, modelsState, wakeModel } from "$lib/models/model.svelte";
 import { recommendModels } from "$lib/models/recommend";
-import type { InferenceStatus, MachineSpecs, ModelDescriptor, ModelDownloadEvent } from "$lib/models/types";
+import type { MachineSpecs, ModelDescriptor } from "$lib/models/types";
 import { recordMilestone } from "./milestones";
 import { createSandbox, dismissCreate, pendingCreates } from "$lib/sandbox/lifecycle.svelte";
 import { refreshSandboxState, sandboxesList } from "$lib/sandbox/state.svelte";
@@ -179,64 +180,25 @@ export function retryModelSetup(): Promise<void> {
 
 async function runModelSetup(descriptor: ModelDescriptor): Promise<void> {
     model = { choice: descriptor, downloadPct: null, downloading: false, starting: false, ready: false, skipped: false, servedModelId: null, error: "" };
-    let servedModelId: string | null = null;
     try {
-        const source = descriptor.llama;
-        if (!source) throw { kind: "Backend", message: "This model has no download for the built-in engine." };
-        const onDisk = await invoke<string[]>("downloaded_models");
-        if (!onDisk.includes(descriptor.id)) {
+        const onDisk = await downloadModel(descriptor, (pct) => {
             model.downloading = true;
-            model.downloadPct = 0;
-            const channel = new Channel<ModelDownloadEvent>();
-            channel.onmessage = (e) => {
-                if (e.kind === "Progress" && e.total_bytes > 0) {
-                    model.downloadPct = Math.floor((e.downloaded_bytes / e.total_bytes) * 100);
-                }
-            };
-            await invoke("download_model", {
-                modelId: descriptor.id,
-                repo: source.repo,
-                file: source.file,
-                sha256: source.sha256,
-                onProgress: channel,
-            });
-            model.downloading = false;
-            model.downloadPct = null;
-        }
+            model.downloadPct = pct;
+        });
+        model.downloading = false;
+        model.downloadPct = null;
+        if (!onDisk) throw { kind: "Backend", message: modelsState().error };
         recordMilestone("model-downloaded");
         model.starting = true;
-        // A healthy server already serving this model (a restarted onboarding keeps the Rust side
-        // alive) is reused: starting again would kill it and drop every sandbox's forward to it.
-        let status = await invoke<InferenceStatus>("inference_status");
-        if (!(status.running && status.modelId === descriptor.id)) {
-            await invoke<InferenceStatus>("start_inference", {
-                engine: "llama",
-                modelId: descriptor.id,
-                onProgress: new Channel(),
-            });
-            // Re-read rather than trust the start's reply: ready means the server answers as running now.
-            status = await invoke<InferenceStatus>("inference_status");
-        }
-        if (!status.running || status.modelId !== descriptor.id) {
-            throw { kind: "Backend", message: "The model did not start." };
-        }
+        await wakeModel(descriptor, "llama");
         recordMilestone("server-started");
-        servedModelId = status.modelId;
-        model.servedModelId = servedModelId;
+        model.servedModelId = modelsState().status.modelId;
         model.ready = true;
     } catch (e) {
         model.error = parseError(e).message;
-        return;
     } finally {
         model.downloading = false;
         model.starting = false;
-    }
-    // Best-effort and after the ready flag: a healthy server must not be reported as failed, and a
-    // retry must not restart it.
-    try {
-        if (servedModelId) await reprovisionInstalledAgents(servedModelId);
-    } catch {
-        // Agents are re-pointed again at the next launch.
     }
 }
 

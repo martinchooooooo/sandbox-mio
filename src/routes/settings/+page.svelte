@@ -22,6 +22,13 @@
     import { refreshSandboxState, sandboxesList } from "$lib/sandbox/state.svelte";
     import { FIRST_SANDBOX } from "$lib/onboarding/handoff.svelte";
     import { closeSandbox } from "$lib/workspace/navigation.svelte";
+    import { ENGINE_NAMES, PAGE } from "$lib/models/copy";
+
+    // TODO(i18n): every string here.
+    const ENGINE_CHOICES: { id: EngineKind; label: string; detail: string }[] = [
+        { id: "llama", label: "Built in: works on most computers", detail: ENGINE_NAMES.llama },
+        { id: "foundry", label: "Microsoft Foundry Local: can use the NPU on Copilot+ PCs", detail: "Foundry Local" },
+    ];
 
     function cycleLocale() {
         const current = getLocale();
@@ -183,18 +190,17 @@
             <Field.Field>
                 <Field.Label>{m.settings_engine_label()}</Field.Label>
                 <div class="flex flex-col gap-2" data-active-engine={engine}>
-                    <Button
-                        data-engine="llama"
-                        variant={engine === "llama" ? "default" : "outline"}
-                        onclick={() => selectEngine("llama")}
-                        class="justify-start"
-                    >{m.settings_engine_llama()}</Button>
-                    <Button
-                        data-engine="foundry"
-                        variant={engine === "foundry" ? "default" : "outline"}
-                        onclick={() => selectEngine("foundry")}
-                        class="justify-start"
-                    >{m.settings_engine_foundry()}</Button>
+                    {#each ENGINE_CHOICES as choice (choice.id)}
+                        <Button
+                            data-engine={choice.id}
+                            variant={engine === choice.id ? "default" : "outline"}
+                            onclick={() => selectEngine(choice.id)}
+                            class="h-auto flex-col items-start justify-start gap-0 py-2 text-left"
+                        >
+                            {choice.label}
+                            <span class="text-xs font-normal opacity-80">{choice.detail}</span>
+                        </Button>
+                    {/each}
                 </div>
             </Field.Field>
 
@@ -233,6 +239,12 @@
                     <Input type="number" min="0" bind:value={ctxSize} placeholder="default" />
                 </Field.Field>
             {/if}
+
+            <Field.Field>
+                <!-- TODO(i18n) -->
+                <Field.Label>{PAGE.wakeSteps}</Field.Label>
+                <RuntimeSteps {steps} />
+            </Field.Field>
         </Field.Group>
     </Field.Set>
     </AdvancedSection>
@@ -291,10 +303,5 @@
 
     <section class="mt-8">
         <ResourceUsageCard />
-    </section>
-
-    <section class="mt-8 border-t pt-6">
-        <Text as="h2" class="mb-3">{m.settings_runtime_explainer()}</Text>
-        <RuntimeSteps {steps} />
     </section>
 </main>

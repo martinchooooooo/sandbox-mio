@@ -1,10 +1,11 @@
 import type { ModelDescriptor } from "./types";
 
-const GB = 1024 * 1024 * 1024;
+export const GB = 1024 * 1024 * 1024;
 
 // Every GGUF below declares an architecture (`qwen35`, `qwen35moe`, `gemma4`, `mistral3`,
 // `gpt-oss`) the bundled llama.cpp (`LLAMA_VERSION` in build.rs) can load. Check the GGUF's
 // `general.architecture` against that build before adding a model; bump llama.cpp if it is missing.
+// A new entry also needs its summary in `copy.ts` (MODEL_SUMMARIES).
 // Foundry aliases were checked against `foundry model list` on 2026-11-09.
 export const MODELS: ModelDescriptor[] = [
   {
@@ -22,6 +23,9 @@ export const MODELS: ModelDescriptor[] = [
     foundryAlias: "qwen3.5-2b-text",
     contextWindow: 262_144,
     reasoning: true,
+    maker: "Alibaba",
+    goodFor: ["quick-replies"],
+    activeParamsB: 2,
   },
   {
     id: "qwen3.5-4b",
@@ -37,6 +41,9 @@ export const MODELS: ModelDescriptor[] = [
     foundryAlias: "qwen3.5-4b",
     contextWindow: 262_144,
     reasoning: true,
+    maker: "Alibaba",
+    goodFor: ["quick-replies", "everyday-chat"],
+    activeParamsB: 4,
   },
   {
     id: "qwen3.5-9b",
@@ -52,6 +59,9 @@ export const MODELS: ModelDescriptor[] = [
     foundryAlias: null,
     contextWindow: 262_144,
     reasoning: true,
+    maker: "Alibaba",
+    goodFor: ["everyday-chat", "coding-agent", "careful-thinking"],
+    activeParamsB: 9,
   },
   {
     id: "gemma-4-12b-it",
@@ -68,6 +78,9 @@ export const MODELS: ModelDescriptor[] = [
     foundryAlias: null,
     contextWindow: 131_072,
     reasoning: true,
+    maker: "Google",
+    goodFor: ["everyday-chat", "careful-thinking"],
+    activeParamsB: 12,
   },
   {
     id: "gpt-oss-20b",
@@ -84,6 +97,9 @@ export const MODELS: ModelDescriptor[] = [
     foundryAlias: null,
     contextWindow: 131_072,
     reasoning: true,
+    maker: "OpenAI",
+    goodFor: ["everyday-chat", "careful-thinking"],
+    activeParamsB: 20,
   },
   {
     id: "devstral-small-2-24b",
@@ -99,6 +115,9 @@ export const MODELS: ModelDescriptor[] = [
     foundryAlias: null,
     contextWindow: 262_144,
     reasoning: false,
+    maker: "Mistral",
+    goodFor: ["coding-agent"],
+    activeParamsB: 24,
   },
   {
     id: "qwen3.8-27b",
@@ -114,6 +133,9 @@ export const MODELS: ModelDescriptor[] = [
     foundryAlias: null,
     contextWindow: 262_144,
     reasoning: true,
+    maker: "Alibaba",
+    goodFor: ["coding-agent", "careful-thinking", "long-documents"],
+    activeParamsB: 27,
   },
   {
     id: "qwen3.6-35b-a3b",
@@ -131,6 +153,9 @@ export const MODELS: ModelDescriptor[] = [
     foundryAlias: null,
     contextWindow: 262_144,
     reasoning: true,
+    maker: "Alibaba",
+    goodFor: ["coding-agent", "careful-thinking"],
+    activeParamsB: 3,
   },
 ];
 
@@ -155,6 +180,9 @@ export function testModelFromEnv(raw: string | undefined): ModelDescriptor | nul
       foundryAlias: null,
       contextWindow: 32_768,
       reasoning: false,
+      maker: null,
+      goodFor: [],
+      activeParamsB: 0.1,
     };
   } catch {
     return null;

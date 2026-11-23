@@ -44,19 +44,40 @@ describe("Local LLM — UI sanity (no download)", function () {
     }
   });
 
+  it("groups every card by its fit verdict with a plain summary", async () => {
+    await ModelsPage.goHome();
+    await ModelsPage.open();
+    const GROUP_OF: Record<string, string> = {
+      fits: "runs-well",
+      tight: "runs-slowly",
+      busy: "needs-more",
+      "too-small": "needs-more",
+      engine: "needs-more",
+    };
+    const cards = await ModelsPage.cards();
+    for (const c of cards) {
+      assert(c.fit in GROUP_OF, `Card ${c.id} has data-fit="${c.fit}", which fitFor() never returns.`);
+      if (c.group !== null) {
+        assert.strictEqual(c.group, GROUP_OF[c.fit], `Card ${c.id} (${c.fit}) sits under group ${c.group}.`);
+        if (c.group === "needs-more") assert(!c.canStart, `Needs-more card ${c.id} offers a start button.`);
+      }
+      if (c.id !== TEST_MODEL_ID) {
+        assert(c.summary.length > 0, `Card ${c.id} has no summary; add it to MODEL_SUMMARIES in src/lib/models/copy.ts.`);
+      }
+    }
+  });
+
   it("keeps the default row's action enabled whether or not it is downloaded yet", async () => {
     if (!TEST_MODEL_ID) return; // nothing injected to inspect
     await ModelsPage.goHome();
     await ModelsPage.open();
-    // The test model is always prepended at rank 0 (+page.svelte onMount), so with nothing else
-    // downloaded in a fresh env it is the default/primary row — the one whose single action button
-    // (docs/features/desktop-app-feel/02_dev.md Phase D) chains download+start and is therefore
-    // never gated on isDownloaded, unlike a secondary row's plain Start button.
+    // The test model is the pick, so it sits on the Your Model card, whose single button chains
+    // download and wake and is therefore never gated on isDownloaded.
     const startEnabled = await ModelsPage.startEnabled(TEST_MODEL_ID);
     assert(
       startEnabled,
-      "Default row's action was disabled — the combined Download & Start button must stay " +
-        "clickable regardless of download state (a secondary row's plain Start is what gates on it).",
+      "Your Model card's action was disabled — the combined download and wake button must stay " +
+        "clickable regardless of download state.",
     );
   });
 

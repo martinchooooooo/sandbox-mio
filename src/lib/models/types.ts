@@ -35,9 +35,20 @@ export interface ModelDescriptor {
   contextWindow: number;
   /** Whether the model emits thinking blocks, so agents show a thinking-level control. */
   reasoning: boolean;
+  /** Who built the model: a `MAKERS` name from the onboarding, or `null` for a test model. */
+  maker: string | null;
+  goodFor: GoodFor[];
+  /** Parameters used per token, in billions; equals `paramsB` except for a mixture of experts. */
+  activeParamsB: number;
 }
 
+export type GoodFor = "quick-replies" | "everyday-chat" | "coding-agent" | "careful-thinking" | "long-documents";
+
 export type ModelRating = "recommended" | "slow" | "wont-fit";
+
+export type FitVerdict = "fits" | "tight" | "busy" | "too-small" | "engine";
+
+export type FitGroup = "runs-well" | "runs-slowly" | "needs-more";
 
 /** Live setup step list returned by `inference_setup_steps` (mirrors Rust `SetupStep`). */
 export interface SetupStep {

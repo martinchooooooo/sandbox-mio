@@ -4,6 +4,9 @@
     import * as Card from "$lib/components/ui/card";
     import { Progress } from "$lib/components/ui/progress";
     import AdvancedSection from "$lib/components/AdvancedSection.svelte";
+    import RuntimeSteps from "$lib/models/RuntimeSteps.svelte";
+    import WakeUpStatus from "$lib/models/WakeUpStatus.svelte";
+    import { modelsState } from "$lib/models/model.svelte";
     import MachineSteps from "$lib/machine/MachineSteps.svelte";
     import { ensureMachineReadiness, machineReadiness } from "$lib/machine/readiness.svelte";
     import type { ProviderId } from "$lib/machine/types";
@@ -39,6 +42,7 @@
     const image = $derived(imageRun());
     const model = $derived(modelRun());
     const sandbox = $derived(sandboxRun());
+    const wake = $derived(modelsState().wake);
     const status = $derived(machineReadiness(provider));
 
     const machineDone = $derived(!status.probing && status.readiness.ready);
@@ -138,7 +142,7 @@
                 <Progress value={model.downloadPct ?? 0} aria-label="Model download" />
                 <Button variant="outline" onclick={skipModelSetup} data-model-skip>Go on without it</Button>
             {:else if model.starting}
-                <p class="text-muted-foreground text-sm">Waking it up…</p>
+                <WakeUpStatus />
                 <Button variant="outline" onclick={skipModelSetup} data-model-skip>Go on without it</Button>
             {:else}
                 <p class="text-muted-foreground text-sm">Waiting its turn…</p>
@@ -149,6 +153,7 @@
                 <p class="text-muted-foreground text-sm">{model.choice.label} ({model.choice.llama.file}) served by llama.cpp.</p>
             {/if}
             {#if model.error}<p class="text-xs text-foreground/80">{model.error}</p>{/if}
+            {#if wake.steps.length > 0}<RuntimeSteps steps={wake.steps} events={wake.events} />{/if}
         </AdvancedSection>
     </Card.Root>
 

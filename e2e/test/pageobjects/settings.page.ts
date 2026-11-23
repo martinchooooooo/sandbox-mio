@@ -65,6 +65,7 @@ class SettingsPage extends AppPage {
   }
 
   async stepTitles(): Promise<string[]> {
+    await this.#expand(this.tuningTrigger);
     const titles = await $$("[data-step-id] [data-step-title]");
     const texts: string[] = [];
     for (const t of titles) texts.push((await t.getText()).trim());

@@ -24,6 +24,7 @@ State shared across routes lives in `.svelte.ts` files under `src/lib/` with mod
 - `src/lib/workspace/dashboard.svelte.ts` — the Manage dashboard section last opened per sandbox (frontend memory; survives the dashboard remount on sandbox switch).
 - `src/lib/onboarding/setup.svelte.ts` — first-run setup (machine, base image, model and the first sandbox) as one shared run, started in the background by the welcome flow and rendered by the four cards of `SetupProgress.svelte`.
 - `src/lib/agent-chat/learning.svelte.ts` — per-sandbox chat learning-mode overrides from `settings.json`, loaded once by `ensureLearning()`.
+- `src/lib/models/model.svelte.ts` — the one Model job (download, wake, sleep) plus machine specs, engine and serving status, shared by the Models page and first-run onboarding; hydrated by `loadModels()` on the Models page mount rather than an `ensure*()` from the root layout.
 - `src/lib/registry.svelte.ts` — mise package registry cache (also the smallest reference example of the pattern).
 
 Event flow is one-directional: Rust emits (`activity://task-updated`, `workspace://state`, container events), one store subscribes, components read accessors. Components must not call `listen()` for a stream a store already owns.

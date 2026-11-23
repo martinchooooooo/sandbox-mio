@@ -1,23 +1,21 @@
 import AppPage, { type Element } from "./app.page.js";
 import { COMMAND, SUBPROCESS } from "../../lib/timeouts.js";
 
-// Selectors are data-attribute based (set in src/routes/models/+page.svelte) so this page object
+// Selectors are data-attribute based (set in src/lib/models/) so this page object
 // never depends on CSS classes or copy.
 class ModelsPage extends AppPage {
   get specsPanel(): Element {
     return $("[data-specs]");
   }
 
-  // The specs panel, full catalogue, and chat box all sit behind this single AdvancedSection
-  // disclosure, closed by default on every page visit (docs/features/desktop-app-feel/02_dev.md
-  // Phase D) — `open()` expands it immediately since every current caller needs at least the specs
-  // panel, keeping the rest of this page object's behavior unchanged from before Phase D.
-  get advancedTrigger(): Element {
-    return $("[data-model-advanced] button");
+  // The hardware list sits behind the computer card's "For those who know" disclosure, closed by
+  // default on every page visit, so open() expands it.
+  get computerTrigger(): Element {
+    return $("[data-computer-details] button");
   }
 
-  async #expandAdvanced(timeout: number): Promise<void> {
-    const btn = await this.advancedTrigger;
+  async #expand(trigger: Element, timeout: number): Promise<void> {
+    const btn = await trigger;
     await btn.waitForDisplayed({ timeout });
     if ((await btn.getAttribute("data-state")) === "open") return;
     await btn.waitForClickable({ timeout });
@@ -36,6 +34,10 @@ class ModelsPage extends AppPage {
 
   get baseUrlEl(): Element {
     return $("[data-base-url]");
+  }
+
+  get wakeDetailsTrigger(): Element {
+    return $("[data-wake-details] button");
   }
 
   // Only rendered while a server is running.
@@ -66,7 +68,20 @@ class ModelsPage extends AppPage {
     return ids;
   }
 
-  /** The badge text (e.g. "Recommended"); its presence proves recommend.ts ran. */
+  /** Each card's id, fit verdict and summary, and the fit group it sits under (null for Your Model). */
+  async cards(): Promise<{ id: string; fit: string; group: string | null; summary: string; canStart: boolean }[]> {
+    return browser.execute(() =>
+      Array.from(document.querySelectorAll("[data-model-id]")).map((el) => ({
+        id: el.getAttribute("data-model-id") ?? "",
+        fit: el.getAttribute("data-fit") ?? "",
+        group: el.closest("[data-fit-group]")?.getAttribute("data-fit-group") ?? null,
+        summary: el.querySelector("[data-summary]")?.textContent?.trim() ?? "",
+        canStart: el.querySelector("[data-start]") !== null,
+      })),
+    );
+  }
+
+  /** The fit label (e.g. "Runs well here"); its presence proves recommend.ts ran. */
   async rating(modelId: string): Promise<string> {
     return (await (await this.row(modelId)).$("[data-rating]")).getText();
   }
@@ -85,8 +100,8 @@ class ModelsPage extends AppPage {
   /** Returns only once the host-specs probe has resolved; it shells out and can lag by seconds. */
   async open(timeout = COMMAND): Promise<void> {
     await this.showPage("/models", timeout);
-    await this.#expandAdvanced(timeout);
-    await (await this.specsPanel).waitForDisplayed({ timeout });
+    await (await this.specsPanel).waitForDisplayed({ timeout: SUBPROCESS });
+    await this.#expand(this.computerTrigger, SUBPROCESS);
     await (await this.specsReady).waitForDisplayed({ timeout: SUBPROCESS });
   }
 
@@ -95,24 +110,13 @@ class ModelsPage extends AppPage {
   }
 
   /**
-   * The default/primary row (docs/features/desktop-app-feel/02_dev.md Phase D) has no separate
-   * Download button — its single action chains download and start together — while any other row
-   * (reached through the AdvancedSection catalogue `open()` already expands) keeps them separate.
-   * Falls back to the combined `[data-start]` button when `button=Download` isn't there, so callers
-   * don't need to know which shape a given model's row has.
+   * The Your Model card's single button chains download and wake; any other card downloads through
+   * "Use this Model" (also `[data-start]`), so callers need not know which card a model is on.
    */
   async startDownload(modelId: string): Promise<void> {
-    const row = await this.row(modelId);
-    const downloadBtn = row.$("button=Download");
-    if (await downloadBtn.isExisting()) {
-      const btn = await downloadBtn;
-      await btn.waitForDisplayed({ timeout: COMMAND });
-      await btn.click();
-      return;
-    }
-    const combined = await row.$("[data-start]");
-    await combined.waitForClickable({ timeout: COMMAND });
-    await combined.click();
+    const btn = await (await this.row(modelId)).$("[data-start]");
+    await btn.waitForClickable({ timeout: COMMAND });
+    await btn.click();
   }
 
   async waitForDownloaded(modelId: string, timeoutMs: number): Promise<void> {
@@ -125,8 +129,8 @@ class ModelsPage extends AppPage {
   }
 
   /**
-   * No-ops if `[data-start]` is already gone: the primary row's combined `startDownload()` click
-   * above already triggered start too, in which case the button switched to Stop (no `data-start`).
+   * No-ops if `[data-start]` is already gone: the Your Model card's combined `startDownload()` click
+   * already triggered start too, in which case the button switched to Sleep (no `data-start`).
    */
   async startInference(modelId: string): Promise<void> {
     const row = await this.row(modelId);
@@ -145,15 +149,16 @@ class ModelsPage extends AppPage {
     });
   }
 
-  // Waits rather than reads: the element only renders inside a running row, so a not-yet-running
+  // Waits rather than reads: the attribute only exists while the server runs, so a not-yet-running
   // server surfaces as a timeout here instead of "element not found" at the call site.
   async baseUrl(): Promise<string> {
     const el = await this.baseUrlEl;
-    await el.waitForDisplayed({ timeout: COMMAND });
-    return el.getText();
+    await el.waitForExist({ timeout: COMMAND });
+    return (await el.getAttribute("data-base-url")) ?? "";
   }
 
   async stepTitles(): Promise<string[]> {
+    await this.#expand(this.wakeDetailsTrigger, COMMAND);
     const titles = await $$("[data-step-id] [data-step-title]");
     const texts: string[] = [];
     for (const t of titles) texts.push((await t.getText()).trim());
@@ -161,7 +166,7 @@ class ModelsPage extends AppPage {
   }
 
   async stopInference(): Promise<void> {
-    const btn = await (await this.runningPanel).$("button=Stop");
+    const btn = await (await this.runningPanel).$("[data-stop]");
     await btn.waitForClickable({ timeout: COMMAND });
     await btn.click();
     // stop_inference drops the server handle synchronously and tears the Mutagen forward down on a

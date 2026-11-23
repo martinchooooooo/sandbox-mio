@@ -80,7 +80,8 @@
         {#if store.inferenceDown}
             <div class="flex items-center justify-between gap-2 border-b-2 bg-muted px-4 py-2 text-xs" data-chat-inference-down>
                 <span>{m.agent_chat_inference_down()}</span>
-                <Button size="sm" variant="outline" href="/models">{m.agent_chat_start_model()}</Button>
+                <!-- TODO(i18n) -->
+                <Button size="sm" variant="outline" href="/models">Wake up the Model</Button>
             </div>
         {/if}
         <div class="min-h-0 flex-1">
