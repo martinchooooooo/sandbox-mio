@@ -12,6 +12,9 @@
 		active = false,
 		icon,
 		trailing,
+		action,
+		muted = false,
+		contains = false,
 		class: className,
 		...restProps
 	}: Omit<HTMLButtonAttributes, "children"> & {
@@ -21,6 +24,12 @@
 		icon: Snippet;
 		/** Badge or marker after the label; pinned to the icon's corner in the rail. */
 		trailing?: Snippet;
+		/** Separate button over the row's right edge (expanded only), shown on hover, focus and while active. */
+		action?: Snippet;
+		/** De-emphasised, e.g. an action row rather than a destination. */
+		muted?: boolean;
+		/** A child entry is active: outlined instead of filled. */
+		contains?: boolean;
 	} = $props();
 
 	const nav = getNavListContext();
@@ -42,6 +51,9 @@
 			navItemBase,
 			"relative w-full hover:border-border",
 			nav.collapsed ? "justify-center px-0" : "justify-start px-2.5",
+			action && !nav.collapsed && "pr-8",
+			muted && !active && "text-muted-foreground",
+			contains && !active && "border-border font-semibold",
 			active && "border-border bg-primary text-primary-foreground font-semibold",
 			className
 		)}
@@ -58,7 +70,21 @@
 	</button>
 {/snippet}
 
-{#if domTooltip}
+{#if !nav.collapsed}
+	<div class="group/nav-item relative">
+		{@render item({})}
+		{#if action}
+			<div
+				class={[
+					"absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-focus-within/nav-item:opacity-100 group-hover/nav-item:opacity-100",
+					active && "opacity-100",
+				]}
+			>
+				{@render action()}
+			</div>
+		{/if}
+	</div>
+{:else if domTooltip}
 	<Tooltip.Root>
 		<Tooltip.Trigger>
 			{#snippet child({ props })}

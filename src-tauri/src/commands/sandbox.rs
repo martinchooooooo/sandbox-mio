@@ -115,3 +115,35 @@ pub fn get_resource_history(
 ) -> Result<services::resources::ResourceHistory, AppError> {
     services::resources::history(&app, name.as_deref(), window)
 }
+
+/// Opens the sandbox's workspace folder in the OS file manager. The path is resolved from the
+/// backend's own listing, never from the frontend. Under the mock backend nothing is launched.
+#[tauri::command]
+pub async fn open_sandbox_folder(
+    name: String,
+    store: State<'_, Arc<dyn SandboxBackend>>,
+    app: tauri::AppHandle,
+) -> Result<(), AppError> {
+    use crate::backends::types::BackendError;
+    use tauri_plugin_opener::OpenerExt;
+
+    let sandboxes = store.list().await?;
+    let sandbox = sandboxes
+        .iter()
+        .find(|s| s.name == name)
+        .ok_or_else(|| BackendError::CommandFailed(format!("sandbox {name:?} not found")))?;
+    let path = std::path::PathBuf::from(&sandbox.workspace_path);
+    if !path.exists() {
+        return Err(BackendError::PathNotFound { path: sandbox.workspace_path.clone() }.into());
+    }
+    if !path.is_dir() {
+        return Err(BackendError::PathNotADirectory { path: sandbox.workspace_path.clone() }.into());
+    }
+    if crate::backends::mock_backend_enabled() {
+        return Ok(());
+    }
+    app.opener()
+        .open_path(path.to_string_lossy(), None::<&str>)
+        .map_err(|e| BackendError::CommandFailed(format!("could not open folder: {e}")))?;
+    Ok(())
+}

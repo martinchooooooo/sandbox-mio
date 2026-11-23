@@ -8,6 +8,8 @@
         Add01Icon,
         AiBrain01Icon,
         BookOpen01Icon,
+        Cancel01Icon,
+        Folder01Icon,
         Home01Icon,
         Key01Icon,
         PanelLeftCloseIcon,
@@ -17,13 +19,22 @@
     import Button from "$lib/components/ui/button/button.svelte";
     import * as NavList from "$lib/components/ui/nav-list";
     import ActivityCenter from "$lib/activity/ActivityCenter.svelte";
-        import { m } from "$lib/paraglide/messages.js";
+    import { m } from "$lib/paraglide/messages.js";
     import { parseError } from "$lib/errors";
     import { statusDotClass, type Project } from "$lib/sandbox";
     import { lifecycleMessage, pendingCreates, pendingOp } from "$lib/sandbox/lifecycle.svelte";
     import { deploymentFor, ensureSandboxRemoteState, liveStatus, sandboxesList } from "$lib/sandbox/state.svelte";
-    import { activePane, isCollapsed, viewSandboxName } from "$lib/workspace/state.svelte";
-    import { newSandbox, openSandbox, showPage } from "$lib/workspace/navigation.svelte";
+    import { HOME_APP, LAUNCHABLE_APPS } from "$lib/workspace/apps";
+    import { activeAppLabel, activePane, isCollapsed, panesOf, viewSandboxName } from "$lib/workspace/state.svelte";
+    import {
+        activatePane,
+        closePane,
+        closeSandbox,
+        newSandbox,
+        openSandbox,
+        showManage,
+        showPage,
+    } from "$lib/workspace/navigation.svelte";
 
     // A failed placeholder stays listed; a successful one is hidden once its real entry exists.
     const creating = $derived(
@@ -41,6 +52,19 @@
         { href: "/settings", label: m.nav_settings, icon: Settings01Icon },
         { href: "/intro", label: m.nav_intro, icon: BookOpen01Icon },
     ];
+
+    const viewPanes = $derived(viewing ? panesOf(viewing) : []);
+    // Apps are launched from the dashboard cards; the sidebar lists only the ones that are open.
+    const apps = $derived(LAUNCHABLE_APPS.filter((app) => viewPanes.some((p) => p.kind === app.kind)));
+    const dashboardActive = $derived(viewing !== null && activeAppLabel() === null);
+
+    async function openFolder(sandbox: string) {
+        try {
+            await invoke("open_sandbox_folder", { name: sandbox });
+        } catch (e) {
+            toast.error(parseError(e).message);
+        }
+    }
 
     function pageActive(href: string): boolean {
         return viewing === null && page.url.pathname === href;
@@ -117,11 +141,25 @@
                 {@const pending = pendingOp(project.name)}
                 {@const hint = pending ? lifecycleMessage(pending) : undefined}
                 {@const dot = statusDotClass(liveStatus(project), deploymentFor(project.name), pending)}
+                {#snippet closeSandboxAction()}
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        class="size-6"
+                        data-close-sandbox
+                        aria-label={m.workspace_close_sandbox_label({ sandbox: project.name })}
+                        title={m.workspace_close_sandbox_label({ sandbox: project.name })}
+                        onclick={() => closeSandbox(project.name)}
+                    >
+                        <HugeiconsIcon icon={Cancel01Icon} size={12} />
+                    </Button>
+                {/snippet}
                 <NavList.Item
                     data-nav-sandbox={project.name}
                     data-pending={pending}
                     label={project.name}
-                    active={viewing === project.name}
+                    contains={viewing === project.name}
+                    action={viewing === project.name ? closeSandboxAction : undefined}
                     onclick={() => open(project)}
                 >
                     {#snippet icon()}
@@ -135,6 +173,69 @@
                         {/if}
                     {/snippet}
                 </NavList.Item>
+                {#if viewing === project.name}
+                    <div
+                        role="group"
+                        aria-label={m.sandbox_header_apps_label()}
+                        data-sandbox-apps={project.name}
+                        class={[
+                            "flex flex-col gap-1",
+                            collapsed ? "bg-muted/50 rounded-md p-0.5" : "ml-3.5 border-l-2 pl-1.5",
+                        ]}
+                    >
+                        <NavList.Item
+                            data-app="dashboard"
+                            class="h-8"
+                            label={HOME_APP.title()}
+                            active={dashboardActive}
+                            onclick={() => showManage(project.name)}
+                        >
+                            {#snippet icon()}
+                                <HugeiconsIcon icon={HOME_APP.icon} size={16} />
+                            {/snippet}
+                        </NavList.Item>
+                        {#each apps as app (app.kind)}
+                            {@const pane = viewPanes.find((p) => p.kind === app.kind)!}
+                            {@const isActive = pane.label === activeAppLabel()}
+                            {#snippet closeAppAction()}
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    class="size-6"
+                                    data-close-tab={app.kind}
+                                    aria-label={m.workspace_close_tab_label({ title: app.title() })}
+                                    title={m.workspace_close_tab_label({ title: app.title() })}
+                                    onclick={() => closePane(pane)}
+                                >
+                                    <HugeiconsIcon icon={Cancel01Icon} size={12} />
+                                </Button>
+                            {/snippet}
+                            <NavList.Item
+                                data-app={app.kind}
+                                class="h-8"
+                                label={app.title()}
+                                active={isActive}
+                                action={closeAppAction}
+                                onclick={() => activatePane(pane)}
+                            >
+                                {#snippet icon()}
+                                    <HugeiconsIcon icon={app.icon} size={16} />
+                                {/snippet}
+                            </NavList.Item>
+                        {/each}
+                        <NavList.Item
+                            data-open-folder
+                            class="h-8"
+                            label={m.workspace_open_folder()}
+                            muted
+                            onclick={() => openFolder(project.name)}
+                        >
+                            {#snippet icon()}
+                                <HugeiconsIcon icon={Folder01Icon} size={16} />
+                            {/snippet}
+                        </NavList.Item>
+                    </div>
+                {/if}
             {/each}
             {#each creating as create (create.name)}
                 {@const dot = create.error ? "bg-destructive" : statusDotClass(undefined, undefined, "create")}

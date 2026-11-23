@@ -64,7 +64,7 @@ export function isCollapsed(): boolean {
     return collapsed;
 }
 
-/** The pane area Rust lays native panes out in, below the sandbox header and beside the sidebar. */
+/** The pane area Rust lays native panes out in, beside the sidebar. */
 export function overlayRect(): Rect {
     return overlay;
 }

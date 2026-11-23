@@ -7,7 +7,7 @@ import { allCapabilities, type ProviderCapabilities, type ProviderId } from "$li
 
 // Module-scoped store (mirrors src/lib/workspace/state.svelte.ts): the shared sandbox-list,
 // deployment, and capability data read by the app sidebar, the Home page
-// (src/routes/projects/+page.svelte), the sandbox header and the Manage dashboard. None of them is
+// (src/routes/projects/+page.svelte), the sandbox title bar and the Manage dashboard. None of them is
 // an ancestor of another, so a Destroy or Deploy/Undeploy/Sync triggered from the Dashboard has no
 // direct prop path back to the lists — this store is that path.
 

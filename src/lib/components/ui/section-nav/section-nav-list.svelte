@@ -9,14 +9,11 @@
 	}: TabsPrimitive.ListProps & { "aria-label": string } = $props();
 </script>
 
-<!-- The @min-[48rem] breakpoint must equal the one in section-nav-item.svelte
-(docs/features/manage-dashboard-redesign/02_dev.md, Resolved Decision 10). -->
+<!-- Labels always show; icons drop below 52rem so the strip fits one row, and wrapping is the last resort
+(docs/features/workspace-ux/02_dev.md). -->
 <TabsPrimitive.List
 	bind:ref
 	data-slot="section-nav-list"
-	class={cn(
-		"border-border bg-background flex w-12 shrink-0 flex-col gap-1 self-start rounded-md border-2 p-1 shadow-md @min-[48rem]/section-nav:w-40",
-		className
-	)}
+	class={cn("@container/tabs border-border flex w-full shrink-0 flex-wrap items-center gap-1 border-b-2 pb-2", className)}
 	{...restProps}
 />

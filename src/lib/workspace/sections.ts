@@ -1,11 +1,10 @@
 import {
-    DashboardSquare01Icon,
+    Layout01Icon,
     Wrench01Icon,
     PlugSocketIcon,
     Shield01Icon,
     Activity01Icon,
     CloudServerIcon,
-    Alert02Icon,
 } from "@hugeicons/core-free-icons";
 import type { ProviderId } from "$lib/providers";
 import { capabilitiesFor } from "$lib/sandbox/state.svelte";
@@ -17,17 +16,14 @@ export type DashboardSectionId =
     | "ports"
     | "network"
     | "traffic"
-    | "remote"
-    | "danger";
+    | "remote";
 
 export type SectionContext = { provider: ProviderId | undefined };
 
 export type DashboardSection = {
     id: DashboardSectionId;
-    icon: typeof DashboardSquare01Icon;
+    icon: typeof Layout01Icon;
     label: () => string;
-    /** Renders a separator above the list entry. */
-    separated?: boolean;
     visible(ctx: SectionContext): boolean;
 };
 
@@ -35,7 +31,7 @@ export type DashboardSection = {
 export const DASHBOARD_SECTIONS: DashboardSection[] = [
     {
         id: "overview",
-        icon: DashboardSquare01Icon,
+        icon: Layout01Icon,
         label: () => m.dashboard_section_overview(),
         visible: () => true,
     },
@@ -68,12 +64,5 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
         icon: CloudServerIcon,
         label: () => m.dashboard_section_remote(),
         visible: ({ provider }) => (provider ? (capabilitiesFor(provider)?.remoteTargets ?? false) : false),
-    },
-    {
-        id: "danger",
-        icon: Alert02Icon,
-        label: () => m.dashboard_section_danger(),
-        separated: true,
-        visible: () => true,
     },
 ];

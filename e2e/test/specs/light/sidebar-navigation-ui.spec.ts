@@ -7,7 +7,7 @@ import SettingsPage from "../../pageobjects/settings.page.js";
 import ActivityCenter from "../../pageobjects/activity.page.js";
 import chat from "../../pageobjects/agent-chat.page.js";
 import sidebar from "../../pageobjects/sidebar.page.js";
-import sandboxHeader from "../../pageobjects/sandbox-header.page.js";
+import sandboxView from "../../pageobjects/sandbox-view.page.js";
 import workspaceDashboard from "../../pageobjects/workspace-dashboard.page.js";
 import { isPageShown, navButton, showPage, type PageHref } from "../../pageobjects/app.page.js";
 import { captureDiagOnFailure } from "../../../lib/diag.js";
@@ -17,7 +17,7 @@ import { COMMAND, PANEL_RENDER, UI_SETTLE } from "../../../lib/timeouts.js";
 import { paneFor, panesFor, workspaceState } from "../../../lib/workspace.js";
 
 // LIGHT spec for docs/features/unified-sidebar-nav (03_e2e.md, spec L1): the app sidebar, the
-// content area's page-or-sandbox switch and the single sandbox header, against the mock backend.
+// content area's page-or-sandbox switch and the sandbox view with its sidebar apps group, against the mock backend.
 // The native chat stands in for a pane: it is a real Rust-registered pane (active_app,
 // sandbox_last_pane) that MockAgentHost serves without a webview or a forward. Pane geometry and
 // webview panes are the standard tier's job (standard/embedded-workspace.spec.ts).
@@ -71,7 +71,7 @@ describe("Unified sidebar navigation (mock backend)", function () {
         `After choosing ${href} in the sidebar, the highlighted page entries are wrong.`,
       );
       assert.strictEqual(new URL(await browser.getUrl()).pathname, href);
-      assert.strictEqual(await sandboxHeader.sandboxInView(), null, `A sandbox header shows on ${href}.`);
+      assert.strictEqual(await sandboxView.sandboxInView(), null, `A sandbox view shows on ${href}.`);
     }
     assert(await (await ProjectsPage.root).isDisplayed(), "Home (main[data-home]) is not showing after choosing Home.");
   });
@@ -85,8 +85,8 @@ describe("Unified sidebar navigation (mock backend)", function () {
     await ProjectsPage.row(nameA).openWorkspace();
     await workspaceDashboard.waitForRendered(nameA);
 
-    assert.strictEqual(await sandboxHeader.sandboxInView(), nameA);
-    assert(await sandboxHeader.isTabActive(nameA, "dashboard"), "The header's Manage tab is not current.");
+    assert.strictEqual(await sandboxView.sandboxInView(), nameA);
+    assert(await sandboxView.isTabActive(nameA, "dashboard"), "The sidebar's Dashboard child is not current.");
     assert.strictEqual(
       await (await ProjectsPage.root).isExisting(),
       false,
@@ -101,26 +101,26 @@ describe("Unified sidebar navigation (mock backend)", function () {
     assert(await ActivityCenter.isToggleShown(), "The activity toggle is missing while a sandbox is in view.");
   });
 
-  it("switches sandboxes in the sidebar, showing one header at a time", async () => {
+  it("switches sandboxes in the sidebar, showing one sandbox view at a time", async () => {
     await sidebar.selectSandbox(nameB);
     await workspaceDashboard.waitForRendered(nameB);
 
-    assert.strictEqual((await $$("div[data-sandbox-header]")).length, 1, "More than one sandbox header rendered.");
-    assert.strictEqual(await sandboxHeader.sandboxInView(), nameB);
+    assert.strictEqual((await $$("div[data-sandbox-view]")).length, 1, "More than one sandbox view rendered.");
+    assert.strictEqual(await sandboxView.sandboxInView(), nameB);
     assert(await sidebar.isSandboxActive(nameB));
     assert.strictEqual(await sidebar.isSandboxActive(nameA), false, "Two sandboxes are highlighted in the sidebar.");
   });
 
   it("hides an active pane behind a page, keeps it alive, and restores it from the sidebar", async () => {
     const chatLabel = await openChat(nameA);
-    assert.strictEqual(await sandboxHeader.sandboxInView(), nameA, "Opening a pane by command did not bring its sandbox into view.");
-    assert(await sandboxHeader.isTabActive(nameA, "agentchat"), "The chat tab is not current after opening the chat.");
+    assert.strictEqual(await sandboxView.sandboxInView(), nameA, "Opening a pane by command did not bring its sandbox into view.");
+    assert(await sandboxView.isTabActive(nameA, "agentchat"), "The chat child is not current after opening the chat.");
 
     await ModelsPage.open();
     const onPage = await workspaceState();
     assert.strictEqual(onPage.active_app, null, "Showing a page did not hide the active pane.");
     assert(paneFor(onPage, nameA, "agentchat"), "Showing a page closed the pane instead of hiding it.");
-    assert.strictEqual(await sandboxHeader.sandboxInView(), null, "The sandbox header stayed over the Models page.");
+    assert.strictEqual(await sandboxView.sandboxInView(), null, "The sandbox view stayed over the Models page.");
     assert.strictEqual(await (await chat.root(nameA)).isExisting(), false, "The chat view stayed mounted over the Models page.");
 
     // The sandbox's last view was the chat, so its sidebar entry restores the chat, not Manage.
@@ -128,7 +128,7 @@ describe("Unified sidebar navigation (mock backend)", function () {
     await waitForActiveApp(chatLabel, "Selecting the sandbox in the sidebar did not restore its chat pane.");
     await (await chat.root(nameA)).waitForExist({ timeout: PANEL_RENDER });
     await chat.waitForConnection(nameA, "attached");
-    assert(await sandboxHeader.isTabActive(nameA, "agentchat"));
+    assert(await sandboxView.isTabActive(nameA, "agentchat"));
   });
 
   it("the Home card still opens Manage when the last view was a pane", async () => {
@@ -137,7 +137,7 @@ describe("Unified sidebar navigation (mock backend)", function () {
     const state = await workspaceState();
     assert.strictEqual(state.active_app, null, "The Home card restored the pane instead of opening Manage (Resolved Decision 2).");
     assert(paneFor(state, nameA, "agentchat"), "Opening Manage from the card closed the chat pane.");
-    assert(await sandboxHeader.isTabActive(nameA, "dashboard"));
+    assert(await sandboxView.isTabActive(nameA, "dashboard"));
   });
 
   it("the sidebar restores Manage when Manage was the last view", async () => {
@@ -145,7 +145,7 @@ describe("Unified sidebar navigation (mock backend)", function () {
     await sidebar.selectSandbox(nameA);
     await workspaceDashboard.waitForRendered(nameA);
     assert.strictEqual((await workspaceState()).active_app, null, "The sidebar restored the chat although Manage was the last view.");
-    assert(await sandboxHeader.isTabActive(nameA, "dashboard"));
+    assert(await sandboxView.isTabActive(nameA, "dashboard"));
   });
 
   it("collapses the sidebar to the rail and keeps navigating", async () => {
@@ -165,7 +165,7 @@ describe("Unified sidebar navigation (mock backend)", function () {
   });
 
   it("New sandbox goes Home and focuses the create card's name field", async () => {
-    assert.strictEqual(await sandboxHeader.sandboxInView(), nameA, "Precondition: a sandbox is in view.");
+    assert.strictEqual(await sandboxView.sandboxInView(), nameA, "Precondition: a sandbox is in view.");
     await sidebar.newSandbox();
     await (await ProjectsPage.root).waitForDisplayed({ timeout: UI_SETTLE });
     const input = await ProjectsPage.nameInput;
@@ -178,11 +178,11 @@ describe("Unified sidebar navigation (mock backend)", function () {
   it("closing a sandbox whose pane is active hands the view to the remaining sandbox's pane", async () => {
     const chatB = await openChat(nameB);
     await openChat(nameA);
-    assert.strictEqual(await sandboxHeader.sandboxInView(), nameA);
+    assert.strictEqual(await sandboxView.sandboxInView(), nameA);
 
-    await sandboxHeader.closeSandbox(nameA);
+    await sandboxView.closeSandbox(nameA);
     await waitForActiveApp(chatB, "Closing sandbox A did not activate sandbox B's chat as the neighbour.");
-    await (await sandboxHeader.root(nameB)).waitForDisplayed({
+    await (await sandboxView.root(nameB)).waitForDisplayed({
       timeout: UI_SETTLE,
       timeoutMsg: "Sandbox B did not come into view after closing A (Resolved Decision 6).",
     });
@@ -190,11 +190,11 @@ describe("Unified sidebar navigation (mock backend)", function () {
   });
 
   it("closing the sandbox in view lands on Home", async () => {
-    await sandboxHeader.closeSandbox(nameB);
+    await sandboxView.closeSandbox(nameB);
     await (await ProjectsPage.root).waitForDisplayed({ timeout: UI_SETTLE, timeoutMsg: "Closing the sandbox did not land on Home." });
     assert.strictEqual(new URL(await browser.getUrl()).pathname, "/projects");
     assert(await isPageShown("/projects"), "Home is showing but its sidebar entry is not highlighted.");
-    assert.strictEqual(await sandboxHeader.sandboxInView(), null);
+    assert.strictEqual(await sandboxView.sandboxInView(), null);
     const state = await workspaceState();
     assert.strictEqual(state.apps.length, 0, `Panes survived closing every sandbox: ${state.apps.map((p) => p.label).join(", ")}`);
     assert.strictEqual(state.active_app, null);
@@ -203,7 +203,7 @@ describe("Unified sidebar navigation (mock backend)", function () {
   it("deleting a sandbox from Manage lands on Home without it", async () => {
     await ProjectsPage.row(nameB).destroy();
     assert(await (await ProjectsPage.root).isDisplayed(), "Delete did not end on Home.");
-    assert.strictEqual(await sandboxHeader.sandboxInView(), null);
+    assert.strictEqual(await sandboxView.sandboxInView(), null);
     await (await sidebar.sandboxItem(nameB)).waitForExist({
       timeout: COMMAND,
       reverse: true,

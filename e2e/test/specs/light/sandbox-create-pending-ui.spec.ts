@@ -31,7 +31,7 @@ describe("Sandbox create — placeholder while creating (mock backend)", functio
     await expect(sidebarEntry(name)).toHaveAttribute("data-pending", "create");
     await placeholder(name).waitForDisplayed({ timeout: 5000, timeoutMsg: "no Home placeholder" });
 
-    await $(`div[data-sandbox-header][data-sandbox="${name}"]`).waitForDisplayed({ timeout: 30000 });
+    await $(`div[data-sandbox-view="${name}"]`).waitForDisplayed({ timeout: 30000 });
     await browser.waitUntil(async () => (await sidebarEntry(name).getAttribute("data-pending")) === null, {
       timeout: 5000,
       timeoutMsg: "sidebar entry still pending after create",
@@ -52,7 +52,7 @@ describe("Sandbox create — placeholder while creating (mock backend)", functio
     await expect(card.$("[data-create-dismiss]")).toBeDisplayed();
 
     await card.$("[data-create-retry]").click();
-    await $(`div[data-sandbox-header][data-sandbox="${name}"]`).waitForDisplayed({ timeout: 30000 });
+    await $(`div[data-sandbox-view="${name}"]`).waitForDisplayed({ timeout: 30000 });
 
     // Dismiss path
     const name2 = `${name}-b`;

@@ -2,7 +2,6 @@
 	import { Tabs as TabsPrimitive } from "bits-ui";
 	import type { Snippet } from "svelte";
 	import { cn } from "$lib/utils.js";
-	import * as Tooltip from "../tooltip/index.js";
 	import { navItemBase } from "./styles.js";
 
 	let {
@@ -17,42 +16,21 @@
 		label: string;
 		icon: Snippet;
 	} = $props();
-
-	let labelEl = $state<HTMLElement | null>(null);
-	let tipOpen = $state(false);
-
-	// The tooltip is portalled out of the container, so only the label's own size says whether the
-	// list is collapsed. An sr-only label renders 1px wide.
-	$effect(() => {
-		if (tipOpen && (labelEl === null || labelEl.getBoundingClientRect().width > 1)) tipOpen = false;
-	});
 </script>
 
-<!-- The @min-[48rem] breakpoint must equal the one in section-nav-list.svelte
-(docs/features/manage-dashboard-redesign/02_dev.md, Resolved Decision 10). -->
-<Tooltip.Root bind:open={tipOpen}>
-	<Tooltip.Trigger>
-		{#snippet child({ props })}
-			<TabsPrimitive.Trigger
-				bind:ref
-				{...props}
-				{...restProps}
-				{value}
-				data-slot="section-nav-item"
-				data-section-nav-item={value}
-				class={cn(
-					navItemBase,
-					"justify-center px-1.5 @min-[48rem]/section-nav:justify-start @min-[48rem]/section-nav:px-2.5",
-					"data-[state=active]:border-border data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:font-semibold",
-					className
-				)}
-			>
-				{@render icon()}
-				<span bind:this={labelEl} class="sr-only truncate @min-[48rem]/section-nav:not-sr-only">
-					{label}
-				</span>
-			</TabsPrimitive.Trigger>
-		{/snippet}
-	</Tooltip.Trigger>
-	<Tooltip.Content side="right">{label}</Tooltip.Content>
-</Tooltip.Root>
+<TabsPrimitive.Trigger
+	bind:ref
+	{...restProps}
+	{value}
+	data-slot="section-nav-item"
+	data-section-nav-item={value}
+	class={cn(
+		navItemBase,
+		"shrink-0 justify-start px-2 whitespace-nowrap",
+		"data-[state=active]:border-border data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:font-semibold",
+		className
+	)}
+>
+	<span class="hidden @[52rem]/tabs:contents">{@render icon()}</span>
+	{label}
+</TabsPrimitive.Trigger>

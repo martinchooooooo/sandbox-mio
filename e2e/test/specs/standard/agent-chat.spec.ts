@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import ProjectsPage from "../../pageobjects/projects.page.js";
 import workspaceDashboard from "../../pageobjects/workspace-dashboard.page.js";
 import chat from "../../pageobjects/agent-chat.page.js";
-import sandboxHeader from "../../pageobjects/sandbox-header.page.js";
+import sandboxView from "../../pageobjects/sandbox-view.page.js";
 import { captureDiagOnFailure } from "../../../lib/diag.js";
 import { useSandboxWorkspace } from "../../../lib/sandbox-suite.js";
 import { podman, podmanOk, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
@@ -134,9 +134,9 @@ describe("Native agent chat — real pi supervisor on Podman", function () {
     await row.openWorkspace();
     await workspaceDashboard.waitForRendered(projectName);
 
-    // LAUNCHABLE_APPS offers the chat only once pi is installed (src/lib/workspace/apps.ts).
+    // The Chat card stays disabled until pi is installed (src/lib/workspace/apps.ts).
     assert(
-      !(await (await workspaceDashboard.launcherButton("agentchat")).isExisting()),
+      !(await (await workspaceDashboard.launcherButton("agentchat")).isEnabled()),
       "The Chat launcher is offered before pi is installed.",
     );
 
@@ -163,7 +163,7 @@ describe("Native agent chat — real pi supervisor on Podman", function () {
 
   it("offers the Chat launcher and opens a webview-less chat pane", async () => {
     const launcher = await workspaceDashboard.launcherButton("agentchat");
-    await launcher.waitForDisplayed({ timeout: PANEL_RENDER, timeoutMsg: "the Chat launcher never appeared with pi installed" });
+    await launcher.waitForEnabled({ timeout: PANEL_RENDER, timeoutMsg: "the Chat launcher never enabled with pi installed" });
     await workspaceDashboard.launchApp("agentchat");
 
     await browser.waitUntil(async () => paneFor(await workspaceState(), projectName, "agentchat") !== undefined, {
@@ -253,7 +253,7 @@ describe("Native agent chat — real pi supervisor on Podman", function () {
 
   it("closing the chat tab detaches without stopping pi", async () => {
     await kill(reader);
-    await (await chat.closeTabButton(projectName)).click();
+    await sandboxView.closeTab(projectName, "agentchat");
     await browser.waitUntil(async () => paneFor(await workspaceState(), projectName, "agentchat") === undefined, {
       timeout: COMMAND,
       timeoutMsg: "the agentchat pane survived its close button",
@@ -359,15 +359,17 @@ describe("Native agent chat — real pi supervisor on Podman", function () {
 
   it("a sandbox restart starts a new generation despite the stale pi.pid", async () => {
     piPid = stateFile("pi.pid");
-    // The sandbox header's Stop/Start keep the chat on screen; the Home card's would hide it.
-    await sandboxHeader.stop(projectName);
-    await sandboxHeader.waitForStopped(projectName);
+    // Stop/Start go through the Dashboard (docs/features/workspace-ux/02_dev.md, Resolved Decision 8), so the chat tab is reopened.
+    await sandboxView.stop(projectName);
+    await sandboxView.waitForStopped(projectName);
+    await sandboxView.clickTab(projectName, "agentchat");
     // The open chat's stream ends with the sandbox, so it offers Reconnect.
     await chat.waitForConnection(projectName, "disconnected", SUBPROCESS);
     await (await $("[data-chat-disconnected]")).waitForDisplayed({ timeout: COMMAND });
 
-    await sandboxHeader.start(projectName);
-    await sandboxHeader.waitForRunning(projectName);
+    await sandboxView.start(projectName);
+    await sandboxView.waitForRunning(projectName);
+    await sandboxView.clickTab(projectName, "agentchat");
     // /run is not a tmpfs, so the old pid file survives and only the cmdline check rejects it.
     assert.strictEqual(sandboxSh(`cat ${STATE}/pi.pid`, false), piPid, "pi.pid did not survive the restart");
     const reconnect = await $("[data-chat-reconnect]");

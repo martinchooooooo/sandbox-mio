@@ -40,22 +40,22 @@ class SidebarPage {
   }
 
   async isSandboxActive(name: string): Promise<boolean> {
-    const item = await this.sandboxItem(name);
-    return (await item.isExisting()) && (await item.getAttribute("data-active")) === "true";
+    // The in-view sandbox row is only outlined (data-active stays false); the view root tells which is showing.
+    return (await $(`div[data-sandbox-view='${name}']`)).isDisplayed();
   }
 
   /**
    * Brings sandbox `name` into view through its sidebar entry, which restores its last view (a pane
-   * or Manage), and waits for its header (docs/features/unified-sidebar-nav/02_dev.md, Resolved
+   * or Dashboard), and waits for its view root (docs/features/unified-sidebar-nav/02_dev.md, Resolved
    * Decision 2). The entry appears once the sandbox store has polled the sandbox in.
    */
   async selectSandbox(name: string, timeout = UI_SETTLE): Promise<void> {
     const item = await this.sandboxItem(name);
     await item.waitForClickable({ timeout, timeoutMsg: `sidebar has no clickable entry for sandbox "${name}"` });
     await item.click();
-    await (await $(`div[data-sandbox-header][data-sandbox='${name}']`)).waitForDisplayed({
+    await (await $(`div[data-sandbox-view='${name}']`)).waitForDisplayed({
       timeout,
-      timeoutMsg: `selecting "${name}" in the sidebar never brought its sandbox header into view`,
+      timeoutMsg: `selecting "${name}" in the sidebar never brought its sandbox view into view`,
     });
   }
 

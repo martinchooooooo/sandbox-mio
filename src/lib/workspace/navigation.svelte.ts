@@ -5,10 +5,12 @@ import {
     activeSandboxName,
     forgetManageView,
     markManageView,
+    panesOf,
     restoreTarget,
     setActiveSandbox,
     type AppPane,
 } from "$lib/workspace/state.svelte";
+import type { AppDescriptor } from "$lib/workspace/apps";
 
 // Every way the shell moves between pages and sandboxes, so components never re-derive the order
 // of client-side state and pane commands. The content area itself is derived in the store
@@ -72,6 +74,16 @@ export async function activatePane(pane: AppPane): Promise<void> {
     } catch (e) {
         console.error(e);
     }
+}
+
+/**
+ * Switches to `app`'s pane when open, otherwise launches it. Rejects when the launch command
+ * fails; no client-side view state is set before Rust confirms the pane is active.
+ */
+export async function launchApp(sandbox: string, workspacePath: string, app: AppDescriptor): Promise<void> {
+    const pane = panesOf(sandbox).find((p) => p.kind === app.kind);
+    if (pane) return activatePane(pane);
+    await invoke(app.command, { name: sandbox, workspacePath });
 }
 
 export async function closePane(pane: AppPane): Promise<void> {

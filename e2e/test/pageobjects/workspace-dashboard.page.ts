@@ -3,7 +3,7 @@ import { AGENT_INSTALL, COMMAND, PACKAGE_INSTALL, PANEL_RENDER, SUBPROCESS } fro
 
 // A DOM region of the single `main-navigation-panel` webview, not a separate one — no window
 // switching needed (docs/features/consolidate-app-container/02_dev.md Phase C).
-type DashboardSectionId = "overview" | "tools" | "ports" | "network" | "traffic" | "remote" | "danger";
+type DashboardSectionId = "overview" | "tools" | "ports" | "network" | "traffic" | "remote";
 
 // iron-proxy logs a CONNECT row's host as `host:port`; request rows carry the bare host.
 const stripPort = (host: string): string => host.replace(/:\d+$/, "");
@@ -37,23 +37,28 @@ class WorkspaceDashboardPage {
     });
   }
 
-  // `data-dashboard` (WorkspaceDashboard.svelte's `<main>`, valued with the sandbox name) scopes the
-  // getters below: the sandbox header above it also renders a StatusRow, so an unscoped `errorRow`
-  // lookup could resolve to the header's instead of the Dashboard's.
+  // `data-dashboard` (WorkspaceDashboard.svelte's `<main>`) scopes the getters below; the title bar
+  // inside it has its own StatusRow, so `errorRow` is narrowed further to `data-dashboard-status`.
   get root(): Element {
     return $("[data-dashboard]");
   }
 
   // ── App launcher (docs/features/workspace-app-tabs/02_dev.md Phase D) ──────
 
-  // Scoped to `root`: once a pane exists, its sandbox header tab (SandboxHeader.svelte) carries the
-  // same `data-app` value as the launcher.
+  // The large app cards at the top of Overview (DashboardOverview.svelte). Scoped to `root`: once a
+  // pane exists, its sidebar app child (AppSidebar.svelte) carries the same `data-app` value. A card
+  // for an app that is not available yet exists but is disabled.
   launcherButton(kind: "terminal" | "agentweb" | "agentchat"): Element {
     return this.root.$(`button[data-app="${kind}"]`);
   }
 
   async launchApp(kind: "terminal" | "agentweb" | "agentchat"): Promise<void> {
     await this.#clickButton(this.launcherButton(kind));
+  }
+
+  /** The small Close button on an open app's card. */
+  closeAppButton(kind: "terminal" | "agentweb" | "agentchat"): Element {
+    return this.root.$(`button[data-close-app="${kind}"]`);
   }
 
   // ── Package management ─────────────────────────────────────────────────────
@@ -324,13 +329,6 @@ class WorkspaceDashboardPage {
     return (await value.getAttribute("title")) ?? "";
   }
 
-  // ── Destroy (WorkspaceDashboard.svelte) ─────────────────────────────────────
-
-  // The "Delete sandbox" section's button; its label is `projects_destroy` in messages/en.json.
-  get destroyButton(): Element {
-    return this.root.$("button=delete");
-  }
-
   // ── Remote management (RemoteManager.svelte) ────────────────────────────────
 
   get deployButton(): Element {
@@ -477,12 +475,11 @@ class WorkspaceDashboardPage {
   }
 
   /**
-   * StatusRow's error line for the Dashboard's shared action runner — deploy/undeploy/destroy/sync
-   * all run through it (`action` in WorkspaceDashboard.svelte), so one selector covers all of them,
-   * scoped to `root` (see the comment on it above).
+   * StatusRow's error line for the Dashboard's shared action runner: deploy, undeploy, sync and the
+   * section operations (`action` in WorkspaceDashboard.svelte). The title bar's own row is excluded.
    */
   get errorRow(): Element {
-    return this.root.$("div[role='status'].text-destructive");
+    return this.root.$("[data-dashboard-status] div[role='status'].text-destructive");
   }
 }
 

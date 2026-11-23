@@ -1,5 +1,6 @@
 import { showHome, type Element } from "./app.page.js";
 import workspaceDashboard from "./workspace-dashboard.page.js";
+import sandboxView from "./sandbox-view.page.js";
 import { COMMAND, DEPLOY, DESTROY_GRACE, SUBPROCESS, SYNC_CONVERGE, UI_SETTLE } from "../../lib/timeouts.js";
 
 // Enough to outlast two of the deployment poll's 3 s re-render windows without masking a button that
@@ -217,8 +218,7 @@ export default class ProjectRow {
 
   async destroy(timeout = DESTROY_GRACE): Promise<void> {
     await this.#openDashboard();
-    await workspaceDashboard.openSection("danger");
-    await this.#clickButton(workspaceDashboard.destroyButton);
+    await sandboxView.destroy(this.projectName);
     await this.waitForGone(timeout);
   }
 

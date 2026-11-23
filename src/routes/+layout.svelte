@@ -27,7 +27,7 @@
     // before any route mounts and is never torn down for the life of the webview.
     ensureActivity();
 
-    // Rust positions native panes beside the sidebar and below the sandbox header. The routed page
+    // Rust positions native panes beside the sidebar, full height. The routed page
     // unmounts while a sandbox is in view (docs/features/unified-sidebar-nav/02_dev.md, Resolved
     // Decision 9).
     let isNavigationPanel = $state(false);

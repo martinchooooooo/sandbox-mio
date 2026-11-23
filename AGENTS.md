@@ -97,9 +97,9 @@ Currently available components:
 - `input-group` — retro-ui-svelte has no `input-group` registry item either; same hand-restyle situation as `field`
 - `item` (Root, Group, Media, Content, Title, Description, Actions, Header, Footer, Separator) — retro-ui-svelte has no `item` registry item; pulled from shadcn-svelte and hand-restyled, like `field`
 - `label`
-- `nav-list` (Root, Group, Item) — the app sidebar's vertical navigation list: buttons with an icon and label, collapsing to an icon rail with tooltips; hand-built in the `section-nav` item style (shared base classes in `section-nav/styles.ts`), since retro-ui-svelte has no `sidebar` item (see `docs/features/unified-sidebar-nav/02_dev.md`)
+- `nav-list` (Root, Group, Item) — the app sidebar's vertical navigation list: buttons with an icon and label (optional `muted`/`contains` states and a sibling `action` button), collapsing to an icon rail with tooltips; hand-built in the `section-nav` item style (shared base classes in `section-nav/styles.ts`), since retro-ui-svelte has no `sidebar` item (see `docs/features/unified-sidebar-nav/02_dev.md`)
 - `progress`
-- `section-nav` (Root, List, Item, Separator, Content) — vertical section list that collapses to icons with tooltips by container width and mounts only the active section; retro-ui-svelte has no `sidebar` item, so it is hand-built on bits-ui vertical `Tabs` and hand-restyled, like `field` and `input-group` (see `docs/features/manage-dashboard-redesign/02_dev.md`)
+- `section-nav` (Root, List, Item, Content) — horizontal, always-labelled tab strip that wraps when narrow and mounts only the active section; retro-ui-svelte has no `sidebar` item, so it is hand-built on bits-ui `Tabs` and hand-restyled, like `field` and `input-group` (see `docs/features/workspace-ux/02_dev.md`)
 - `separator`
 - `sonner` (toast notifications; mount a single `<Toaster />` in `src/routes/+layout.svelte`, call `toast.success`/`toast.error` from `svelte-sonner`)
 - `spinner` — retro-ui-svelte has no `spinner` registry item; pulled from shadcn-svelte as-is (a spinning icon, nothing to restyle)

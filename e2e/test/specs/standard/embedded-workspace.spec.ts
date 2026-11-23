@@ -4,7 +4,7 @@ import path from "path";
 import ProjectsPage from "../../pageobjects/projects.page.js";
 import ProjectRow from "../../pageobjects/project-row.component.js";
 import workspaceDashboard from "../../pageobjects/workspace-dashboard.page.js";
-import sandboxHeader from "../../pageobjects/sandbox-header.page.js";
+import sandboxView from "../../pageobjects/sandbox-view.page.js";
 import sidebar from "../../pageobjects/sidebar.page.js";
 import { podman, podmanOk, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
 import { forwardList } from "../../../lib/mutagen.js";
@@ -23,11 +23,10 @@ import {
 } from "../../../lib/workspace.js";
 
 // Logical-px constants mirrored from src-tauri/src/workspace/mod.rs (the app sidebar's expanded and
-// rail widths, the sandbox header's height). Asserted directly (not re-derived) so a spec failure
+// rail widths). Asserted directly (not re-derived) so a spec failure
 // points at either side changing without the other.
 const NAVIGATION_PANEL_EXPANDED_W = 240;
 const NAVIGATION_PANEL_RAIL_W = 48;
-const SWITCHER_H = 64;
 
 const WORKSPACE_ROOT = process.env.SANDBOX_WORKSPACE_ROOT;
 
@@ -55,14 +54,14 @@ async function assertDashboardVisible(sandbox: string): Promise<void> {
   const { height } = await input.getSize();
   assert(
     height > 0,
-    `Dashboard content for "${sandbox}" has zero rendered height — this is the switcher/header ` +
+    `Dashboard content for "${sandbox}" has zero rendered height — this is the switcher/chrome ` +
       "h-screen/h-16 class of bug (docs/features/consolidate-app-container/02_dev.md Common Gotchas).",
   );
 }
 
 // `function ()` (not an arrow) so `this.timeout` raises the suite ceiling: the first create on a
 // connection may trigger the one-time mise base-image build (~324 MB).
-describe("Embedded workspace (app sidebar, sandbox header and Dashboard in one webview)", function () {
+describe("Embedded workspace (app sidebar and Dashboard in one webview)", function () {
   this.timeout(600000);
 
   const nameA = `e2e-workspace-a-${Date.now()}`;
@@ -118,10 +117,10 @@ describe("Embedded workspace (app sidebar, sandbox header and Dashboard in one w
     );
 
     // Structural layout proof (mirrors the Rust unit tests in workspace/mod.rs): the overlay rect is
-    // always positioned at the sidebar's edge and below the SWITCHER_H-tall header, regardless of active pane —
+    // always positioned at the sidebar's edge and at the window top (no header), regardless of active pane —
     // the merged webview itself is never resized.
     assert.strictEqual(state.overlay.x, NAVIGATION_PANEL_EXPANDED_W);
-    assert.strictEqual(state.overlay.y, SWITCHER_H);
+    assert.strictEqual(state.overlay.y, 0);
   });
 
   it("open_terminal_pane lazily opens the native Terminal pane and makes it active", async () => {
@@ -148,17 +147,17 @@ describe("Embedded workspace (app sidebar, sandbox header and Dashboard in one w
     );
   });
 
-  it("clicking the sandbox header's Manage tab hides the Terminal overlay and shows Dashboard again", async () => {
+  it("clicking the sidebar's Dashboard child hides the Terminal overlay and shows Dashboard again", async () => {
     const terminal = paneFor(await workspaceState(), nameA, "terminal")!;
 
-    await sandboxHeader.clickTab(nameA, "dashboard");
+    await sandboxView.clickTab(nameA, "dashboard");
     await assertDashboardVisible(nameA);
 
     const afterToDashboard = await workspaceState();
     assert.strictEqual(
       afterToDashboard.active_app,
       null,
-      "hide_active_pane must clear active_app once the Manage tab is clicked.",
+      "hide_active_pane must clear active_app once the Dashboard child is clicked.",
     );
     assert.strictEqual(
       afterToDashboard.sandbox_last_pane[nameA],
@@ -167,7 +166,7 @@ describe("Embedded workspace (app sidebar, sandbox header and Dashboard in one w
         "even though it is no longer the active view.",
     );
 
-    // Home is unmounted while a sandbox is in view, so no card can shadow the header's
+    // Home is unmounted while a sandbox is in view, so no card can shadow the sidebar row's
     // `data-sandbox` (docs/features/unified-sidebar-nav/02_dev.md, Resolved Decision 9).
     assert.strictEqual(
       await (await rowA.root).isExisting(),
@@ -176,7 +175,7 @@ describe("Embedded workspace (app sidebar, sandbox header and Dashboard in one w
     );
 
     // Bring the Terminal pane back so the switch_app assertion below keeps its meaning.
-    await sandboxHeader.clickTab(nameA, "terminal");
+    await sandboxView.clickTab(nameA, "terminal");
     await waitForTerminalAttached(nameA);
     assert.strictEqual((await workspaceState()).active_app, terminal.label);
   });
@@ -211,7 +210,7 @@ describe("Embedded workspace (app sidebar, sandbox header and Dashboard in one w
       "The Home card's workspace label is hidden — Home cards keep their labels at full width.",
     );
 
-    // The last view was the Terminal pane, so the sidebar entry restores it rather than Manage.
+    // The last view was the Terminal pane, so the sidebar entry restores it rather than the Dashboard.
     await sidebar.selectSandbox(nameA);
     await browser.waitUntil(async () => (await workspaceState()).active_app === terminal.label, {
       timeout: 10000,
@@ -397,8 +396,8 @@ describe("Embedded workspace (app sidebar, sandbox header and Dashboard in one w
     assert.strictEqual(state.active_app, null);
     // Unlike the pre-consolidation three-rect model, the overlay rect is not conditioned on
     // whether any sandbox is open (Resolved Decision 3) — it always reflects the current
-    // sidebar-width/header-height layout, since the merged webview is never resized.
+    // sidebar-width layout, since the merged webview is never resized.
     assert.strictEqual(state.overlay.x, NAVIGATION_PANEL_EXPANDED_W);
-    assert.strictEqual(state.overlay.y, SWITCHER_H);
+    assert.strictEqual(state.overlay.y, 0);
   });
 });

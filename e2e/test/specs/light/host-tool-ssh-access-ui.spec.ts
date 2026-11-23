@@ -1,7 +1,7 @@
 import assert from "node:assert";
 
 import ProjectsPage from "../../pageobjects/projects.page.js";
-import sandboxHeader from "../../pageobjects/sandbox-header.page.js";
+import sandboxView from "../../pageobjects/sandbox-view.page.js";
 import workspaceDashboard from "../../pageobjects/workspace-dashboard.page.js";
 import { captureDiagOnFailure } from "../../../lib/diag.js";
 import { configureMock, useMockControl } from "../../../lib/mock.js";
@@ -45,8 +45,8 @@ describe("SSH access panel renders the handoff (mock backend)", function () {
   });
 
   it("re-fetches on stop and tells the user to start the sandbox", async () => {
-    await sandboxHeader.stop(name);
-    await sandboxHeader.waitForStopped(name);
+    await sandboxView.stop(name);
+    await sandboxView.waitForStopped(name);
     await workspaceDashboard.waitForSshState("stopped");
     assert.strictEqual(await workspaceDashboard.sshAlias(), name);
   });

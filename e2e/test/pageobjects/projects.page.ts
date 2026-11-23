@@ -122,7 +122,7 @@ class ProjectsPage extends AppPage {
 
     // A finished create opens the new sandbox on its own (lifecycle store), so wait for that and
     // come back to Home, where the card and every later ProjectRow action live.
-    await $(`div[data-sandbox-header][data-sandbox="${name}"]`).waitForDisplayed({
+    await $(`div[data-sandbox-view="${name}"]`).waitForDisplayed({
       timeout,
       timeoutMsg: `sandbox "${name}" was not opened after create`,
     });

@@ -1,7 +1,7 @@
 import assert from "node:assert";
 
 import ProjectsPage from "../../pageobjects/projects.page.js";
-import sandboxHeader from "../../pageobjects/sandbox-header.page.js";
+import sandboxView from "../../pageobjects/sandbox-view.page.js";
 import workspaceDashboard from "../../pageobjects/workspace-dashboard.page.js";
 import { captureDiagOnFailure } from "../../../lib/diag.js";
 import { invokeCmd, useMockControl } from "../../../lib/mock.js";
@@ -44,7 +44,7 @@ describe("GitHub access card — sidecar wording and opt-out (mock backend)", fu
     // starts it).
     await ProjectsPage.row(name).openWorkspace();
     await workspaceDashboard.waitForRendered(name);
-    await sandboxHeader.waitForRunning(name);
+    await sandboxView.waitForRunning(name);
 
     await invokeCmd("set_github_token", { token: SENTINEL });
 

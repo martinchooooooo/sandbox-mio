@@ -12,22 +12,20 @@ pub const MAIN_WINDOW: &str = "main";
 pub const NAVIGATION_PANEL_LABEL: &str = "main-navigation-panel";
 
 /// Width of the expanded app sidebar. The Tailwind sizes in `src/lib/workspace/AppSidebar.svelte`
-/// and `SandboxHeader.svelte` must match these three constants, or the native panes render shifted.
+/// must match these two constants, or the native panes render shifted.
 pub const NAVIGATION_PANEL_EXPANDED_W: f64 = 240.0;
 /// Width of the collapsed sidebar icon rail.
 pub const NAVIGATION_PANEL_RAIL_W: f64 = 48.0;
-/// Height of the sandbox header (name, controls and app tabs) above the pane area.
-pub const SWITCHER_H: f64 = 64.0;
-
+/// Overlay rect for panes: everything right of the sidebar, full window height (the sidebar is the
+/// only app chrome).
 pub fn workspace_layout(width: f64, height: f64, collapsed: bool) -> Rect {
     let navigation_panel_w =
         if collapsed { NAVIGATION_PANEL_RAIL_W } else { NAVIGATION_PANEL_EXPANDED_W }.min(width);
-    let switcher_h = SWITCHER_H.min(height);
     Rect {
         x: navigation_panel_w,
-        y: switcher_h,
+        y: 0.0,
         width: (width - navigation_panel_w).max(0.0),
-        height: (height - switcher_h).max(0.0),
+        height: height.max(0.0),
     }
 }
 
@@ -259,7 +257,7 @@ fn hide_active_pane_on_main<R: Runtime>(app: &AppHandle<R>) -> Result<(), Worksp
     Ok(())
 }
 
-/// Bring a specific pane of sandbox `name` to the front (sandbox header tab click), recording it as
+/// Bring a specific pane of sandbox `name` to the front (sidebar app click), recording it as
 /// that sandbox's last-active pane so a later cross-sandbox `switch_app` restores it (Resolved
 /// Decision 1, `docs/features/responsive-panel/02_dev.md`).
 pub fn switch_pane<R: Runtime>(
@@ -493,7 +491,7 @@ fn relayout<R: Runtime>(app: &AppHandle<R>, size: tauri::PhysicalSize<u32>) {
     }
 }
 
-/// Broadcast the fresh state so the sandbox header's app tabs and the sidebar's collapse chrome
+/// Broadcast the fresh state so the sidebar's app tree and collapse chrome
 /// track what Rust applied. Best-effort: a dropped event never fails the underlying operation.
 fn emit_state<R: Runtime>(app: &AppHandle<R>) {
     let state = app.state::<WorkspaceRegistry>().lock().unwrap().clone();
@@ -586,12 +584,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn expanded_layout_places_overlay_beside_sidebar_and_below_header() {
+    fn expanded_layout_places_overlay_beside_sidebar_at_full_height() {
         let r = workspace_layout(1024.0, 720.0, false);
         assert_eq!(r.x, NAVIGATION_PANEL_EXPANDED_W);
-        assert_eq!(r.y, SWITCHER_H);
+        assert_eq!(r.y, 0.0);
         assert_eq!(r.width, 1024.0 - NAVIGATION_PANEL_EXPANDED_W);
-        assert_eq!(r.height, 720.0 - SWITCHER_H);
+        assert_eq!(r.height, 720.0);
     }
 
     #[test]

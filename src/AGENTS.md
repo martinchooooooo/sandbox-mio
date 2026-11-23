@@ -5,7 +5,7 @@ The `src/` tree is a SvelteKit app (Svelte 5 runes, static adapter, Tailwind 4) 
 ## Route Map
 
 - `src/routes/projects/` — Home: sandbox cards (`SandboxItem.svelte`, `StatusRow.svelte`), the create card (`CreateSandboxItem.svelte`), plus the panels the Manage dashboard mounts (`PackageManager.svelte`, `AgentManager.svelte`, and others).
-- `src/lib/workspace/` — not a route: the app shell rendered by the root layout (app sidebar `AppSidebar.svelte`, sandbox view and header `SandboxView.svelte`/`SandboxHeader.svelte`, Manage dashboard, launchable-app catalogue in `apps.ts`); pane state comes from the Rust `WorkspaceRegistry` via `state.svelte.ts`, and every page/sandbox navigation action lives in `navigation.svelte.ts`. See `docs/architecture/workspace-ui.md`.
+- `src/lib/workspace/` — not a route: the app shell rendered by the root layout (app sidebar `AppSidebar.svelte`, sandbox view `SandboxView.svelte`, Manage dashboard and its title bar `SandboxTitleBar.svelte`, launchable-app catalogue in `apps.ts`); pane state comes from the Rust `WorkspaceRegistry` via `state.svelte.ts`, and every page/sandbox navigation action lives in `navigation.svelte.ts`. See `docs/architecture/workspace-ui.md`.
 - `src/routes/models/` — local LLM catalogue, download, and inference control.
 - `src/routes/agent-auth/`, `src/routes/credentials/` — agent login flow and shared credential bundles.
 - `src/routes/settings/`, `src/routes/intro/` — settings page and first-run intro.
@@ -18,7 +18,7 @@ The `src/` tree is a SvelteKit app (Svelte 5 runes, static adapter, Tailwind 4) 
 State shared across routes lives in `.svelte.ts` files under `src/lib/` with module-level `$state` declared above the router, exported through accessor functions, and hydrated by an idempotent `ensure*()`/start function called once from the root layout. Component-local `$state` is destroyed on navigation, so cross-route state must use a store following the established pattern. Existing stores:
 
 - `src/lib/activity/activity.svelte.ts` — task ledger hydrated from `list_tasks`, kept live by `activity://task-updated`; also folds container status per sandbox from the `listen_events` stream.
-- `src/lib/workspace/state.svelte.ts` — the single `workspace://state` subscription plus the sandbox in view; consumed by the layout, the app sidebar and the sandbox header.
+- `src/lib/workspace/state.svelte.ts` — the single `workspace://state` subscription plus the sandbox in view; consumed by the layout and the app sidebar.
 - `src/lib/proxy/status.svelte.ts` — per-sandbox `proxy_status` cache (5 s freshness) shared by the Manage dashboard's Overview summary, Network and Traffic sections; call `refreshProxyStatus` after any sidecar-changing command.
 - `src/lib/agents/authStatus.svelte.ts` — per-sandbox coding-agent login status, checked concurrently and kept across dashboard remounts.
 - `src/lib/workspace/dashboard.svelte.ts` — the Manage dashboard section last opened per sandbox (frontend memory; survives the dashboard remount on sandbox switch).

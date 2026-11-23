@@ -1,4 +1,4 @@
-import { Home01Icon, TerminalIcon, BotIcon, AiChat02Icon } from "@hugeicons/core-free-icons";
+import { DashboardSquare01Icon, Home01Icon, TerminalIcon, BotIcon, AiChat02Icon } from "@hugeicons/core-free-icons";
 import { m } from "$lib/paraglide/messages.js";
 import type { AgentDescriptor } from "$lib/agents/types";
 import type { AppKind } from "./state.svelte";
@@ -10,22 +10,28 @@ export type AppDescriptor = {
     title: () => string;
     icon: typeof Home01Icon;
     command: string;
+    /** One plain-language line for the dashboard card. */
+    description: () => string;
+    /** Shown on the disabled card when `available` is false: what the user has to do. */
+    unavailableHint: () => string;
     available(ctx: LaunchContext): boolean;
 };
 
-/** Manage/Home tab metadata. Not a catalogue entry: always present, not launchable, not closable. */
+/** Dashboard entry metadata. Not a catalogue entry: always present, not launchable, not closable. */
 export const HOME_APP = {
     title: m.workspace_tab_manage,
-    icon: Home01Icon,
+    icon: DashboardSquare01Icon,
 };
 
-/** The set of apps a sandbox can launch from its Manage tab, and each one's availability rule. */
+/** The set of apps a sandbox can launch from its dashboard, and each one's availability rule. */
 export const LAUNCHABLE_APPS: AppDescriptor[] = [
     {
         kind: "terminal",
         title: m.workspace_tab_terminal,
         icon: TerminalIcon,
         command: "open_terminal_pane",
+        description: m.app_terminal_desc,
+        unavailableHint: () => "",
         available: () => true,
     },
     {
@@ -33,6 +39,8 @@ export const LAUNCHABLE_APPS: AppDescriptor[] = [
         title: m.workspace_tab_agents,
         icon: BotIcon,
         command: "open_agent_web",
+        description: m.app_agents_desc,
+        unavailableHint: m.app_agents_unavailable,
         available: (ctx) => ctx.installedAgents.length > 0,
     },
     {
@@ -40,6 +48,8 @@ export const LAUNCHABLE_APPS: AppDescriptor[] = [
         title: m.workspace_tab_chat,
         icon: AiChat02Icon,
         command: "open_agent_chat",
+        description: m.app_chat_desc,
+        unavailableHint: m.app_chat_unavailable,
         // The native chat drives pi only (docs/features/native-agent-ui/02_dev.md).
         available: (ctx) => ctx.installedAgents.some((a) => a.id === "pi"),
     },

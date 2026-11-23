@@ -12,8 +12,8 @@ import { agentsById, planPreinstall, readPreinstallFacts } from "$lib/agents/pre
 
 // Module-scoped store (mirrors src/lib/sandbox/state.svelte.ts): the in-flight lifecycle operation
 // and last failure per sandbox name. Component-local runners lost both on navigation, so a start
-// from a Home card showed nothing in the sidebar or header and could be fired twice. Every surface
-// (Home card, header, sidebar) reads this instead.
+// from a Home card showed nothing in the sidebar and could be fired twice. Every surface
+// (Home card, title bar, sidebar) reads this instead.
 
 export type LifecycleOp = "create" | "start" | "stop" | "restart" | "destroy";
 
