@@ -4,36 +4,34 @@
     import * as Bubble from "$lib/components/ai-elements/bubble/index.js";
     import Markdown from "./Markdown.svelte";
     import ReasoningPart from "./ReasoningPart.svelte";
-    import RoleFrame from "./RoleFrame.svelte";
+    import AgentRow from "./AgentRow.svelte";
     import ToolPart from "./ToolPart.svelte";
     import type { Snippet } from "svelte";
     import type { ChatStore } from "./chat.svelte";
-    import type { Role } from "./anatomy";
-    import type { NoticeKind } from "./types";
+    import { avatarLabel } from "./anatomy-copy";
+    import { frameOf, isLive, type Role } from "./anatomy";
+    import type { ChatPart, NoticeKind, RunState } from "./types";
 
     let { store }: { store: ChatStore } = $props();
 
     const messages = $derived(store.chat.messages);
     const learning = $derived(store.learning);
-
-    function selectedRole(messageId: string, index: number): Role | null {
-        const sel = store.selected;
-        return sel && sel.messageId === messageId && sel.partIndex === index ? sel.role : null;
-    }
-    const select = (messageId: string, partIndex: number, role: Role) =>
-        (store.selected = selectedRole(messageId, partIndex) === role ? null : { messageId, partIndex, role });
+    // Only the newest assistant message can hold an in-progress part: pi runs a message's tools
+    // before the next assistant message starts.
+    const liveId = $derived(messages.findLast((m) => m.role === "assistant")?.id);
+    const runFor = (id: string): RunState => (id === liveId ? store.chat.run : "idle");
 
     const noticeClass = (kind: NoticeKind) =>
         kind === "error" ? "text-destructive text-xs" : "text-muted-foreground text-xs";
 </script>
 
-{#snippet framed(messageId: string, index: number, role: Role, body: Snippet)}
-    {#if learning}
-        <RoleFrame {role} selected={selectedRole(messageId, index) === role} onselect={() => select(messageId, index, role)}>
-            {@render body()}
-        </RoleFrame>
-    {:else}
+{#snippet partRow(part: ChatPart, run: RunState, role: Role, body: Snippet)}
+    {#if !learning}
         {@render body()}
+    {:else}
+        {@const frame = frameOf(part, run)}
+        {@const live = isLive(part, run)}
+        <AgentRow {role} {frame} {live} label={avatarLabel(role, frame, "", live)}>{@render body()}</AgentRow>
     {/if}
 {/snippet}
 
@@ -67,26 +65,23 @@
                                             {#snippet reply()}
                                                 <Markdown content={part.text} streaming={part.streaming} />
                                             {/snippet}
-                                            {@render framed(message.id, i, "brain-reply", reply)}
+                                            {@render partRow(part, runFor(message.id), "brain-reply", reply)}
                                         {:else if part.type === "reasoning"}
                                             {#snippet think()}
-                                                <ReasoningPart
-                                                    text={part.text}
-                                                    streaming={part.streaming}
-                                                    open={learning ? selectedRole(message.id, i) === "brain-think" : undefined}
-                                                />
+                                                <ReasoningPart text={part.text} streaming={part.streaming} />
                                             {/snippet}
-                                            {@render framed(message.id, i, "brain-think", think)}
+                                            {@render partRow(part, runFor(message.id), "brain-think", think)}
                                         {:else if part.type === "tool"}
-                                            <ToolPart
-                                                {part}
-                                                {learning}
-                                                settled={store.chat.run === "idle"}
-                                                selectedRole={selectedRole(message.id, i)}
-                                                onselect={(role) => select(message.id, i, role)}
-                                            />
+                                            <ToolPart {part} {learning} run={runFor(message.id)} />
                                         {:else if part.type === "notice"}
-                                            <p class={noticeClass(part.kind)} data-notice={part.kind}>{part.text}</p>
+                                            {#snippet notice()}
+                                                <p class={noticeClass(part.kind)} data-notice={part.kind}>{part.text}</p>
+                                            {/snippet}
+                                            {#if learning}
+                                                <AgentRow>{@render notice()}</AgentRow>
+                                            {:else}
+                                                {@render notice()}
+                                            {/if}
                                         {/if}
                                     {/each}
                                 </Message.Content>

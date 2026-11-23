@@ -1,25 +1,21 @@
 <script lang="ts">
     import * as Trace from "$lib/components/ai-elements/trace/index.js";
     import * as CodeBlock from "$lib/components/ai-elements/code-block/index.js";
-    import RoleFrame from "./RoleFrame.svelte";
-    import { rolesOf, toolKindOf, type Role } from "./anatomy";
-    import { ARMS_WORDS } from "./anatomy-copy";
-    import type { ToolChatPart } from "./types";
+    import AgentRow from "./AgentRow.svelte";
+    import { askFrameOf, frameOf, hasRun, isLive, toolKindOf } from "./anatomy";
+    import { avatarLabel } from "./anatomy-copy";
+    import type { RunState, ToolChatPart } from "./types";
 
     let {
         part,
         learning = false,
-        settled = false,
-        selectedRole = null,
-        onselect = () => {},
+        run = "idle",
     }: {
         part: ToolChatPart;
         /** Splits the call into the Brain's request and the Arms' execution. */
         learning?: boolean;
-        /** The run ended, so a call still in state `input` was never run. */
-        settled?: boolean;
-        selectedRole?: Role | null;
-        onselect?: (role: Role) => void;
+        /** After the run ended, a call still in state `input` or `composing` was never run. */
+        run?: RunState;
     } = $props();
 
     const str = (v: unknown) => (typeof v === "string" ? v : "");
@@ -47,8 +43,12 @@
                 ? "pending"
                 : undefined,
     );
+    const settled = $derived(run === "idle");
+    const composing = $derived(part.state === "composing" && !settled);
     const kind = $derived(toolKindOf(part.toolName));
-    const armsDetail = $derived((kind && ARMS_WORDS[kind]) || part.toolName);
+    const frame = $derived(frameOf(part, run));
+    const askFrame = $derived(askFrameOf(frame));
+    const live = $derived(isLive(part, run));
     /** An edit's replacements as removed and added lines. */
     const editLines = $derived.by(() => {
         if (part.toolName !== "edit") return [];
@@ -125,29 +125,35 @@
         </Trace.Collapsible>
     </Trace.Root>
 {:else}
-    <div class="flex flex-col gap-1" data-tool={part.toolName} data-tool-state={part.state}>
-        <RoleFrame role="brain-ask" selected={selectedRole === "brain-ask"} onselect={() => onselect("brain-ask")}>
+    <div class="flex flex-col" data-tool={part.toolName} data-tool-state={part.state}>
+        <AgentRow
+            role="brain-ask"
+            frame={askFrame}
+            live={live && (frame === "compose" || frame === "request")}
+            label={avatarLabel("brain-ask", askFrame, part.toolName, live)}
+            tool={kind}
+        >
             <div data-tool-band="ask">
                 <Trace.Root>
-                    <Trace.Line status={part.state === "composing" ? "running" : undefined}>
-                        <!-- TODO(i18n) -->
-                        <Trace.Title>
-                            {part.state === "composing" ? "Brain is asking for:" : "Brain asked:"}
-                            {part.toolName}
-                        </Trace.Title>
+                    <Trace.Line status={composing ? "running" : undefined}>
+                        <Trace.Title>{part.toolName}</Trace.Title>
+                        {#if part.state === "input" && !settled}
+                            <Trace.Description>· waiting to run</Trace.Description> <!-- TODO(i18n) -->
+                        {/if}
                         {#if summary}
                             <Trace.Description class="truncate font-mono">{summary}</Trace.Description>
                         {/if}
                     </Trace.Line>
                 </Trace.Root>
             </div>
-        </RoleFrame>
-        {#if rolesOf(part).includes("arms-act")}
-            <RoleFrame
+        </AgentRow>
+        {#if hasRun(part)}
+            <AgentRow
                 role="arms-act"
-                detail={armsDetail}
-                selected={selectedRole === "arms-act"}
-                onselect={() => onselect("arms-act")}
+                {frame}
+                live={live && frame === "act"}
+                label={avatarLabel("arms-act", frame, part.toolName, live)}
+                tool={kind}
             >
                 <div data-tool-band="act">
                     <Trace.Root>
@@ -170,9 +176,11 @@
                         </Trace.Collapsible>
                     </Trace.Root>
                 </div>
-            </RoleFrame>
-        {:else if settled && part.state === "input"}
-            <p class="text-muted-foreground px-1 text-xs" data-tool-band="act">Asked, but not run</p> <!-- TODO(i18n) -->
+            </AgentRow>
+        {:else if settled && (part.state === "input" || part.state === "composing")}
+            <AgentRow>
+                <p class="text-muted-foreground m-0 text-xs" data-tool-band="act">Asked, but not run</p> <!-- TODO(i18n) -->
+            </AgentRow>
         {/if}
     </div>
 {/if}

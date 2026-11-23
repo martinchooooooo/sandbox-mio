@@ -11,7 +11,7 @@
     import { m } from "$lib/paraglide/messages.js";
     import { LOCAL_LLM_PROVIDER_ID } from "$lib/agents/local-llm";
 
-    let { store, onOpenAnatomy }: { store: ChatStore; onOpenAnatomy?: () => void } = $props();
+    let { store }: { store: ChatStore } = $props();
 
     const model = $derived(store.piState?.model as { id?: string; name?: string; provider?: string; reasoning?: boolean } | null | undefined);
     const thinkingLevel = $derived(String(store.piState?.thinkingLevel ?? "off"));
@@ -83,10 +83,6 @@
         />
         <Label for="chat-learning-mode" class="text-xs whitespace-nowrap">Show the Brain and Arms</Label> <!-- TODO(i18n) -->
     </div>
-
-    {#if onOpenAnatomy}
-        <Button size="sm" variant="outline" onclick={onOpenAnatomy} data-chat-open-anatomy>Brain and Arms</Button> <!-- TODO(i18n) -->
-    {/if}
 
     {#if context}
         <HoverCard.Root>

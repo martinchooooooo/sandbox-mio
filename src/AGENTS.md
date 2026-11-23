@@ -10,7 +10,7 @@ The `src/` tree is a SvelteKit app (Svelte 5 runes, static adapter, Tailwind 4) 
 - `src/routes/agent-auth/`, `src/routes/credentials/` — agent login flow and shared credential bundles.
 - `src/routes/settings/`, `src/routes/intro/` — settings page and first-run intro.
 - `src/lib/onboarding/` — not a route: the illustrated onboarding book the welcome flow (`src/lib/welcome/`) shows, its reusable page kit, and the background first-run setup store. See `src/lib/onboarding/AGENTS.md` before adding a chapter.
-- `src/lib/story-stage/` — not a route: the whiteboard animation engine shared by the onboarding book and the native chat's live stage. See `src/lib/story-stage/AGENTS.md`.
+- `src/lib/story-stage/` — not a route: the whiteboard animation engine used by the onboarding book. See `src/lib/story-stage/AGENTS.md`.
 - `src/routes/+layout.svelte` — mounts the single `<Toaster />`, the app sidebar (which holds the activity center), and the content area: the sandbox view when a sandbox is in view, otherwise the routed page.
 
 ## Module-Scoped Rune Stores
@@ -44,7 +44,7 @@ Motion is applied at the shell and primitive level, so most new UI animates with
 - Something appearing: add a class, no JS. `animate-enter` for a surface arriving, `animate-fade-in` for content swapping in place, `animate-pop-in` for a floating element, `stagger` on a list or stack whose children should cascade.
 - Something that must animate out: use `in:rise out:rise` or `in:pop out:pop` from `src/lib/motion.ts`, never Svelte's raw `fade`/`fly` and never `transition:` (it loses the faster exit).
 - Do not nest movement: inside an element that already rises or slides, use `animate-fade-in`.
-- Reduced motion is handled centrally: the tokens drop movement and keep fades, so do not add per-component `prefers-reduced-motion` checks.
+- Reduced motion is handled centrally: the tokens drop movement and keep fades, so do not add per-component `prefers-reduced-motion` checks, except for infinite indicator keyframes, which carry their own `no-preference` query (pattern: `src/lib/agent-chat/AgentAvatar.svelte`).
 
 ## Common Gotchas
 
