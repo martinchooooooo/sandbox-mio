@@ -153,7 +153,13 @@ describe("Sidebar apps group and Dashboard title bar (mock backend)", function (
   });
 
   it("shows Start while stopped and Stop beside the status once running", async () => {
+    // Launching Terminal in an earlier test started the sandbox (the terminal host starts it on demand), so stop it first.
     await sandboxView.ensureDashboard(nameB);
+    if (await (await sandboxView.stopButton).isExisting()) {
+      await sandboxView.stop(nameB);
+      await sandboxView.waitForStopped(nameB);
+    }
+    await (await sandboxView.startButton).waitForDisplayed({ timeout: UI_SETTLE, timeoutMsg: "A stopped sandbox has no Start button." });
     assert(await (await sandboxView.startButton).isDisplayed(), "A stopped sandbox has no Start button.");
     assert.strictEqual(await (await sandboxView.stopButton).isExisting(), false, "A stopped sandbox offers Stop.");
     await sandboxView.openMenu();
