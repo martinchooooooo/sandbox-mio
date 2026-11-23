@@ -13,7 +13,6 @@
 
 ## planned
 
-* [proxy-toggle-management](proxy-toggle-management/index.md) - App-global proxy default and turning the proxy on or off for an existing sandbox by recreating it.
 * [tailscale-access](tailscale-access/index.md) - Join deployed sandboxes to the user's tailnet so their web services are reachable from other devices.
 
 ## idea
@@ -21,7 +20,7 @@
 * [chat-mcp-learning](chat-mcp-learning/index.md) - A built-in offline demo MCP server and MCP visibility in the native chat (server badges on tool calls, a tools popover), so users can learn what an MCP server does with the local model.
 * [cloud-sandboxes](cloud-sandboxes/index.md) - Top-level Cloud Sandboxes nav panel for administering remote Podman hosts, including Oracle Cloud and Google Cloud provisioning.
 * [mcp-servers](mcp-servers/index.md) - An app-wide library of MCP servers, added by pasting a URL or README snippet and switched on per sandbox, rendered into the native MCP config of Claude Code, OpenCode and pi so Paseo, the terminal and the native chat all use them.
-* [proxy-remote-deploy](proxy-remote-deploy/index.md) - Let a proxy-enabled sandbox be deployed to a remote host instead of being refused.
+* [proxy-remote-deploy](proxy-remote-deploy/index.md) - Let a proxied sandbox be deployed to a remote host; remote deploy is blocked for every sandbox until it lands.
 
 ## implemented
 
@@ -78,3 +77,7 @@
 * [microsandbox-provider](microsandbox-provider/index.md) - microsandbox (libkrun microVMs via the msb CLI) as a second machine provider alongside Podman.
 * [proxy-network-policy](proxy-network-policy/index.md) - Domain allow/deny and interactive approval for Podman sandboxes through the mitmproxy sidecar.
 * [proxy-non-http-capture](proxy-non-http-capture/index.md) - Surface connections that bypass the proxy (non-HTTP(S) traffic) in the proxy panel.
+
+## abandoned
+
+* [proxy-toggle-management](proxy-toggle-management/index.md) - App-global proxy default and turning the proxy on or off for an existing sandbox by recreating it.

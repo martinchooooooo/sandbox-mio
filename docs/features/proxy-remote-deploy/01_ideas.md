@@ -5,6 +5,8 @@ feature: proxy-remote-deploy
 ---
 # Proxy Remote Deploy: Letting a Proxy-Enabled Sandbox Survive Deploy
 
+> **Update:** every new sandbox now has a proxy sidecar, so remote deploy is blocked outright until this feature lands (see [feature.md](feature.md)).
+
 > **Stale (2026-11-17):** this ideation targets the mitmproxy sidecar that `podman-egress-boundary` removed from Podman. Read it as history only; the feature is back at `idea` (see [feature.md](feature.md)).
 
 This document covers lifting `CliBackend::deploy`'s refusal of a proxy-enabled sandbox

@@ -23,7 +23,7 @@ sources:
 ---
 # Outbound Network Control
 
-A sandbox can opt into these controls over its outbound traffic, all switched on by the create dialog's proxy switch:
+Every new sandbox gets a proxy sidecar and these controls over its outbound traffic; there is no option to create one without:
 
 - **Traffic viewer**: a per-sandbox proxy sidecar records every HTTP(S) request (never headers, bodies or secret values) for the traffic panel.
 - **Secret swapping**: the sandbox holds only a placeholder; the real credential replaces it outside the sandbox, only in requests to the binding's hosts.
@@ -42,7 +42,7 @@ One policy format is shared across providers; Podman enforces it with a sidecar.
 | Egress policy | Host allows and CIDR denies only; ports, address groups, host denies and UDP are refused |
 | Non-HTTP traffic | Blocked |
 | Changing the policy after create | Applied live by reloading the sidecar |
-| Remote deploy | Refused |
+| Remote deploy | Blocked for every sandbox until the sidecar can be recreated remotely |
 
 A Podman sidecar created before the boundary existed records traffic but has no boundary or policy until the sandbox is recreated.
 
@@ -50,7 +50,7 @@ A Podman sidecar created before the boundary existed records traffic but has no 
 
 - **Workspace** (`.mio/`, visible inside the sandbox): the egress policy and secret bindings, which reference secrets by id only.
 - **App data** (never mounted into the sandbox): secret values, each sidecar's CA key, config and secret files, the snapshot of the policy last applied, and the flow record.
-- Whether a sandbox has a proxy is derived from the sidecar's existence.
+- Whether a sandbox has a proxy is derived from the sidecar's existence; only auth containers and sandboxes created before the sidecar became universal lack one.
 
 ## Lifecycle
 

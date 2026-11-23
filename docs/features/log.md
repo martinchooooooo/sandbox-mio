@@ -7,6 +7,7 @@ approximate. New entries go on top.
 
 ## 2026-11-22
 
+* **Abandon** [proxy-toggle-management](proxy-toggle-management/index.md): every sandbox now always has a proxy sidecar, so there is nothing to turn on or off per sandbox
 * **Implement** [chat-agent-anatomy](chat-agent-anatomy/index.md): the native chat gains a per-sandbox learning mode that outlines parts as Brain or Arms, splits tool calls into ask and act, and plays a live brain-and-arms stage in a companion panel; translations (Phase G) wait for approval
 
 ## 2026-11-21

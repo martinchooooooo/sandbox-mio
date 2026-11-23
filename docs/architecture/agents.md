@@ -61,7 +61,7 @@ The app installs coding agents (Claude Code, OpenCode, pi) into a sandbox, lets 
 - One single-value credential, saved by pasting a token or by a device-flow login in the auth container, and verified by the host with GitHub.
 - In-sandbox mise calls carry it as a secret exec environment ([Providers](providers.md)), never a command line.
 - The base image carries the GitHub CLI. A serialised reconcile logs it into each running local sandbox over stdin on create, start, save, delete and the Manage switch, honouring a per-sandbox opt-out.
-- Two modes, derived from whether the sandbox sits behind a proxy sidecar. In sidecar mode gh and mise hold a fixed placeholder, and the sidecar swaps in the real token on requests to GitHub's hosts, so the token stays on the host ([Network](network.md)); an opted-out sandbox holds nothing. In plaintext mode (deployed sandboxes, no sidecar) both hold the real token. A mode change re-applies the login.
+- Every sandbox sits behind a proxy sidecar, so gh and mise hold a fixed placeholder and the sidecar swaps in the real token on requests to GitHub's hosts; the token stays on the host ([Network](network.md)). An opted-out sandbox holds nothing, and a deployed sandbox is skipped.
 
 ## Local-Model Agents: OpenCode and pi
 

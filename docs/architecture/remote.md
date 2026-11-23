@@ -35,7 +35,7 @@ A Podman sandbox can move from the laptop to a remote Podman host while its work
 2. **Rebuild the software.** Installed tools are replayed on the remote from the workspace's `mise.toml`. Software moves as a manifest, never as a committed image.
 3. **Start syncing.** A Mutagen sync session named after the sandbox mirrors the laptop workspace and the remote one.
 
-A sandbox with a proxy sidecar is refused, because the remote side has no proxy ([Network](network.md)).
+Deploy is temporarily blocked for every sandbox: each has a proxy sidecar and the remote side has none yet ([Network](network.md)). The deploy action is disabled in the UI and the backend refuses it.
 
 ## Deployment State
 
