@@ -5,14 +5,14 @@ feature: local-models-ux
 ---
 # Local Models UX: Build Plan
 
-This document is the build plan for the Models page rework and the re-homing of the runtime teaching steps. It continues [01_ideas.md](01_ideas.md) and supersedes it wherever the two differ; the departures are listed in "Departures from 01_ideas.md". The work is frontend-only: no Tauri command, Rust code, host path, host port or environment variable is added. Status: Phases A to E are implemented; Phase F (copy approval and Paraglide) remains.
+This document is the build plan for the Models page rework and the re-homing of the runtime teaching steps. It continues [01_ideas.md](01_ideas.md) and supersedes it wherever the two differ; the departures are listed in "Departures from 01_ideas.md". The work is frontend-only: no Tauri command, Rust code, host path, host port or environment variable is added. After review the Models page is deliberately sparse: it renders no "For those who know" disclosure, hardware list, model facts, engine, endpoint, wake steps or Try it box, and "Download anyway" is a plain link; the first-run onboarding card keeps its "For those who know" disclosure with the wake steps. Status: Phases A to E are implemented; Phase F (copy approval and Paraglide) remains.
 
 ## The Concrete Model
 
 The Models page (`src/routes/models/+page.svelte`) becomes a column of three sections in the dashboard rhythm of `src/lib/workspace/DashboardOverview.svelte`, titled "Models" to match the sidebar label `nav_models`:
 
-1. **Your Model** (`src/lib/models/CurrentModelCard.svelte`): the Model that is awake, or else the one the page would wake. It shows the brain avatar (`src/lib/models/ModelAvatar.svelte`), the name, the maker chip, the one-line summary, one status line in the tour's voice, one primary button, an inline "Try it" area while awake, and a "For those who know" disclosure holding the engine, the GGUF file name, the endpoint URL, the context window and the full technical `RuntimeSteps.svelte` checklist.
-2. **Your computer** (`src/lib/models/ComputerSummary.svelte`): one plain sentence about memory and graphics, with a "For those who know" disclosure holding the current hardware list (CPU cores, RAM, GPU names, NPU) and the re-detect button.
+1. **Your Model** (`src/lib/models/CurrentModelCard.svelte`): the Model that is awake, or else the one the page would wake. It shows the brain avatar (`src/lib/models/ModelAvatar.svelte`), the name, the maker chip, the one-line summary, one status line in the tour's voice, one primary button, and a green border with a green dot on the status line while awake. There is no test box and no disclosure; the endpoint is exposed to tests as the `data-base-url` attribute.
+2. **Your computer** (`src/lib/models/ComputerSummary.svelte`): one plain sentence about memory and graphics, with a small re-detect icon button beside the title. The CPU, RAM, GPU and NPU list is removed.
 3. **Other Models** (`src/lib/models/ModelShelf.svelte`): every other catalogue model as a `src/lib/models/ModelCard.svelte`, grouped under "Runs well here", "Runs here, slowly" and "Needs more than this computer has". An empty group is not rendered.
 
 All job state (download progress, wake-up events, serving status, last error) lives in one module-scoped store, `src/lib/models/model.svelte.ts`, shared by the Models page and the first-run onboarding (`src/lib/onboarding/setup.svelte.ts`). Progress therefore survives navigation, and both places narrate a wake-up with the same component, `src/lib/models/WakeUpStatus.svelte`.
@@ -36,7 +36,7 @@ The Settings page keeps the engine picker; the static checklist moves from the b
 | "Our pick for this computer" badge | When the card is the pick, with a "Why this one?" `Explainer` | When the card is the pick |
 | Status line | `WakeUpStatus.svelte` while waking; otherwise "Not downloaded yet", "Downloading… 42%" with `Progress`, "Asleep", "Awake: your sandboxes can use it" | "Downloading… 42%" with `Progress` while downloading |
 | Primary action | "Download and wake up", "Wake it up" or "Put it to sleep"; "Try anyway" when the verdict is not "fits" | "Use this Model" when the verdict is "fits" or "tight"; none in "Needs more" |
-| "For those who know" | Engine, file name, endpoint URL, context window, `RuntimeSteps.svelte`, raw error | Parameters, active parameters, file name, context window, RAM floor; "Download anyway" link in "Needs more" |
+| Failure detail | The failed line plus the raw error beneath it in small muted text | The failed line plus the raw error; a "Download anyway" link in "Needs more" |
 
 "Use this Model" downloads when needed, then wakes the model; `start_inference` (`src-tauri/src/commands/inference.rs`) already stops a prior server before starting another, so switching needs no extra stop.
 
@@ -68,21 +68,21 @@ The Settings page keeps the engine picker; the static checklist moves from the b
 
 ### Wake-up narration
 
-`WakeUpStatus.svelte` folds `RuntimeSetupEvent`s (`src/lib/models/types.ts`) the same way `RuntimeSteps.svelte` does and shows one line: the plain title (`PLAIN_STEP_TITLES` in `src/lib/models/copy.ts`) of the step currently running, "Waking it up…" before the first event, "Ready ✓" on `ready`, and "That did not go through." with a "Try again" button on `stepFailed`, with the raw error under "For those who know".
+`WakeUpStatus.svelte` folds `RuntimeSetupEvent`s (`src/lib/models/types.ts`) the same way `RuntimeSteps.svelte` does and shows one line: the plain title (`PLAIN_STEP_TITLES` in `src/lib/models/copy.ts`) of the step currently running, "Waking it up…" before the first event, "Ready ✓" on `ready`, and "That did not go through." with a "Try again" button on `stepFailed`, and the card shows the raw error beneath it.
 
 ## Resolved Decisions
 
 | Question | Resolution |
 |---|---|
-| OQ-cant-run-download | A card in "Needs more than this computer has" has no primary button; its "For those who know" disclosure holds a "Download anyway" link that calls `downloadModel()` in `src/lib/models/model.svelte.ts`. |
+| OQ-cant-run-download | A card in "Needs more than this computer has" has no primary button; it shows a plain "Download anyway" link that calls `downloadModel()` in `src/lib/models/model.svelte.ts`. |
 | OQ-editorial-ownership | The implementer of Phase A writes the summaries, tags and size buckets into `src/lib/models/copy.ts` and `catalogue.ts`, each checked against the model's card; the user approves the first set in Phase F before Paraglide. After that, whoever adds a catalogue model writes them in the same change as the llama.cpp architecture check. |
 | OQ-use-case-chooser | No chooser. Good-for tags are passive labels on every card. |
 | OQ-speed-basis | Heuristic speed from `describeModel()`, always labelled "expected". Measured speed stays in [04_improvements.md](04_improvements.md). |
 | OQ-ram-wording | Whole GB, rounded to nearest, with "right now" in every sentence about free memory. The group still follows `ratingFor()` on raw bytes. |
 | OQ-brain-on-models-page | `ModelAvatar.svelte` draws the brain disc in the `--brain` token; visible text says "Model"; only the "What is a Model?" explainer says "the Brain from the tour", once. |
 | OQ-maker-identity | A maker chip: a round swatch in the `MAKERS` `fill` with a 1px border, plus the name; no logos. A model whose maker is not in `MAKERS` (the test model) shows no chip. |
-| OQ-try-it | Inline "Try it" inside the Your Model card while awake (`src/lib/models/TryIt.svelte`), plus the line "Your sandboxes' agents use this Model." with a link to the `hello-world` sandbox when that sandbox exists. |
-| OQ-engine-home | The engine picker stays in Settings. The checklist moves under it, and Your Model's "For those who know" links to `/settings`. |
+| OQ-try-it | Superseded after review: the test box is removed. The Your Model card keeps only the line "Your sandboxes' agents use this Model." with a link to the `hello-world` sandbox when that sandbox exists. |
+| OQ-engine-home | The engine picker stays in Settings. The checklist moves under it. The Models page has no link to the engine setting. |
 | OQ-shared-store | Extracted in this feature (Phase C), because progress lost on navigation is part of the inconsistency. The onboarding keeps its `ModelRun` shape and flags; only the download and wake-up calls move. |
 | OQ-onboarding-narration | Yes: the first-run model card in `src/lib/welcome/SetupProgress.svelte` renders `WakeUpStatus.svelte` in place of its fixed "Waking it up…" line (Phase C). |
 | OQ-foundry-presentation | A model without a Foundry alias goes into "Needs more than this computer has" with the `engine` verdict. |
@@ -100,7 +100,7 @@ The Settings page keeps the engine picker; the static checklist moves from the b
 ## Superseded Approaches
 
 - **"Choose a different model" disclosure** (`docs/features/desktop-app-feel/02_dev.md`, Phase D) hid every other model and the hardware card behind an `AdvancedSection` so a first-time user saw one button. It is removed because choosing a model is the page's primary decision. The one-button default survives as the Your Model card's primary action; do not re-wrap the shelf in a disclosure.
-- **Auto-collapsing checklist** on the Models page (`stepsCollapsed`, `collapsedOnce` and the two-second timer in `src/routes/models/+page.svelte`, with its underlined "View details" button) is removed. The checklist lives permanently inside "For those who know", and the visible narration is `WakeUpStatus.svelte`.
+- **Auto-collapsing checklist** on the Models page (`stepsCollapsed`, `collapsedOnce` and the two-second timer in `src/routes/models/+page.svelte`, with its underlined "View details" button) is removed. The Models page no longer renders the checklist at all (the Settings page and the onboarding card do), and the visible narration is `WakeUpStatus.svelte`.
 - **Unicode step glyphs and blue running colour** in `RuntimeSteps.svelte` are replaced by HugeIcons and the theme's status colours.
 - **Page-local job state** (`downloadPct`, `startingModel`, `setupEvents` and the action runner in the route) is replaced by `src/lib/models/model.svelte.ts`.
 
@@ -137,9 +137,9 @@ The Settings page keeps the engine picker; the static checklist moves from the b
 ## Implemented: Phase D: Models Page Rework
 
 - `src/routes/models/+page.svelte`: rewritten as a thin layout over the store: an `h1` "Models", one sentence of introduction with the "What is a Model?" explainer, then `CurrentModelCard`, `ComputerSummary` and `ModelShelf` in a `stagger` column. It calls `loadModels()` on mount and holds no job state.
-- New components in `src/lib/models/`: `CurrentModelCard.svelte`, `ComputerSummary.svelte`, `ModelShelf.svelte`, `ModelCard.svelte` (built on `src/lib/components/ui/item/`), `ModelAvatar.svelte`, `MakerChip.svelte`, `ModelScales.svelte` (the three scales with explainers) and `TryIt.svelte` (a `Textarea` and send button; the reply renders with `src/lib/components/ai-elements/message/` and `bubble/` beside `ModelAvatar.svelte`; same request shape as today's `sendPrompt()`).
-- `src/lib/models/RuntimeSteps.svelte`: glyphs become HugeIcons (`@hugeicons/core-free-icons`), the running state uses a spinning icon in `text-muted-foreground`, and the blue colour is removed. Titles and explanations stay the Paraglide `runtime_step_*` keys, because the checklist is the "For those who know" view.
-- Shared pieces beyond that list: `ModelDetails.svelte` (the part both card kinds share), `ModelFacts.svelte`, `ModelExplainer.svelte` (an `Explainer` keyed into `EXPLAINERS`) and `DownloadProgress.svelte`. The hardware list and `TryIt.svelte` keep the existing Paraglide `models_*` keys; Phase F deletes only the keys that no longer render.
+- New components in `src/lib/models/`: `CurrentModelCard.svelte`, `ComputerSummary.svelte`, `ModelShelf.svelte`, `ModelCard.svelte` (built on `src/lib/components/ui/item/`), `ModelAvatar.svelte`, `MakerChip.svelte`, `ModelScales.svelte` (the three scales with explainers).
+- `src/lib/models/RuntimeSteps.svelte`: glyphs become HugeIcons (`@hugeicons/core-free-icons`), the running state uses a spinning icon in `text-muted-foreground`, and the blue colour is removed. Titles and explanations stay the Paraglide `runtime_step_*` keys, because the checklist is shown on the Settings page and in the onboarding card.
+- Shared pieces beyond that list: `ModelDetails.svelte` (the part both card kinds share), `ModelExplainer.svelte` (an `Explainer` keyed into `EXPLAINERS`) and `DownloadProgress.svelte`. The hardware list and `TryIt.svelte` are removed, and so are their Paraglide keys (`models_cpu_cores`, `models_ram`, `models_gpu`, `models_no_gpu`, `models_npu`); Phase F deletes the remaining `models_*` keys that no longer render.
 - E2E hooks, all kept by name so `e2e/test/pageobjects/models.page.ts` changes minimally:
 
 | Hook | New home |
@@ -149,15 +149,15 @@ The Settings page keeps the engine picker; the static checklist moves from the b
 | `data-fit`, `data-fit-group` (new) | `data-fit` on every card root; `data-fit-group` on each shelf group |
 | `data-start`, `data-stop` (new) | `data-start` on Your Model's wake button and every "Use this Model" button; `data-stop` on Your Model's sleep button (replaces the `button=Stop` text selector) |
 | `data-running` | Root of the Your Model card while awake |
-| `data-base-url` | The attribute `data-base-url={url}` on the Your Model card root while awake, because the disclosure's content is not mounted while collapsed |
+| `data-base-url` | The attribute `data-base-url={url}` on the Your Model card root while awake |
 | `data-downloaded` | A marker element inside each card root, the Your Model card included, when the model is on disk |
-| `data-specs`, `data-specs-ready`, `data-redetect` | `ComputerSummary.svelte`; `data-specs-ready` and `data-redetect` inside its "For those who know" (`data-computer-details`) |
-| `data-chat`, `data-reply` | `TryIt.svelte` |
-| `data-wake-details` (new) | The "For those who know" disclosure holding `RuntimeSteps.svelte` |
+| `data-specs`, `data-specs-ready`, `data-redetect` | `ComputerSummary.svelte`; `data-specs-ready` is on the summary sentence and `data-redetect` on the icon button beside the title; `data-specs` also carries `data-total-ram`, `data-free-ram` and `data-cpu-cores` with the raw numbers |
+| `data-chat`, `data-reply` | Removed with `TryIt.svelte` |
+| `data-wake-details` (new) | Removed; the Models page no longer renders `RuntimeSteps.svelte` |
 | `data-model-advanced` | Removed |
 
-- `e2e/test/pageobjects/models.page.ts`: `open()` drops `#expandAdvanced()` and expands `[data-computer-details]`; `baseUrl()` reads the `data-base-url` attribute; `stopInference()` clicks `[data-stop]`; `stepTitles()` expands `[data-wake-details]` first; `startDownload()` keeps its `[data-start]` fallback.
-- `e2e/test/specs/light/local-llm-ui.spec.ts`: the RAM assertion keeps working against the disclosed hardware list; add the structural fit assertions from Resolved Decisions and an assertion that every visible card has a non-empty summary. Full coverage is planned in `03_e2e.md`.
+- `e2e/test/pageobjects/models.page.ts`: `open()` drops `#expandAdvanced()` and expands nothing; `baseUrl()` reads the `data-base-url` attribute; `stopInference()` clicks `[data-stop]`; `stepTitles()`, `chatPanel` and `isChatShown()` are removed (the Settings page object still covers the checklist titles); `startDownload()` keeps its `[data-start]` fallback.
+- `e2e/test/specs/light/local-llm-ui.spec.ts`: the memory assertion reads the `data-total-ram` attribute on `[data-specs]` (with `data-free-ram` and `data-cpu-cores`, exposed through `specsFigures()` in the page object) and the "GB" in the summary sentence, because the visible text no longer lists hardware; add the structural fit assertions from Resolved Decisions and an assertion that every visible card has a non-empty summary. Full coverage is planned in `03_e2e.md`.
 - `src/lib/agent-chat/ChatView.svelte`: the banner link text "Start a model" becomes "Wake up the Model" (`TODO(i18n)` literal).
 
 ## Implemented: Phase E: Settings Re-Home
@@ -175,10 +175,10 @@ The Settings page keeps the engine picker; the static checklist moves from the b
 
 - **State derivation.** The store re-reads `inference_status` and `downloaded_models` on every `loadModels()`, so a server started or stopped elsewhere (onboarding, a restart) is reflected on the next visit; no polling is added.
 - **One job at a time.** `busy` is shared by the Models page and the onboarding. While the first-run job runs, the Models page shows its progress and disables every action rather than queueing a second job.
-- **Wake events lifetime.** `wake.events` is cleared when a new wake starts and on `sleep()`; a finished wake keeps its events so "For those who know" can still show the checklist after navigation.
+- **Wake events lifetime.** `wake.events` is cleared when a new wake starts and on `sleep()`; a finished wake keeps its events so the onboarding card can still show the checklist.
 - **Agent re-pointing.** Exactly one `reprovisionInstalledAgents()` call per successful wake, inside `wakeModel()`.
 - **Free memory drift.** Groups follow live free memory; a card can change group between visits. The page re-reads specs on mount only, never on a timer.
-- **Copy.** Visible text never names llama.cpp, Vulkan, RAM, endpoint or GGUF; those appear only inside "For those who know", per `docs/features/fastest-time-to-wow/01_ideas.md`.
+- **Copy.** Visible text never names llama.cpp, Vulkan, RAM, endpoint or GGUF; those appear only in the onboarding "For those who know" disclosure and on the Settings page, per `docs/features/fastest-time-to-wow/01_ideas.md`.
 
 ## Common Gotchas
 
@@ -196,4 +196,4 @@ The Settings page keeps the engine picker; the static checklist moves from the b
 | Google's maker swatch is invisible on a light theme | Google's `MAKERS` fill is white | The swatch carries a 1px border in the `border` token |
 | Saving from the moved Settings checklist resets other settings | `set_settings` replaces the whole file | Keep `save()`'s full round-trip of the object read from `get_settings` |
 | Progress disappears after leaving the Models page | Job state put back into a route-level `$state` | Keep job state in `src/lib/models/model.svelte.ts`, per the root `AGENTS.md` gotcha on route-local stores |
-| Visible copy names llama.cpp, Vulkan or RAM | Copy reused from `runtime_step_*_explain` or `models_*` keys | Technical names appear only inside "For those who know" |
+| Visible copy names llama.cpp, Vulkan or RAM | Copy reused from `runtime_step_*_explain` or `models_*` keys | Technical names appear only in the onboarding "For those who know" disclosure and on the Settings page |

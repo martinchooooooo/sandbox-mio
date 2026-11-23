@@ -8,20 +8,6 @@ class ModelsPage extends AppPage {
     return $("[data-specs]");
   }
 
-  // The hardware list sits behind the computer card's "For those who know" disclosure, closed by
-  // default on every page visit, so open() expands it.
-  get computerTrigger(): Element {
-    return $("[data-computer-details] button");
-  }
-
-  async #expand(trigger: Element, timeout: number): Promise<void> {
-    const btn = await trigger;
-    await btn.waitForDisplayed({ timeout });
-    if ((await btn.getAttribute("data-state")) === "open") return;
-    await btn.waitForClickable({ timeout });
-    await btn.click();
-  }
-
   // Present only once detect_machine_specs has resolved, so open() waits on it rather than the
   // specsPanel placeholder — otherwise callers read the panel mid-probe.
   get specsReady(): Element {
@@ -34,15 +20,6 @@ class ModelsPage extends AppPage {
 
   get baseUrlEl(): Element {
     return $("[data-base-url]");
-  }
-
-  get wakeDetailsTrigger(): Element {
-    return $("[data-wake-details] button");
-  }
-
-  // Only rendered while a server is running.
-  get chatPanel(): Element {
-    return $("[data-chat]");
   }
 
   // Only rendered once specs resolve, so callers must open() first.
@@ -93,20 +70,27 @@ class ModelsPage extends AppPage {
   async isRunningShown(): Promise<boolean> {
     return (await this.runningPanel).isExisting();
   }
-  async isChatShown(): Promise<boolean> {
-    return (await this.chatPanel).isExisting();
-  }
 
   /** Returns only once the host-specs probe has resolved; it shells out and can lag by seconds. */
   async open(timeout = COMMAND): Promise<void> {
     await this.showPage("/models", timeout);
     await (await this.specsPanel).waitForDisplayed({ timeout: SUBPROCESS });
-    await this.#expand(this.computerTrigger, SUBPROCESS);
     await (await this.specsReady).waitForDisplayed({ timeout: SUBPROCESS });
   }
 
   async specsText(): Promise<string> {
     return (await this.specsPanel).getText();
+  }
+
+  /** The raw host numbers `ComputerSummary.svelte` exposes as data attributes; the visible text carries no figures like RAM or CPU. */
+  async specsFigures(): Promise<{ totalRamBytes: number; freeRamBytes: number; cpuCores: number }> {
+    const panel = await this.specsPanel;
+    const num = async (name: string) => Number((await panel.getAttribute(name)) ?? "NaN");
+    return {
+      totalRamBytes: await num("data-total-ram"),
+      freeRamBytes: await num("data-free-ram"),
+      cpuCores: await num("data-cpu-cores"),
+    };
   }
 
   /**
@@ -155,14 +139,6 @@ class ModelsPage extends AppPage {
     const el = await this.baseUrlEl;
     await el.waitForExist({ timeout: COMMAND });
     return (await el.getAttribute("data-base-url")) ?? "";
-  }
-
-  async stepTitles(): Promise<string[]> {
-    await this.#expand(this.wakeDetailsTrigger, COMMAND);
-    const titles = await $$("[data-step-id] [data-step-title]");
-    const texts: string[] = [];
-    for (const t of titles) texts.push((await t.getText()).trim());
-    return texts;
   }
 
   async stopInference(): Promise<void> {

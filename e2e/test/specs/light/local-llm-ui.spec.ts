@@ -21,10 +21,12 @@ describe("Local LLM — UI sanity (no download)", function () {
     await ModelsPage.goHome();
     await ModelsPage.open();
     const specs = await ModelsPage.specsText();
+    const figures = await ModelsPage.specsFigures();
     assert(
-      /\d/.test(specs) && /RAM/i.test(specs),
-      `Specs panel "${specs}" shows no RAM figures. detect_machine_specs must return host numbers; ` +
-        "an empty panel means the probe command never resolved or the route failed to mount.",
+      figures.totalRamBytes > 0 && /\d+\s*GB/.test(specs),
+      `Specs panel "${specs}" (total RAM ${figures.totalRamBytes} bytes) shows no memory figures. ` +
+        "detect_machine_specs must return host numbers; an empty panel means the probe command never " +
+        "resolved or the route failed to mount.",
     );
   });
 
@@ -81,17 +83,13 @@ describe("Local LLM — UI sanity (no download)", function () {
     );
   });
 
-  it("shows no running/chat UI when nothing is running", async () => {
+  it("shows no running UI when nothing is running", async () => {
     await ModelsPage.goHome();
     await ModelsPage.open();
     assert(
       !(await ModelsPage.isRunningShown()),
       "A [data-running] panel exists with no server started — inference_status reported running:true " +
         "for an idle app, or stale state leaked from a prior run.",
-    );
-    assert(
-      !(await ModelsPage.isChatShown()),
-      "The [data-chat] test surface is shown while idle — it must only render when status.running.",
     );
   });
 

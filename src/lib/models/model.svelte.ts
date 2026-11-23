@@ -151,13 +151,6 @@ export async function loadModels(): Promise<void> {
     } catch {
         /* keep the last status */
     }
-    if (s.busy !== "wake") {
-        try {
-            s.wake.steps = await invoke<SetupStep[]>("inference_setup_steps", { engine: s.engine });
-        } catch {
-            /* the checklist stays empty */
-        }
-    }
 }
 
 export function redetect(): Promise<boolean> {

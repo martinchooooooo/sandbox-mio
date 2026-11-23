@@ -76,14 +76,16 @@ describe("Local LLM — llama engine", function () {
     // ── Step 1: host specs (not the 2 GiB container VM) ──────────────────────────────────────
     await ModelsPage.open();
     const specs = await ModelsPage.specsText();
+    const figures = await ModelsPage.specsFigures();
     assert(
-      /\d/.test(specs) && /RAM/i.test(specs),
-      `Specs panel "${specs}" shows no RAM/CPU figures. detect_machine_specs must return host ` +
-        "numbers read via sysinfo; an empty panel means the probe command never resolved.",
+      figures.totalRamBytes > 0 && /\d+\s*GB/.test(specs),
+      `Specs panel "${specs}" (total RAM ${figures.totalRamBytes} bytes) shows no memory figures. ` +
+        "detect_machine_specs must return host numbers read via sysinfo; an empty panel means the " +
+        "probe command never resolved.",
     );
     assert(
-      /[1-9]\d*\s*CPU/i.test(specs),
-      `Specs panel "${specs}" shows zero CPU cores. A zero count means the host probe failed.`,
+      figures.cpuCores > 0,
+      `Specs panel reports ${figures.cpuCores} CPU cores. A zero count means the host probe failed.`,
     );
 
     // ── Step 2: download the test GGUF to the app data dir ───────────────────────────────────
@@ -101,17 +103,9 @@ describe("Local LLM — llama engine", function () {
         "truncated download passed the presence check; download_model must verify sha256 before rename.",
     );
 
-    // ── Step 3: start the sidecar, tick the setup checklist, serve a completion ──────────────
+    // ── Step 3: start the sidecar, serve a completion ──────────────
     await ModelsPage.startInference(model.id);
     await ModelsPage.waitForRunning(180000);
-
-    // 3z. The runtime-setup checklist rendered with non-empty, resolved titles.
-    const titles = await ModelsPage.stepTitles();
-    assert(
-      titles.length > 0 && titles.every((t) => t.length > 0),
-      `Runtime-setup checklist rendered ${titles.length} rows; titles=${JSON.stringify(titles)}. ` +
-        "A blank row means a step id was added without its Paraglide runtime_step_<id>_title key.",
-    );
 
     // 3a. base_url is a loopback /v1 endpoint. Captured once here while the row is running and
     // reused by the stop step below — the running row (and its [data-base-url]) is gone after stop.

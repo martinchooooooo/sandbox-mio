@@ -1,10 +1,8 @@
 <script lang="ts">
     import Button from "$lib/components/ui/button/button.svelte";
     import * as Item from "$lib/components/ui/item";
-    import AdvancedSection from "$lib/components/AdvancedSection.svelte";
     import DownloadProgress from "./DownloadProgress.svelte";
     import ModelDetails from "./ModelDetails.svelte";
-    import ModelFacts from "./ModelFacts.svelte";
     import { downloadAndWake, downloadModel, isDownloaded, modelsState, pick, type ModelInfo } from "./model.svelte";
     import { PAGE } from "./copy";
     import type { ModelDescriptor } from "./types";
@@ -27,17 +25,15 @@
     {/if}
     <Item.Footer class="flex-col items-stretch">
         {#if pct !== undefined}<DownloadProgress {pct} />{/if}
-        {#if st.error && !st.busy && st.jobModelId === d.id}<span class="text-xs text-destructive">{PAGE.failed}</span>{/if}
+        {#if st.error && !st.busy && st.jobModelId === d.id}
+            <span class="text-xs text-destructive">{PAGE.failed}</span>
+            <span class="text-xs text-muted-foreground">{st.error}</span>
+        {/if}
         {#if isDownloaded(d)}<span class="text-xs text-emerald-600 dark:text-emerald-400" data-downloaded>{PAGE.downloaded}</span>{/if}
-        <AdvancedSection label={PAGE.forThoseWhoKnow}>
-            <div class="flex flex-col gap-2">
-                <ModelFacts {d} />
-                {#if needsMore && info.fit.verdict !== "engine" && d.llama && !isDownloaded(d)}
-                    <Button variant="link" size="sm" class="self-start px-0" disabled={st.busy !== null} onclick={() => downloadModel(d)}>
-                        {PAGE.downloadAnyway}
-                    </Button>
-                {/if}
-            </div>
-        </AdvancedSection>
+        {#if needsMore && info.fit.verdict !== "engine" && d.llama && !isDownloaded(d)}
+            <Button variant="link" size="sm" class="self-start px-0" disabled={st.busy !== null} onclick={() => downloadModel(d)}>
+                {PAGE.downloadAnyway}
+            </Button>
+        {/if}
     </Item.Footer>
 </Item.Root>

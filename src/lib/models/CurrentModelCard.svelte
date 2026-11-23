@@ -1,15 +1,11 @@
 <script lang="ts">
     import Button from "$lib/components/ui/button/button.svelte";
     import * as Card from "$lib/components/ui/card";
-    import AdvancedSection from "$lib/components/AdvancedSection.svelte";
     import { sandboxesList } from "$lib/sandbox/state.svelte";
     import { FIRST_SANDBOX } from "$lib/onboarding/setup.svelte";
     import { openSandbox } from "$lib/workspace/navigation.svelte";
     import DownloadProgress from "./DownloadProgress.svelte";
     import ModelDetails from "./ModelDetails.svelte";
-    import ModelFacts from "./ModelFacts.svelte";
-    import RuntimeSteps from "./RuntimeSteps.svelte";
-    import TryIt from "./TryIt.svelte";
     import WakeUpStatus from "./WakeUpStatus.svelte";
     import {
         currentEntry,
@@ -22,7 +18,7 @@
         pick,
         sleep,
     } from "./model.svelte";
-    import { ENGINE_NAMES, PAGE } from "./copy";
+    import { PAGE } from "./copy";
 
     const st = modelsState();
     const d = $derived(currentEntry());
@@ -44,7 +40,7 @@
 
 {#if d && info}
     <Card.Root
-        class="gap-4 p-5"
+        class={["gap-4 p-5", awake && "border-emerald-600 dark:border-emerald-400"]}
         data-model-id={d.id}
         data-fit={info.fit.verdict}
         data-running={awake ? "" : undefined}
@@ -58,11 +54,15 @@
             {:else if pct !== undefined}
                 <DownloadProgress {pct} />
             {:else}
-                <p class="m-0 text-sm text-muted-foreground">
+                <p class={["m-0 flex items-center gap-2 text-sm", awake ? "font-medium text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"]}>
+                    {#if awake}<span class="size-2 rounded-full bg-emerald-600 dark:bg-emerald-400"></span>{/if}
                     {awake ? PAGE.awake : needsDownload(d) ? PAGE.notDownloaded : PAGE.asleep}
                 </p>
             {/if}
-            {#if failed}<p class="m-0 text-sm text-destructive">{PAGE.failed}</p>{/if}
+            {#if failed}
+                <p class="m-0 text-sm text-destructive">{PAGE.failed}</p>
+                <p class="m-0 text-xs text-muted-foreground">{st.error}</p>
+            {/if}
         </div>
         {#if isDownloaded(d)}<span hidden data-downloaded></span>{/if}
 
@@ -79,36 +79,14 @@
         </div>
 
         {#if awake}
-            <div class="flex flex-col gap-3 border-t-2 pt-3">
-                <p class="m-0 text-sm">
-                    {PAGE.sandboxesUse}
-                    {#if hello}
-                        <Button variant="link" size="sm" class="px-1" onclick={() => openSandbox(hello.name, hello.workspace_path, { restore: true })}>
-                            {PAGE.openSandbox}
-                        </Button>
-                    {/if}
-                </p>
-                <TryIt />
-            </div>
-        {/if}
-
-        <AdvancedSection label={PAGE.forThoseWhoKnow} data-wake-details>
-            <div class="flex flex-col gap-3">
-                <ModelFacts {d}>
-                    <dt class="text-muted-foreground">{PAGE.facts.engine}</dt>
-                    <dd class="m-0">{ENGINE_NAMES[st.engine]}</dd>
-                    {#if awake && st.status.baseUrl}
-                        <dt class="text-muted-foreground">{PAGE.facts.endpoint}</dt>
-                        <dd class="m-0"><code>{st.status.baseUrl}</code></dd>
-                    {/if}
-                </ModelFacts>
-                <p class="m-0 text-xs"><a href="/settings" class="underline">{PAGE.engineLink}</a></p>
-                {#if failed}<p class="m-0 text-xs text-foreground/80">{st.error}</p>{/if}
-                {#if st.wake.steps.length > 0}
-                    <p class="m-0 text-xs font-medium">{PAGE.wakeSteps}</p>
-                    <RuntimeSteps steps={st.wake.steps} events={st.wake.events} />
+            <p class="m-0 text-sm">
+                {PAGE.sandboxesUse}
+                {#if hello}
+                    <Button variant="link" size="sm" class="px-1" onclick={() => openSandbox(hello.name, hello.workspace_path, { restore: true })}>
+                        {PAGE.openSandbox}
+                    </Button>
                 {/if}
-            </div>
-        </AdvancedSection>
+            </p>
+        {/if}
     </Card.Root>
 {/if}
