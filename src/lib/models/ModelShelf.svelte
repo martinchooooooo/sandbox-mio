@@ -2,7 +2,7 @@
     import { Text } from "$lib/components/ui/text";
     import ModelCard from "./ModelCard.svelte";
     import { currentEntry, entries, infoOf } from "./model.svelte";
-    import { GROUP_TITLES, PAGE } from "./copy";
+    import { PAGE, groupTitle } from "./copy";
     import type { FitGroup } from "./types";
 
     const GROUPS: FitGroup[] = ["runs-well", "runs-slowly", "needs-more"];
@@ -24,7 +24,7 @@
         {@const cards = others.filter((c) => c.info.fit.group === group)}
         {#if cards.length > 0}
             <div class="flex flex-col gap-3" data-fit-group={group}>
-                <Text as="h3" class="text-muted-foreground">{GROUP_TITLES[group]}</Text>
+                <Text as="h3" class="text-muted-foreground">{groupTitle(group)}</Text>
                 {#each cards as { d, info } (d.id)}
                     <ModelCard {d} {info} />
                 {/each}

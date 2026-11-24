@@ -1,13 +1,13 @@
 <script lang="ts">
     import Explainer from "$lib/components/Explainer.svelte";
-    import { EXPLAINERS } from "./copy";
+    import { type ExplainerKey, explainer } from "./copy";
 
-    let { key }: { key: keyof typeof EXPLAINERS } = $props();
+    let { key }: { key: ExplainerKey } = $props();
 </script>
 
 <Explainer
-    title={EXPLAINERS[key].title}
-    body={EXPLAINERS[key].body}
+    title={explainer(key).title}
+    body={explainer(key).body}
     data-explainer={key}
     contentProps={{ "data-explainer-card": key }}
 />

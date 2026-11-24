@@ -1,5 +1,5 @@
 import { GB } from "./catalogue";
-import { SIZE_LABELS, SPEED_LABELS } from "./copy";
+import { SPEED_STEPS, sizeLabel, speedLabel } from "./copy";
 import type { Fit } from "./recommend";
 import type { MachineSpecs, ModelDescriptor } from "./types";
 
@@ -20,10 +20,10 @@ export function describeModel(d: ModelDescriptor, specs: MachineSpecs, fit: Fit)
     let speedStep = SPEED_LIMITS_B.filter((l) => d.activeParamsB > l).length;
     if (specs.gpuNames.length > 0) speedStep -= 1;
     if (fit.verdict === "tight") speedStep += 1;
-    speedStep = Math.min(SPEED_LABELS.length - 1, Math.max(0, speedStep));
+    speedStep = Math.min(SPEED_STEPS - 1, Math.max(0, speedStep));
     return {
-        size: SIZE_LABELS[SIZE_LIMITS_B.filter((l) => d.paramsB >= l).length],
-        speed: fit.group === "needs-more" ? null : SPEED_LABELS[speedStep],
+        size: sizeLabel(SIZE_LIMITS_B.filter((l) => d.paramsB >= l).length),
+        speed: fit.group === "needs-more" ? null : speedLabel(speedStep),
         downloadGb: Math.round((d.llama?.sizeBytes ?? 0) / GB),
         memoryGb: fit.needGb,
     };

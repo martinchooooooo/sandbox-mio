@@ -5,7 +5,7 @@ feature: local-models-ux
 ---
 # Local Models UX: Build Plan
 
-This document is the build plan for the Models page rework and the re-homing of the runtime teaching steps. It continues [01_ideas.md](01_ideas.md) and supersedes it wherever the two differ; the departures are listed in "Departures from 01_ideas.md". The work is frontend-only: no Tauri command, Rust code, host path, host port or environment variable is added. After review the Models page is deliberately sparse: it renders no "For those who know" disclosure, hardware list, model facts, engine, endpoint, wake steps or Try it box, and "Download anyway" is a plain link; the first-run onboarding card keeps its "For those who know" disclosure with the wake steps. Status: Phases A to E are implemented; Phase F (copy approval and Paraglide) remains.
+This document is the build plan for the Models page rework and the re-homing of the runtime teaching steps. It continues [01_ideas.md](01_ideas.md) and supersedes it wherever the two differ; the departures are listed in "Departures from 01_ideas.md". The work is frontend-only: no Tauri command, Rust code, host path, host port or environment variable is added. After review the Models page is deliberately sparse: it renders no "For those who know" disclosure, hardware list, model facts, engine, endpoint, wake steps or Try it box, and "Download anyway" is a plain link; the first-run onboarding card keeps its "For those who know" disclosure with the wake steps. Status: all phases (A to F) are implemented, and the copy is in Paraglide.
 
 ## The Concrete Model
 
@@ -165,11 +165,11 @@ The Settings page keeps the engine picker; the static checklist moves from the b
 - `src/routes/settings/+page.svelte`: move the `RuntimeSteps` section from the bottom of the page into the "tuning" `AdvancedSection`, directly after the engine buttons, under the heading "What waking a Model involves with this engine". The engine buttons read "Built in: works on most computers" and "Microsoft Foundry Local: can use the NPU on Copilot+ PCs", each followed by a muted line naming llama.cpp with Vulkan, or Foundry Local. `save()` and its round-trip of `get_settings` are unchanged.
 - `e2e/test/pageobjects/settings.page.ts`: `stepTitles()` calls `#expand(this.tuningTrigger)` first, because the checklist now sits inside a closed-by-default disclosure.
 
-## Remaining: Phase F: Copy Approval and Translations
+## Implemented: Phase F: Copy Approval and Translations
 
-- The user reviews the running page: summaries, good-for tags, size buckets, fit sentences, plain step titles and explainers. Each sentence is checked against the model's card.
-- After approval, per the `feature-implement` skill: move every `TODO(i18n)` literal from `src/lib/models/copy.ts` and the new components into Paraglide keys in `messages/en.json` and the other locale files; delete the `models_*` keys that no longer render (for example `models_title`, `models_engine_label`, `models_memory_warning`, `models_view_details`, `models_hide_details`, `models_foundry_first_run`) and `settings_runtime_explainer`.
-- Update `docs/architecture/inference.md` to state that one frontend store owns the model job and that the setup steps are shown as plain narration with the technical plan on demand.
+- The user approved the copy and asked for the feature to be finished. The running page was reviewed: summaries, good-for tags, size buckets, fit sentences, plain step titles and explainers. Each sentence is checked against the model's card.
+- Per the `feature-implement` skill: moved every `TODO(i18n)` literal from `src/lib/models/copy.ts` and the new components into Paraglide keys in `messages/en.json`, `messages/de.json` and `messages/ru.json`. `src/lib/models/copy.ts` now exposes functions and getters over `m.*` so text follows the locale. Deleted the `models_*` keys that no longer render, including the superseded `settings_engine_llama` and `settings_engine_foundry` (for example `models_title`, `models_engine_label`, `models_memory_warning`, `models_view_details`, `models_hide_details`, `models_foundry_first_run`) and `settings_runtime_explainer`). The onboarding card `src/lib/welcome/SetupProgress.svelte` keeps its page-wide `TODO(i18n)` marker: its literals predate this feature and belong to `docs/features/fastest-time-to-wow/`.
+- Updated `docs/architecture/inference.md` to state that one frontend store owns the model job and that the setup steps are shown as plain narration with the technical plan on demand.
 
 ## Lifecycle and Cross-Cutting Concerns
 

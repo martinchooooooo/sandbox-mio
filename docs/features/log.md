@@ -7,6 +7,7 @@ approximate. New entries go on top.
 
 ## 2026-11-23
 
+* **Implement** [local-models-ux](local-models-ux/index.md): the Models page is a sparse Your Model, Your computer and Other Models layout with plain-language cards and fit reasons, one shared model store drives it and the onboarding with plain wake-up narration, and the copy is translated into German and Russian
 * **Implement** [workspace-ux](workspace-ux/index.md): the sandbox header is gone and the left sidebar is the only app chrome, with opened apps nested under the in-view sandbox, a dashboard title bar with a visible Stop/Start, horizontal section tabs and Open folder; the standard e2e tier passes after the layout fixes
 
 ## 2026-11-22

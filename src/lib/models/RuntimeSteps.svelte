@@ -22,7 +22,7 @@
         events?: RuntimeSetupEvent[];
     } = $props();
 
-    // Plain-language mirror: PLAIN_STEP_TITLES in src/lib/models/copy.ts.
+    // Plain-language mirror: STEP_TITLES in src/lib/models/copy.ts.
     // Step ids are engine-owned (Rust); copy lives in Paraglide. Paraglide generates one function
     // per key, so an explicit id→message map is required rather than dynamic indexing of `m`.
     // A new step id with no entry here renders blank — guarded by the e2e checklist assertion.

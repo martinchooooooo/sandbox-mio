@@ -4,7 +4,7 @@
     import ModelAvatar from "./ModelAvatar.svelte";
     import ModelExplainer from "./ModelExplainer.svelte";
     import ModelScales from "./ModelScales.svelte";
-    import { FIT_LABELS, GOOD_FOR_LABELS, MODEL_SUMMARIES, PAGE, fitSentence } from "./copy";
+    import { PAGE, fitLabel, fitSentence, goodForLabel, modelSummary } from "./copy";
     import type { ModelInfo } from "./model.svelte";
     import type { ModelDescriptor } from "./types";
 
@@ -36,17 +36,17 @@
                 <ModelExplainer key="pick" />
             {/if}
         </div>
-        <p class="m-0 text-sm text-muted-foreground" data-summary>{MODEL_SUMMARIES[d.id] ?? ""}</p>
+        <p class="m-0 text-sm text-muted-foreground" data-summary>{modelSummary(d.id)}</p>
         {#if d.goodFor.length > 0}
             <ul class="m-0 flex list-none flex-wrap gap-1.5 p-0">
                 {#each d.goodFor as tag (tag)}
-                    <li class="rounded-md border border-border px-1.5 text-xs">{GOOD_FOR_LABELS[tag]}</li>
+                    <li class="rounded-md border border-border px-1.5 text-xs">{goodForLabel(tag)}</li>
                 {/each}
             </ul>
         {/if}
         <ModelScales scales={info.scales} />
         <p class="m-0 flex flex-wrap items-center gap-x-2 text-xs">
-            <span class={["font-medium", tone]} data-rating>{FIT_LABELS[fit.verdict]}</span>
+            <span class={["font-medium", tone]} data-rating>{fitLabel(fit.verdict)}</span>
             {#if fit.verdict !== "fits"}<span class="text-muted-foreground">{fitSentence(fit)}</span>{/if}
             {#if fit.group === "needs-more"}<ModelExplainer key="cantRun" />{/if}
         </p>

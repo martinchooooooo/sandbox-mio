@@ -4,7 +4,7 @@ title: "Local Inference"
 description: "Running a language model on the host (hardware probe, recommendation, downloads, the llama.cpp and Foundry Local engines) and offering it to sandboxes."
 generated:
   by: claude-code/sonnet-5-5
-  at: 2026-11-21T20:00:00+11:00
+  at: 2026-11-23T12:00:00+11:00
 stale_after: 2027-02-21T00:00:00+11:00
 code:
   - src-tauri/src/inference/
@@ -18,6 +18,7 @@ sources:
   - resource: docs/features/local-llm-reachability/02_dev.md
   - resource: docs/features/native-agent-ui/02_dev.md
   - resource: docs/features/remove-microsandbox/02_dev.md
+  - resource: docs/features/local-models-ux/02_dev.md
 ---
 # Local Inference
 
@@ -28,6 +29,11 @@ The app can run a language model on the user's machine and offer it to sandboxes
 - The hardware probe (RAM, GPU, NPU) is slow, so its result is cached in memory for the life of the process and refreshed only on request. The probe result is never written to disk.
 - A frontend model catalogue is ranked against the probed specs, rating each model by free RAM against the model's requirement.
 - Model weights download into the app-data root, reporting progress as an activity.
+
+## One Model Job in the Frontend
+
+- A single frontend store owns the model job (download, wake-up, serving status, last error). The Models page and the first-run onboarding both read it, so progress survives navigation and only one job runs at a time.
+- Setup steps reach the user as plain narration: one line naming the step now running. The engine's technical plan stays available on demand, in the onboarding's "For those who know" disclosure and on the Settings page.
 
 ## Engines
 
@@ -53,5 +59,6 @@ The app can run a language model on the user's machine and offer it to sandboxes
 
 - An inference listener binds sandbox loopback only; nothing outside its sandbox can reach it.
 - A sandbox's inference forward is closed before the app stops the sandbox, and created only for running sandboxes: dialling a stopped microVM's alias tries to boot it without the app's start environment.
+- The model job has one owner: no page keeps its own copy of download or wake-up state.
 - The in-sandbox port is one value shared by the backend and the frontend's local-model wiring.
 - Every catalogue model's GGUF declares an architecture the pinned llama.cpp release can load; adding a model of a newer architecture means bumping that release too.

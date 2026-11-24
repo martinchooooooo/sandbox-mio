@@ -24,10 +24,9 @@
     import { closeSandbox } from "$lib/workspace/navigation.svelte";
     import { ENGINE_NAMES, PAGE } from "$lib/models/copy";
 
-    // TODO(i18n): every string here.
     const ENGINE_CHOICES: { id: EngineKind; label: string; detail: string }[] = [
-        { id: "llama", label: "Built in: works on most computers", detail: ENGINE_NAMES.llama },
-        { id: "foundry", label: "Microsoft Foundry Local: can use the NPU on Copilot+ PCs", detail: "Foundry Local" },
+        { id: "llama", label: m.settings_engine_llama_label(), detail: ENGINE_NAMES.llama },
+        { id: "foundry", label: m.settings_engine_foundry_label(), detail: "Foundry Local" },
     ];
 
     function cycleLocale() {
@@ -230,18 +229,15 @@
             {#if engine === "llama"}
                 <Field.Field>
                     <Field.Label>{m.settings_llama_gpu_layers()}</Field.Label>
-                    <!-- TODO(i18n) -->
-                    <Input type="number" min="0" bind:value={gpuLayers} placeholder="auto" />
+                    <Input type="number" min="0" bind:value={gpuLayers} placeholder={m.settings_llama_gpu_layers_placeholder()} />
                 </Field.Field>
                 <Field.Field>
                     <Field.Label>{m.settings_llama_ctx_size()}</Field.Label>
-                    <!-- TODO(i18n) -->
-                    <Input type="number" min="0" bind:value={ctxSize} placeholder="default" />
+                    <Input type="number" min="0" bind:value={ctxSize} placeholder={m.settings_llama_ctx_size_placeholder()} />
                 </Field.Field>
             {/if}
 
             <Field.Field>
-                <!-- TODO(i18n) -->
                 <Field.Label>{PAGE.wakeSteps}</Field.Label>
                 <RuntimeSteps {steps} />
             </Field.Field>

@@ -1,131 +1,136 @@
 // Copy for the Models page. Technical names (llama.cpp, Vulkan, RAM, GGUF) stay out of visible text.
-// TODO(i18n): every string in this file.
+// Everything is a function or getter so the text follows the active locale at render time.
+import { m } from "$lib/paraglide/messages.js";
 import type { Fit } from "./recommend";
 import type { EngineKind, FitGroup, FitVerdict, GoodFor } from "./types";
 
-export const MODEL_SUMMARIES: Record<string, string> = {
-    "qwen3.5-2b": "The smallest and quickest. Fine for simple questions; makes more mistakes on bigger jobs.",
-    "qwen3.5-4b": "Small and quick, and steadier than the 2B.",
-    "qwen3.5-9b": "A good all-rounder for a computer with 16 GB of memory.",
-    "gemma-4-12b-it": "Google's mid-sized open Model.",
-    "gpt-oss-20b": "OpenAI's open Model that runs on your own computer.",
-    "devstral-small-2-24b": "Mistral's Model made for coding agents; answers without thinking out loud.",
-    "qwen3.8-27b": "The most capable Model on the shelf, and the slowest.",
-    "qwen3.6-35b-a3b":
-        "A very large Model that only wakes a small part of itself per word, so it answers faster than its size suggests. Biggest download.",
-    "test-model": "A tiny Model used for testing.",
+const SUMMARIES: Record<string, () => string> = {
+    "qwen3.5-2b": m.models_summary_qwen3_5_2b,
+    "qwen3.5-4b": m.models_summary_qwen3_5_4b,
+    "qwen3.5-9b": m.models_summary_qwen3_5_9b,
+    "gemma-4-12b-it": m.models_summary_gemma_4_12b_it,
+    "gpt-oss-20b": m.models_summary_gpt_oss_20b,
+    "devstral-small-2-24b": m.models_summary_devstral_small_2_24b,
+    "qwen3.8-27b": m.models_summary_qwen3_8_27b,
+    "qwen3.6-35b-a3b": m.models_summary_qwen3_6_35b_a3b,
+    "test-model": m.models_summary_test_model,
 };
 
-export const GOOD_FOR_LABELS: Record<GoodFor, string> = {
-    "quick-replies": "Quick replies",
-    "everyday-chat": "Everyday chat",
-    "coding-agent": "Coding with an agent",
-    "careful-thinking": "Careful thinking",
-    "long-documents": "Long documents",
+export function modelSummary(id: string): string {
+    return SUMMARIES[id]?.() ?? "";
+}
+
+const GOOD_FOR: Record<GoodFor, () => string> = {
+    "quick-replies": m.models_good_for_quick_replies,
+    "everyday-chat": m.models_good_for_everyday_chat,
+    "coding-agent": m.models_good_for_coding_agent,
+    "careful-thinking": m.models_good_for_careful_thinking,
+    "long-documents": m.models_good_for_long_documents,
 };
 
-export const SIZE_LABELS = ["Small", "Medium", "Large", "Very large"];
-export const SPEED_LABELS = ["Quick", "Steady", "Slow"];
+export function goodForLabel(tag: GoodFor): string {
+    return GOOD_FOR[tag]();
+}
 
-export const FIT_LABELS: Record<FitVerdict, string> = {
-    fits: "Runs well here",
-    tight: "Runs slowly",
-    busy: "Needs more free memory",
-    "too-small": "Needs a bigger computer",
-    engine: "Not on this engine",
+const SIZES = [m.models_size_small, m.models_size_medium, m.models_size_large, m.models_size_very_large];
+const SPEEDS = [m.models_speed_quick, m.models_speed_steady, m.models_speed_slow];
+
+export const SPEED_STEPS = SPEEDS.length;
+export const sizeLabel = (step: number): string => SIZES[step]();
+export const speedLabel = (step: number): string => SPEEDS[step]();
+
+const FIT_LABELS: Record<FitVerdict, () => string> = {
+    fits: m.models_fit_label_fits,
+    tight: m.models_fit_label_tight,
+    busy: m.models_fit_label_busy,
+    "too-small": m.models_fit_label_too_small,
+    engine: m.models_fit_label_engine,
 };
+
+export const fitLabel = (verdict: FitVerdict): string => FIT_LABELS[verdict]();
 
 export function fitSentence(f: Fit): string {
     switch (f.verdict) {
-        case "fits": return "Runs well on this computer.";
-        case "tight": return "Runs here, but slowly. Closing other apps helps.";
-        case "busy": return `Needs about ${f.needGb} GB free; about ${f.freeGb} GB is free right now. Close some apps, then check again.`;
-        case "too-small": return `Needs a computer with at least ${f.needGb} GB of memory. This one has ${f.totalGb} GB.`;
-        case "engine": return "Not available with Microsoft Foundry Local. The built-in engine can run it.";
+        case "fits": return m.models_fit_sentence_fits();
+        case "tight": return m.models_fit_sentence_tight();
+        case "busy": return m.models_fit_sentence_busy({ need: f.needGb, free: f.freeGb });
+        case "too-small": return m.models_fit_sentence_too_small({ need: f.needGb, total: f.totalGb });
+        case "engine": return m.models_fit_sentence_engine();
     }
 }
 
-export const GROUP_TITLES: Record<FitGroup, string> = {
-    "runs-well": "Runs well here",
-    "runs-slowly": "Runs here, slowly",
-    "needs-more": "Needs more than this computer has",
+const GROUPS: Record<FitGroup, () => string> = {
+    "runs-well": m.models_group_runs_well,
+    "runs-slowly": m.models_group_runs_slowly,
+    "needs-more": m.models_group_needs_more,
 };
+
+export const groupTitle = (group: FitGroup): string => GROUPS[group]();
 
 // Plain titles of the engine-owned setup steps, mirroring `titles` in RuntimeSteps.svelte.
-export const PLAIN_STEP_TITLES: Record<string, string> = {
-    "detect-device": "Looking for a graphics chip that can help…",
-    "engine-ready": "Getting the engine ready…",
-    "model-ready": "Making sure the Model is on this computer…",
-    "launch-server": "Bringing the Model into memory…",
-    "health-check": "Checking it answers…",
-    "check-foundry": "Looking for Microsoft Foundry Local…",
-    "register-eps": "Finding the fastest chip to use…",
-    "start-service": "Starting the service…",
-    "load-model": "Bringing the Model into memory…",
-    "resolve-id": "Checking it answers…",
+const STEP_TITLES: Record<string, () => string> = {
+    "detect-device": m.models_step_detect_device,
+    "engine-ready": m.models_step_engine_ready,
+    "model-ready": m.models_step_model_ready,
+    "launch-server": m.models_step_launch_server,
+    "health-check": m.models_step_health_check,
+    "check-foundry": m.models_step_check_foundry,
+    "register-eps": m.models_step_register_eps,
+    "start-service": m.models_step_start_service,
+    "load-model": m.models_step_load_model,
+    "resolve-id": m.models_step_resolve_id,
 };
 
-export const EXPLAINERS = {
-    model: {
-        title: "What is a Model?",
-        body: "A Model is the Brain from the tour: the part that reads your words and writes back. This one lives on your own computer, so nothing you ask leaves it.",
-    },
-    memory: {
-        title: "Memory",
-        body: "While a Model is awake it sits in your computer's memory. A bigger Model needs more room, and less is left for your other apps.",
-    },
-    download: {
-        title: "Download size",
-        body: "The Model is one big file you download once. The biggest ones are as large as a long film.",
-    },
-    speed: {
-        title: "Expected speed",
-        body: "An estimate from the Model's size and your graphics chip. A bigger Model has read more and makes fewer mistakes, but answers more slowly.",
-    },
-    size: {
-        title: "Size",
-        body: "A bigger Model has read more and makes fewer mistakes, but needs more memory and answers more slowly.",
-    },
-    pick: {
-        title: "Why this one?",
-        body: "It is the most capable Model that fits comfortably in the memory this computer has free.",
-    },
-    cantRun: {
-        title: "Why can't this computer run it?",
-        body: "A Model has to fit in memory while it works. This one needs more than this computer has, or more than is free right now.",
-    },
-};
+export const planStepTitle = (stepId: string): string | undefined => STEP_TITLES[stepId]?.();
 
+const EXPLAINERS = {
+    model: [m.models_explainer_model_title, m.models_explainer_model_body],
+    memory: [m.models_explainer_memory_title, m.models_explainer_memory_body],
+    download: [m.models_explainer_download_title, m.models_explainer_download_body],
+    speed: [m.models_explainer_speed_title, m.models_explainer_speed_body],
+    size: [m.models_explainer_size_title, m.models_explainer_size_body],
+    pick: [m.models_explainer_pick_title, m.models_explainer_pick_body],
+    cantRun: [m.models_explainer_cant_run_title, m.models_explainer_cant_run_body],
+} as const;
+
+export type ExplainerKey = keyof typeof EXPLAINERS;
+
+export const explainer = (key: ExplainerKey): { title: string; body: string } => ({
+    title: EXPLAINERS[key][0](),
+    body: EXPLAINERS[key][1](),
+});
+
+// Product names, not translated.
 export const ENGINE_NAMES: Record<EngineKind, string> = { llama: "llama.cpp with Vulkan", foundry: "Microsoft Foundry Local" };
 
 export const PAGE = {
-    title: "Models",
-    intro: "A Model is the Brain your sandboxes' agents think with. Pick one to keep on this computer.",
-    yourModel: "Your Model",
-    yourComputer: "Your computer",
-    otherModels: "Other Models",
-    pickBadge: "Our pick for this computer",
-    notDownloaded: "Not downloaded yet",
-    downloading: (pct: number) => `Downloading… ${pct}%`,
-    asleep: "Asleep",
-    awake: "Awake: your sandboxes can use it",
-    waking: "Waking it up…",
-    ready: "Ready ✓",
-    failed: "That did not go through.",
-    downloaded: "Downloaded",
-    downloadAndWake: "Download and wake up",
-    wake: "Wake it up",
-    sleep: "Put it to sleep",
-    tryAnyway: "Try anyway",
-    useThis: "Use this Model",
-    downloadAnyway: "Download anyway",
-    sandboxesUse: "Your sandboxes' agents use this Model.",
-    openSandbox: "Open hello-world",
+    get title() { return m.models_heading(); },
+    get intro() { return m.models_intro(); },
+    get yourModel() { return m.models_your_model(); },
+    get yourComputer() { return m.models_your_computer(); },
+    get otherModels() { return m.models_other_models(); },
+    get pickBadge() { return m.models_pick_badge(); },
+    get notDownloaded() { return m.models_not_downloaded(); },
+    downloading: (pct: number) => m.models_downloading({ percent: pct }),
+    get asleep() { return m.models_asleep(); },
+    get awake() { return m.models_awake(); },
+    get waking() { return m.models_waking(); },
+    get ready() { return m.models_ready(); },
+    get failed() { return m.models_failed(); },
+    get downloaded() { return m.models_downloaded(); },
+    get downloadAndWake() { return m.models_download_and_wake(); },
+    get wake() { return m.models_wake(); },
+    get sleep() { return m.models_sleep(); },
+    get tryAnyway() { return m.models_try_anyway(); },
+    get useThis() { return m.models_use_this(); },
+    get downloadAnyway() { return m.models_download_anyway(); },
+    get sandboxesUse() { return m.models_sandboxes_use(); },
+    get openSandbox() { return m.models_open_sandbox(); },
     computer: (totalGb: number, freeGb: number, gpu: boolean) =>
-        `This computer has about ${totalGb} GB of memory, about ${freeGb} GB of it free right now, and ${gpu ? "a graphics chip that can help" : "no graphics chip that can help"}.`,
-    wakeSteps: "What waking a Model involves with this engine",
-    size: "Size",
-    speed: "Expected speed",
-    download: (gb: number) => `${gb} GB to download`,
-    memory: (gb: number) => `about ${gb} GB of memory`,
+        gpu ? m.models_computer_gpu({ total: totalGb, free: freeGb }) : m.models_computer_no_gpu({ total: totalGb, free: freeGb }),
+    get wakeSteps() { return m.models_wake_steps(); },
+    get size() { return m.models_size_label(); },
+    get speed() { return m.models_speed_label(); },
+    download: (gb: number) => m.models_download_size({ gb }),
+    memory: (gb: number) => m.models_memory_need({ gb }),
 };

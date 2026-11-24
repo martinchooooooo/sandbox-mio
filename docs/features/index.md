@@ -6,12 +6,10 @@
 * [fastest-time-to-wow](fastest-time-to-wow/index.md) - Reshape first-run onboarding around one metric, the fastest time to a local-model wow: story-voiced setup, a local model downloaded with consent, a pre-built hello-world sandbox with pi, and one consistent word for models.
 * [github-cli-auth](github-cli-auth/index.md) - Log in to GitHub once through the GitHub CLI in the auth container, then apply that token to every sandbox's gh and git, at create and to existing sandboxes, with a per-sandbox opt-out.
 * [host-tool-ssh-access](host-tool-ssh-access/index.md) - Let host SSH clients (e.g. the Claude Code desktop app) attach to a sandbox over the existing exec transport.
-* [local-models-ux](local-models-ux/index.md) - Rework the Models page and its teaching steps to match the onboarding's voice and components, and make the model list meaningful to non-technical users: plain descriptions, human-scale tradeoffs, and an explanation for every model this computer cannot run.
 * [native-terminal](native-terminal/index.md) - Faster terminal startup: render the sandbox terminal in the main webview over a Rust-owned SSH session that attaches zellij, replacing the zellij web child webview.
 * [onboarding-story](onboarding-story/index.md) - Illustrated onboarding book inside the welcome flow, extensible by chapter, with first-run setup running in the background and reported through the activity center.
 * [retro-ui-migration](retro-ui-migration/index.md) - Re-skin the UI primitives with the retro-ui-svelte registry (Sunset Orange, rounded).
 * [sandbox-resource-monitor](sandbox-resource-monitor/index.md) - Sample each local sandbox's CPU and memory, show a discrete health indicator with a restart hint, and keep a local usage history that tells the maintainer whether sandboxes need more default memory.
-* [workspace-ux](workspace-ux/index.md) - Make the in-sandbox workspace friendlier for non-technical users by making the left app sidebar the only app chrome, so hosted apps feel like the app itself.
 
 ## planned
 
@@ -41,6 +39,7 @@
 * [loading-states](loading-states/index.md) - Per-row in-flight feedback (loading buttons, StatusRow, action runner) for every sandbox action.
 * [local-llm](local-llm/index.md) - Detect host specs, recommend and download a local model, and run a host inference server.
 * [local-llm-reachability](local-llm-reachability/index.md) - Make the host inference server reachable from every sandbox, microsandbox included, through a per-sandbox loopback forward, and keep every local-model agent's provisioned config current.
+* [local-models-ux](local-models-ux/index.md) - Rework the Models page and its teaching steps to match the onboarding's voice and components, and make the model list meaningful to non-technical users: plain descriptions, human-scale tradeoffs, and an explanation for every model this computer cannot run.
 * [manage-dashboard-redesign](manage-dashboard-redesign/index.md) - Make a sandbox's Manage dashboard open instantly and read simply: an Overview for launching and agents, advanced controls in a section sidebar that loads on demand.
 * [models-page-caching](models-page-caching/index.md) - Make the /models route instant on repeat visits by caching the host-spec probe.
 * [mutagen-transport](mutagen-transport/index.md) - Provider-neutral port forwarding and workspace transport over the Mutagen sidecar.
@@ -73,6 +72,7 @@
 * [web-terminal](web-terminal/index.md) - Interactive Zellij web terminal for each sandbox, shown inside the app.
 * [welcome-onboarding](welcome-onboarding/index.md) - First-run hero and onboarding flow that sets up the VM and base image.
 * [workspace-app-tabs](workspace-app-tabs/index.md) - Open a sandbox on a Manage launcher tab and let the user open app tabs from it.
+* [workspace-ux](workspace-ux/index.md) - Make the in-sandbox workspace friendlier for non-technical users by making the left app sidebar the only app chrome, so hosted apps feel like the app itself.
 
 ## superseded
 

@@ -1,6 +1,6 @@
 <script lang="ts">
     import { modelsState } from "./model.svelte";
-    import { PAGE, PLAIN_STEP_TITLES } from "./copy";
+    import { PAGE, planStepTitle } from "./copy";
 
     const wake = $derived(modelsState().wake);
 
@@ -13,7 +13,7 @@
             if (e.kind === "stepStart" || e.kind === "stepProgress") current = e.id;
             else if (e.id === current) current = null;
         }
-        return { text: (current && PLAIN_STEP_TITLES[current]) || PAGE.waking, failed: false };
+        return { text: (current && planStepTitle(current)) || PAGE.waking, failed: false };
     });
 </script>
 
