@@ -4,7 +4,7 @@ title: "Outbound Network Control"
 description: "Per-sandbox traffic viewer, secret swapping and egress policy, enforced by an iron-proxy sidecar on Podman."
 generated:
   by: claude-code/sonnet-5-5
-  at: 2026-11-21T20:00:00+11:00
+  at: 2026-11-24T20:00:00+11:00
 stale_after: 2027-02-21T00:00:00+11:00
 code:
   - src-tauri/src/proxy/
@@ -20,6 +20,7 @@ sources:
   - resource: docs/features/podman-egress-boundary/02_dev.md
   - resource: docs/features/proxy-credential-secrets/02_dev.md
   - resource: docs/features/remove-microsandbox/02_dev.md
+  - resource: docs/features/proxy-remote-deploy/02_dev.md
 ---
 # Outbound Network Control
 
@@ -42,12 +43,13 @@ One policy format is shared across providers; Podman enforces it with a sidecar.
 | Egress policy | Host allows and CIDR denies only; ports, address groups, host denies and UDP are refused |
 | Non-HTTP traffic | Blocked |
 | Changing the policy after create | Applied live by reloading the sidecar |
-| Remote deploy | Blocked for every sandbox until the sidecar can be recreated remotely |
+| Remote deploy | The network, sidecar and secrets are recreated on the target; the local sidecar stays stopped meanwhile |
 
 ## Where State Lives
 
 - **Workspace** (`.mio/`, visible inside the sandbox): the egress policy and secret bindings, which reference secrets by id only.
 - **App data** (never mounted into the sandbox): secret values, each sidecar's CA key, config and secret files, the snapshot of the policy last applied, and the flow record.
+- **Remote site** (deployed sandboxes): the target holds its own sidecar and network. The sidecar's config and CA are copied in, and secret values sit in a memory-only directory pushed from the laptop; a staged copy on the laptop is the source of truth.
 - Whether a sandbox has a proxy is derived from the sidecar's existence; only auth containers and sandboxes created before the sidecar became universal lack one.
 
 ## Lifecycle
@@ -55,6 +57,7 @@ One policy format is shared across providers; Podman enforces it with a sidecar.
 - **Create**: the sidecar is created first and denies everything until the workspace policy is applied. Any later failure removes it.
 - **Policy change**: the sidecar reloads, restoring the previous config if the reload is rejected. The UI shows drift between the workspace file and the last applied snapshot.
 - **Traffic record**: while the traffic panel watches a sandbox, new audit lines are copied into the flow record, so history survives log truncation.
+- **Deploy and undeploy**: the traffic record continues across sites, with one read cursor per site.
 - **Destroy**: the sandbox, then the sidecar, then its network and state directory.
 - **Startup**: sidecars whose sandbox no longer exists are swept.
 

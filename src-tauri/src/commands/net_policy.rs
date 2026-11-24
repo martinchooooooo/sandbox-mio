@@ -67,6 +67,7 @@ pub async fn apply_sandbox_policy(
     name: String,
     workspace_path: String,
     registry: State<'_, Arc<ProviderRegistry>>,
+    router: State<'_, crate::services::routing::SandboxRouter>,
     app: tauri::AppHandle,
 ) -> Result<crate::proxy::iron::ApplyReport, AppError> {
     let registry = registry.inner().clone();
@@ -80,7 +81,8 @@ pub async fn apply_sandbox_policy(
     let policy = net_policy::load(&workspace_path).map_err(BackendError::from)?;
     net_policy::validate(&policy, registry.local(provider).capabilities())
         .map_err(BackendError::from)?;
-    Ok(crate::proxy::iron::apply_policy(&app, &registry, &name, policy)
+    let site = crate::services::proxy::locate_sidecar(&router, &name).await?;
+    Ok(crate::proxy::iron::apply_policy(&app, &site, &name, policy)
         .await
         .map_err(BackendError::from)?)
 }

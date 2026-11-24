@@ -68,6 +68,7 @@ static KNOWN_CALLS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "podman.network-inspect",
         // `MachineProvider::pull_image` (docs/features/network-proxy/02_dev.md, Resolved Decision 10).
         "podman.pull",
+        "podman.cp",
         // `MachineProvider::sidecar_logs` and `exec`, scripted to stand in for the egress sidecar's
         // audit lines and reload failures (docs/features/podman-egress-boundary/02_dev.md, Phase B).
         // An unscripted `podman.logs` reads back as no lines.

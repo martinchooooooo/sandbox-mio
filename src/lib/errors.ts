@@ -15,7 +15,7 @@ export type AppErrorKind =
     | "PodmanUnresponsive"
     | "PodmanRebootRequired"
     | "MockControl"
-    | "ProxyDeployUnsupported"
+    | "RemoteHostUnsupported"
     | "AgentHost"
     | "AgentChatDeployed"
     | "Terminal";

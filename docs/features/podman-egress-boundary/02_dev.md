@@ -40,7 +40,7 @@ flowchart LR
 
 **Traffic record.** iron-proxy writes one structured JSON audit record per request to stderr. The backend polls `podman logs` on the sidecar, translates each audit record into the existing `FlowEntry` (`src-tauri/src/proxy/flowlog.rs`), appends the rows to the host-side `flows.ndjson` (the container log is truncated at its size cap, so it is only a transport), and emits `proxy://flows-changed` from that file exactly as today, so `src/lib/proxy/traffic.svelte.ts` keeps its contract. Two new optional fields carry the rejecting transform and the `open`-mode "would block" annotation.
 
-**What stays unchanged.** microsandbox keeps its mitmproxy SOCKS5 sidecar, its own engine-enforced egress, and the file-based flow log. `<app_data_root>/proxy/secrets.json` stays the one secret-value store for both providers. Proxy state stays derived from the sidecar container's presence (`docs/features/network-proxy/02_dev.md`, Resolved Decision 3). Remote deploy of a proxied sandbox stays refused (`BackendError::ProxyDeployUnsupported` in `CliBackend::deploy`, `src-tauri/src/backends/mod.rs`).
+**What stays unchanged.** microsandbox keeps its mitmproxy SOCKS5 sidecar, its own engine-enforced egress, and the file-based flow log. `<app_data_root>/proxy/secrets.json` stays the one secret-value store for both providers. Proxy state stays derived from the sidecar container's presence (`docs/features/network-proxy/02_dev.md`, Resolved Decision 3). Remote deploy of a proxied sandbox was refused here and is now supported (`docs/features/proxy-remote-deploy/02_dev.md`).
 
 ## Resolved Decisions
 

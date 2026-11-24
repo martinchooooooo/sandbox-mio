@@ -422,6 +422,10 @@ impl MachineProvider for PodmanProvider {
             let suffix = if m.read_only { ":ro" } else { "" };
             args.push(format!("{}:{}{suffix}", m.host_path, m.dest));
         }
+        for t in &spec.tmpfs {
+            args.push("--tmpfs".to_string());
+            args.push(t.clone());
+        }
         for (k, v) in &spec.labels {
             args.push("--label".to_string());
             args.push(format!("{k}={v}"));
@@ -670,6 +674,7 @@ mod tests {
                 dest: "/certs".to_string(),
                 read_only: true,
             }],
+            tmpfs: vec!["/secrets:rw,mode=0755,size=1m".to_string()],
             publish: Vec::new(),
             env: Vec::new(),
             command: vec!["-config".to_string(), "/config/config.yaml".to_string()],
@@ -684,6 +689,7 @@ mod tests {
             .collect();
         assert_eq!(networks, ["mio-proxy-s:ip=10.90.3.2", "podman", "other"]);
         assert!(has_pair(&argv, "--volume", "C:/p/certs:/certs:ro"));
+        assert!(has_pair(&argv, "--tmpfs", "/secrets:rw,mode=0755,size=1m"));
         assert!(has_pair(&argv, "--log-driver", "k8s-file"));
         assert!(has_pair(&argv, "--log-opt", "max-size=4mb"));
         assert_eq!(

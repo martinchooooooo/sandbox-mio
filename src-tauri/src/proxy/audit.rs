@@ -17,7 +17,8 @@ use super::flowlog::{FlowEntry, FLOW_LOG_MAX_LINES};
 use super::types::ProxyError;
 use crate::provider::types::MachineProvider;
 
-const CURSOR_FILE: &str = "audit.cursor";
+/// The cursor file of the local site; the remote site keeps its own under `remote/`.
+pub const CURSOR_FILE: &str = "audit.cursor";
 
 /// The newest `podman logs` timestamp ingested, and how many lines carrying exactly that stamp were
 /// ingested: Podman stamps every line of one read with the same value.
@@ -111,14 +112,19 @@ fn unseen<'a>(
     (bodies, next.or_else(|| cursor.cloned()))
 }
 
-/// Pulls the audit lines logged since the last poll into `state_dir`'s `flows.ndjson`. Returns
+/// Pulls the audit lines logged since the last poll, tracked by `cursor_path`, into `state_dir`'s
+/// `flows.ndjson` (one file for both sites). Returns
 /// whether the file was rewritten, which invalidates a reader's byte offset. Never creates the
 /// file, so a poll racing `remove_proxy` cannot recreate the state directory.
-pub async fn ingest(provider: &dyn MachineProvider, sidecar: &str, state_dir: &Path) -> bool {
+pub async fn ingest(
+    provider: &dyn MachineProvider,
+    sidecar: &str,
+    state_dir: &Path,
+    cursor_path: &Path,
+) -> bool {
     let flows = state_dir.join("flows.ndjson");
-    let cursor_path = state_dir.join(CURSOR_FILE);
     let cursor: Option<AuditCursor> =
-        crate::mio_files::read_value(&cursor_path).and_then(|v| serde_json::from_value(v).ok());
+        crate::mio_files::read_value(cursor_path).and_then(|v| serde_json::from_value(v).ok());
     let Ok(lines) = provider.sidecar_logs(sidecar, cursor.as_ref().map(|c| c.since.as_str())).await
     else {
         return false;
@@ -148,7 +154,7 @@ pub async fn ingest(provider: &dyn MachineProvider, sidecar: &str, state_dir: &P
         }
     };
     if let Some(next) = next {
-        if let Err(e) = crate::mio_files::write_compact(&cursor_path, &serde_json::json!(next)) {
+        if let Err(e) = crate::mio_files::write_compact(cursor_path, &serde_json::json!(next)) {
             tracing::warn!(target: "proxy", %sidecar, error = %e, "audit cursor not saved");
         }
     }

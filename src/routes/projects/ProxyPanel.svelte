@@ -36,6 +36,11 @@
         <span class="text-muted-foreground text-xs" data-proxy-network>
             {m.proxy_network({ network: status.network })}
         </span>
+        {#if status.host}
+            <span class="text-muted-foreground text-xs" data-proxy-host>
+                Running on {status.host}. <!-- TODO(i18n) -->
+            </span>
+        {/if}
         {#if iron}
             <span class="text-muted-foreground text-xs" data-proxy-non-http-blocked>
                 Traffic that ignores the proxy (raw sockets, git over SSH) is blocked: the sidecar is the sandbox's only way out. <!-- TODO(i18n) -->

@@ -14,6 +14,8 @@ pub mod iron;
 pub mod iron_config;
 pub mod types;
 
+pub use iron::ensure_sidecar_running;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -24,9 +26,13 @@ use crate::activity::types::TaskKind;
 use crate::activity::TaskFailure;
 use crate::provider::types::{InstanceNetwork, MachineProvider, ProviderId, SidecarMount, SidecarSpec};
 use crate::provider::ProviderRegistry;
-use types::{ProxyAttachment, ProxyEngine, ProxyError, ProxyStatus};
+use types::{ProxyAttachment, ProxyEngine, ProxyError, ProxyStatus, SidecarSite};
 
 pub const PROXY_PORT: u16 = 8080;
+
+/// The sidecar's secrets tmpfs. RAM only, so a stopped or rebooted remote sidecar holds no credential
+/// (`docs/features/proxy-remote-deploy/02_dev.md`, Resolved Decision 1).
+const SECRETS_TMPFS_OPTIONS: &str = "rw,mode=0755,size=1m";
 
 /// In-sandbox path the proxy's CA cert is installed at. Referenced by both `inject_ca` and
 /// `proxy_env` — the two must name the same path.
@@ -304,6 +310,7 @@ async fn create_podman_proxy(
             mount(&dir.join("config"), iron::CONTAINER_CONFIG_DIR),
             mount(&secrets, iron_config::CONTAINER_SECRETS_DIR),
         ],
+        tmpfs: Vec::new(),
         command: vec!["-config".to_string(), format!("{}/config.yaml", iron::CONTAINER_CONFIG_DIR)],
         labels: Vec::new(),
     };
@@ -321,6 +328,169 @@ async fn create_podman_proxy(
     )?;
 
     Ok(ProxyAttachment::PodmanBridge { network, env: proxy_env(&proxy_ip), dns: proxy_ip })
+}
+
+/// `<state>/remote/`: the laptop's staging of the remote sidecar's files plus its connection cache
+/// and audit cursor. Created on demand.
+fn remote_dir(app: &AppHandle, sandbox: &str) -> Result<PathBuf, ProxyError> {
+    let dir = state_dir(app, sandbox)?.join("remote");
+    std::fs::create_dir_all(&dir).map_err(|e| io_err(&dir, e))?;
+    Ok(dir)
+}
+
+/// The remote directory when it exists, without creating the state tree as a side effect.
+fn remote_dir_if_exists(app: &AppHandle, sandbox: &str) -> Option<PathBuf> {
+    let dir = crate::paths::app_data_root(app).ok()?.join("proxy").join(sandbox).join("remote");
+    dir.is_dir().then_some(dir)
+}
+
+/// The remote sidecar's connection, network and address, a cache like `meta.json`: whether a sandbox
+/// is deployed stays decided by its Mutagen session alone.
+pub fn read_remote_meta(app: &AppHandle, sandbox: &str) -> Option<serde_json::Value> {
+    crate::mio_files::read_value(&remote_dir_if_exists(app, sandbox)?.join("remote.json"))
+}
+
+fn write_remote_meta(
+    app: &AppHandle,
+    sandbox: &str,
+    connection: &str,
+    network: &str,
+    proxy_ip: &str,
+) -> Result<(), ProxyError> {
+    let path = remote_dir(app, sandbox)?.join("remote.json");
+    let body = serde_json::json!({ "connection": connection, "network": network, "proxyIp": proxy_ip });
+    crate::mio_files::write_compact(&path, &body).map_err(|e| ProxyError::CommandFailed(e.to_string()))
+}
+
+/// The remote sidecar's CA, which the remote sandbox must trust instead of the local one
+/// (`docs/features/proxy-remote-deploy/02_dev.md`, Resolved Decision 9).
+pub fn read_remote_ca_pem(app: &AppHandle, sandbox: &str) -> Result<Vec<u8>, ProxyError> {
+    let path = remote_dir(app, sandbox)?.join("certs").join("ca.pem");
+    std::fs::read(&path).map_err(|e| io_err(&path, e))
+}
+
+/// Deletes the laptop's remote staging, which holds the remote CA's private key.
+pub fn remove_remote_state(app: &AppHandle, sandbox: &str) {
+    if let Some(dir) = remote_dir_if_exists(app, sandbox) {
+        if let Err(e) = std::fs::remove_dir_all(&dir) {
+            tracing::warn!(target: "proxy", %sandbox, error = %e, "failed to remove the remote proxy state");
+        }
+    }
+}
+
+fn copy_dir(src: &std::path::Path, dst: &std::path::Path) -> Result<(), ProxyError> {
+    std::fs::create_dir_all(dst).map_err(|e| io_err(dst, e))?;
+    for entry in std::fs::read_dir(src).map_err(|e| io_err(src, e))? {
+        let entry = entry.map_err(|e| io_err(src, e))?;
+        let target = dst.join(entry.file_name());
+        if entry.path().is_dir() {
+            copy_dir(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), &target).map_err(|e| io_err(&target, e))?;
+        }
+    }
+    Ok(())
+}
+
+/// Copies the remote staging's `config/` and `certs/` into the created, unstarted sidecar. One tree
+/// is copied onto `/etc/iron-proxy`: `podman cp` cannot write into the missing parent of
+/// `/etc/iron-proxy/config`, but creates the destination itself when only its parent exists
+/// (`docs/features/proxy-remote-deploy/spike/README.md`, check 1).
+async fn copy_state_in(
+    provider: &Arc<dyn MachineProvider>,
+    container: &str,
+    dir: &std::path::Path,
+) -> Result<(), ProxyError> {
+    let stage = dir.join("stage");
+    let _ = std::fs::remove_dir_all(&stage);
+    let staged = copy_dir(&dir.join("config"), &stage.join("config"))
+        .and_then(|()| copy_dir(&dir.join("certs"), &stage.join("certs")));
+    let copied = match staged {
+        Ok(()) => provider
+            .copy_in(container, &stage.to_string_lossy(), iron::CONTAINER_STATE_DIR)
+            .await
+            .map_err(ProxyError::from),
+        Err(e) => Err(e),
+    };
+    let _ = std::fs::remove_dir_all(&stage);
+    copied
+}
+
+/// Creates the remote network and the dual-homed remote sidecar on `site`, with a fresh CA, a
+/// deny-all config and a RAM-only secrets directory (`docs/features/proxy-remote-deploy/02_dev.md`,
+/// Resolved Decisions 1, 8, 9). Removes what it created when it fails; the caller has run
+/// `ensure_proxy_image` and refused a name collision on `site`.
+pub async fn create_remote_proxy(
+    app: &AppHandle,
+    site: &SidecarSite,
+    sandbox: &str,
+) -> Result<ProxyAttachment, ProxyError> {
+    let (network, proxy_ip) = allocate_network(&site.provider, sandbox).await?;
+    let created = create_remote_sidecar(app, site, sandbox, &network, &proxy_ip).await;
+    if created.is_err() {
+        remove_sidecar_and_network(&site.provider, sandbox).await;
+        remove_remote_state(app, sandbox);
+    }
+    created
+}
+
+async fn create_remote_sidecar(
+    app: &AppHandle,
+    site: &SidecarSite,
+    sandbox: &str,
+    network: &str,
+    proxy_ip: &str,
+) -> Result<ProxyAttachment, ProxyError> {
+    let (network, proxy_ip) = (network.to_string(), proxy_ip.to_string());
+    let dir = remote_dir(app, sandbox)?;
+    let certs = dir.join("certs");
+    std::fs::create_dir_all(&certs).map_err(|e| io_err(&certs, e))?;
+    iron::generate_ca(&certs)?;
+    iron::write_bootstrap(&dir, &proxy_ip)?;
+    let container_name = proxy_container_name(sandbox);
+    let spec = SidecarSpec {
+        name: container_name.clone(),
+        image: iron::iron_proxy_image(),
+        network: Some(InstanceNetwork { name: network.clone(), ip: Some(proxy_ip.clone()), dns: None }),
+        extra_networks: vec!["podman".to_string()],
+        log_max_size: Some(iron::SIDECAR_LOG_MAX_SIZE.to_string()),
+        publish: Vec::new(),
+        env: vec![(iron_config::MGMT_API_KEY_ENV.to_string(), uuid::Uuid::new_v4().simple().to_string())],
+        mounts: Vec::new(),
+        tmpfs: vec![format!("{}:{SECRETS_TMPFS_OPTIONS}", iron_config::CONTAINER_SECRETS_DIR)],
+        command: vec!["-config".to_string(), format!("{}/config.yaml", iron::CONTAINER_CONFIG_DIR)],
+        labels: Vec::new(),
+    };
+    site.provider.create_sidecar(&spec).await?;
+    // Order is load-bearing: the files must be in the container before its first start, or iron-proxy
+    // exits on a missing config.
+    copy_state_in(&site.provider, &container_name, &dir).await?;
+    site.provider.start(&container_name).await?;
+    write_remote_meta(app, sandbox, &site.machine.id, &network, &proxy_ip)?;
+    Ok(ProxyAttachment::PodmanBridge { network, env: proxy_env(&proxy_ip), dns: proxy_ip })
+}
+
+/// Removes the remote sidecar and its network from `site`, best-effort. Never touches the laptop's
+/// state directory: the caller removes `remote/` with [`remove_remote_state`].
+pub async fn remove_remote_proxy(site: &SidecarSite, sandbox: &str) {
+    remove_sidecar_and_network(&site.provider, sandbox).await;
+}
+
+async fn remove_sidecar_and_network(provider: &Arc<dyn MachineProvider>, sandbox: &str) {
+    let container_name = proxy_container_name(sandbox);
+    let is_a_sandbox = provider
+        .list_instances()
+        .await
+        .map(|instances| instances.iter().any(|s| s.name == container_name && !is_sidecar(s)))
+        .unwrap_or(false);
+    if is_a_sandbox {
+        tracing::warn!(target: "proxy", %sandbox, %container_name, "not removing: it is a sandbox, not a proxy sidecar");
+    } else if let Err(e) = provider.remove(&container_name).await {
+        tracing::warn!(target: "proxy", %sandbox, error = %e, "failed to remove proxy container");
+    }
+    if let Err(e) = provider.remove_network(&proxy_network_name(sandbox)).await {
+        tracing::warn!(target: "proxy", %sandbox, error = %e, "failed to remove proxy network");
+    }
 }
 
 fn io_err(path: &std::path::Path, e: std::io::Error) -> ProxyError {
@@ -379,28 +549,37 @@ pub fn is_sidecar(instance: &crate::backends::types::Sandbox) -> bool {
     instance.name.ends_with(types::PROXY_CONTAINER_SUFFIX) && instance.image_version.is_none()
 }
 
-/// Whether `sandbox` has a proxy sidecar right now — derived from the `<sandbox>-proxy` sidecar's
-/// presence on the provider its `meta.json` names, never persisted (Resolved Decision 3).
-pub async fn exists(app: &AppHandle, registry: &Arc<ProviderRegistry>, sandbox: &str) -> bool {
-    let (_, provider) = sidecar_provider(app, registry, sandbox);
-    provider
-        .list_instances()
-        .await
-        .map(|instances| instances.iter().any(|s| s.name == proxy_container_name(sandbox) && is_sidecar(s)))
-        .unwrap_or(false)
-}
-
-/// Restarts the proxy sidecar so it re-reads its mounted `config.yaml`.
-pub async fn restart_proxy_container(
+/// Fails unless `sandbox`'s local sidecar exists on the provider its `meta.json` names. A failed
+/// listing is an error too, so a deploy never proceeds on an unverified boundary.
+pub async fn require_sidecar(
     app: &AppHandle,
     registry: &Arc<ProviderRegistry>,
     sandbox: &str,
 ) -> Result<(), ProxyError> {
     let (_, provider) = sidecar_provider(app, registry, sandbox);
+    let instances = provider.list_instances().await?;
+    if instances.iter().any(|s| s.name == proxy_container_name(sandbox) && is_sidecar(s)) {
+        return Ok(());
+    }
+    Err(ProxyError::CommandFailed(format!(
+        "{sandbox:?} has no network proxy sidecar; recreate the sandbox to get the network boundary"
+    )))
+}
+
+/// Restarts the proxy sidecar so it re-reads its config. A remote sidecar restarts through
+/// [`iron::ensure_sidecar_running`], because its secrets tmpfs is empty after any start.
+pub async fn restart_proxy_container(
+    app: &AppHandle,
+    site: &SidecarSite,
+    sandbox: &str,
+) -> Result<(), ProxyError> {
     let name = proxy_container_name(sandbox);
     // A crashed sidecar may refuse the stop, so only the start decides the outcome.
-    let stopped = provider.stop_sidecar(&name).await;
-    match provider.start(&name).await {
+    let stopped = site.provider.stop_sidecar(&name).await;
+    if !site.local {
+        return iron::ensure_sidecar_running(app, site, sandbox).await;
+    }
+    match site.provider.start(&name).await {
         Ok(()) => Ok(()),
         Err(e) => Err(stopped.err().unwrap_or(e).into()),
     }
@@ -417,22 +596,8 @@ pub async fn remove_proxy(
     provider_id: ProviderId,
     sandbox: &str,
 ) {
-    let container_name = proxy_container_name(sandbox);
-    let is_a_sandbox = provider
-        .list_instances()
-        .await
-        .map(|instances| instances.iter().any(|s| s.name == container_name && !is_sidecar(s)))
-        .unwrap_or(false);
-    if is_a_sandbox {
-        tracing::warn!(target: "proxy", %sandbox, %container_name, "not removing: it is a sandbox, not a proxy sidecar");
-    } else if let Err(e) = provider.remove(&container_name).await {
-        tracing::warn!(target: "proxy", %sandbox, error = %e, "failed to remove proxy container");
-    }
-    if provider_id == ProviderId::Podman {
-        let network = proxy_network_name(sandbox);
-        if let Err(e) = provider.remove_network(&network).await {
-            tracing::warn!(target: "proxy", %sandbox, error = %e, "failed to remove proxy network");
-        }
+    match provider_id {
+        ProviderId::Podman => remove_sidecar_and_network(provider, sandbox).await,
     }
     if let Ok(dir) = state_dir(app, sandbox) {
         if let Err(e) = std::fs::remove_dir_all(&dir) {
@@ -460,19 +625,36 @@ pub async fn sweep(app: &AppHandle, registry: &Arc<ProviderRegistry>, live: &[St
     }
 }
 
-/// Derives proxy status from the `<sandbox>-proxy` container's presence — never persisted
-/// (Resolved Decision 3).
+/// Derives proxy status from the `<sandbox>-proxy` container's presence on `site` — never persisted
+/// (Resolved Decision 3). A deployed sandbox without a remote sidecar reports no sidecar and no host.
 pub async fn status(
     app: &AppHandle,
-    registry: &Arc<ProviderRegistry>,
+    site: &SidecarSite,
     sandbox: &str,
 ) -> Result<ProxyStatus, ProxyError> {
-    let (id, provider) = sidecar_provider(app, registry, sandbox);
+    let id = site.machine.provider;
     let container_name = proxy_container_name(sandbox);
-    let instances = provider.list_instances().await?;
     let network = proxy_network_name(sandbox);
-    let meta = read_meta(app, sandbox).unwrap_or_default();
+    let (meta, host) = if site.local {
+        (read_meta(app, sandbox).unwrap_or_default(), None)
+    } else {
+        match read_remote_meta(app, sandbox) {
+            Some(meta) => (meta, Some(site.machine.id.clone())),
+            None => {
+                return Ok(ProxyStatus {
+                    exists: false,
+                    running: false,
+                    proxy_ip: String::new(),
+                    network,
+                    provider: id,
+                    engine: ProxyEngine::IronProxy,
+                    host: None,
+                });
+            }
+        }
+    };
     let engine = meta_engine(&meta);
+    let instances = site.provider.list_instances().await?;
     let Some(instance) = instances.into_iter().find(|s| s.name == container_name && is_sidecar(s)) else {
         return Ok(ProxyStatus {
             exists: false,
@@ -481,6 +663,7 @@ pub async fn status(
             network,
             provider: id,
             engine,
+            host,
         });
     };
     let running = instance.status == "running";
@@ -488,9 +671,10 @@ pub async fn status(
         exists: true,
         running,
         proxy_ip: meta["proxyIp"].as_str().unwrap_or_default().to_string(),
-        network,
+        network: meta["network"].as_str().map_or(network, str::to_string),
         provider: id,
         engine,
+        host,
     })
 }
 

@@ -26,6 +26,8 @@
   "workspace_launcher_switch": "Wechseln zu",
   "workspace_close_sandbox_label": "{sandbox} schließen",
   "workspace_close_tab_label": "{title} schließen",
+  "projects_no_hosts": "Keine Hosts registriert — bitte zuerst einen hinzufügen.",
+  "projects_deploy_confirm": "Deployen",
   "projects_deploy": "Deployen",
   "projects_cancel": "Abbrechen",
   "projects_packages": "Pakete",

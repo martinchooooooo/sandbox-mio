@@ -26,6 +26,8 @@ pub enum TaskKind {
     BaseImageBuild,
     /// Creating a sandbox (`create_sandbox`); `detail` carries the current step.
     SandboxCreate,
+    /// Deploying a sandbox to a remote host (`deploy_sandbox`); `detail` carries the current step.
+    SandboxDeploy,
 }
 
 #[derive(serde::Serialize, Clone, Copy, PartialEq, Eq)]

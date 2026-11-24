@@ -55,9 +55,10 @@ pub async fn list_sandboxes(store: State<'_, Arc<dyn SandboxBackend>>) -> Result
 pub async fn start_sandbox(
     name: String,
     store: State<'_, Arc<dyn SandboxBackend>>,
+    router: State<'_, services::routing::SandboxRouter>,
     app: tauri::AppHandle,
 ) -> Result<(), AppError> {
-    store.start(&name).await?;
+    services::sandbox::start(&name, &store, &router, &app).await?;
     services::inference_reach::spawn_ensure_for_sandbox(&app, &name);
     services::github_access::spawn_reconcile(&app, &name);
     services::panes::spawn_prewarm_agent_web(&app, &name);

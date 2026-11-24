@@ -11,14 +11,15 @@ import { captureDiagOnFailure } from "../../../lib/diag.js";
 // is only supported on async element matchers, not on plain JS value assertions — node:assert's
 // second argument carries the diagnostic message for free.
 
-// Skipped: every sandbox has a proxy sidecar, so remote deploy is blocked (docs/features/proxy-remote-deploy/feature.md).
-describe.skip("Deploy sandbox to remote machine", () => {
+describe("Deploy sandbox to remote machine", () => {
   const { projectName, row, workspaceDir } = useSandboxWorkspace("e2e-deploy");
 
   after(() => {
     // Best-effort cleanup so a failed run does not leave the remote container behind (the local
     // one is already handled by useSandboxWorkspace's teardown).
     podman(REMOTE_CONNECTION, ["rm", "-f", projectName], { check: false });
+    podman(REMOTE_CONNECTION, ["rm", "-f", `${projectName}-proxy`], { check: false });
+    podman(REMOTE_CONNECTION, ["network", "rm", "--force", `mio-proxy-${projectName}`], { check: false });
   });
 
   captureDiagOnFailure();
@@ -55,6 +56,40 @@ describe.skip("Deploy sandbox to remote machine", () => {
       await row.isHostShown(REMOTE_CONNECTION),
       `Deployed host label "${REMOTE_CONNECTION}" not visible in the project row. ` +
         "This can happen when sandbox_deployments did not return the session, or the frontend did not re-poll after deploy."
+    );
+  });
+
+  it("runs a remote proxy sidecar that refuses a raw IP from the remote sandbox", async () => {
+    const sidecar = podman(REMOTE_CONNECTION, [
+      "inspect",
+      `${projectName}-proxy`,
+      "--format",
+      "{{.State.Status}}",
+    ]);
+    assert(
+      sidecar === "running",
+      `Remote sidecar "${projectName}-proxy" on ${REMOTE_CONNECTION} is in state "${sidecar}", expected "running". ` +
+        "This can happen when create_remote_proxy failed to start it or the deploy rolled back."
+    );
+
+    // A raw-IP connection has no route out of the internal network: curl exits 7 or 28, never 0.
+    const reachable = podmanOk(REMOTE_CONNECTION, [
+      "exec",
+      projectName,
+      "curl",
+      "-s",
+      "-m",
+      "5",
+      "--noproxy",
+      "*",
+      "-o",
+      "/dev/null",
+      "https://1.1.1.1",
+    ]);
+    assert(
+      !reachable,
+      "The remote sandbox reached 1.1.1.1 directly. This can happen when it was created without the " +
+        "internal network, so the egress boundary is not in place on the target."
     );
   });
 
@@ -121,6 +156,24 @@ describe.skip("Deploy sandbox to remote machine", () => {
       !podmanOk(REMOTE_CONNECTION, ["inspect", projectName]),
       `Remote container "${projectName}" still exists on ${REMOTE_CONNECTION} after undeploy. ` +
         "This can happen when remove_remote failed silently or the wrong connection name was used."
+    );
+
+    assert(
+      !podmanOk(REMOTE_CONNECTION, ["inspect", `${projectName}-proxy`]) &&
+        !podmanOk(REMOTE_CONNECTION, ["network", "inspect", `mio-proxy-${projectName}`]),
+      `The remote sidecar or its network is still on ${REMOTE_CONNECTION} after undeploy. ` +
+        "This can happen when undeploy skipped remove_remote_proxy."
+    );
+    const localSidecar = podman(LOCAL_CONNECTION, [
+      "inspect",
+      `${projectName}-proxy`,
+      "--format",
+      "{{.State.Status}}",
+    ]);
+    assert(
+      localSidecar === "running",
+      `The local sidecar is "${localSidecar}" after undeploy, expected "running". ` +
+        "This can happen when undeploy started the local sandbox without ensure_sidecar_running."
     );
 
     const localState = podman(LOCAL_CONNECTION, [

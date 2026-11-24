@@ -59,11 +59,11 @@ pub enum BackendError {
     /// Error from SSH config management.
     #[error(transparent)]
     Ssh(#[from] SshError),
-    /// `deploy` is refused for every sandbox: each has a proxy sidecar and no remote counterpart
-    /// exists yet, and deploying without it would silently move the sandbox onto an unbounded
-    /// network (`docs/features/proxy-remote-deploy/feature.md`).
-    #[error("remote deploy of {name:?} is temporarily unavailable")]
-    ProxyDeployUnsupported { name: String },
+    /// The deploy target cannot host the egress boundary: its Podman is too old or uses a network
+    /// backend the dual-homed sidecar needs more of (`docs/features/proxy-remote-deploy/02_dev.md`,
+    /// Resolved Decision 6). Raised before anything is mutated.
+    #[error("{connection:?} cannot host a bounded sandbox: {reason}")]
+    RemoteHostUnsupported { connection: String, reason: String },
 }
 
 /// Classifies a raw spawn/wait failure from the process seam. `TimedOut` is the marker
@@ -101,6 +101,14 @@ pub struct RemoteDeployment {
     pub alpha: String,
     /// Remote (beta) endpoint: scp-style URL (`alias:path`).
     pub beta: String,
+}
+
+/// What `SandboxBackend::plan_deploy` validated and resolved, handed back to `deploy` so the target
+/// is read once. Mutating nothing, it is safe to drop.
+pub struct DeployPlan {
+    /// The target connection.
+    pub target: String,
+    pub(super) workspace: WorkspacePlan,
 }
 
 /// Workspace location and sync strategy (used by deploy to compute bind-mount and SSH endpoint).
@@ -179,12 +187,19 @@ pub trait SandboxBackend: Send + Sync {
     async fn stop(&self, name: &str) -> Result<(), BackendError>;
     /// Remove the local container (workspace directory is left intact).
     async fn destroy(&self, name: &str) -> Result<(), BackendError>;
+    /// Validates a deploy of `name` to `target_connection` without mutating anything: the name, the
+    /// provider's remote-target capability, self-deploy, the target's SSH endpoint, and that the
+    /// target's Podman can host the egress boundary.
+    async fn plan_deploy(&self, name: &str, target_connection: &str) -> Result<DeployPlan, BackendError>;
     /// Create remote container and return Mutagen sync endpoints.
-    /// Local container is left stopped (deploy is reversible).
+    /// Local container is left stopped (deploy is reversible). `proxy` attaches the remote container
+    /// to its remote sidecar; `extra_env` adds the secret-binding placeholders.
     async fn deploy(
         &self,
         name: &str,
-        target_connection: &str,
+        plan: &DeployPlan,
+        proxy: &crate::proxy::types::ProxyAttachment,
+        extra_env: &[(String, String)],
     ) -> Result<RemoteDeployment, BackendError>;
     /// Remove remote container (workspace directory left intact).
     async fn remove_remote(&self, name: &str, connection: &str) -> Result<(), BackendError>;

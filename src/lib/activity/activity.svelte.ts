@@ -48,6 +48,7 @@ const kindLabels: Record<TaskKind, () => string> = {
     "machine-setup": () => "Setting up your workspace", // TODO(i18n)
     "base-image-build": () => "Getting sandboxes ready", // TODO(i18n)
     "sandbox-create": () => "Creating sandbox", // TODO(i18n)
+    "sandbox-deploy": () => "Deploying sandbox", // TODO(i18n)
 };
 
 export function taskLabel(kind: TaskKind): string {

@@ -77,6 +77,12 @@ fn wants_access(credential_captured_at_ms: Option<u64>, state: &GithubSandboxSta
     credential_captured_at_ms.is_some() && !state.opted_out
 }
 
+/// The site of `name`'s active sidecar, resolved from its route.
+async fn locate_site(app: &AppHandle, name: &str) -> Result<crate::proxy::types::SidecarSite, AppError> {
+    let router = app.state::<super::routing::SandboxRouter>();
+    super::proxy::locate_sidecar(&router, name).await
+}
+
 /// Whether `name` has a Mutagen deploy session, which puts it out of scope. An error is not
 /// treated as "local", so a deployed sandbox never receives the token on a Mutagen failure.
 async fn is_deployed(app: &AppHandle, name: &str) -> Result<bool, AppError> {
@@ -158,8 +164,8 @@ async fn reconcile_locked(
         // now. This is a security action: a failure is returned, and the saved opt-out makes a retry
         // (the same call) re-run the refresh.
         if opted_out {
-            let registry = app.state::<Arc<ProviderRegistry>>().inner().clone();
-            refreshed = Some(Ok(crate::proxy::iron::refresh_github_binding(app, &registry, name).await?));
+            let site = locate_site(app, name).await?;
+            refreshed = Some(Ok(crate::proxy::iron::refresh_github_binding(app, &site, name).await?));
         }
     }
 
@@ -174,8 +180,8 @@ async fn reconcile_locked(
     // Stopped sidecars are refreshed by `spawn_reconcile_all` and the opt-out above. A running one is
     // refreshed here even when gh needs no action, which is how a rotation reaches the sidecar.
     if refreshed.is_none() {
-        let registry = app.state::<Arc<ProviderRegistry>>().inner().clone();
-        refreshed = Some(crate::proxy::iron::refresh_github_binding(app, &registry, name).await.map_err(|e| e.to_string()));
+        let site = locate_site(app, name).await?;
+        refreshed = Some(crate::proxy::iron::refresh_github_binding(app, &site, name).await.map_err(|e| e.to_string()));
     }
     if is_deployed(app, name).await? {
         return Ok(state);
@@ -246,9 +252,14 @@ pub fn spawn_reconcile_all(app: &AppHandle) {
                 return;
             }
         };
-        let registry = app.state::<Arc<ProviderRegistry>>().inner().clone();
         for sandbox in sandboxes.iter().filter(|s| s.status != "running") {
-            if let Err(e) = crate::proxy::iron::refresh_github_binding(&app, &registry, &sandbox.name).await {
+            let refreshed = match locate_site(&app, &sandbox.name).await {
+                Ok(site) => crate::proxy::iron::refresh_github_binding(&app, &site, &sandbox.name)
+                    .await
+                    .map_err(|e| e.to_string()),
+                Err(e) => Err(e.to_string()),
+            };
+            if let Err(e) = refreshed {
                 tracing::warn!(target: "credentials", sandbox = %sandbox.name, error = %e, "could not refresh the GitHub binding");
             }
         }

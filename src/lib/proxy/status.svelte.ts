@@ -14,6 +14,8 @@ export interface ProxyStatus {
     provider: "podman";
     /** Mirrors Rust `proxy::types::ProxyEngine`. */
     engine: "iron-proxy";
+    /** The deploy target's connection when the sidecar runs remotely; null locally. */
+    host: string | null;
 }
 
 type Entry = { value: ProxyStatus | null; error: string | null; fetchedAt: number; loading: boolean };

@@ -9,14 +9,13 @@ use std::time::{Duration, Instant};
 
 use tauri::AppHandle;
 
-use super::types::ProxyError;
+use super::types::{ProxyError, SidecarSite};
 use super::{io_err, iron_config, write_atomic};
 use crate::credentials::github;
 use crate::credentials::types::CredentialError;
 use crate::credentials::{self, GITHUB_SERVICE};
 use crate::net_policy::{self, NetPolicy};
-use crate::provider::types::{ExecOpts, MachineProvider, ProviderId};
-use crate::provider::ProviderRegistry;
+use crate::provider::types::{ExecOpts, MachineProvider};
 
 /// Pinned to the version Phase A ran, never `latest` or an `-rc.N` tag. The tag must not parse as
 /// an integer, or `is_sidecar` mistakes the sidecar for a sandbox. An upgrade re-runs the Phase A
@@ -27,6 +26,8 @@ pub const IRON_PROXY_IMAGE_DEFAULT: &str = "docker.io/ironsh/iron-proxy:0.56.0";
 /// more than one poll's worth of audit rows (about 1 KB each; Resolved Decision 4).
 pub const SIDECAR_LOG_MAX_SIZE: &str = "4mb";
 
+/// The directory the sidecar keeps `config/`, `certs/` and `secrets/` under.
+pub const CONTAINER_STATE_DIR: &str = "/etc/iron-proxy";
 pub const CONTAINER_CONFIG_DIR: &str = "/etc/iron-proxy/config";
 
 pub fn iron_proxy_image() -> String {
@@ -248,14 +249,19 @@ async fn is_running(
     Ok(provider.list_instances().await?.iter().any(|s| s.name == sidecar && s.status == "running"))
 }
 
-/// Starts a stopped sidecar and confirms it stays up. `podman start` succeeds even when iron-proxy
-/// exits at once on a config it refuses, so the start is followed by a reload: it answers only
-/// once the process has booted with the config, and fails if the process has exited.
+/// Starts a stopped sidecar and confirms it stays up (see [`confirm_started`]).
 async fn start_and_confirm(
     provider: &Arc<dyn MachineProvider>,
     sidecar: &str,
 ) -> Result<(), ProxyError> {
     provider.start(sidecar).await?;
+    confirm_started(provider, sidecar).await
+}
+
+/// `podman start` succeeds even when iron-proxy exits at once on a config it refuses, so a start is
+/// followed by a reload: it answers only once the process has booted with the config, and fails if
+/// the process has exited.
+async fn confirm_started(provider: &Arc<dyn MachineProvider>, sidecar: &str) -> Result<(), ProxyError> {
     match reload(provider, sidecar).await {
         Ok(()) => Ok(()),
         Err(_) if !is_running(provider, sidecar).await.unwrap_or(true) => {
@@ -265,6 +271,130 @@ async fn start_and_confirm(
         }
         Err(e) => Err(e),
     }
+}
+
+/// Whether `name` is safe to splice into the `sh -c` scripts below: secret file names come from a
+/// validated environment variable name or the app's own constant, never from the sandbox.
+fn safe_file_name(name: &str) -> Result<(), ProxyError> {
+    if !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.')) {
+        Ok(())
+    } else {
+        Err(ProxyError::CommandFailed(format!("unsafe secret file name {name:?}")))
+    }
+}
+
+/// The remote secrets directory's path for one file.
+fn remote_secret_path(name: &str) -> String {
+    format!("{}/{name}", iron_config::CONTAINER_SECRETS_DIR)
+}
+
+/// The shell script that writes stdin to `name` in the sidecar's secrets directory through a
+/// rename, so iron-proxy never reads a partial file.
+fn push_script(name: &str) -> String {
+    let target = remote_secret_path(name);
+    format!("cat > {target}.tmp && mv {target}.tmp {target}")
+}
+
+/// The shell script that deletes every file in the secrets directory not named in `keep`.
+fn stale_script(keep: &[String]) -> String {
+    format!(
+        "cd {dir} && for f in $(ls -A); do case \" {keep} \" in *\" $f \"*) ;; *) rm -f -- \"$f\" ;; esac; done",
+        dir = iron_config::CONTAINER_SECRETS_DIR,
+        keep = keep.join(" "),
+    )
+}
+
+/// The shell script that swaps the copied-in `config.next.yaml` over `config.yaml`, keeping the
+/// running config as `config.prev.yaml`; [`swap_back_script`] undoes it
+/// (`docs/features/proxy-remote-deploy/02_dev.md`, Resolved Decision 14).
+fn swap_script() -> String {
+    let dir = CONTAINER_CONFIG_DIR;
+    format!("cd {dir} && mv -f config.yaml config.prev.yaml && mv -f config.next.yaml config.yaml")
+}
+
+fn swap_back_script() -> String {
+    format!("cd {CONTAINER_CONFIG_DIR} && mv -f config.prev.yaml config.yaml")
+}
+
+/// Runs `script` in the remote sidecar and turns a non-zero exit into an error.
+async fn exec_script(site: &SidecarSite, sidecar: &str, script: &str) -> Result<(), ProxyError> {
+    let out = site.provider.exec(sidecar, &["sh", "-c", script], ExecOpts::default()).await?;
+    if out.status.success() {
+        return Ok(());
+    }
+    Err(ProxyError::CommandFailed(String::from_utf8_lossy(&out.stderr).trim().to_string()))
+}
+
+/// Writes each of `names` from the laptop's `secrets` directory into the remote sidecar's tmpfs. The
+/// value travels on stdin only, never argv, the container environment, logs or IPC.
+async fn push_secret_files(
+    site: &SidecarSite,
+    sidecar: &str,
+    secrets: &Path,
+    names: &[String],
+) -> Result<(), ProxyError> {
+    for name in names {
+        safe_file_name(name)?;
+        let path = secrets.join(name);
+        let bytes = std::fs::read(&path).map_err(|e| io_err(&path, e))?;
+        let script = push_script(name);
+        let out = site.provider.exec_piped(sidecar, &["sh", "-c", &script], &bytes).await?;
+        if !out.status.success() {
+            return Err(ProxyError::CommandFailed(format!(
+                "could not push a secret file to the remote proxy: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Deletes the remote secret files not in `keep`. Runs only after a successful reload, for the reason
+/// [`remove_stale_secret_files`] does.
+async fn remove_stale_remote_files(
+    site: &SidecarSite,
+    sidecar: &str,
+    keep: &[String],
+) -> Result<(), ProxyError> {
+    for name in keep {
+        safe_file_name(name)?;
+    }
+    exec_script(site, sidecar, &stale_script(keep)).await
+}
+
+/// The names of the files in the laptop's `secrets` directory.
+fn staged_secret_names(secrets: &Path) -> Vec<String> {
+    std::fs::read_dir(secrets)
+        .map(|entries| {
+            entries.flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Makes sure `sandbox`'s sidecar on `site` runs, so a sandbox about to start has its network.
+/// A remote sidecar gets the staged secret files pushed on every call, so a failed earlier push
+/// self-heals (`docs/features/proxy-remote-deploy/02_dev.md`, Resolved Decisions 1, 5).
+/// A missing sidecar is a no-op, which the mock backend relies on.
+pub async fn ensure_sidecar_running(
+    app: &AppHandle,
+    site: &SidecarSite,
+    sandbox: &str,
+) -> Result<(), ProxyError> {
+    let sidecar = super::proxy_container_name(sandbox);
+    let instances = site.provider.list_instances().await?;
+    let Some(instance) = instances.iter().find(|s| s.name == sidecar && super::is_sidecar(s)) else {
+        return Ok(());
+    };
+    let running = instance.status == "running";
+    if site.local {
+        return if running { Ok(()) } else { start_and_confirm(&site.provider, &sidecar).await };
+    }
+    let secrets = secrets_dir(&super::state_dir(app, sandbox)?);
+    if !running {
+        site.provider.start(&sidecar).await?;
+    }
+    push_secret_files(site, &sidecar, &secrets, &staged_secret_names(&secrets)).await?;
+    if running { Ok(()) } else { confirm_started(&site.provider, &sidecar).await }
 }
 
 /// The GitHub token the sidecar should swap the placeholder for, or `None` when no credential is
@@ -312,19 +442,19 @@ fn app_bindings(github: bool) -> Vec<iron_config::AppBinding> {
     if github { vec![iron_config::github_app_binding()] } else { Vec::new() }
 }
 
-/// Makes the sidecar run `policy`, already validated: reload when running, start when stopped
-/// (Resolved Decision 13). A failed reload or start restores `config.prev.yaml` and never restarts,
-/// so disk matches what the sidecar last ran; `applied.json` is rewritten only once the new policy
-/// runs. Applies to the same sandbox run one at a time.
+/// Makes the sidecar on `site` run `policy`, already validated: reload when running, start when
+/// stopped (Resolved Decision 13). A failure restores the previous files, and `applied.json` changes
+/// only once the new policy runs. A deployed sandbox is applied live on the remote sidecar
+/// (`docs/features/proxy-remote-deploy/02_dev.md`, Resolved Decisions 3, 4, 12).
 pub async fn apply_policy(
     app: &AppHandle,
-    registry: &Arc<ProviderRegistry>,
+    site: &SidecarSite,
     sandbox: &str,
     policy: NetPolicy,
 ) -> Result<ApplyReport, ProxyError> {
     let lock = apply_lock(sandbox);
     let _guard = lock.lock().await;
-    apply_policy_locked(app, registry, sandbox, policy).await
+    apply_policy_locked(app, site, sandbox, policy).await
 }
 
 /// One lock per sandbox name. Every apply shares one `config.prev.yaml` and one secrets directory,
@@ -338,21 +468,46 @@ fn apply_lock(sandbox: &str) -> Arc<tokio::sync::Mutex<()>> {
 
 async fn apply_policy_locked(
     app: &AppHandle,
-    registry: &Arc<ProviderRegistry>,
+    site: &SidecarSite,
+    sandbox: &str,
+    policy: NetPolicy,
+) -> Result<ApplyReport, ProxyError> {
+    if site.local {
+        apply_local_locked(app, site, sandbox, policy).await
+    } else if super::read_remote_meta(app, sandbox).is_some() {
+        apply_remote_locked(app, site, sandbox, policy).await
+    } else {
+        Err(ProxyError::CommandFailed(format!(
+            "{sandbox:?} is deployed without a remote proxy; undeploy it and recreate the sandbox"
+        )))
+    }
+}
+
+/// The iron-proxy `meta.json` of `sandbox`'s local sidecar, or the error naming the missing sidecar.
+fn local_meta(app: &AppHandle, sandbox: &str) -> Result<serde_json::Value, ProxyError> {
+    super::read_meta(app, sandbox)
+        .filter(|m| super::meta_engine(m) == super::types::ProxyEngine::IronProxy)
+        .ok_or_else(|| {
+            ProxyError::CommandFailed(format!(
+                "{sandbox:?} has no iron-proxy sidecar; recreate the sandbox to get the network boundary"
+            ))
+        })
+}
+
+fn policy_err(e: net_policy::NetPolicyError) -> ProxyError {
+    ProxyError::CommandFailed(e.0)
+}
+
+async fn apply_local_locked(
+    app: &AppHandle,
+    site: &SidecarSite,
     sandbox: &str,
     policy: NetPolicy,
 ) -> Result<ApplyReport, ProxyError> {
     let state = super::state_dir(app, sandbox)?;
-    let meta = super::read_meta(app, sandbox)
-        .filter(|m| super::meta_engine(m) == super::types::ProxyEngine::IronProxy);
-    let Some(meta) = meta else {
-        return Err(ProxyError::CommandFailed(format!(
-            "{sandbox:?} has no iron-proxy sidecar; recreate the sandbox to get the network boundary"
-        )));
-    };
+    let meta = local_meta(app, sandbox)?;
     let proxy_ip = meta["proxyIp"].as_str().unwrap_or_default().to_string();
-    let provider = registry.local(ProviderId::Podman);
-    let policy_err = |e: net_policy::NetPolicyError| ProxyError::CommandFailed(e.0);
+    let provider = &site.provider;
     // Read before anything changes: the rewrite below must carry `guest_env` forward, and losing it
     // would hide every unstamped binding.
     let guest_env = net_policy::read_applied(app, sandbox).map_err(policy_err)?.and_then(|a| a.guest_env);
@@ -378,10 +533,10 @@ async fn apply_policy_locked(
     write_config(&current, &iron_config::render(&policy, &proxy_ip, &written, &bindings)).map_err(fail)?;
 
     let sidecar = super::proxy_container_name(sandbox);
-    let outcome = if is_running(&provider, &sidecar).await? {
-        reload(&provider, &sidecar).await
+    let outcome = if is_running(provider, &sidecar).await? {
+        reload(provider, &sidecar).await
     } else {
-        start_and_confirm(&provider, &sidecar).await
+        start_and_confirm(provider, &sidecar).await
     };
     if let Err(e) = outcome {
         if let Err(restore) = std::fs::rename(&prev, &current) {
@@ -390,12 +545,127 @@ async fn apply_policy_locked(
         return Err(fail(e));
     }
     remove_stale_secret_files(&secrets, &written);
+    finish_apply(app, sandbox, policy, guest_env, missing_secrets)
+}
+
+/// Records the applied snapshot once the new policy runs, and reports what had no stored value.
+fn finish_apply(
+    app: &AppHandle,
+    sandbox: &str,
+    policy: NetPolicy,
+    guest_env: Option<Vec<String>>,
+    missing_secrets: Vec<String>,
+) -> Result<ApplyReport, ProxyError> {
     let applied = net_policy::AppliedPolicy { policy, guest_env };
     net_policy::write_applied(app, sandbox, &applied).map_err(policy_err)?;
     if !missing_secrets.is_empty() {
         tracing::warn!(target: "proxy", %sandbox, ?missing_secrets, "bindings without a stored secret were not applied");
     }
     Ok(ApplyReport { missing_secrets })
+}
+
+/// The apply of a deployed sandbox: renders both configs, pushes the secret files, swaps the remote
+/// config in and reloads. A failure restores the laptop files and the remote sidecar, so
+/// `applied.json` always describes what it runs (`docs/features/proxy-remote-deploy/02_dev.md`,
+/// Resolved Decisions 4, 14).
+async fn apply_remote_locked(
+    app: &AppHandle,
+    site: &SidecarSite,
+    sandbox: &str,
+    policy: NetPolicy,
+) -> Result<ApplyReport, ProxyError> {
+    let state = super::state_dir(app, sandbox)?;
+    let local_ip = local_meta(app, sandbox)?["proxyIp"].as_str().unwrap_or_default().to_string();
+    let remote_ip = super::read_remote_meta(app, sandbox)
+        .and_then(|m| m["proxyIp"].as_str().map(str::to_string))
+        .unwrap_or_default();
+    let sidecar = super::proxy_container_name(sandbox);
+    // A stopped remote sidecar (host reboot) is started with its last-applied files first; an
+    // unreachable target fails here, before anything on the laptop changed.
+    ensure_sidecar_running(app, site, sandbox).await?;
+    let guest_env = net_policy::read_applied(app, sandbox).map_err(policy_err)?.and_then(|a| a.guest_env);
+
+    let secrets = secrets_dir(&state);
+    let values = super::load_secrets(app)?;
+    let github_token = fail_closed_binding(sandbox, github_binding(app, sandbox));
+    let snapshot = snapshot_secret_files(&secrets)?;
+    let snapshot_names: Vec<String> = snapshot
+        .iter()
+        .filter_map(|(p, _)| p.file_name().map(|n| n.to_string_lossy().to_string()))
+        .collect();
+    let skip_github = github_token.is_none();
+    let (written, missing_secrets) = stage_files(&secrets, &policy, &values, github_token.as_deref())
+        .map_err(|e| {
+            restore_secret_files(&secrets, &snapshot, skip_github);
+            e
+        })?;
+
+    let bindings = app_bindings(github_token.is_some());
+    let remote_dir = config_dir(&super::remote_dir(app, sandbox)?);
+    let sites = [(config_dir(&state), &local_ip), (remote_dir.clone(), &remote_ip)];
+    // A stale `config.prev.yaml` from an earlier apply must never be restored, so only sites backed
+    // up in this apply count.
+    let backed_up = Mutex::new(Vec::<PathBuf>::new());
+    let restore_configs = || {
+        for dir in backed_up.lock().unwrap().iter() {
+            if let Err(e) = std::fs::rename(dir.join("config.prev.yaml"), dir.join("config.yaml")) {
+                tracing::error!(target: "proxy", %sandbox, error = %e, "failed to restore a proxy config");
+            }
+        }
+    };
+    let rendered_files: Result<(), ProxyError> = sites.iter().try_for_each(|(dir, ip)| {
+        std::fs::create_dir_all(dir).map_err(|e| io_err(dir, e))?;
+        let current = dir.join("config.yaml");
+        std::fs::copy(&current, dir.join("config.prev.yaml")).map_err(|e| io_err(&current, e))?;
+        backed_up.lock().unwrap().push(dir.clone());
+        write_config(&current, &iron_config::render(&policy, ip, &written, &bindings))
+    });
+    if let Err(e) = rendered_files {
+        restore_configs();
+        restore_secret_files(&secrets, &snapshot, skip_github);
+        return Err(e);
+    }
+
+    let outcome = push_swap_reload(site, &sidecar, &secrets, &written, &remote_dir.join("config.yaml")).await;
+    if let Err(e) = outcome {
+        restore_configs();
+        restore_secret_files(&secrets, &snapshot, skip_github);
+        // Best effort: put the remote tmpfs back to the restored files.
+        let repushed = push_secret_files(site, &sidecar, &secrets, &snapshot_names).await;
+        let cleaned = remove_stale_remote_files(site, &sidecar, &snapshot_names).await;
+        if let Some(err) = repushed.err().or(cleaned.err()) {
+            tracing::error!(target: "proxy", %sandbox, error = %err, "failed to restore the remote secret files");
+        }
+        return Err(e);
+    }
+    remove_stale_secret_files(&secrets, &written);
+    if let Err(e) = remove_stale_remote_files(site, &sidecar, &written).await {
+        tracing::warn!(target: "proxy", %sandbox, error = %e, "failed to remove stale remote secret files");
+    }
+    finish_apply(app, sandbox, policy, guest_env, missing_secrets)
+}
+
+/// The remote half of an apply: pushes `names`, copies the rendered config in as `config.next.yaml`,
+/// swaps it over `config.yaml` with one exec and reloads. A rejected reload swaps the old config back;
+/// the sidecar is never restarted as a fallback.
+async fn push_swap_reload(
+    site: &SidecarSite,
+    sidecar: &str,
+    secrets: &Path,
+    names: &[String],
+    rendered_config: &Path,
+) -> Result<(), ProxyError> {
+    push_secret_files(site, sidecar, secrets, names).await?;
+    let next = format!("{CONTAINER_CONFIG_DIR}/config.next.yaml");
+    site.provider.copy_in(sidecar, &rendered_config.to_string_lossy(), &next).await?;
+    exec_script(site, sidecar, &swap_script()).await?;
+    if let Err(e) = reload(&site.provider, sidecar).await {
+        if let Err(back) = exec_script(site, sidecar, &swap_back_script()).await {
+            tracing::error!(target: "proxy", %sidecar, error = %back, "failed to swap the previous remote config back");
+        }
+        return Err(e);
+    }
+    Ok(())
 }
 
 /// What a binding refresh left in the sidecar.
@@ -407,21 +677,17 @@ pub enum BindingState {
     NotLive,
 }
 
-/// Re-renders one sandbox's GitHub binding from the credential store and the opt-out, so a
-/// credential change reaches the sidecar without a policy edit. A sandbox with no applied snapshot
-/// or no iron-proxy sidecar renders nothing and answers `NotLive`, so a caller about to hand gh the
-/// placeholder can tell; an unchanged render skips the reload; a stopped sidecar gets its files
-/// rewritten without being started (`docs/features/proxy-credential-secrets/02_dev.md`, "Refresh
-/// paths"). A failed binding lookup renders without the token and then returns the error, so a
-/// revocation never leaves the last token in place.
+/// Re-renders one sandbox's GitHub binding so a credential change reaches the sidecar without a
+/// policy edit; `NotLive` means no token is rendered (`docs/features/proxy-credential-secrets/02_dev.md`,
+/// "Refresh paths"). A revocation always unstages the laptop's token file, even when the sidecar
+/// is unreachable, so a later start never re-pushes it.
 pub async fn refresh_github_binding(
     app: &AppHandle,
-    registry: &Arc<ProviderRegistry>,
+    site: &SidecarSite,
     sandbox: &str,
 ) -> Result<BindingState, ProxyError> {
     let lock = apply_lock(sandbox);
     let _guard = lock.lock().await;
-    let policy_err = |e: net_policy::NetPolicyError| ProxyError::CommandFailed(e.0);
     let Some(meta) = super::read_meta(app, sandbox)
         .filter(|m| super::meta_engine(m) == super::types::ProxyEngine::IronProxy)
     else {
@@ -440,18 +706,39 @@ pub async fn refresh_github_binding(
     let values = super::load_secrets(app)?;
     let config = rendered(&applied.policy, &proxy_ip, &values, token.is_some());
     if !github_files_current(&state, &config, token.as_deref()) {
-        let provider = registry.local(ProviderId::Podman);
         let sidecar = super::proxy_container_name(sandbox);
-        if is_running(&provider, &sidecar).await? {
-            apply_policy_locked(app, registry, sandbox, applied.policy).await?;
-        } else {
-            write_offline(&state, &applied.policy, &proxy_ip, &values, token.as_deref())?;
+        let policy = applied.policy.clone();
+        let refreshed: Result<(), ProxyError> = async {
+            if is_running(&site.provider, &sidecar).await? {
+                apply_policy_locked(app, site, sandbox, policy).await.map(drop)
+            } else {
+                write_offline(&state, &applied.policy, &proxy_ip, &values, token.as_deref()).map(drop)
+            }
+        }
+        .await;
+        if let Err(e) = refreshed {
+            if token.is_none() {
+                if let Err(offline) = write_offline(&state, &applied.policy, &proxy_ip, &values, None) {
+                    tracing::error!(target: "proxy", %sandbox, error = %offline, "failed to unstage the revoked GitHub token");
+                }
+            }
+            return Err(e);
         }
     }
     if let Some(e) = lookup_error {
         return Err(ProxyError::CommandFailed(e));
     }
     Ok(if token.is_some() { BindingState::Live } else { BindingState::NotLive })
+}
+
+/// How many secret values a deploy would send to the target: workspace bindings with a stored value
+/// plus the live GitHub binding. A count only, so no value or secret id crosses IPC
+/// (`docs/features/proxy-remote-deploy/02_dev.md`, Resolved Decision 2).
+pub fn deploy_secret_count(app: &AppHandle, sandbox: &str, workspace_path: &str) -> Result<usize, ProxyError> {
+    let policy = net_policy::load(workspace_path).map_err(policy_err)?;
+    let values = super::load_secrets(app)?;
+    let github = fail_closed_binding(sandbox, github_binding(app, sandbox)).is_some();
+    Ok(planned_files(&policy, &values, github).len())
 }
 
 /// Deletes the GitHub token file when it exists.
@@ -514,13 +801,14 @@ pub fn github_binding_live(app: &AppHandle, sandbox: &str) -> Result<bool, Proxy
 
 /// Writes the secret files and `config.yaml` of a stopped sidecar, so it boots with the current
 /// state. Nothing runs, so a write failure restores the secret files and leaves the old config.
+/// Returns the variables left out for want of a stored value.
 fn write_offline(
     state: &Path,
     policy: &NetPolicy,
     proxy_ip: &str,
     values: &HashMap<String, String>,
     token: Option<&str>,
-) -> Result<(), ProxyError> {
+) -> Result<Vec<String>, ProxyError> {
     let secrets = secrets_dir(state);
     let snapshot = snapshot_secret_files(&secrets)?;
     let skip_github = token.is_none();
@@ -528,13 +816,13 @@ fn write_offline(
         restore_secret_files(&secrets, &snapshot, skip_github);
         e
     };
-    let (written, _) = stage_files(&secrets, policy, values, token).map_err(fail)?;
+    let (written, missing) = stage_files(&secrets, policy, values, token).map_err(fail)?;
     let config = rendered(policy, proxy_ip, values, token.is_some());
     let dir = config_dir(state);
     std::fs::create_dir_all(&dir).map_err(|e| fail(io_err(&dir, e)))?;
     write_config(&dir.join("config.yaml"), &config).map_err(fail)?;
     remove_stale_secret_files(&secrets, &written);
-    Ok(())
+    Ok(missing)
 }
 
 #[cfg(test)]
@@ -640,5 +928,40 @@ mod tests {
         restore_secret_files(&dir, &snapshot, false);
         assert!(dir.join("mio-github").exists());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn remote_scripts_write_through_a_rename_and_swap_in_one_command() {
+        assert_eq!(
+            push_script("A_KEY"),
+            "cat > /etc/iron-proxy/secrets/A_KEY.tmp && mv /etc/iron-proxy/secrets/A_KEY.tmp /etc/iron-proxy/secrets/A_KEY"
+        );
+        let swap = swap_script();
+        assert!(swap.contains("mv -f config.yaml config.prev.yaml && mv -f config.next.yaml config.yaml"));
+        assert!(swap_back_script().ends_with("mv -f config.prev.yaml config.yaml"));
+        let stale = stale_script(&["A_KEY".to_string(), "mio-github".to_string()]);
+        assert!(stale.contains("\" A_KEY mio-github \""), "{stale}");
+    }
+
+    /// File names reach `sh -c`, so anything outside the environment-variable alphabet is refused.
+    #[test]
+    fn unsafe_secret_file_names_are_refused() {
+        assert!(safe_file_name("OPENAI_API_KEY").is_ok());
+        assert!(safe_file_name("mio-github").is_ok());
+        for bad in ["", "a b", "a;rm", "../x", "a$b", "a'b"] {
+            assert!(safe_file_name(bad).is_err(), "{bad}");
+        }
+    }
+
+    /// The two sites render one policy, differing only in the sidecar address the DNS answers with.
+    #[test]
+    fn two_sites_render_configs_that_differ_only_in_the_proxy_address() {
+        let policy: NetPolicy = serde_json::from_str("{}").unwrap();
+        let mut local = rendered(&policy, "10.90.1.2", &HashMap::new(), false);
+        let mut remote = rendered(&policy, "10.90.7.2", &HashMap::new(), false);
+        assert_ne!(local, remote);
+        local["dns"]["proxy_ip"] = serde_json::Value::Null;
+        remote["dns"]["proxy_ip"] = serde_json::Value::Null;
+        assert_eq!(local, remote);
     }
 }

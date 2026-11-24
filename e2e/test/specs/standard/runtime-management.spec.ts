@@ -33,6 +33,8 @@ describe("Sandbox runtime management (mise)", function () {
     // Best-effort cleanup so a failed run leaves no remote container behind (the local one is
     // already handled by useSandboxWorkspace's teardown).
     podman(REMOTE_CONNECTION, ["rm", "-f", projectName], { check: false });
+    podman(REMOTE_CONNECTION, ["rm", "-f", `${projectName}-proxy`], { check: false });
+    podman(REMOTE_CONNECTION, ["network", "rm", "--force", `mio-proxy-${projectName}`], { check: false });
   });
 
   // Capture the webview state on any failure: the "row vanished" symptom points at an app crash or
@@ -111,8 +113,7 @@ describe("Sandbox runtime management (mise)", function () {
     );
   });
 
-  // Skipped: every sandbox has a proxy sidecar, so remote deploy is blocked (docs/features/proxy-remote-deploy/feature.md).
-  it.skip("deploys to the remote and the remote container starts", async () => {
+  it("deploys to the remote and the remote container starts", async () => {
     // Generous: the deploy reproduces software from the lockfile, whose first remote install
     // fetches the pinned binary from the upstream release host over the network.
     await row.deployTo(REMOTE_CONNECTION, { timeout: 300000 });
@@ -130,8 +131,7 @@ describe("Sandbox runtime management (mise)", function () {
     );
   });
 
-  // Skipped: every sandbox has a proxy sidecar, so remote deploy is blocked (docs/features/proxy-remote-deploy/feature.md).
-  it.skip("reproduces the package on the remote from the lockfile, not a committed image", async () => {
+  it("reproduces the package on the remote from the lockfile, not a committed image", async () => {
     const out = podman(REMOTE_CONNECTION, [
       "exec",
       "--workdir",
@@ -158,8 +158,7 @@ describe("Sandbox runtime management (mise)", function () {
     );
   });
 
-  // Skipped: every sandbox has a proxy sidecar, so remote deploy is blocked (docs/features/proxy-remote-deploy/feature.md).
-  it.skip("carries the manifest into the remote workspace", async () => {
+  it("carries the manifest into the remote workspace", async () => {
     const remoteManifest = podman(REMOTE_CONNECTION, [
       "exec",
       projectName,

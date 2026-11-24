@@ -26,6 +26,8 @@
   "workspace_launcher_switch": "Переключиться",
   "workspace_close_sandbox_label": "Закрыть {sandbox}",
   "workspace_close_tab_label": "Закрыть {title}",
+  "projects_no_hosts": "Нет зарегистрированных хостов — сначала добавьте один.",
+  "projects_deploy_confirm": "Развернуть",
   "projects_deploy": "Развернуть",
   "projects_cancel": "Отмена",
   "projects_packages": "Пакеты",

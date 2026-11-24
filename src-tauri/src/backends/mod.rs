@@ -13,7 +13,7 @@ use crate::process::{detached_command, detached_command_std};
 use crate::provider::types::{InstanceSpec, ProviderId};
 use crate::provider::ProviderRegistry;
 use types::{
-    BackendError, CliBackend, ConnectionInfo, RemoteDeployment, Sandbox, SandboxBackend,
+    BackendError, CliBackend, ConnectionInfo, DeployPlan, RemoteDeployment, Sandbox, SandboxBackend,
     SyncStrategy, WorkspacePlan,
 };
 
@@ -197,6 +197,36 @@ fn ssh_target(ssh_url: &str) -> Result<(String, Option<String>), BackendError> {
         }
     }
     Ok((authority.to_string(), None))
+}
+
+/// Podman 4.0 is the first release taking several `--network` flags with `name:ip=`, which the
+/// dual-homed sidecar needs; netavark is the backend proven by the Phase A spike
+/// (`docs/features/proxy-remote-deploy/02_dev.md`, Resolved Decision 6).
+const MIN_REMOTE_PODMAN_MAJOR: u64 = 4;
+
+/// Whether the target's `podman info --format json` describes a host that can run the bounded
+/// sandbox, or the reason it cannot. Pure so the floor is unit-tested.
+fn check_remote_podman(connection: &str, info_json: &str) -> Result<(), BackendError> {
+    let unsupported = |reason: String| BackendError::RemoteHostUnsupported {
+        connection: connection.to_string(),
+        reason,
+    };
+    let info: serde_json::Value = serde_json::from_str(info_json)
+        .map_err(|e| BackendError::ParseError(format!("podman info on {connection:?}: {e}")))?;
+    let version = info["version"]["Version"].as_str().unwrap_or_default();
+    let major: u64 = version.split('.').next().and_then(|m| m.parse().ok()).unwrap_or(0);
+    if major < MIN_REMOTE_PODMAN_MAJOR {
+        return Err(unsupported(format!(
+            "Podman {version:?} is older than {MIN_REMOTE_PODMAN_MAJOR}.0"
+        )));
+    }
+    let backend = info["host"]["networkBackend"].as_str().unwrap_or_default();
+    if backend != "netavark" {
+        return Err(unsupported(format!(
+            "its network backend is {backend:?}, and the egress boundary needs netavark"
+        )));
+    }
+    Ok(())
 }
 
 fn parse_connection_entry(entry: &serde_json::Value) -> Result<Option<ConnectionInfo>, BackendError> {
@@ -610,17 +640,12 @@ impl SandboxBackend for CliBackend {
         Ok(self.registry.provider_of(name).await.1.remove(name).await?)
     }
 
-    async fn deploy(
+    async fn plan_deploy(
         &self,
         name: &str,
         target_connection: &str,
-    ) -> Result<RemoteDeployment, BackendError> {
+    ) -> Result<DeployPlan, BackendError> {
         validate_name(name)?;
-        // Refused rather than silently deployed unproxied: every sandbox has a sidecar and deploy has
-        // no target-side proxy story yet (`docs/features/proxy-remote-deploy/feature.md`).
-        if crate::proxy::exists(&self.app, &self.registry, name).await {
-            return Err(BackendError::ProxyDeployUnsupported { name: name.to_string() });
-        }
         // The deploy picker is already hidden for a provider without remote targets
         // (`ProviderCapabilities.remote_targets`); this is the backend half of that gate, so an
         // invoke that gets through anyway fails with a reason rather than nonsense podman argv.
@@ -640,11 +665,27 @@ impl SandboxBackend for CliBackend {
         // Resolve the remote endpoint first, so an unreachable target fails before any mutation of
         // the local container.
         let plan = self.resolve_workspace(name, target_connection).await?;
-        let SyncStrategy::Remote(info) = plan.strategy else {
-            return Err(BackendError::NoSshEndpoint {
-                connection: target_connection.to_string(),
-            });
+        if !matches!(plan.strategy, SyncStrategy::Remote(_)) {
+            return Err(BackendError::NoSshEndpoint { connection: target_connection.to_string() });
+        }
+        let info = check(self.podman_on(target_connection, &["info", "--format", "json"]).await?)?;
+        check_remote_podman(target_connection, &info)?;
+        Ok(DeployPlan { target: target_connection.to_string(), workspace: plan })
+    }
+
+    async fn deploy(
+        &self,
+        name: &str,
+        deploy_plan: &DeployPlan,
+        proxy: &crate::proxy::types::ProxyAttachment,
+        extra_env: &[(String, String)],
+    ) -> Result<RemoteDeployment, BackendError> {
+        let target_connection = deploy_plan.target.as_str();
+        let plan = &deploy_plan.workspace;
+        let SyncStrategy::Remote(info) = &plan.strategy else {
+            return Err(BackendError::NoSshEndpoint { connection: target_connection.to_string() });
         };
+        let owner = self.registry.provider_of(name).await.1;
 
         // A second provider pinned to the target: `self.provider` targets the local connection,
         // but every remote-container operation below runs against `target_connection`.
@@ -658,7 +699,7 @@ impl SandboxBackend for CliBackend {
         let image = Self::image();
 
         // Create the remote workspace and register the OpenSSH alias so Mutagen can reach it.
-        Self::remote_mkdir(&info, &plan.bind_mount_source).await?;
+        Self::remote_mkdir(info, &plan.bind_mount_source).await?;
         crate::ssh::write_alias(&crate::ssh::types::SshAlias::Direct {
             alias: target_connection.to_string(),
             host: info.host.clone(),
@@ -673,13 +714,20 @@ impl SandboxBackend for CliBackend {
 
         // Create and start the remote container on the target connection, not self.connection.
         // No workspace label on remote containers, matching prior behaviour.
+        let crate::proxy::types::ProxyAttachment::PodmanBridge { network, env: bridge_env, dns } = proxy;
+        let mut env = bridge_env.clone();
+        env.extend(extra_env.iter().cloned());
         let spec = InstanceSpec {
             name: name.to_string(),
             image: image.clone(),
             workspace_source: plan.bind_mount_source.clone(),
             labels: Vec::new(),
-            env: Vec::new(),
-            network: None,
+            env,
+            network: Some(crate::provider::types::InstanceNetwork {
+                name: network.clone(),
+                ip: None,
+                dns: Some(dns.clone()),
+            }),
             egress: None,
         };
         target_provider.create_instance(&spec).await?;
@@ -691,7 +739,7 @@ impl SandboxBackend for CliBackend {
         ensure_sandbox_alias(name, target_connection, &identity_path).await?;
 
         Ok(RemoteDeployment {
-            alpha: plan.laptop_dir,
+            alpha: plan.laptop_dir.clone(),
             beta: format!("{target_connection}:{}", plan.bind_mount_source),
         })
     }
@@ -1053,4 +1101,29 @@ mod proxy_command_tests {
         assert!(!command.contains("/usr/local/bin"), "{command}");
     }
 
+}
+
+#[cfg(test)]
+mod remote_podman_tests {
+    use super::*;
+
+    fn info(version: &str, backend: &str) -> String {
+        format!(r#"{{"version":{{"Version":"{version}"}},"host":{{"networkBackend":"{backend}"}}}}"#)
+    }
+
+    #[test]
+    fn netavark_podman_4_or_newer_is_accepted() {
+        assert!(check_remote_podman("t", &info("4.0.0", "netavark")).is_ok());
+        assert!(check_remote_podman("t", &info("5.8.6", "netavark")).is_ok());
+    }
+
+    #[test]
+    fn an_old_podman_or_cni_is_refused_with_a_reason() {
+        for bad in [info("3.4.4", "netavark"), info("5.0.0", "cni"), "{}".to_string()] {
+            assert!(matches!(
+                check_remote_podman("t", &bad),
+                Err(BackendError::RemoteHostUnsupported { .. })
+            ));
+        }
+    }
 }

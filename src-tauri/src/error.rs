@@ -63,11 +63,11 @@ pub enum AppError {
     /// a payload that doesn't match the key's real error/return-value shape.
     #[error("mock control plane: {0}")]
     MockControl(String),
-    /// `deploy` was asked for a proxy-enabled sandbox. Pulled out of `Backend` (like
+    /// The deploy target's Podman cannot host the egress boundary. Pulled out of `Backend` (like
     /// `PodmanUnresponsive`) so the frontend can offer a specific remedy instead of a generic
-    /// backend-error toast (`docs/features/network-proxy/02_dev.md`, Resolved Decision 6).
+    /// backend-error toast (`docs/features/proxy-remote-deploy/02_dev.md`, Resolved Decision 18).
     #[error("{0}")]
-    ProxyDeployUnsupported(String),
+    RemoteHostUnsupported(String),
     /// Transparent: native agent chat host error.
     #[error(transparent)]
     AgentHost(AgentHostError),
@@ -97,8 +97,8 @@ impl From<BackendError> for AppError {
     fn from(e: BackendError) -> Self {
         match e {
             BackendError::PodmanUnresponsive(m) => AppError::PodmanUnresponsive(m),
-            BackendError::ProxyDeployUnsupported { .. } => {
-                AppError::ProxyDeployUnsupported(e.to_string())
+            BackendError::RemoteHostUnsupported { .. } => {
+                AppError::RemoteHostUnsupported(e.to_string())
             }
             other => AppError::Backend(other),
         }
@@ -133,7 +133,7 @@ impl AppError {
             AppError::PodmanUnresponsive(_) => "PodmanUnresponsive",
             AppError::PodmanRebootRequired(_) => "PodmanRebootRequired",
             AppError::MockControl(_) => "MockControl",
-            AppError::ProxyDeployUnsupported(_) => "ProxyDeployUnsupported",
+            AppError::RemoteHostUnsupported(_) => "RemoteHostUnsupported",
             AppError::AgentHost(_) => "AgentHost",
             AppError::AgentChatDeployed(_) => "AgentChatDeployed",
             AppError::Terminal(_) => "Terminal",

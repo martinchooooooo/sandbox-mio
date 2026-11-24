@@ -82,6 +82,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         machine::reset_stuck_podman_machine,
         sandbox::listen_events,
         hosts::list_sandbox_hosts,
+        proxy::deploy_secret_count,
         hosts::add_sandbox_host,
         hosts::prepare_sandbox_host,
         hosts::provision_sandbox_host,

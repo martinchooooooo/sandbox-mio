@@ -5,320 +5,174 @@ feature: proxy-remote-deploy
 ---
 # Proxy Remote Deploy: Build Plan
 
-> **Stale (2026-11-17):** this plan targets the mitmproxy sidecar that `podman-egress-boundary` removed from Podman. Read it as history only; the feature is back at `idea` (see [feature.md](feature.md)).
-
-This document is the build plan for letting a proxy-enabled sandbox survive `CliBackend::deploy`
-(`src-tauri/src/backends/mod.rs`), scoped in `docs/features/proxy-remote-deploy/01_ideas.md`, and
-supersedes it wherever the two disagree. Nothing is implemented yet — every phase below is
-`Remaining`. Unlike most build plans in this repository, the final phase (Phase E, wiring the new
-machinery into `deploy` and lifting `BackendError::ProxyDeployUnsupported`) is explicitly blocked:
-`01_ideas.md`'s Validation section could not run the live two-machine spike its core risk (rootless
-bridge-network behaviour on a genuine non-WSL remote Podman host) requires, and this document does
-not fabricate one. Phases A through D build real, independently useful groundwork — new trait
-methods, new `proxy/` functions, new command routing — that changes no runtime behaviour of `deploy`
-by itself; Phase E is the single integration point that makes a proxy-enabled deploy actually happen,
-and a future agent must not start it before that spike has run and cleared.
+This document is the build plan for deploying a bounded sandbox (internal network, dual-homed iron-proxy sidecar, secret files, live policy reload, audit polling) to a remote Podman host. It continues [01_ideas.md](01_ideas.md) and supersedes it wherever the two disagree; it replaces an earlier plan written for the removed mitmproxy sidecar, which git history keeps. Status: implemented. Resolved Decisions 1–7 are settled by the user (the recommended option in each case) and the phases below were built for them; the `standard` remote specs pass on `mio-tests-remote`, and a real Linux host run was not done ([04_improvements.md](04_improvements.md)). Phase A (the gating spike) blocked Phases C–G; Phase B changed no behaviour. Phase A (the gating spike) blocks Phases C–G; Phase B changes no behaviour and can start at once. Relevant code: `src-tauri/src/backends/mod.rs` (`CliBackend::deploy`), `src-tauri/src/services/sandbox.rs` (create, undeploy, destroy), `src-tauri/src/services/routing.rs` (`SandboxRouter`), `src-tauri/src/proxy/` (sidecar lifecycle, apply, audit), `src-tauri/src/provider/` (`SidecarSpec`), `src-tauri/src/commands/{deploy,proxy,net_policy,sandbox}.rs`, `src/routes/projects/RemoteManager.svelte`, and the skipped specs under `e2e/test/specs/standard/`.
 
 ## The Concrete Model
 
-`CliBackend::deploy` gains a target-side proxy path that mirrors the sequencing
-`services::sandbox::create` already uses locally: ensure the mitmproxy image on the target
-connection, create the proxy sidecar there, create the sandbox container with the resulting
-`ProxyAttachment`'s env/network, start it, then inject the freshly generated remote CA. The
-low-level `proxy/` functions this reuses (`create_proxy`, `inject_ca`, `apply_rules`,
-`restart_proxy_container`) already take a `provider: &Arc<dyn MachineProvider>` parameter rather than
-resolving one internally, so no signature change is needed there — `deploy` simply passes the
-`target_provider` it already builds for the sandbox container itself
-(`crate::provider::default_provider(self.runner.clone(), target_connection.to_string())`).
+A deployed bounded sandbox has two sites. The **local site** keeps the stopped sandbox container, the stopped local sidecar and the local `mio-proxy-<sandbox>` network, exactly as created. The **remote site** on the target connection gets its own internal network, its own dual-homed sidecar and the sandbox container. The laptop is the single source of truth for both sites' sidecar files; the remote sidecar only ever holds copies.
 
-What genuinely does not exist yet is a remote-side counterpart to the *file-backed* half of the
-proxy's state. `state_dir`/`certs_dir`/`ca_pem_path` (`src-tauri/src/proxy/mod.rs`) resolve every
-path under `crate::paths::app_data_root(app)` — a directory on the machine running the desktop app,
-which for a remote deploy target is not the same machine `podman create`'s bind mounts resolve
-against (`docs/features/remote-sync/01_ideas.md`'s foundational fact). A new family of `_remote`
-functions in `proxy/mod.rs` gives the proxy sidecar's `addon.py`, materialised `rules.json`, and
-`certs/` directory a home on the *target* host's own filesystem — `<home>/mio-proxy/<sandbox>/`,
-directly analogous to `resolve_workspace`'s `<home>/work/<name>` for the sandbox workspace itself —
-created and populated over a raw SSH command/pipe, the same transport shape `remote_mkdir`
-(`src-tauri/src/backends/mod.rs`) already uses for the workspace directory. The small,
-non-secret `meta.json` cache (network name, proxy IP) stays on the laptop under the existing local
-`state_dir`, since nothing about it needs to live on the remote host and keeping it local lets
-`status()` answer without an SSH round trip.
+```mermaid
+flowchart LR
+  subgraph laptop["Laptop app data: proxy/&lt;sandbox&gt;/"]
+    L1[config/ certs/ meta.json audit.cursor]
+    L2[secrets/ shared staging]
+    L3[remote/: remote.json config/ certs/ audit.cursor]
+  end
+  subgraph local["Local machine (stopped while deployed)"]
+    LS[sandbox] --- LP[sidecar]
+  end
+  subgraph target["Target connection"]
+    RS[sandbox] -- internal net --> RP[sidecar]
+    RP --> NET((internet))
+  end
+  L1 -. bind mounts .-> LP
+  L3 -- podman cp before first start, config swap on apply --> RP
+  L2 -- pushed into the running sidecar --> RP
+  RP -- podman logs over the connection --> L3
+```
 
-Rule *definitions* (`.mio/proxy-rules.json`) need no new transport at all — they already live inside
-the sandbox's own workspace, which the existing Mutagen sync session mirrors to the remote once
-deployed. Only the *materialised* `rules.json` (real secret values) is deploy-specific: it is
-generated fresh from the laptop's `secrets.json` and written directly into the remote proxy's state
-directory at deploy time and at every subsequent rule change, mirroring `write_materialised_rules`'s
-local behaviour but through the new remote-write path — never by transferring the raw `secrets.json`
-store itself.
+**Site resolution.** `SidecarSite { machine: MachineRef, provider: Arc<dyn MachineProvider>, local: bool }` (new, `src-tauri/src/proxy/types.rs`) names where a sandbox's active sidecar runs. Callers resolve it with a new `services::proxy::locate_sidecar` (`src-tauri/src/services/proxy.rs`) from `SandboxRouter::locate` (`src-tauri/src/services/routing.rs`) and `ProviderRegistry::provider_for`; `proxy/` never touches `SyncEngine` (`src-tauri/AGENTS.md`, subsystem independence). Deployed-ness stays defined only by the Mutagen session ([remote.md](../../architecture/remote.md), Invariants); `remote/remote.json` is a cache of the remote sidecar's connection, network and address, read the same way `meta.json` is for the local one.
 
-The local proxy sidecar is **stopped, not removed**, by `deploy` — the same treatment `deploy`
-already gives the local sandbox container itself ("kept stopped, not removed, so undeploy can
-restart it"). This is load-bearing: the local sandbox container's `--network mio-proxy-<sandbox>`
-attachment is fixed at `podman create` time, and deleting that network out from under a stopped
-container that still names it would strand `undeploy`'s later `store.start(name)`.
+**Remote sidecar files.** The remote sidecar has no host bind mounts. Its `config/config.yaml` (rendered with the remote sidecar address) and `certs/` (a fresh CA) are staged under `<app_data_root>/proxy/<sandbox>/remote/` and copied into the created, unstarted container at `/etc/iron-proxy/` with `MachineProvider::copy_in` (the paths `CONTAINER_CONFIG_DIR`, `CONTAINER_CERTS_DIR` and `CONTAINER_SECRETS_DIR` in `src-tauri/src/proxy/iron.rs` and `src-tauri/src/proxy/iron_config.rs` stay unchanged). Secret files live in a tmpfs mounted at `CONTAINER_SECRETS_DIR` (Resolved Decision 1) and are pushed from the laptop's shared `secrets/` staging directory after every remote sidecar start and on every apply.
 
-Commands that act on an already-deployed sandbox's proxy (`proxy_status`, `set_proxy_rules`,
-`restart_proxy`) need to know, at call time, whether that sandbox's authoritative proxy is currently
-local or on a deploy target — the same question `SandboxRouter` (`src-tauri/src/services/routing.rs`)
-already answers for every other transport-sensitive command. A new `src-tauri/src/services/proxy.rs`
-resolves a route via `SandboxRouter::locate`, and — when the route names a non-local Podman
-connection — resolves that connection's SSH endpoint through a new `SandboxBackend::connection_info`
-trait method, so the command layer never has to know the difference between a local and a
-deploy-target proxy beyond which function variant (`proxy::apply_rules` vs.
-`proxy::apply_rules_remote`, etc.) to call.
+**Apply while deployed.** One apply stages the secret files on the laptop, writes the local sidecar's `config.yaml` offline (the local sidecar stays stopped), renders the remote config, pushes changed secret files, copies the remote config in as `config.next.yaml`, swaps it in, reloads the remote sidecar, and only then rewrites `applied.json` and deletes stale secret files on both sites. A failure restores the laptop files, swaps the remote config back, re-pushes the restored secret files, and returns the error, so `applied.json` always describes what the active sidecar runs (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 13).
 
-Undeploying a proxy-enabled sandbox removes the remote proxy sidecar entirely (container, network,
-remote state directory — mirroring how `store.remove_remote` already removes the remote sandbox
-container) and restarts the local proxy sidecar `deploy` left stopped, so the sandbox returns to
-exactly the locally-proxied state it was in before deploy. Destroying a still-deployed,
-proxy-enabled sandbox removes both the local and the remote proxy sidecar, since nothing survives
-the sandbox's own destruction on either side.
+**Audit.** `audit::ingest` takes the cursor path, so the local site keeps `audit.cursor` and the remote site uses `remote/audit.cursor`; both append to the one laptop `flows.ndjson`. A running watch is retargeted by deploy and undeploy through `FlowWatchRegistry::retarget` (`src-tauri/src/proxy/flowlog.rs`).
+
+**Deploy order** (`services::sandbox::deploy`, new): plan without mutation (`SandboxBackend::plan_deploy`, includes the target preflight) → pull the iron-proxy image on the target → create the remote network and sidecar (fresh CA, bootstrap config copied in, deny-all) and start it → `SandboxBackend::deploy` with the remote `ProxyAttachment` and the `guestEnv` placeholders (stops the local sandbox, creates the remote workspace, alias, base image, remote container, key) → apply the policy to the remote sidecar → inject the remote CA into the remote sandbox → stop the local sidecar → retarget the flow watch → `RuntimeManager::reproduce_remote` → create the Mutagen session. Any failure before the session exists runs the rollback (Lifecycle).
 
 ## Resolved Decisions
 
-1. **Whether to lift `ProxyDeployUnsupported` before the live spike clears** (`01_ideas.md` Open
-   Question) — not lifted by this document. Phases A–D build every piece of new machinery with zero
-   change to `deploy`'s observable behaviour; Phase E is the sole phase that removes the refusal and
-   wires the machinery in, and is explicitly blocked on the live two-machine spike
-   `01_ideas.md`'s Validation section could not run.
-2. **Undeploy symmetry for the local proxy** (`01_ideas.md` Open Question) — resolved yes:
-   `services::sandbox::undeploy` restarts the local `<sandbox>-proxy` container (a new
-   `proxy::start_proxy_if_present`, Phase D) immediately after `store.start(name)`, mirroring the
-   existing symmetry between `deploy` stopping the local sandbox container and `undeploy` restarting
-   it.
-3. **The remote proxy's fate on undeploy** (`01_ideas.md` Open Question) — resolved: removed
-   entirely. `undeploy` calls the new `proxy::remove_proxy_remote` (Phase B) against the target
-   connection before `store.remove_remote` runs, mirroring `store.remove_remote`'s own removal of the
-   remote sandbox container — nothing about a proxy-enabled sandbox is left behind on a connection the
-   sandbox no longer runs on.
-4. **`services::sandbox::destroy`'s missing proxy cleanup on the deployed-sandbox branch**
-   (`01_ideas.md` Open Question) — resolved as an in-scope fix, not deferred: Phase D adds calls to
-   remove both the local (stopped) and remote proxy sidecar in that branch, ordered alongside the
-   existing `store.remove_remote`/`store.destroy` calls (see Phase D for exact ordering).
-5. **Progress reporting for a remote proxy image pull** (`01_ideas.md` Open Question) — resolved:
-   no new mechanism. `ensure_proxy_image` (`src-tauri/src/proxy/mod.rs`) already takes a generic
-   `provider` parameter and already reports through `activity::TaskRegistry`; calling it with the
-   target-pinned provider during deploy gets progress reporting for free. Whether this should be
-   unified with `docs/features/remote-deploys/01_ideas.md`'s own open question about base-image build
-   progress reporting stays open — that document owns the decision, not this one.
-6. **Directional dependency between `proxy/` and `backends/`** (new; not posed in `01_ideas.md` but
-   forced by Phase A/B's design) — resolved: `proxy/` does not gain a dependency on any `backends/`
-   *trait* or function, preserving the one-directional `backends → proxy` dependency that already
-   exists (`backends/mod.rs` already calls `crate::proxy::exists`, etc.). It does reuse the plain
-   `ConnectionInfo` struct (`src-tauri/src/backends/types.rs`, widened from `pub(super)` to
-   `pub(crate)` in Phase A) as a data type — justified by the precedent of
-   `proxy/` calling `credentials/` for plain data: a plain-data or pure-function reference is not the kind of
-   dependency the "subsystems never depend on each other" rule (`src-tauri/AGENTS.md`) is protecting
-   against — only a dependency on another subsystem's *trait* (breaking independent mockability) is.
-   The SSH command-construction logic itself (argv building, spawning) is duplicated into `proxy/mod.rs`
-   rather than calling `backends::remote_mkdir` or its siblings, since those are free functions in a
-   module `proxy/` must not depend on.
-7. **How a command resolves which connection a sandbox's proxy operations should currently address**
-   (new) — resolved: a new `src-tauri/src/services/proxy.rs` orchestration module, using
-   `SandboxRouter::locate` plus the new `SandboxBackend::connection_info` trait method (Phase A/C).
-8. **`sweep`'s scope across connections** (new) — resolved: stays local-only, exactly as it is
-   implemented today (`crate::proxy::sweep`, `src-tauri/src/proxy/mod.rs`, called from
-   `src-tauri/src/bootstrap.rs` against `registry.local(ProviderId::Podman)` only). Remote proxy
-   cleanup is handled entirely by `deploy`/`undeploy`/`destroy`'s explicit lifecycle calls (Resolved
-   Decisions 2–4), not by a periodic sweep across every registered connection — enumerating every
-   connection on every app startup is an unbounded, expensive operation this feature does not need.
-   A cross-connection sweep remains a possible future improvement (`04_improvements.md`) if orphaned
-   remote proxy resources turn out to accumulate in practice (e.g. from a crash mid-deploy).
+Decisions 1–7 restate the Open Questions of [01_ideas.md](01_ideas.md) and were settled by the user in favour of the recommended option. Decisions 8 onward are settled by this plan.
 
-## Remaining: Phase A — Cross-module plumbing
+1. **Where remote secret values live** — **Settled.** Options: (a) files in the remote sidecar's container layer, on the remote disk until the sidecar is removed, pushed with `podman cp` of the laptop's staged files; (b) a tmpfs at `CONTAINER_SECRETS_DIR`, RAM only, pushed again after every remote sidecar start; (c) no secret values on the remote, so bindings pass through unswapped there; (d) refuse deploy while any binding has a stored value or the GitHub binding is live. **Chosen: (b).** A stopped or rebooted remote sidecar then holds no credential at rest, and a missing secret file fails safe (iron-proxy sends the placeholder unswapped and annotates `secret_unavailable`; `docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 15). The cost is a push after every remote start, which Decision 5 already routes through the app. Under (a) Phase C drops `SidecarSpec.tmpfs` and pushes with `copy_in`; under (c) or (d) Phase C drops the secret push and Phase D adds the refusal or the stripped render.
+2. **Whether the user is told before secrets leave the laptop** — **Settled.** Options: no notice; a one-line notice in the deploy picker naming the host and the number of secrets that will be sent; a blocking confirmation dialog. **Chosen: the one-line notice** (Phase G), computed by a new `deploy_secret_count` command from the workspace bindings with a stored value plus the live GitHub binding, so no value or secret id crosses IPC.
+3. **Sidecar-less sandboxes** — **Settled by the user.** Every sandbox is assumed to have a proxy sidecar. Options considered: (a) keep a sidecar-less sandbox deployable unbounded, flagged in `RemoteManager.svelte`; (b) refuse its deploy. **Chosen: (b).** `services::sandbox::deploy` calls `proxy::require_sidecar` first and fails with "recreate the sandbox" when the `<name>-proxy` sidecar is missing or the lookup fails, so a sandbox never deploys without its boundary and the deploy has one bounded path only. The local start path stays lenient: `ensure_sidecar_running` skips a missing sidecar, because the mock backend scripts `podman ps` without sidecars. A deployment made before this feature has no remote sidecar; undeploy and destroy still work, a policy apply on it is refused, and nothing flags it.
+4. **How a policy change reaches the remote sidecar** — **Settled.** Options: push and reload live on every apply; apply only at deploy and require a redeploy. For an unreachable target: fail the apply, or queue it. **Chosen: live push, and fail the apply when the target is unreachable**, leaving the laptop files restored, `applied.json` unchanged and the drift banner (`net_policy_drift`, `src-tauri/src/commands/net_policy.rs`) showing until the next successful apply. A queue would let `applied.json` and the running remote pipeline disagree.
+5. **Whether starting a sandbox also starts its sidecar** — **Settled.** Today `start_sandbox` (`src-tauri/src/commands/sandbox.rs`) starts only the sandbox, locally and for a deployed sandbox alike. **Chosen: yes, for both sites, in this feature** (Phase E): a new `proxy::ensure_sidecar_running(site)` starts a stopped sidecar, pushes the secret files on the remote site, and confirms with a reload before the sandbox starts. Without it, a remote host reboot leaves a deployed sandbox with no network, and under Decision 1 (b) with no secrets either. The local half fixes the same pre-existing gap after a Podman machine restart.
+6. **The minimum target the deploy preflight accepts** — **Settled by the user as 4.0+ with netavark; Phase A confirms.** Proposed: Podman 4.0 or newer (multiple `--network` flags with `name:ip=` need it) with the netavark backend, read from `podman --connection <target> info --format json` by `SandboxBackend::plan_deploy`. Phase A check 4 fixes the final floor and whether CNI is refused. A target below the floor fails with `BackendError::RemoteHostUnsupported` (Decision 18) before anything is mutated.
+7. **What the remote e2e must prove before the feature counts as done** — **Settled.** Options: (a) the un-skipped `standard` specs against `mio-tests-remote` (a second rootless WSL Podman machine, provisioned by `onPrepare` in `e2e/wdio.conf.ts`) plus the new boundary assertions; (b) (a) plus a manual Phase A run against a real non-WSL Linux host. **Chosen: (a) gates `implemented`; (b) runs once if the user can provide a host, else stays recorded in [04_improvements.md](04_improvements.md).** `mio-tests-remote` shares the local machine's WSL image, so it proves the flow, not SELinux, firewalld or older-Podman behaviour.
+8. **Remote sidecar state transport** — in-container files over the Podman connection: `MachineProvider::copy_in` of one staged tree (`config/` and `certs/`, removed afterwards) onto `/etc/iron-proxy` before the first start (Phase A) and of `config.next.yaml` on every apply, `MachineProvider::exec` for the swap, reload and stale-file removal, and the Decision 1 push for secrets. No raw SSH and no remote directory; `podman rm` is the whole remote teardown. Rejected options are in [01_ideas.md](01_ideas.md), Technology Choices.
+9. **Remote CA** — fresh per deploy, generated by `iron::generate_ca` into `remote/certs/` and removed with `remote/` at undeploy and destroy. The local sandbox's trust store is never touched, so undeploy needs no re-injection.
+10. **Remote placeholders** — the remote sandbox is created with the placeholders of `applied.json`'s `guestEnv` (`AppliedPolicy`, `src-tauri/src/net_policy.rs`), so one snapshot stays valid for both containers and `net_policy_unstamped_bindings` keeps its meaning. A snapshot without `guestEnv` stamps none.
+11. **Image on the target** — `proxy::ensure_proxy_image` with the target-pinned provider, reported through `activity::TaskRegistry` as at create. Air-gapped targets are deferred ([04_improvements.md](04_improvements.md)).
+12. **Local site during a deploy** — the local sidecar and network are stopped, never removed, because the stopped local sandbox's `--network mio-proxy-<sandbox>` is fixed at create. Undeploy starts the local sidecar with `ensure_sidecar_running` before `store.start`. While deployed, applies and GitHub refreshes write the local sidecar's files offline and never start it.
+13. **Subnet on the target** — `allocate_network` (`src-tauri/src/proxy/mod.rs`) walks `10.90.<index>.0/24` on the target independently; the result is recorded in `remote/remote.json` and rendered into the remote config only.
+14. **Remote config swap** — the new config is copied in as `config.next.yaml`; one `podman exec … sh -c` renames `config.yaml` to `config.prev.yaml` and `config.next.yaml` to `config.yaml`; the Rust `reload` (`src-tauri/src/proxy/iron.rs`) runs next; on failure a second exec renames `config.prev.yaml` back. The remote sidecar is never restarted as a fallback for a rejected config (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 13).
+15. **Audit across sites** — one laptop `flows.ndjson`; one cursor per site; the remote cursor starts empty for each new remote sidecar and is removed with `remote/`. The local cursor survives a deploy because the stopped local sidecar keeps its `k8s-file` log.
+16. **Deploy orchestration and rollback** — `services::sandbox::deploy` owns the sequence and `deploy_sandbox` (`src-tauri/src/commands/deploy.rs`) delegates to it. The remote sidecar is created before the local sandbox is stopped. A failure before the Mutagen session exists removes the remote sandbox, the remote sidecar, the remote network and `remote/`, starts the local sidecar, and starts the local sandbox. Today's deploy has no rollback at all; this covers the old `reproduce_remote` failure path too.
+17. **Destroy of a deployed sandbox** — after the existing session terminate and `remove_remote`, remove the remote sidecar and network, then `store.destroy`, `net_policy::remove_applied`, `cleanup_host_state` and `proxy::remove_proxy` for the local site. The order relative to the session terminate stays as `docs/features/lib-decomposition/02_dev.md`, Resolved Decision 2, defines it.
+18. **Error shape** — `BackendError::ProxyDeployUnsupported` and `AppError::ProxyDeployUnsupported` (`src-tauri/src/backends/types.rs`, `src-tauri/src/error.rs`, `src/lib/errors.ts`) are replaced by `RemoteHostUnsupported { connection, reason }` for a failed preflight, with its `kind()` arm, its arm in the hand-written `From<BackendError> for AppError`, and its `AppErrorKind` entry.
+19. **Startup sweep** — `proxy::sweep` stays local-only. A remote sidecar orphaned by a crash mid-deploy is recorded in [04_improvements.md](04_improvements.md), "Cross-connection sweep".
+20. **Host-global state and parallel worktrees** — every new laptop path is under `<app_data_root>/proxy/<sandbox>/remote/` through `crate::paths::app_data_root`, which honours `MIO_APP_DATA_DIR`. No new host port, bundled binary, environment variable or teardown of host-global state. The deploy flow already uses host-global resources (`mio-tests-remote`, the `~/.ssh` alias writes in `ssh::write_alias`), so its specs stay in the host-locked `standard` tier, one run per host. No `light` spec may invoke `deploy_sandbox` past `plan_deploy`: `remote_mkdir` runs raw `ssh` and `ssh::write_alias` writes the real `~/.ssh`, neither gated by `MIO_MOCK_BACKEND`.
 
-- `src-tauri/src/backends/types.rs`: widen `ConnectionInfo` from `pub(super)` to `pub(crate)`. Add
-  `async fn connection_info(&self, connection: &str) -> Result<Option<ConnectionInfo>, BackendError>`
-  to the `SandboxBackend` trait, doc-commented as returning `None` when `connection` names no
-  registered connection or is a local Podman machine with no SSH endpoint (the same case
-  `parse_connection_entry` already returns `None` for).
-- `src-tauri/src/backends/mod.rs`: `CliBackend::connection_info` implements the trait method by
-  delegating to the existing `Self::remote_connection_info(&self.runner, connection)` — no change to
-  that function itself, only a new public entry point onto it.
-- `src-tauri/src/backends/mock.rs`: mock `SandboxBackend::connection_info` returns `Ok(None)`
-  unconditionally. The light e2e tier never registers a real remote connection, matching
-  `list_hosts`'s existing always-empty mock behaviour (`docs/features/cloud-sandboxes/01_ideas.md`
-  Common Gotchas) — this feature does not change that gap, only avoids making it worse.
+## Implemented: Phase A — Gating spike
 
-## Remaining: Phase B — Remote-state primitives in `proxy/mod.rs`
+Run before Phases C–G, on `mio-tests-remote` (Decision 7) and, if available, a real Linux host. Adapt the scripts in `docs/features/podman-egress-boundary/spike/` (`lib.sh` already reads `SPIKE_CONNECTION`) to in-container state, and keep the adapted scripts and evidence in `docs/features/proxy-remote-deploy/spike/` with a `type: spike` `README.md`.
 
-- `remote_home(user: &str) -> String` — `/root` for `root`, else `/home/<user>`; a deliberate,
-  small duplication of the equivalent inline match in `resolve_workspace`
-  (`src-tauri/src/backends/mod.rs`), kept local to `proxy/` per Resolved Decision 6.
-- `remote_state_root(sandbox: &str, target: &ConnectionInfo) -> String` —
-  `format!("{}/mio-proxy/{sandbox}", remote_home(&target.user))`.
-- `ssh_argv(target: &ConnectionInfo) -> Vec<String>` (or an equivalent private builder) — the shared
-  `-o BatchMode=yes -o StrictHostKeyChecking=accept-new -i <identity> -p <port> <user>@<host>` prefix,
-  matching `remote_mkdir`'s existing flags exactly so remote proxy operations fail the same way (host
-  key changes, unreachable host) that remote workspace operations already do.
-- `remote_mkdir(target: &ConnectionInfo, dir: &str) -> Result<(), ProxyError>` — `ssh ... mkdir -p
-  '<dir>'`, structurally identical to `backends::remote_mkdir` but returning `ProxyError`.
-- `remote_write_file(target: &ConnectionInfo, path: &str, contents: &[u8]) -> Result<(), ProxyError>`
-  — spawns `ssh ... sh -c "cat > '<path>'"` with stdin piped, writes `contents`, and awaits the
-  child, the same spawn-then-write-stdin-then-wait shape `PodmanProvider::exec_piped`
-  (`src-tauri/src/provider/mod.rs`) already uses for a different transport.
-- `remote_read_file(target: &ConnectionInfo, path: &str) -> Result<Vec<u8>, ProxyError>` — `ssh ...
-  cat '<path>'`, captured stdout; a non-zero exit (file absent) maps to `ProxyError::CommandFailed`.
-- `remote_rm_rf(target: &ConnectionInfo, dir: &str) -> Result<(), ProxyError>` — `ssh ... rm -rf
-  '<dir>'`, called only from `remove_proxy_remote`, best-effort exactly like local `remove_proxy`'s
-  final state-directory deletion.
-- `wait_for_ca_remote(target: &ConnectionInfo, sandbox: &str) -> Result<(), ProxyError>` — polls with
-  the same attempt count/interval constants `wait_for_ca` uses, but each attempt runs `ssh ... test -f
-  '<remote_state_root>/certs/mitmproxy-ca-cert.pem'` instead of a local `Path::exists` check, to avoid
-  transferring the file itself on every poll.
-- `create_proxy_remote(app: &AppHandle, provider: &Arc<dyn MachineProvider>, sandbox: &str, target:
-  &ConnectionInfo) -> Result<ProxyAttachment, ProxyError>` — network allocation is unchanged
-  (`allocate_network`, already connection-generic through `provider`); creates the remote state root
-  and its `certs/` subdirectory via `remote_mkdir`; writes the embedded `ADDON_SCRIPT` and an empty
-  `rules.json` array via `remote_write_file`; builds the same `SidecarSpec` shape `create_proxy` does,
-  with `SidecarMount.host_path` set to the remote paths instead of `certs_dir`/`addon_path`/
-  `rules_path`; calls `provider.create_sidecar`/`provider.start` unchanged; calls
-  `wait_for_ca_remote` in place of `wait_for_ca`; still calls the existing (local) `write_meta` so the
-  non-secret network name/IP cache stays laptop-side, additionally recording a `"location":
-  "remote"` field and the target connection name so `status()` can report where a sandbox's proxy
-  currently lives.
-- `read_ca_pem_remote(target: &ConnectionInfo, sandbox: &str) -> Result<Vec<u8>, ProxyError>` —
-  `remote_read_file` at `<remote_state_root>/certs/mitmproxy-ca-cert.pem`.
-- `write_materialised_rules_remote(app: &AppHandle, sandbox: &str, workspace_path: &str, target:
-  &ConnectionInfo) -> Result<(), ProxyError>` — reuses `rules::load_rules`/`rules::materialise`
-  unchanged, writing the result via `remote_write_file` to `<remote_state_root>/rules.json` instead of
-  `std::fs::write`.
-- `apply_rules_remote(app: &AppHandle, provider: &Arc<dyn MachineProvider>, sandbox: &str,
-  workspace_path: &str, target: &ConnectionInfo) -> Result<(), ProxyError>` — calls
-  `write_materialised_rules_remote` then `restart_proxy_container(provider, sandbox)` (unchanged —
-  restarting the container is already connection-generic through `provider`).
-- `remove_proxy_remote(provider: &Arc<dyn MachineProvider>, sandbox: &str, target: &ConnectionInfo)`
-  — mirrors `remove_proxy`'s best-effort container-then-network-then-state-directory order, using
-  `remote_rm_rf` for the last step; logs warnings the same way, never propagates an error.
-- `stop_proxy(provider: &Arc<dyn MachineProvider>, sandbox: &str) -> Result<(), ProxyError>` — `
-  provider.stop(&proxy_container_name(sandbox))`, a one-line addition used by `deploy` (Phase E)
-  against the local provider.
-- `start_proxy_if_present(provider: &Arc<dyn MachineProvider>, sandbox: &str) -> Result<(), ProxyError>`
-  — `if exists(provider, sandbox).await { provider.start(&proxy_container_name(sandbox)).await?; }`,
-  used by `undeploy` (Phase D, Resolved Decision 2).
-- `exists`/`status` (existing functions) are widened to accept `provider: &Arc<dyn MachineProvider>`
-  directly instead of `&Arc<ProviderRegistry>`, dropping their internal `registry.local(ProviderId::
-  Podman)` resolution. Every existing call site (`backends/mod.rs::deploy`'s guard,
-  `services/sandbox.rs`, `commands/proxy.rs`) is updated to resolve a provider first and pass it in —
-  `deploy`'s own guard explicitly resolves `registry.local(ProviderId::Podman)` (it is asking "is the
-  sandbox about to be deployed currently proxy-enabled locally," which is inherently a local-only
-  question), while `commands/proxy.rs`'s commands resolve theirs through the new `services/proxy.rs`
-  (Phase C). `sweep` keeps its existing `&Arc<ProviderRegistry>` signature and local-only scope
-  (Resolved Decision 8).
+| # | Check | Gates |
+|---|---|---|
+| 1 | Internal network and dual-homed sidecar over `--connection`; `podman cp <dir>/. <sidecar>:/etc/iron-proxy/config` into the created container before its first start (the parent `/etc/iron-proxy` may not exist in the image); iron-proxy's user can read the copied files; bootstrap denies; a swapped `config.next.yaml` reloads | Decisions 8, 14 |
+| 2 | `--tmpfs` at `CONTAINER_SECRETS_DIR` with a mode iron-proxy's user can read; a file pushed into it by `podman exec -i … sh -c 'cat > …'` is swapped on the next request; whether `podman cp` can write into the tmpfs of a running container | Decision 1 |
+| 3 | A sandbox on the internal network over `--connection`: no route out, the exec transport (`podman --connection <target> exec -i <name> mio-sshd`) works, `mise install` succeeds through the sidecar, `podman logs --timestamps --since` reads the audit stream | Model; Decision 15 |
+| 4 | Checks 1–3 on a real Linux host (SELinux enforcing, firewalld, the distribution's Podman); record `podman info` network backend and version | Decision 6 |
 
-## Remaining: Phase C — `services/proxy.rs` and command routing
+**Result (2026-11-24, `mio-tests-remote`, Podman 5.8.6, netavark; evidence in [spike/README.md](spike/README.md)):** checks 1–3 pass; check 4 was not run (no real Linux host available). Two corrections to the plan: `podman cp <dir> <sidecar>:/etc/iron-proxy/config` fails on a created container because `/etc/iron-proxy` does not exist, but copying one staged tree holding `config/` and `certs/` onto `<sidecar>:/etc/iron-proxy` creates the path and works, so no volume fallback was needed; and `podman cp` also writes into the tmpfs of a running container, though the push uses `exec` anyway. The Decision 6 floor (Podman 4.0, netavark) rests on upstream documentation of multiple `--network` flags, not on a measured old Podman. Decision 1 stays (b).
 
-- `src-tauri/src/services/proxy.rs` (new): `pub async fn resolve(router: &SandboxRouter, store:
-  &Arc<dyn SandboxBackend>, registry: &Arc<ProviderRegistry>, name: &str) -> Result<(Arc<dyn
-  MachineProvider>, Option<crate::backends::types::ConnectionInfo>), AppError>` — resolves a
-  `SandboxRoute` via `router.locate(name)`, resolves `provider = registry.provider_for(&route.machine)`,
-  and — only when `route.machine.provider == ProviderId::Podman` and `route.machine.id` differs from
-  `registry.local_ref(ProviderId::Podman).id` — additionally calls `store.connection_info(&route.machine.id)`
-  to produce `Some(ConnectionInfo)`; otherwise returns `(provider, None)`. Thin wrappers
-  `apply_rules`, `restart`, `status` branch on the `Option` to call the local or `_remote` `proxy::`
-  variant.
-- `src-tauri/src/commands/proxy.rs`: `proxy_status`, `set_proxy_rules`, `restart_proxy` gain a
-  `router: State<'_, SandboxRouter>` and `store: State<'_, Arc<dyn SandboxBackend>>` parameter
-  (matching the existing pattern in `src-tauri/src/commands/panes.rs`/`network.rs`) and delegate to
-  the new `services::proxy` wrappers instead of calling `proxy::` directly against
-  `registry.local(ProviderId::Podman)`.
-- `set_proxy_secret`/`delete_proxy_secret` are unchanged: `secrets.json` stays laptop-only regardless
-  of a sandbox's deploy state (`01_ideas.md`, "Secret transport at deploy time" — only the
-  *materialised* per-sandbox output travels, never the raw store).
+## Implemented: Phase B — Sidecar site seam (no behaviour change)
 
-## Remaining: Phase D — Undeploy and destroy lifecycle wiring
+- **`SidecarSite`** (`src-tauri/src/proxy/types.rs`): `machine`, `provider`, `local`. A constructor for the local site from `ProviderRegistry::local_ref`.
+- **`services::proxy::locate_sidecar(router, registry, name)`** (new `src-tauri/src/services/proxy.rs`, registered in `src-tauri/src/services/mod.rs`): `SandboxRouter::locate`, then `registry.provider_for(&route.machine)`, `local` from `SandboxRouter::is_local`.
+- **`proxy::status`, `proxy::restart_proxy_container`** (`src-tauri/src/proxy/mod.rs`), **`iron::apply_policy`, `iron::refresh_github_binding`** (`src-tauri/src/proxy/iron.rs`) take a `&SidecarSite` instead of resolving `registry.local`. `sidecar_provider` remains only for the local-only callers (`proxy::exists`, `services::sandbox::destroy`'s non-deployed branch).
+- **Commands** `proxy_status`, `restart_proxy`, `watch_proxy_flows` (`src-tauri/src/commands/proxy.rs`) and `apply_sandbox_policy` (`src-tauri/src/commands/net_policy.rs`) take `State<SandboxRouter>` and resolve the site; per the state-narrowing rule (`src-tauri/AGENTS.md`) a command needing the router plus the registry calls the service.
+- **`services::github_access`** (`src-tauri/src/services/github_access.rs`): `reconcile_locked` and `spawn_reconcile_all` resolve the site before `refresh_github_binding`.
+- **Audit and watch** (`src-tauri/src/proxy/audit.rs`, `src-tauri/src/proxy/flowlog.rs`): `ingest(provider, sidecar, state_dir, cursor_file)`; `start_watch` takes the site; `FlowWatchRegistry::retarget(app, sandbox, site)` aborts and respawns the task keeping its watcher count.
+- **Verification**: `cargo check`, `cargo test`, `./build e2e light` (the egress-boundary and traffic light specs must still pass unchanged).
 
-- `src-tauri/src/services/sandbox.rs::undeploy`: signature gains `registry: &Arc<ProviderRegistry>`
-  (threaded from `src-tauri/src/commands/deploy.rs::undeploy_sandbox`, which gains a matching
-  `registry: State<'_, Arc<ProviderRegistry>>` parameter). After the existing session lookup and
-  before `engine.terminate(name)`, if `store.connection_info(&session.host)` resolves to `Some(info)`
-  and `proxy::exists` against that connection's provider is true, call
-  `proxy::remove_proxy_remote(&remote_provider, name, &info)` (Resolved Decision 3). After the
-  existing `store.start(name)` call, call `proxy::start_proxy_if_present(&registry.local(ProviderId::
-  Podman), name)` (Resolved Decision 2).
-- `src-tauri/src/services/sandbox.rs::destroy`: in the deployed-sandbox branch (the `Some(session)`
-  path), before `store.remove_remote(name, &session.host)`, resolve the remote provider the same way
-  and call `proxy::remove_proxy_remote` if a remote proxy exists; after `close_panes_and_forwards`
-  and independent of the remote branch, also call the existing `remove_proxy_if_present(app, registry,
-  name)` to clean up the local (stopped) sidecar — a proxy-enabled, still-deployed sandbox being
-  destroyed has state on both sides, and both must go (Resolved Decision 4).
-- Both call sites reuse `store.connection_info` (Phase A) and `proxy::exists`/`remove_proxy_remote`
-  (Phase B) with no further new functions.
+## Implemented: Phase C — Remote sidecar primitives
 
-## Remaining: Phase E — Wire proxy creation into `deploy` and lift the refusal (blocked)
+- **`SidecarSpec.tmpfs: Vec<String>`** (`src-tauri/src/provider/types.rs`) rendered by `PodmanProvider::create_sidecar` (`src-tauri/src/provider/mod.rs`) as `--tmpfs <path>:<options from Phase A>`; argv unit test beside `create_sidecar_renders_networks_and_log_flags_before_the_image`. Existing callers pass an empty list.
+- **`podman.cp`** joins `KNOWN_CALLS` in `src-tauri/src/mockctl/mod.rs`, so light specs can script a failed copy.
+- **Remote state paths** (`src-tauri/src/proxy/mod.rs`): `remote_dir`, `read_remote_meta`/`write_remote_meta` (`remote/remote.json`: `connection`, `network`, `proxyIp`), `remove_remote_state`.
+- **`proxy::create_remote_proxy(app, site, sandbox) -> ProxyAttachment`**: `allocate_network` on `site.provider`; `iron::generate_ca` into `remote/certs/`; `iron::write_bootstrap` into `remote/`; `create_sidecar` with no mounts, the tmpfs, the same networks, log flags and management token as `create_podman_proxy`; `copy_in` of `config/` and `certs/`; start; `write_remote_meta`. Returns `PodmanBridge` with `proxy_env(<remote ip>)` and the remote `dns`.
+- **`proxy::remove_remote_proxy(site, sandbox)`**: removes the sidecar (guarded by `is_sidecar` as `remove_proxy` is) and the network on `site.provider`, best-effort. It never touches the laptop state directory; the caller removes `remote/`.
+- **`iron::push_secrets(site, sandbox, files)`**: for each staged file, `exec_piped` of `sh -c 'cat > <dir>/.<name>.tmp && mv …'`, then `exec` of `rm` for files no longer staged. `exec_piped` stages stdin in a temp file until `docs/improvement-backlog.md` T5a lands; the same exposure the GitHub token and CA injection have today.
+- **`iron::apply_remote(site, sandbox, policy)`**: the Model's "Apply while deployed" sequence, under the same per-sandbox `apply_lock`, with the Decision 14 swap. Reuses `stage_files`, `snapshot_secret_files`, `restore_secret_files`, `write_offline` and `rendered`.
+- **`proxy::ensure_sidecar_running(site, sandbox)`**: start if stopped, `push_secrets` on the remote site, then the existing `start_and_confirm` reload.
+- **Unit tests**: remote meta round trip; the swap and push argv; render with two addresses yields configs differing only in `dns.proxy_ip`.
 
-**Do not start this phase until the live two-machine spike described in `01_ideas.md`'s Validation
-section has run against a genuine non-WSL remote Podman host and confirmed the bridge-network and
-mitmproxy-image assumptions it lists as unconfirmed.** Phases A–D compile, unit-test, and pass the
-`light` e2e tier (via mocked `SandboxBackend::connection_info` and `proxy::exists` returning `false`
-for every mock sandbox) with zero behavioural change to `deploy` — this phase is the only one that
-changes what `deploy` actually does.
+## Implemented: Phase D — Deploy service and rollback
 
-- `src-tauri/src/backends/mod.rs::deploy`: remove the early `if crate::proxy::exists(&self.registry,
-  name).await { return Err(BackendError::ProxyDeployUnsupported ...) }` block. In its place, resolve
-  `let proxied = crate::proxy::exists(&self.registry.local(ProviderId::Podman), name).await;` early
-  (unchanged local-only check, see Phase B), and keep it in scope through the rest of the function.
-  After `target_provider` is constructed and before `target_provider.create_instance(&spec)`: if
-  `proxied`, call `crate::proxy::ensure_proxy_image(&self.app, &target_provider).await?` then
-  `crate::proxy::create_proxy_remote(&self.app, &target_provider, name, &info).await?` (`info` is the
-  `ConnectionInfo` already bound from `SyncStrategy::Remote(info)` earlier in the function), and use
-  the returned `ProxyAttachment`'s `env`/`network` fields when building the `InstanceSpec` in place of
-  today's hardcoded `env: Vec::new(), network: None`. After `target_provider.start(name).await?`: if
-  `proxied`, call `crate::proxy::read_ca_pem_remote(&info, name)` then
-  `crate::proxy::inject_ca(&target_provider, name, &pem).await?`. Immediately after the existing
-  `owner.stop(name).await?` call (which stops the *local* sandbox container): if `proxied`, call
-  `crate::proxy::stop_proxy(&self.registry.local(ProviderId::Podman), name).await?`.
-- `src-tauri/src/backends/types.rs`: `BackendError::ProxyDeployUnsupported` variant and its doc
-  comment are removed once this phase lands (no other caller constructs it); `src-tauri/src/error.rs`'s
-  `kind()`/`From<BackendError>` arms and `src/lib/errors.ts`'s `AppErrorKind` union drop the matching
-  entries (`src-tauri/AGENTS.md`'s error-mirroring gotcha table).
-- `src-tauri/src/commands/deploy.rs::deploy_sandbox`: unchanged — it already just calls
-  `store.deploy(&name, &host)` and reports whatever `RemoteDeployment` comes back; no proxy-specific
-  branching belongs at the command layer.
+- **`SandboxBackend::plan_deploy(name, target) -> DeployPlan`** (`src-tauri/src/backends/types.rs`, `src-tauri/src/backends/mod.rs`): the existing validation of `CliBackend::deploy` (name, `remote_targets`, self-deploy, `resolve_workspace`, `NoSshEndpoint`) plus the Decision 6 preflight through `podman.info`. Mutates nothing.
+- **`SandboxBackend::deploy(name, plan, proxy: Option<&ProxyAttachment>, extra_env)`**: the existing mutation steps, with the remote `InstanceSpec` taking `network` (internal network and `dns`) and `env` (`proxy_env` plus the `guestEnv` placeholders). The `proxy::exists` refusal moves into the service until Phase G removes it.
+- **`services::sandbox::deploy`** (`src-tauri/src/services/sandbox.rs`): the Model's deploy order, the sidecar precondition of Decision 3, the rollback of Decision 16, and `inject_ca` with `remote/certs/ca.pem`. Wrapped in an `activity::scope` task `sandbox-deploy:<name>` with step progress, mirroring `create`; a new `TaskKind` variant in `src-tauri/src/activity/types.rs`.
+- **`deploy_sandbox`** (`src-tauri/src/commands/deploy.rs`) delegates to the service, which takes the backend, runtime, sync engine, registry and flow-watch registry.
+- **`BackendError::RemoteHostUnsupported`** replaces `ProxyDeployUnsupported` (Decision 18) in `src-tauri/src/backends/types.rs`, `src-tauri/src/error.rs` and `src/lib/errors.ts`.
 
-## Lifecycle / Cross-Cutting Concerns
+## Implemented: Phase E — Operations while deployed
 
-**Parallel-worktree state.** The new remote state root (`<home>/mio-proxy/<sandbox>/`, Phase B) is
-never under `app_data_root` and does not need `MIO_APP_DATA_DIR` — it lives on the *remote host's*
-filesystem, keyed by sandbox name, and sandbox names are already run-scoped in e2e (the same
-precedent `docs/features/network-proxy/02_dev.md`'s Cross-Cutting Concerns cites for the local
-`mio-proxy-<sandbox>` network name). The new local `meta.json` field (`"location"`, connection name)
-is written through the existing `state_dir(app, sandbox)`, which is already `MIO_APP_DATA_DIR`-aware
-— no new path resolution is introduced there. No new host port is introduced: the remote proxy's
-port stays inside its own bridge network exactly as the local one does. No new bundled binary is
-introduced. No new environment variable is introduced — `MIO_PROXY_IMAGE` is reused unchanged for a
-remote pull.
+- **Apply**: `apply_policy` dispatches on `site.local`; the remote branch is `iron::apply_remote`. The local branch is unchanged.
+- **GitHub binding**: `refresh_github_binding` on a remote site writes the local files offline, pushes, swaps and reloads the remote sidecar when it runs. `github_binding_live` keeps reading the laptop's staged files, which are the source for both sites.
+- **Status**: `ProxyStatus` (`src-tauri/src/proxy/types.rs`) gains `host: Option<String>`, the connection when remote; `proxy_ip` and `network` come from `remote.json` there. `src/lib/proxy/status.svelte.ts` mirrors it and `ProxyPanel.svelte` (`src/routes/projects/`) names the host.
+- **Restart**: `restart_proxy` on a remote site stops the sidecar and calls `ensure_sidecar_running`, because the tmpfs is empty after a restart.
+- **Start** (Decision 5): `start_sandbox` (`src-tauri/src/commands/sandbox.rs`) calls `ensure_sidecar_running` for the resolved site before `store.start`, moving into a `services::sandbox::start` because it now spans the router, registry and backend. A sandbox without a sidecar (Decision 3) skips the step.
 
-**Host-global resource scope is unchanged, not new.** This feature does not introduce a new
-host-global external resource; it uses more heavily one `docs/features/remote-deploys/01_ideas.md`
-already requires (a registered remote Podman connection), which already confines any spec exercising
-a real deploy to the host-locked `standard`/`heavy` e2e tier (`e2e/AGENTS.md`). Phase B's SSH-transport
-functions (`remote_mkdir`, `remote_write_file`, `remote_read_file`, `remote_rm_rf`) have no mock, the
-same way `backends::remote_mkdir` has none today — light-tier coverage of Phases A–D is limited to the
-routing/branching logic (`services/proxy.rs`'s `Option<ConnectionInfo>` branch selection,
-`SandboxBackend::connection_info`'s mock returning `None`), not the SSH transport itself, which only
-`standard`/`heavy` specs against a real registered connection can exercise.
+## Implemented: Phase F — Undeploy and destroy
 
-**Teardown remains name-scoped, not global.** `remove_proxy_remote`'s `remote_rm_rf` only ever runs
-against one named sandbox's own remote state directory, reached exclusively through `undeploy` or
-`destroy` acting on that sandbox — never a periodic or cross-connection sweep (Resolved Decision 8) —
-so it cannot cross-worktree-collide with another run's state on the same shared remote connection.
+- **`services::sandbox::undeploy`**: close panes and forwards → flush → `remove_remote` → `remove_remote_proxy` → terminate the session → `FlowWatchRegistry::retarget` to the local site → `ensure_sidecar_running` on the local site → `store.start` → `remove_remote_state`. The remote removals stay before the terminate, for the reason the existing comment gives.
+- **`services::sandbox::destroy`** (deployed branch): Decision 17.
+- Both tolerate a deployment without a remote sidecar (made before this feature) by treating "no such container" and "no such network" as success.
 
-**State derivation is unchanged in kind.** Proxy enablement is still derived purely from container
-presence (`docs/features/network-proxy/02_dev.md` Resolved Decision 3): `exists`/`status`
-(Phase B) ask whichever connection's `provider` they are given, rather than always asking the local
-one, but the underlying "presence, not a persisted flag" model is untouched.
+## Implemented: Phase G — Lift the refusal, frontend, e2e and docs
+
+- **Remove the refusal** from `services::sandbox::deploy`.
+- **`RemoteManager.svelte`**: restore the host picker, `deploy()` and the `projects_no_hosts`/`projects_deploy_confirm` keys in `messages/en.json`, `messages/de.json` and `messages/ru.json` from the parent of commit `bd8f92a`; drop `data-remote-deploy-unavailable` and its `TODO(i18n)` text. Add the Decision 2 notice; new strings stay hard-coded English marked `TODO(i18n)` until the user approves wording (the `feature-implement` skill's Paraglide rule).
+- **Specs**: remove `describe.skip`/`it.skip` from `e2e/test/specs/standard/deploy-remote.spec.ts`, `base-image-remote.spec.ts` and `runtime-management.spec.ts`; extend their `after` hooks to remove `<name>-proxy` and `mio-proxy-<name>` on `REMOTE_CONNECTION`. The new boundary assertions (remote sidecar running, raw IP refused from the remote sandbox, an allowed host reachable, a policy apply reaching the remote sidecar, undeploy removing the remote sidecar and network and restarting the local one) are planned in `03_e2e.md` by the `feature-e2e` skill.
+- **Docs**: [remote.md](../../architecture/remote.md) (drop "Deploy is temporarily blocked", add the remote sidecar to Deploy, Undeploy and Destroy) and [network.md](../../architecture/network.md) (the "Remote deploy" row, Where State Lives, Lifecycle), via the `write-docs` skill; remove `ProxyDeployUnsupported` from `docs/features/proxy-remote-deploy/feature.md`'s status note.
+- **Verification**: `cargo check` and `cargo test` in `src-tauri/`; `pnpm check`; `./build docs`; `./build e2e light`; `./build e2e` (the `standard` tier, which provisions `mio-tests` and `mio-tests-remote` and runs the un-skipped specs; host-locked, one run per host).
+
+## Implementation Notes
+
+What the code does where the phases above were underspecified or the implementation differs from their wording.
+
+- **Site resolution.** `services::proxy::locate_sidecar(router, name)` takes only the router (it already holds the provider registry). A routing failure is never read as "local": a Mutagen error would otherwise start or rewrite the stopped local sidecar of a deployed sandbox.
+- **Apply dispatch.** `iron::apply_policy` takes the site and chooses between the unchanged local path and `apply_remote_locked` (remote sidecar known from `remote/remote.json`); a deployed sandbox without `remote/remote.json` is refused. `apply_remote_locked` first calls `ensure_sidecar_running`, so a stopped remote sidecar is restarted with its last-applied files before anything on the laptop changes.
+- **`ensure_sidecar_running`** (re-exported as `proxy::ensure_sidecar_running`) is a no-op when the sidecar does not exist on the site, which the mock backend relies on (Decision 3). On a remote site it pushes every file in the laptop's `secrets/` directory on every call, running sidecar or not, so a sidecar left with an empty tmpfs by a failed push is repaired by the next call; a fresh start also runs the confirming reload.
+- **Deploy picker count.** `deploy_secret_count` (`src-tauri/src/commands/proxy.rs`) counts the workspace bindings with a stored value plus the live GitHub binding; the picker shows it as a non-blocking line and hides it at zero.
+- **Remote host in the status.** `ProxyStatus.host` is set only for a remote sidecar; `ProxyPanel.svelte` shows it.
+- **Deploy preconditions.** `deploy` refuses a sandbox that already has a Mutagen session, and one whose local sidecar is missing or whose lookup fails (`proxy::require_sidecar`). `deploy_to_target` refuses a target that already holds a container named `<name>` or `<name>-proxy`. `SandboxBackend::deploy` takes the remote `ProxyAttachment` as required.
+- **Rollback.** `DeployUndo` records one flag per resource this run created or stopped (remote sidecar with network and staging, remote sandbox, flow-watch retarget, local sidecar stop, local sandbox stop), and rollback undoes exactly those, remote first. `create_remote_proxy` removes its own partial work when it fails.
+- **Start of a deployed sandbox.** `services::sandbox::start` ensures the remote sidecar, then starts the container on the resolved site; the local container of a deployed sandbox stays stopped.
+- **Revocation.** `refresh_github_binding` unstages the laptop's GitHub token file when a revocation cannot reach the sidecar, so a later start never re-pushes it.
+- **Not covered by unit tests.** The remote-state round trip and `copy_state_in` need an `AppHandle`; they are proven by the `standard` deploy spec. `podman.cp` is a known mock call, but no `light` spec scripts it (Decision 20 keeps `light` out of `deploy_sandbox` past `plan_deploy`).
+
+## Lifecycle and Cross-Cutting Concerns
+
+- **Deploy**: plan → target image → remote sidecar → `store.deploy` → remote apply → remote CA → stop local sidecar → retarget watch → `reproduce_remote` → Mutagen session. The remote sidecar denies everything until the remote apply (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 18), so `reproduce_remote` must run after it.
+- **Rollback** (Decision 16): in reverse of what this run created — remote sandbox, remote sidecar and network, `remote/`, then local sidecar start and local sandbox start. Best-effort and warn-logged; the original error is returned.
+- **Policy change while deployed**: `set_net_policy` → `apply_sandbox_policy` → site resolved → `apply_remote`. The workspace file reaches the laptop through Mutagen like any other workspace file, so code in the remote sandbox can edit it exactly as code in a local sandbox can (`docs/improvement-backlog.md`, T2, applies unchanged).
+- **Secret value change while deployed**: the editor's existing re-apply after `set_proxy_secret` pushes the new file.
+- **App restart while deployed**: nothing is cached across runs; `locate_sidecar` re-resolves from the session, and the remote sidecar keeps running with its tmpfs intact.
+- **Remote host reboot**: both remote containers stop and the tmpfs is gone. `start_sandbox` (Decision 5) restarts the sidecar, re-pushes secrets and reloads before starting the remote sandbox container.
+- **Crash mid-deploy**: may leave a remote sidecar, network or container with no session; [04_improvements.md](04_improvements.md), "Cross-connection sweep".
+- **Secret invariants** ([network.md](../../architecture/network.md), Invariants): values reach the remote only through `exec_piped` stdin, never argv, the container environment, logs or IPC. The remote management token is generated per remote sidecar and passed as `IRON_MANAGEMENT_API_KEY`, as locally.
+- **Testing split**: pure argv and path functions get unit tests; the `light` tier covers the restored picker, a scripted `plan_deploy` failure (`podman.system-connection-list` or `podman.info`) and the status `host` rendering, never a deploy past planning (Decision 20); the `standard` tier is the proof.
 
 ## Common Gotchas
 
 | Gotcha | Cause | Fix |
 |---|---|---|
-| `cargo check` fails after Phase A with a privacy error on `ConnectionInfo` | `ConnectionInfo` (`src-tauri/src/backends/types.rs`) was left `pub(super)` while `proxy/mod.rs` (Phase B) tries to reference it by full path from outside `backends` | Widen `ConnectionInfo` to `pub(crate)` in `src-tauri/src/backends/types.rs` as the first change in Phase A; do not add a duplicate type in `proxy/types.rs` instead (Resolved Decision 6) |
-| `undeploy_sandbox` fails to compile after Phase D with a missing-argument error | `services::sandbox::undeploy`'s signature gained a `registry: &Arc<ProviderRegistry>` parameter, but `src-tauri/src/commands/deploy.rs::undeploy_sandbox` was not updated to accept and thread a matching `State<'_, Arc<ProviderRegistry>>` | Add the `registry` parameter to `undeploy_sandbox` and pass it through, mirroring how `destroy_sandbox` (`src-tauri/src/commands/sandbox.rs`) already threads `registry` into `services::sandbox::destroy` |
-| A `light` e2e spec covering `proxy_status`/`set_proxy_rules`/`restart_proxy` for a deployed sandbox hangs or errors | Phase C's `services::proxy::resolve` calls `store.connection_info`, which the mock `SandboxBackend` (Phase A) always answers with `None` — a light-tier spec cannot actually exercise the remote branch | Scope specs that need the remote branch to `standard`/`heavy` against a real registered connection, per Cross-Cutting Concerns; `light` can only cover the `None` (local) branch |
-| A proxy-enabled sandbox's `undeploy` restarts the local container but its traffic is not inspected afterward | `proxy::start_proxy_if_present` (Phase B/D) restarted the local `<sandbox>-proxy` container, but the local sandbox container's own env vars/network attachment were never touched by `deploy`/`undeploy` in the first place (they were only ever pointed at the local proxy) | Nothing to fix in the proxy path itself if this occurs — check whether the local sandbox container's `--network`/`--env` still reference the local `mio-proxy-<sandbox>` network and IP, which `deploy`'s stop-not-remove design (Resolved Decision 2 discussion, Proposed Model) is specifically meant to preserve |
-| A remote proxy's `certs/mitmproxy-ca-cert.pem` is read as empty or truncated right after `create_proxy_remote` returns | `wait_for_ca_remote`'s `ssh ... test -f` polling loop confirmed the file's existence but `mitmdump` was still mid-write when `read_ca_pem_remote` ran immediately after | Confirm `wait_for_ca_remote` (Phase B) polls with the same attempt/interval budget `wait_for_ca` uses locally rather than a single check; if flaky under real network latency, this is exactly the kind of risk the live spike in `01_ideas.md` Validation exists to surface before Phase E ships |
-| A sandbox's real secret value is found on a remote host's disk that the deploying sandbox's own rules never referenced | `write_materialised_rules_remote` (Phase B) was passed the wrong `workspace_path`, or a caller substituted the raw `secrets.json` for the per-sandbox materialised output | `write_materialised_rules_remote` must call `rules::load_rules(workspace_path)` scoped to the one sandbox being deployed and never write `secrets.json` itself to any remote path (`01_ideas.md`, "Secret transport at deploy time") |
-| `deploy` on a proxy-enabled sandbox fails with a Podman error about an unknown or duplicate network name on the target connection | `allocate_network`'s `10.90.<index>.0/24` walk (`src-tauri/src/proxy/mod.rs`) is per-connection already (each `PodmanProvider::create_network` call is `--connection`-scoped), so a collision here means the same index was already claimed by another proxy on that specific target connection | Confirm `create_proxy_remote` calls `allocate_network(target_provider, sandbox)` (not the local provider) so the walk's overlap-retry runs against the target connection's own existing networks |
+| `podman create` of the remote sidecar fails with "no such file or directory" for a `C:/Users/...` path | The remote sidecar spec carried the local `SidecarMount`s, whose sources exist only on the laptop | Build the remote `SidecarSpec` in `proxy::create_remote_proxy` with no mounts; copy files in with `MachineProvider::copy_in` |
+| The remote sidecar exits at boot with a config-not-found error | The sidecar was started before `config/` and `certs/` were copied into it | Copy both into the created container, then start it (`proxy::create_remote_proxy`, `src-tauri/src/proxy/mod.rs`) |
+| Every request from the remote sandbox is refused right after deploy, and `mise install` fails in `reproduce_remote` | The remote sidecar still runs the deny-all bootstrap because the remote apply had not run | Keep the remote apply before `reproduce_remote` in `services::sandbox::deploy` (`src-tauri/src/services/sandbox.rs`) |
+| A remote request reaches upstream with the literal placeholder after a sidecar restart or host reboot | The tmpfs at `CONTAINER_SECRETS_DIR` is empty after any start, and nothing pushed the secret files | Start remote sidecars only through `proxy::ensure_sidecar_running`, which pushes the files before its reload |
+| A policy apply while deployed starts the local sidecar | `apply_policy`'s local branch calls `start_and_confirm` for a stopped sidecar | Resolve the site first; the remote branch writes the local files offline and never starts the local sidecar (Resolved Decision 12) |
+| `undeploy` starts the local sandbox with no network | The local sidecar was not started first, or was removed by deploy | Call `proxy::ensure_sidecar_running` on the local site before `store.start` in `services::sandbox::undeploy` |
+| The remote sidecar keeps serving the old policy although the apply reported success | `config.next.yaml` was copied in but the swap exec did not run before the reload | Swap with one `sh -c` exec before calling `reload` (Resolved Decision 14) |
+| The traffic panel shows no rows after deploy | The flow watch still polls the stopped local sidecar | Call `FlowWatchRegistry::retarget` in deploy and undeploy (`src-tauri/src/proxy/flowlog.rs`) |
+| Traffic rows from before a deploy reappear after it | The remote ingest read the local `audit.cursor` | Pass `remote/audit.cursor` to `audit::ingest` for the remote site (Resolved Decision 15) |
+| HTTPS from the remote sandbox fails with "unable to get local issuer certificate" | The local `certs/ca.pem` was injected into the remote sandbox | Inject `remote/certs/ca.pem` (Resolved Decision 9) |
+| A `light` spec writes the developer's real `~/.ssh/config` or runs `ssh` | The spec drove `deploy_sandbox` past `plan_deploy`, and `remote_mkdir` and `ssh::write_alias` are not gated by `MIO_MOCK_BACKEND` | Script the failure at `podman.system-connection-list` or `podman.info` so the deploy stops in `plan_deploy` (Resolved Decision 20) |
+| A deployed sandbox's destroy leaves `<name>-proxy` and `mio-proxy-<name>` on the target | The deployed branch of `services::sandbox::destroy` removed only the sandbox containers | Call `proxy::remove_remote_proxy` right after `remove_remote` (Resolved Decision 17) |
+| Deploy to a host fails with `RemoteHostUnsupported` | The target's Podman is below the Resolved Decision 6 floor or uses a refused network backend | Upgrade Podman on the target; `podman --connection <target> info` shows the version and backend |
+| A spec run leaves a `<name>-proxy` container on `mio-tests-remote` that breaks the next run's create | The spec's `after` hook removed only the remote sandbox | Remove `<name>-proxy` and `mio-proxy-<name>` on `REMOTE_CONNECTION` in the `after` hooks of the remote specs |

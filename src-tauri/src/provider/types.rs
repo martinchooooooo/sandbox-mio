@@ -188,6 +188,10 @@ pub struct SidecarSpec {
     /// back (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 4).
     pub log_max_size: Option<String>,
     pub mounts: Vec<SidecarMount>,
+    /// `--tmpfs` arguments (`<path>:<options>`): RAM-only directories the app fills with exec, so a
+    /// stopped container holds nothing at rest (`docs/features/proxy-remote-deploy/02_dev.md`,
+    /// Resolved Decision 1).
+    pub tmpfs: Vec<String>,
     /// Ports published to the host.
     pub publish: Vec<PortPublish>,
     /// `key=value` environment for `command`.

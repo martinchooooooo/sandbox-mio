@@ -5,14 +5,12 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::time::Duration;
 
 use tauri::{AppHandle, Emitter};
 
-use crate::provider::ProviderRegistry;
-
-use super::types::ProxyEngine;
+use super::types::{ProxyEngine, SidecarSite};
 
 const EVENT_NAME: &str = "proxy://flows-changed";
 
@@ -74,7 +72,7 @@ struct Watch {
 pub fn start_watch(
     app: &AppHandle,
     registry: &FlowWatchRegistry,
-    providers: &Arc<ProviderRegistry>,
+    site: &SidecarSite,
     sandbox: &str,
 ) -> bool {
     let mut tasks = registry.0.lock().unwrap();
@@ -87,13 +85,21 @@ pub fn start_watch(
         Some(watch) => watch.watchers + 1,
         None => 1,
     };
-    let handle = tauri::async_runtime::spawn(watch_flows(
-        app.clone(),
-        providers.clone(),
-        sandbox.to_string(),
-    ));
+    let handle = tauri::async_runtime::spawn(watch_flows(app.clone(), site.clone(), sandbox.to_string()));
     tasks.insert(sandbox.to_string(), Watch { handle, watchers });
     true
+}
+
+/// Points a running watch of `sandbox` at `site`, keeping its watcher count, so deploy and undeploy
+/// move the traffic panel to the active sidecar. Does nothing when no panel watches it; the next
+/// `start_watch` resolves the site afresh.
+pub fn retarget(app: &AppHandle, registry: &FlowWatchRegistry, sandbox: &str, site: &SidecarSite) {
+    let mut tasks = registry.0.lock().unwrap();
+    let Some(watch) = tasks.get_mut(sandbox) else {
+        return;
+    };
+    watch.handle.abort();
+    watch.handle = tauri::async_runtime::spawn(watch_flows(app.clone(), site.clone(), sandbox.to_string()));
 }
 
 /// Counts one watcher of `sandbox` gone and stops its poll task with the last one: for an iron-proxy
@@ -113,7 +119,7 @@ pub fn stop_watch(registry: &FlowWatchRegistry, sandbox: &str) {
 
 /// Emits every newly appended flow until the log disappears, which is how proxy teardown is noticed
 /// (`02_dev.md`, Teardown), or until [`stop_watch`] aborts it.
-async fn watch_flows(app: AppHandle, providers: Arc<ProviderRegistry>, sandbox: String) {
+async fn watch_flows(app: AppHandle, site: SidecarSite, sandbox: String) {
     let Ok(path) = super::flows_path(&app, &sandbox) else {
         return;
     };
@@ -127,8 +133,12 @@ async fn watch_flows(app: AppHandle, providers: Arc<ProviderRegistry>, sandbox: 
         let ingest_rewrote = match engine {
             ProxyEngine::IronProxy => match path.parent() {
                 Some(dir) => {
-                    let (_, provider) = super::sidecar_provider(&app, &providers, &sandbox);
-                    super::audit::ingest(provider.as_ref(), &sidecar, dir).await
+                    // One cursor per site: the remote sidecar's log starts empty.
+                    let cursor = match site.local {
+                        true => dir.join(super::audit::CURSOR_FILE),
+                        false => dir.join("remote").join(super::audit::CURSOR_FILE),
+                    };
+                    super::audit::ingest(site.provider.as_ref(), &sidecar, dir, &cursor).await
                 }
                 None => false,
             },

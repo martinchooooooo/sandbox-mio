@@ -13,6 +13,7 @@ import { allCapabilities, type ProviderCapabilities, type ProviderId } from "$li
 
 let projects = $state<Project[]>([]);
 let deployments = $state<Record<string, Deployment>>({});
+let hosts = $state<string[]>([]);
 let capabilities = $state<Record<ProviderId, ProviderCapabilities> | undefined>(undefined);
 let loadError = $state("");
 
@@ -32,6 +33,14 @@ async function loadDeployments() {
     try {
         const list = await invoke<Deployment[]>("sandbox_deployments");
         deployments = Object.fromEntries(list.map((d) => [d.name, d]));
+    } catch (e) {
+        loadError = parseError(e).message;
+    }
+}
+
+async function loadHosts() {
+    try {
+        hosts = await invoke<string[]>("list_sandbox_hosts");
     } catch (e) {
         loadError = parseError(e).message;
     }
@@ -60,6 +69,10 @@ export function liveStatus(project: Project): string {
 
 export function deploymentFor(name: string): Deployment | undefined {
     return deployments[name];
+}
+
+export function hostsList(): string[] {
+    return hosts;
 }
 
 export function capabilitiesFor(provider: ProviderId): ProviderCapabilities | undefined {
@@ -96,6 +109,7 @@ export async function ensureSandboxRemoteState(): Promise<void> {
         started = false;
         return;
     }
+    loadHosts();
     loadCapabilities();
     await refreshSandboxState();
     pollId = setInterval(refreshSandboxState, 3000);

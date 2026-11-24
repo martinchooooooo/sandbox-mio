@@ -9,8 +9,10 @@ use crate::backends;
 use crate::backends::types::{BackendError, EgressRequest, Sandbox, SandboxBackend};
 use crate::error::AppError;
 use crate::network::types::NetworkManager;
-use crate::provider::types::ProviderId;
+use crate::provider::types::{MachineRef, ProviderId};
 use crate::provider::ProviderRegistry;
+use crate::proxy::flowlog::FlowWatchRegistry;
+use crate::proxy::types::SidecarSite;
 use crate::runtime::types::RuntimeManager;
 use crate::sync::types::{SyncEngine, SyncStatus};
 use crate::workspace;
@@ -158,7 +160,8 @@ async fn create_steps(
     // Order is load-bearing: the sidecar denies everything until the first apply (Resolved
     // Decision 18), and the policy can only be read once `store.create` resolved the workspace.
     task.progress(None, "Applying network policy");
-    if let Err(e) = apply_policy_and_inject_ca(app, registry, &sidecar, name, &sandbox.workspace_path).await {
+    let site = crate::proxy::types::SidecarSite::local(registry, provider);
+    if let Err(e) = apply_policy_and_inject_ca(app, &site, name, &sandbox.workspace_path).await {
         tracing::error!(target: "create", %name, error = %e, "create_sandbox: proxy setup failed, rolling back");
         match store.destroy(name).await {
             Ok(()) => cleanup_host_state(name, app),
@@ -188,15 +191,15 @@ async fn create_steps(
 /// sidecar's CA into the sandbox.
 async fn apply_policy_and_inject_ca(
     app: &tauri::AppHandle,
-    registry: &Arc<ProviderRegistry>,
-    podman: &Arc<dyn crate::provider::types::MachineProvider>,
+    site: &crate::proxy::types::SidecarSite,
     name: &str,
     workspace_path: &str,
 ) -> Result<(), AppError> {
+    let podman = &site.provider;
     tracing::info!(target: "create", %name, "create_sandbox: applying network policy");
     let policy = crate::net_policy::load(workspace_path).map_err(BackendError::from)?;
     crate::net_policy::validate(&policy, podman.capabilities()).map_err(BackendError::from)?;
-    crate::proxy::iron::apply_policy(app, registry, name, policy).await?;
+    crate::proxy::iron::apply_policy(app, site, name, policy).await?;
     tracing::info!(target: "create", %name, "create_sandbox: injecting proxy CA");
     let pem = crate::proxy::read_ca_pem(app, name, ProviderId::Podman)?;
     crate::proxy::inject_ca(podman, name, &pem).await?;
@@ -215,12 +218,292 @@ async fn close_panes_and_forwards(
     network.close_sandbox(name).await;
 }
 
-/// Reverses a deploy: flushes remote edits and tears the remote session down.
+/// Starts a sandbox, making sure its sidecar runs first so the sandbox has its network: after a
+/// machine restart, or a remote host reboot, the sidecar is stopped and the remote one has lost its
+/// secrets (`docs/features/proxy-remote-deploy/02_dev.md`, Resolved Decision 5).
+pub async fn start(
+    name: &str,
+    store: &Arc<dyn SandboxBackend>,
+    router: &super::routing::SandboxRouter,
+    app: &tauri::AppHandle,
+) -> Result<(), AppError> {
+    let site = super::proxy::locate_sidecar(router, name).await?;
+    crate::proxy::ensure_sidecar_running(app, &site, name).await?;
+    if site.local {
+        return Ok(store.start(name).await?);
+    }
+    // A deployed sandbox runs on its target; its local container stays stopped.
+    site.provider.start(name).await.map_err(BackendError::from)?;
+    Ok(())
+}
+
+/// The site of a deployed sandbox's remote sidecar on `host`.
+fn remote_site(registry: &ProviderRegistry, host: &str) -> SidecarSite {
+    let machine = MachineRef { provider: ProviderId::Podman, id: host.to_string() };
+    SidecarSite { provider: registry.provider_for(&machine), machine, local: false }
+}
+
+/// Deploys a sandbox to `host`: recreates its network boundary on the target, then moves the sandbox
+/// there and starts syncing. Runs as the `sandbox-deploy:<name>` activity task once the plan has
+/// validated, so a refused target fails fast without opening one.
+#[allow(clippy::too_many_arguments)]
+pub async fn deploy(
+    name: &str,
+    host: &str,
+    store: &Arc<dyn SandboxBackend>,
+    runtime: &Arc<dyn RuntimeManager>,
+    engine: &Arc<dyn SyncEngine>,
+    registry: &Arc<ProviderRegistry>,
+    flows: &FlowWatchRegistry,
+    app: &tauri::AppHandle,
+) -> Result<(), AppError> {
+    // A second deploy would meet the live deployment's containers, which a rollback must never touch.
+    if engine.sessions().await?.iter().any(|s| s.name == name) {
+        return Err(BackendError::CommandFailed(format!(
+            "{name:?} is already deployed; undeploy it first"
+        ))
+        .into());
+    }
+    // Deploy always moves the sidecar; a sandbox without one has no boundary to recreate
+    // (`docs/features/proxy-remote-deploy/02_dev.md`, Resolved Decision 3).
+    crate::proxy::require_sidecar(app, registry, name).await?;
+    let plan = store.plan_deploy(name, host).await?;
+    let id = format!("sandbox-deploy:{name}");
+    activity::scope(app, &id, TaskKind::SandboxDeploy, Some(name.to_string()), |task| async move {
+        deploy_steps(&task, name, host, &plan, store, runtime, engine, registry, flows, app)
+            .await
+            .map_err(TaskFailure::same)
+    })
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn deploy_steps(
+    task: &TaskScope,
+    name: &str,
+    host: &str,
+    plan: &crate::backends::types::DeployPlan,
+    store: &Arc<dyn SandboxBackend>,
+    runtime: &Arc<dyn RuntimeManager>,
+    engine: &Arc<dyn SyncEngine>,
+    registry: &Arc<ProviderRegistry>,
+    flows: &FlowWatchRegistry,
+    app: &tauri::AppHandle,
+) -> Result<(), AppError> {
+    let local = SidecarSite::local(registry, ProviderId::Podman);
+    let remote = remote_site(registry, host);
+    let mut undo = DeployUndo::default();
+    match deploy_to_target(task, name, plan, store, runtime, engine, flows, app, &local, &remote, &mut undo).await {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            tracing::error!(target: "deploy", %name, %host, error = %e, "deploy failed, rolling back");
+            task.progress(None, "Rolling back");
+            rollback(name, host, store, flows, app, &local, &remote, &undo).await;
+            Err(e)
+        }
+    }
+}
+
+/// What a failed deploy has to undo: one flag per resource this run created or stopped.
+#[derive(Default)]
+struct DeployUndo {
+    /// Remote network, sidecar and laptop staging, all created by this run.
+    remote_proxy: bool,
+    /// Set before `store.deploy` runs, as it creates the container in several steps.
+    remote_sandbox: bool,
+    watch_retargeted: bool,
+    local_sidecar_stopped: bool,
+    local_sandbox_stopped: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum UndoStep {
+    RemoveRemoteSandbox,
+    RemoveRemoteProxy,
+    RetargetWatchLocal,
+    StartLocalSidecar,
+    StartLocalSandbox,
+}
+
+impl DeployUndo {
+    /// The rollback steps in execution order, restricted to what this run did.
+    fn steps(&self) -> Vec<UndoStep> {
+        let wanted = [
+            (self.remote_sandbox, UndoStep::RemoveRemoteSandbox),
+            (self.remote_proxy, UndoStep::RemoveRemoteProxy),
+            (self.watch_retargeted, UndoStep::RetargetWatchLocal),
+            (self.local_sidecar_stopped, UndoStep::StartLocalSidecar),
+            (self.local_sandbox_stopped, UndoStep::StartLocalSandbox),
+        ];
+        wanted.into_iter().filter_map(|(done, step)| done.then_some(step)).collect()
+    }
+}
+
+/// The first of `names` already present on the target, which a deploy must not adopt or remove.
+fn remote_collision<'a>(existing: impl IntoIterator<Item = &'a str>, names: &[String]) -> Option<String> {
+    existing.into_iter().find(|e| names.iter().any(|n| n == e)).map(str::to_string)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn deploy_to_target(
+    task: &TaskScope,
+    name: &str,
+    plan: &crate::backends::types::DeployPlan,
+    store: &Arc<dyn SandboxBackend>,
+    runtime: &Arc<dyn RuntimeManager>,
+    engine: &Arc<dyn SyncEngine>,
+    flows: &FlowWatchRegistry,
+    app: &tauri::AppHandle,
+    local: &SidecarSite,
+    remote: &SidecarSite,
+    undo: &mut DeployUndo,
+) -> Result<(), AppError> {
+    let target = remote.machine.clone();
+    let existing = remote.provider.list_instances().await.map_err(BackendError::from)?;
+    let owned = [name.to_string(), crate::proxy::proxy_container_name(name)];
+    if let Some(clash) = remote_collision(existing.iter().map(|i| i.name.as_str()), &owned) {
+        return Err(BackendError::CommandFailed(format!(
+            "the host already has a container named {clash:?}; remove it before deploying {name:?}"
+        ))
+        .into());
+    }
+    task.progress(None, "Preparing network proxy on the host");
+    crate::proxy::ensure_proxy_image(app, &remote.provider, ProviderId::Podman).await?;
+    task.progress(None, "Starting network proxy on the host");
+    let attachment = crate::proxy::create_remote_proxy(app, remote, name).await?;
+    undo.remote_proxy = true;
+    // The remote sandbox carries the placeholders of the applied snapshot, so one snapshot stays
+    // valid for both containers (Resolved Decision 10).
+    let guest_env = crate::net_policy::read_applied(app, name)
+        .map_err(BackendError::from)?
+        .and_then(|a| a.guest_env)
+        .unwrap_or_default();
+    let extra_env: Vec<(String, String)> =
+        guest_env.iter().map(|v| (v.clone(), crate::net_policy::placeholder(v))).collect();
+
+    task.progress(None, "Creating the sandbox on the host");
+    undo.remote_sandbox = true;
+    undo.local_sandbox_stopped = true;
+    let deployment = store.deploy(name, plan, &attachment, &extra_env).await?;
+
+    // Order is load-bearing: the remote sidecar denies everything until this apply (Resolved
+    // Decision 18 of podman-egress-boundary), so `reproduce_remote` must come after it.
+    task.progress(None, "Applying network policy");
+    let policy = crate::net_policy::load(&deployment.alpha).map_err(BackendError::from)?;
+    crate::net_policy::validate(&policy, remote.provider.capabilities()).map_err(BackendError::from)?;
+    crate::proxy::iron::apply_policy(app, remote, name, policy).await?;
+    let pem = crate::proxy::read_remote_ca_pem(app, name)?;
+    crate::proxy::inject_ca(&remote.provider, name, &pem).await?;
+    // Stopped, never removed: the stopped local sandbox's network is fixed at create
+    // (Resolved Decision 12).
+    undo.local_sidecar_stopped = true;
+    if let Err(e) = local.provider.stop_sidecar(&crate::proxy::proxy_container_name(name)).await {
+        tracing::warn!(target: "deploy", %name, error = %e, "could not stop the local proxy sidecar");
+    }
+    crate::proxy::flowlog::retarget(app, flows, name, remote);
+    undo.watch_retargeted = true;
+
+    task.progress(None, "Installing tools on the host");
+    runtime.reproduce_remote(name, &target, &deployment.alpha).await?;
+    engine.create(name, &deployment.alpha, &deployment.beta).await?;
+    Ok(())
+}
+
+/// Reverses a failed deploy, best-effort and warn-logged, undoing only what `undo` recorded
+/// (`docs/features/proxy-remote-deploy/02_dev.md`, Resolved Decision 16).
+#[allow(clippy::too_many_arguments)]
+async fn rollback(
+    name: &str,
+    host: &str,
+    store: &Arc<dyn SandboxBackend>,
+    flows: &FlowWatchRegistry,
+    app: &tauri::AppHandle,
+    local: &SidecarSite,
+    remote: &SidecarSite,
+    undo: &DeployUndo,
+) {
+    for step in undo.steps() {
+        match step {
+            UndoStep::RemoveRemoteSandbox => {
+                if let Err(e) = store.remove_remote(name, host).await {
+                    tracing::warn!(target: "deploy", %name, error = %e, "rollback: could not remove the remote sandbox");
+                }
+            }
+            UndoStep::RemoveRemoteProxy => {
+                crate::proxy::remove_remote_proxy(remote, name).await;
+                crate::proxy::remove_remote_state(app, name);
+            }
+            UndoStep::RetargetWatchLocal => crate::proxy::flowlog::retarget(app, flows, name, local),
+            UndoStep::StartLocalSidecar => {
+                if let Err(e) = crate::proxy::ensure_sidecar_running(app, local, name).await {
+                    tracing::warn!(target: "deploy", %name, error = %e, "rollback: could not restart the local proxy sidecar");
+                }
+            }
+            UndoStep::StartLocalSandbox => {
+                if let Err(e) = store.start(name).await {
+                    tracing::warn!(target: "deploy", %name, error = %e, "rollback: could not restart the local sandbox");
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nothing_created_means_nothing_to_undo() {
+        assert!(DeployUndo::default().steps().is_empty());
+    }
+
+    #[test]
+    fn rollback_undoes_only_recorded_resources() {
+        let undo = DeployUndo { remote_proxy: true, ..Default::default() };
+        assert_eq!(undo.steps(), vec![UndoStep::RemoveRemoteProxy]);
+        let undo = DeployUndo { remote_sandbox: true, local_sandbox_stopped: true, ..Default::default() };
+        assert_eq!(undo.steps(), vec![UndoStep::RemoveRemoteSandbox, UndoStep::StartLocalSandbox]);
+    }
+
+    #[test]
+    fn full_rollback_runs_remote_first_and_local_last() {
+        let undo = DeployUndo {
+            remote_proxy: true,
+            remote_sandbox: true,
+            watch_retargeted: true,
+            local_sidecar_stopped: true,
+            local_sandbox_stopped: true,
+        };
+        assert_eq!(
+            undo.steps(),
+            vec![
+                UndoStep::RemoveRemoteSandbox,
+                UndoStep::RemoveRemoteProxy,
+                UndoStep::RetargetWatchLocal,
+                UndoStep::StartLocalSidecar,
+                UndoStep::StartLocalSandbox,
+            ]
+        );
+    }
+
+    #[test]
+    fn collision_names_the_foreign_container() {
+        let owned = ["web".to_string(), "web-proxy".to_string()];
+        assert_eq!(remote_collision(["db", "web-proxy"], &owned), Some("web-proxy".to_string()));
+        assert_eq!(remote_collision(["db"], &owned), None);
+    }
+}
+
+/// Reverses a deploy: flushes remote edits, removes the remote sandbox and sidecar, tears the
+/// session down and restarts the local sidecar and sandbox.
+#[allow(clippy::too_many_arguments)]
 pub async fn undeploy(
     name: &str,
     store: &Arc<dyn SandboxBackend>,
     engine: &Arc<dyn SyncEngine>,
     network: &Arc<dyn NetworkManager>,
+    registry: &Arc<ProviderRegistry>,
+    flows: &FlowWatchRegistry,
     app: &tauri::AppHandle,
 ) -> Result<(), AppError> {
     let session = engine
@@ -235,8 +518,17 @@ pub async fn undeploy(
     // make the machine unresponsive to a following `podman rm`.
     engine.flush(name).await?;
     store.remove_remote(name, &session.host).await?;
+    let remote = remote_site(registry, &session.host);
+    crate::proxy::remove_remote_proxy(&remote, name).await;
     engine.terminate(name).await?;
-    Ok(store.start(name).await?)
+    let local = SidecarSite::local(registry, ProviderId::Podman);
+    crate::proxy::flowlog::retarget(app, flows, name, &local);
+    // Order is load-bearing: the local sidecar was stopped by deploy and the local sandbox has no
+    // network until it runs again.
+    crate::proxy::ensure_sidecar_running(app, &local, name).await?;
+    store.start(name).await?;
+    crate::proxy::remove_remote_state(app, name);
+    Ok(())
 }
 
 /// Removes a sandbox. For a deployed sandbox, guards against discarding unsynced remote work
@@ -279,7 +571,12 @@ pub async fn destroy(
     // Decision 2) — do not unify them.
     engine.terminate(name).await?;
     store.remove_remote(name, &session.host).await?;
+    crate::proxy::remove_remote_proxy(&remote_site(registry, &session.host), name).await;
     store.destroy(name).await?;
+    crate::net_policy::remove_applied(app, name);
     cleanup_host_state(name, app);
+    // Removes the local sidecar, its network and the whole state directory, `remote/` included.
+    let (id, provider) = crate::proxy::sidecar_provider(app, registry, name);
+    crate::proxy::remove_proxy(app, &provider, id, name).await;
     Ok(())
 }

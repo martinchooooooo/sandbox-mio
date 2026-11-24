@@ -127,9 +127,9 @@ pairs pointing at the same in-container path.
    bundles are whole-home tar archives, and extracting one bearer token from one is agent-specific
    work with no general shape.
 6. **Remote deploy scope** (Open Question 4) — out of scope for v1, and refused rather than silently
-   degraded: `deploy` of a proxy-enabled sandbox fails with a new
-   `BackendError::ProxyDeployUnsupported`. Deploying without a proxy would move a sandbox the user
-   enabled inspection for onto an uninspected network, which is a worse outcome than an error.
+   degraded: `deploy` of a proxy-enabled sandbox failed with a new
+   `BackendError::ProxyDeployUnsupported`. Superseded: proxied sandboxes now deploy with a remote
+   sidecar ([proxy-remote-deploy](../proxy-remote-deploy/02_dev.md)).
 7. **Non-HTTP(S) traffic** (Open Question 5) — accepted and documented, not surfaced per-connection.
    Anything ignoring `http_proxy`/`https_proxy` leaves over the bridge's own NAT uninspected. The
    proxy panel states the limitation once; per-connection reporting is deferred
@@ -212,7 +212,8 @@ subsystems: it owns no long-lived state, and every external call it makes alread
   (`src-tauri/src/error.rs`), mirrored into `AppErrorKind` (`src/lib/errors.ts`).
 - `src-tauri/src/backends/mod.rs`: `CliBackend::create` passes the attachment's `network` and `env`
   into the `InstanceSpec` it builds, and refuses a proxy attachment when `exec_capable` is false.
-  `CliBackend::deploy` returns `ProxyDeployUnsupported` when `<name>-proxy` exists.
+  `CliBackend::deploy` returned `ProxyDeployUnsupported` when `<name>-proxy` existed; removed by
+  [proxy-remote-deploy](../proxy-remote-deploy/02_dev.md), Resolved Decision 18.
 - `src-tauri/src/credentials/mod.rs`: `ensure_auth_container` passes `None` — an auth container is a
   throwaway and never proxied.
 - `src-tauri/src/services/sandbox.rs`: `create` takes a `proxy: bool` and, when set, runs
@@ -320,4 +321,4 @@ the entire feature — the workspace is bind-mounted into the sandbox at `/root/
 | A real secret shows up inside the sandbox despite proxy injection | The value was written into `.mio/proxy-rules.json`, which lives in the workspace bind-mounted at `/root/work` | Keep secret *ids* in `.mio/proxy-rules.json` and values in `<app_data_root>/proxy/secrets.json`, which is mounted into the proxy container only (Resolved Decision 4) |
 | `podman network rm` fails with the network still in use during teardown | `remove_proxy` removed the network before the `<sandbox>-proxy` container attached to it | Remove the container first, then the network, then the state directory — the order `remove_proxy` (`src-tauri/src/proxy/mod.rs`) documents |
 | `mock_configure` rejects a `podman.network-create` key in a light spec | `KNOWN_CALLS` in `src-tauri/src/mockctl/mod.rs` lists only registered keys, and `derive_podman_key` needs a depth-2 arm for `network` or the key derives as `podman.network` | Add the `"network"` arm to `derive_podman_key` and the three `podman.network-*` keys to `KNOWN_CALLS` (Phase A) |
-| Deploying a proxy-enabled sandbox fails with `ProxyDeployUnsupported` | Remote proxy creation is deliberately out of scope for v1 (Resolved Decision 6), and deploying without a proxy would silently drop inspection | Destroy and recreate the sandbox without the proxy toggle if it must be deployed; remote support is tracked in `docs/features/network-proxy/04_improvements.md` |
+| Deploying a proxy-enabled sandbox failed with `ProxyDeployUnsupported` | Remote proxy creation was out of scope for v1 (Resolved Decision 6) | Resolved: a proxied sandbox deploys with a remote sidecar, see [proxy-remote-deploy](../proxy-remote-deploy/02_dev.md) |

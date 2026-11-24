@@ -34,8 +34,8 @@ to keep v1's surface to one toggle; the field is additive whenever it is wanted.
 
 ## Remote-deployed sandboxes keep their proxy
 
-`02_dev.md`'s Resolved Decision 6 refuses `deploy` for a proxy-enabled sandbox with
-`BackendError::ProxyDeployUnsupported` rather than deploying it unproxied. Supporting it means
+Resolved by [proxy-remote-deploy](../proxy-remote-deploy/02_dev.md): `02_dev.md`'s Resolved Decision 6
+refused `deploy` for a proxy-enabled sandbox with `BackendError::ProxyDeployUnsupported`. Supporting it meant
 creating the network and the `<sandbox>-proxy` container on the target Podman connection during
 `CliBackend::deploy` (`src-tauri/src/backends/mod.rs`), re-injecting a target-side CA, and deciding
 what happens to the local proxy meanwhile. Deferred because rootless bridge-network behaviour on a

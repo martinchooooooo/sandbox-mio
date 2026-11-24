@@ -20,7 +20,6 @@
 * [chat-mcp-learning](chat-mcp-learning/index.md) - A built-in offline demo MCP server and MCP visibility in the native chat (server badges on tool calls, a tools popover), so users can learn what an MCP server does with the local model.
 * [cloud-sandboxes](cloud-sandboxes/index.md) - Top-level Cloud Sandboxes nav panel for administering remote Podman hosts, including Oracle Cloud and Google Cloud provisioning.
 * [mcp-servers](mcp-servers/index.md) - An app-wide library of MCP servers, added by pasting a URL or README snippet and switched on per sandbox, rendered into the native MCP config of Claude Code, OpenCode and pi so Paseo, the terminal and the native chat all use them.
-* [proxy-remote-deploy](proxy-remote-deploy/index.md) - Let a proxied sandbox be deployed to a remote host; remote deploy is blocked for every sandbox until it lands.
 
 ## implemented
 
@@ -56,6 +55,7 @@
 * [podman-process-isolation](podman-process-isolation/index.md) - Stop spawned processes on Windows from inheriting the app's console handles.
 * [podman-startup-recovery](podman-startup-recovery/index.md) - Graceful recovery when the Podman machine is stopped or its socket is missing after a host restart.
 * [proxy-credential-secrets](proxy-credential-secrets/index.md) - Keep the GitHub token on the host: sandboxes hold a fixed placeholder that the iron-proxy sidecar swaps for the real token on GitHub requests.
+* [proxy-remote-deploy](proxy-remote-deploy/index.md) - Deploy a bounded sandbox to a remote Podman host by recreating its internal network, iron-proxy sidecar, secret files, policy reload and audit polling there; a deployed sandbox keeps its egress boundary on the target.
 * [proxy-traffic-viewer](proxy-traffic-viewer/index.md) - Per-sandbox panel listing the HTTP(S) flows the proxy sidecar observed.
 * [remote-deploys](remote-deploys/index.md) - Deploy a sandbox from the local Podman machine to a remote Podman host.
 * [remote-sync](remote-sync/index.md) - Run a sandbox on a remote host while mirroring its workspace to the laptop with Mutagen.

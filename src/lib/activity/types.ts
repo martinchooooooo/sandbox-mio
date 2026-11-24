@@ -9,7 +9,8 @@ export type TaskKind =
   | "proxy-image-pull"
   | "machine-setup"
   | "base-image-build"
-  | "sandbox-create";
+  | "sandbox-create"
+  | "sandbox-deploy";
 export type TaskStatus = "running" | "succeeded" | "failed";
 
 /** One long-running background operation (mirrors Rust `Task`). */

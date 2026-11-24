@@ -5,54 +5,32 @@ feature: proxy-remote-deploy
 ---
 # Proxy Remote Deploy: Deferred Improvements
 
-Ideas noticed while planning `01_ideas.md`/`02_dev.md` that are worthwhile but out of scope for the
-initial "keep the proxy across a deploy" feature.
+Work noticed while planning [01_ideas.md](01_ideas.md) and [02_dev.md](02_dev.md) that is worthwhile but out of scope for deploying a bounded sandbox. An earlier version of this file was written for the removed mitmproxy sidecar; its "Switching an already-deployed sandbox's proxy toggle" entry is gone because `docs/features/proxy-toggle-management/` was abandoned and every sandbox now has a sidecar.
 
-## Cross-connection sweep for orphaned remote proxy resources
+## Cross-connection sweep
 
-`02_dev.md` Resolved Decision 8 keeps `proxy::sweep` (`src-tauri/src/proxy/mod.rs`) local-only: a
-remote proxy sidecar's lifecycle is handled entirely by `deploy`/`undeploy`/`destroy`'s explicit calls,
-not a periodic scan. A process crash or forced-quit mid-deploy (after `create_proxy_remote` succeeds
-but before the sandbox container or CA injection completes) could leave a remote `<sandbox>-proxy`
-container, its network, and its state directory (CA private key included) on the target connection
-with nothing on the local side to know it exists. A future iteration could extend the startup sweep
-to also enumerate registered remote connections and remove orphaned proxy resources whose base
-sandbox is absent from that connection's own `podman ps`. Deferred because it requires enumerating
-every registered connection on every app startup — an unbounded, network-dependent operation the
-current local-only sweep deliberately avoids — and because the crash window it protects against is
-narrow and already leaves recoverable state (a stopped container, not silently corrupted data).
+`proxy::sweep` (`src-tauri/src/proxy/mod.rs`) scans only the local connection (`02_dev.md`, Resolved Decision 19). A crash or forced quit mid-deploy, after the remote sidecar exists but before the rollback runs, can leave `<sandbox>-proxy`, `mio-proxy-<sandbox>` or the sandbox container on the target with no Mutagen session pointing at them. A future sweep could enumerate registered connections and remove sidecars whose sandbox has no session there. Deferred because enumerating every connection at startup is unbounded and network-dependent, and the window is narrow.
 
-## Unified remote-provisioning progress reporting
+## Air-gapped deploy targets
 
-`02_dev.md` Resolved Decision 5 notes that `ensure_proxy_image`'s existing `activity::TaskRegistry`
-reporting (`src-tauri/src/proxy/mod.rs`) works unchanged for a remote pull, but that whether this
-should be presented to the user alongside `docs/features/remote-deploys/01_ideas.md`'s own
-undecided "does `deploy` stream base-image build progress" question is unresolved. A future
-iteration could give `deploy` one unified progress channel covering base-image build, mitmproxy image
-pull, and remote proxy creation as a single multi-step sequence, rather than two independently
-reported activities. Deferred because it depends on `remote-deploys/01_ideas.md`'s own open question
-being resolved first, which this document does not control.
+`02_dev.md`, Resolved Decision 11 pulls the iron-proxy image from Docker Hub on the target. A target without registry access could receive the image from the laptop with `podman image scp` or `podman save`/`load` over the connection. Deferred because `mise install` in `reproduce_remote` needs internet access on the target anyway, so an air-gapped target cannot deploy for other reasons.
 
-## A live two-machine spike against a real remote host
+## A real non-WSL remote host in the e2e harness
 
-`01_ideas.md`'s entire Validation section is a placeholder for work this feature could not do: no
-real non-WSL remote Podman host was available to spike against. Running that spike — ideally on one
-of the free-tier cloud VM candidates `docs/features/cloud-sandboxes/01_ideas.md` already identifies
-(Oracle Cloud's Always Free A1, or Google Cloud's `e2-micro`) once that feature's own onboarding
-panel exists, or by hand against a manually provisioned VM sooner — is the single highest-value
-follow-up to this document, and is what unblocks `02_dev.md`'s Phase E. Not recorded as an Open
-Question in `01_ideas.md` because it is not a design decision to make; it is a concrete task for
-whichever future agent has access to real remote infrastructure.
+The `standard` tier's deploy target, `mio-tests-remote`, is a second WSL Podman machine sharing the local machine's image, so SELinux labelling, firewalld and older distribution Podman versions are never exercised (`02_dev.md`, Resolved Decision 7). A harness option pointing `REMOTE_CONNECTION` at a provisioned VM (for example a free-tier VM from `docs/features/cloud-sandboxes/01_ideas.md`) would close the gap. Deferred until such a host is available to the project.
 
-## Switching an already-deployed sandbox's proxy toggle
+## GitHub CLI login inside a deployed sandbox
 
-Both `01_ideas.md` and `02_dev.md` assume a sandbox's proxy-enabled-ness is decided at local `create`
-time and simply follows the sandbox through `deploy`/`undeploy`. Turning inspection on or off for a
-sandbox that is *already* deployed (without first undeploying it back to local) is not covered —
-`docs/features/network-proxy/02_dev.md`'s own Cross-Cutting Concerns already establishes that toggling
-proxy state means recreating the sandbox container even in the local-only case, and doing that for a
-remote container mid-deploy is a materially larger change (recreating a remote container, re-running
-CA injection, likely a brief connectivity gap) than this document scopes. Deferred until the
-local-only toggle-by-recreation feature (`docs/features/network-proxy/04_improvements.md`, "Switching
-an existing sandbox between proxied and unproxied") is itself built, since a remote version would
-extend that mechanism rather than invent its own.
+`reconcile_locked` (`src-tauri/src/services/github_access.rs`) returns early for a deployed sandbox, so the fresh remote container never gets the gh placeholder login, although the remote sidecar holds the GitHub binding and mise's placeholder variable works. Applying the login on the remote site would need `github::apply` against the site's provider. Deferred because it predates this feature and is independent of the boundary.
+
+## One progress channel for deploy
+
+`02_dev.md` wraps deploy in one activity task, but the iron-proxy image pull still reports as its own `proxy-image-pull` task and the remote base-image build reports nothing (`docs/features/remote-deploys/01_ideas.md`, Open Questions). Folding both into the deploy task's steps would show deploy as one sequence. Deferred because the base-image build has no progress source yet.
+
+## SELinux labels for the remote workspace mount
+
+`PodmanProvider::create_instance` (`src-tauri/src/provider/mod.rs`) bind-mounts the remote workspace without a `:Z` or `:z` label. On an SELinux-enforcing target the sandbox may be denied access to `/root/work`. The remote sidecar avoids the problem by holding no bind mounts (`02_dev.md`, Resolved Decision 8); the workspace mount predates this feature. Deferred until Phase A check 4 shows whether it bites.
+
+## Measuring the Podman 4.0 floor
+
+The preflight accepts Podman 4.0 or newer with netavark (`02_dev.md`, Resolved Decision 6) on the strength of the upstream documentation; only Podman 5.8.6 was run (`spike/README.md`, check 4 not run). A measured run on a 4.x host, ideally with SELinux enforcing and firewalld, would confirm or raise the floor. Deferred until such a host is available.

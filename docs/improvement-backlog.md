@@ -20,7 +20,7 @@ This document is an interim task list, compiled on 2026-11-23 at commit `2e0e665
 
 ### T1. Remote deploy is refused for every sandbox — Feature
 
-- [ ] Resolved
+- [x] Resolved
 - **Problem:** every new sandbox gets an iron-proxy sidecar with no opt-out, and `deploy` refuses a proxied sandbox with `BackendError::ProxyDeployUnsupported` (`src-tauri/src/backends/mod.rs:622`). Remote deploy, a headline capability in the root `AGENTS.md`, is therefore unusable, and the remote e2e specs (`deploy-remote`, `base-image-remote`, the remote part of `runtime-management`) are skipped.
 - **Source:** `docs/features/proxy-remote-deploy/feature.md` (status note). The existing `01_ideas.md` and `02_dev.md` there describe the removed mitmproxy sidecar and must not be implemented from.
 - **Done when:** a proxied sandbox deploys to a remote Podman host with its internal network, dual-homed iron-proxy sidecar, per-binding secret files, policy reload and audit-log polling recreated on the target; the skipped remote specs run again.

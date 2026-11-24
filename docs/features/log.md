@@ -5,6 +5,10 @@ Records feature status changes only: creation (`Create`), reaching `implemented`
 history with at most one `Create` and one `Implement` entry per feature, so seeded dates are
 approximate. New entries go on top.
 
+## 2026-11-24
+
+* **Implement** [proxy-remote-deploy](proxy-remote-deploy/index.md): a sandbox with a sidecar can deploy to a remote Podman host, which gets its own internal network, sidecar and memory-only secret files, live policy applies and audit polling; the remote standard specs pass on `mio-tests-remote`, a real Linux host was not tried
+
 ## 2026-11-23
 
 * **Implement** [local-models-ux](local-models-ux/index.md): the Models page is a sparse Your Model, Your computer and Other Models layout with plain-language cards and fit reasons, one shared model store drives it and the onboarding with plain wake-up narration, and the copy is translated into German and Russian

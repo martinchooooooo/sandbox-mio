@@ -5,6 +5,7 @@
 pub mod github_access;
 pub mod inference_reach;
 pub mod panes;
+pub mod proxy;
 pub mod resources;
 pub mod routing;
 pub mod sandbox;

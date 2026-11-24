@@ -8,9 +8,11 @@
     import type { ProviderId } from "$lib/providers";
     import {
         deploymentFor,
+        hostsList,
         capabilitiesFor,
         refreshSandboxState,
     } from "$lib/sandbox/state.svelte";
+    import { parseError } from "$lib/errors";
 
     let {
         sandboxName,
@@ -30,9 +32,41 @@
     // the user could do to make it available.
     const canDeploy = $derived(capabilitiesFor(provider)?.remoteTargets ?? false);
 
+    // Whether the host picker is open, and the host chosen within it.
+    let picking = $state(false);
+    let chosenHost = $state("");
+    // How many secret values deploying would copy to the chosen host; null until counted.
+    let secretCount = $state<number | null>(null);
+
     // The toggle is optimistic: Mutagen does not surface a "paused" status, so on/off is tracked
     // locally, defaulting on for a freshly listed deployment.
     let syncOn = $state(true);
+
+    function openPicker() {
+        picking = true;
+        chosenHost = hostsList()[0] ?? "";
+    }
+
+    // Non-blocking: the count only informs, the Deploy button stays enabled.
+    $effect(() => {
+        if (!picking) return;
+        secretCount = null;
+        invoke<number>("deploy_secret_count", { name: sandboxName, workspacePath })
+            .then((n) => (secretCount = n))
+            .catch((e) => console.warn(parseError(e).message));
+    });
+
+    async function deploy() {
+        if (!chosenHost) return;
+        if (await action.run(
+            "deploy",
+            () => invoke("deploy_sandbox", { name: sandboxName, host: chosenHost }),
+            { message: m.projects_status_deploying({ host: chosenHost }) }
+        )) {
+            picking = false;
+            await refreshSandboxState();
+        }
+    }
 
     async function undeploy() {
         if (await action.run(
@@ -79,12 +113,34 @@
             </span>
         </div>
     {:else if canDeploy}
-        <!-- Every sandbox has a proxy sidecar, which has no remote counterpart yet
-             (docs/features/proxy-remote-deploy/feature.md). -->
-        <div class="flex items-center gap-2" data-remote-deploy-unavailable>
-            <Button variant="ghost" size="sm" disabled>{m.projects_deploy()}</Button>
-            <span class="text-muted-foreground text-xs">Not available yet. <!-- TODO(i18n) --></span>
-        </div>
+        {#if picking}
+            <div class="flex items-center gap-2">
+                {#if hostsList().length === 0}
+                    <span class="text-muted-foreground text-xs flex-1">{m.projects_no_hosts()}</span>
+                {:else}
+                    <select bind:value={chosenHost} class="flex-1 rounded border bg-background px-2 py-1 text-xs">
+                        {#each hostsList() as host (host)}
+                            <option value={host}>{host}</option>
+                        {/each}
+                    </select>
+                    <Button size="sm" loading={action.busy === "deploy"} disabled={action.busy !== null} onclick={deploy}>
+                        {m.projects_deploy_confirm()}
+                    </Button>
+                {/if}
+                <Button size="sm" variant="outline" disabled={action.busy !== null} onclick={() => (picking = false)}>
+                    {m.projects_cancel()}
+                </Button>
+            </div>
+            {#if chosenHost && secretCount}
+                <span class="text-muted-foreground text-xs" data-deploy-secret-notice>
+                    {secretCount} secret{secretCount === 1 ? "" : "s"} will be copied to {chosenHost}'s memory. <!-- TODO(i18n) -->
+                </span>
+            {/if}
+        {:else}
+            <Button variant="ghost" size="sm" onclick={openPicker} disabled={action.busy !== null}>
+                {m.projects_deploy()}
+            </Button>
+        {/if}
     {:else}
         <span class="text-muted-foreground text-xs">{m.projects_no_remote_target()}</span>
     {/if}
