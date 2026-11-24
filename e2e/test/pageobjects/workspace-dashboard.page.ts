@@ -176,8 +176,10 @@ class WorkspaceDashboardPage {
     return $("span=No agents installed.");
   }
 
+  // Exact label match: a substring match hits the Overview cards' hint text first ("Add the Pi agent
+  // below to turn this on.").
   agentInstallButton(agentLabel: string): Element {
-    return $(`span*=${agentLabel}`).$("../..").$("button=install");
+    return $(`span=${agentLabel}`).$("../..").$("button=install");
   }
 
   agentAuthButton(agentLabel: string): Element {

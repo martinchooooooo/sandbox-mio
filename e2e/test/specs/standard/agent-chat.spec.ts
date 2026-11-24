@@ -372,9 +372,8 @@ describe("Native agent chat — real pi supervisor on Podman", function () {
     await sandboxView.clickTab(projectName, "agentchat");
     // /run is not a tmpfs, so the old pid file survives and only the cmdline check rejects it.
     assert.strictEqual(sandboxSh(`cat ${STATE}/pi.pid`, false), piPid, "pi.pid did not survive the restart");
-    const reconnect = await $("[data-chat-reconnect]");
-    await reconnect.waitForClickable({ timeout: COMMAND });
-    await reconnect.click();
+    // Reopening the tab remounts the chat view, which reattaches on its own when it was disconnected
+    // (ChatView.svelte), so there is no Reconnect to click here — that banner is asserted above.
     await chat.waitForConnection(projectName, "attached", SUBPROCESS);
     assert.strictEqual(await chat.attribute(projectName, "data-writer"), "true");
 

@@ -117,8 +117,12 @@ export default class ProjectRow {
     }
   }
 
+  // Create opens the new sandbox and its agent preinstall starts the container, so the card can
+  // already show Stop; "start" then means "make sure it runs". Specs that need a stopped sandbox
+  // call stop() first.
   async start(): Promise<void> {
     await showHome();
+    if (await (await this.stopButton).isExisting()) return;
     await this.#clickButton(this.startButton);
   }
 

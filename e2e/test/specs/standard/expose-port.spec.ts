@@ -95,6 +95,14 @@ describe("Exposing sandbox ports (network::expose_port / unexpose_port / watch_p
     );
 
     const hostPort = await workspaceDashboard.portRowHostPort(label);
+    // The port row renders when the expose command returns; Mutagen can still be listing the forward
+    // as absent or Connecting for a moment, so poll before asserting.
+    await browser
+      .waitUntil(() => forwardList(`expose-${projectName}-${MANUAL_PORT}`).includes("Connected"), {
+        timeout: COMMAND,
+        interval: 500,
+      })
+      .catch(() => undefined);
     const fwdOut = forwardList(`expose-${projectName}-${MANUAL_PORT}`);
     assert(
       fwdOut.includes("Connected"),
