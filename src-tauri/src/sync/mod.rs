@@ -117,6 +117,9 @@ async fn run_via_discarding(runner: &Arc<dyn ProcessRunner>, args: &[&str]) {
     }
 }
 
+/// Tries `forward_create` makes before giving up.
+const FORWARD_CREATE_ATTEMPTS: u32 = 3;
+
 /// Serializes every terminate-then-create pair below.
 static FORWARD_CREATE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -132,9 +135,21 @@ pub async fn forward_create<R: Runtime>(
     let _ = run(app, &["forward", "terminate", name]).await;
     let source = format!("tcp:127.0.0.1:{local_port}");
     let dest = format!("{remote_alias}:tcp:127.0.0.1:{remote_port}");
-    run(app, &["forward", "create", &format!("--name={name}"), &source, &dest])
-        .await
-        .map(|_| ())
+    // Mutagen dials the destination while creating the session, and that handshake through the
+    // alias's `podman exec` ProxyCommand intermittently ends in EOF right after the container was
+    // started or exec'd into. The same call succeeds moments later, so retry before reporting it.
+    let mut attempt = 1;
+    loop {
+        match run(app, &["forward", "create", &format!("--name={name}"), &source, &dest]).await {
+            Ok(_) => return Ok(()),
+            Err(e) if attempt < FORWARD_CREATE_ATTEMPTS => {
+                tracing::warn!(target: "sync", %name, attempt, error = %e, "forward create failed, retrying");
+                attempt += 1;
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+            Err(e) => return Err(e),
+        }
+    }
 }
 
 /// Idempotent reverse of `forward_create`: listen on the remote's loopback, dial the host. Loopback
