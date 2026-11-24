@@ -56,11 +56,20 @@ pub fn command<R: Runtime>(app: &AppHandle<R>) -> Result<tokio::process::Command
 /// `forward`/`version` free functions only; [`MutagenCli`]'s own calls go through [`run_via`] so the
 /// e2e `light` tier can script them (`docs/features/scriptable-mock-backend/02_dev.md`, Phase C).
 async fn run<R: Runtime>(app: &AppHandle<R>, args: &[&str]) -> Result<String, SyncError> {
+    let started = std::time::Instant::now();
     let output = command(app)?
         .args(args)
         .output()
         .await
         .map_err(|e| SyncError::Sidecar(e.to_string()))?;
+    // These calls bypass the process runner and its `log_call_outcome`, so they are timed here.
+    // Failure is `debug`: terminate-before-create fails by design, and callers report real failures.
+    let ms = started.elapsed().as_millis();
+    if output.status.success() {
+        tracing::info!(target: "mutagen", argv = %args.join(" "), ms, "mutagen call ok");
+    } else {
+        tracing::debug!(target: "mutagen", argv = %args.join(" "), ms, "mutagen call exited non-zero");
+    }
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {

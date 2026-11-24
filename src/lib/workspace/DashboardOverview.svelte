@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { invoke } from "@tauri-apps/api/core";
     import { HugeiconsIcon } from "@hugeicons/svelte";
     import { LoaderPinwheelIcon } from "@hugeicons/core-free-icons";
     import Button from "$lib/components/ui/button/button.svelte";
@@ -9,6 +10,7 @@
     import { panesOf, sandboxHasPane } from "$lib/workspace/state.svelte";
     import { closePane, launchApp } from "$lib/workspace/navigation.svelte";
     import { packagesFor } from "$lib/workspace/packages.svelte";
+    import { liveStatus, sandboxesList } from "$lib/sandbox/state.svelte";
     import AgentManager from "../../routes/projects/AgentManager.svelte";
     import StatusSummary from "./StatusSummary.svelte";
     import GithubAccess from "./GithubAccess.svelte";
@@ -36,6 +38,17 @@
     const installedAgents = $derived(
         AGENTS.filter((a) => a.misePackages.every((p) => packages.includes(miseKey(p)))),
     );
+    // Start Paseo before the user asks for it. Both inputs are booleans, so the effect re-runs only
+    // when the sandbox starts or gains its first agent, e.g. right after an install.
+    const entry = $derived(sandboxesList().find((p) => p.name === sandboxName));
+    const running = $derived(entry ? liveStatus(entry) === "running" : false);
+    const hasAgent = $derived(installedAgents.length > 0);
+    $effect(() => {
+        if (running && hasAgent) {
+            // Fire and forget: the backend logs a failed pre-warm.
+            invoke("prewarm_agent_web", { name: sandboxName }).catch(() => {});
+        }
+    });
     // An open pane stays usable so it can still be switched to and closed once its agent is gone.
     const apps = $derived(
         LAUNCHABLE_APPS.map((app) => ({

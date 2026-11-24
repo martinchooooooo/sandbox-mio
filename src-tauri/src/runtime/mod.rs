@@ -9,9 +9,10 @@ mod paseo_plugins;
 #[cfg(any(debug_assertions, test))]
 mod plugin_archive;
 
+use std::collections::HashMap;
 use std::process::Output;
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex};
 
 use mock::MockRuntime;
 use types::{MiseRuntime, RuntimeError, RuntimeManager};
@@ -24,7 +25,8 @@ const MANIFEST_REL: &str = "mise.toml";
 
 const LOCKFILE_REL: &str = "mise.lock";
 
-const PASEO_WEB_PORT: u16 = 6767;
+/// The container port the Paseo daemon listens on and its forward dials.
+pub const PASEO_WEB_PORT: u16 = 6767;
 
 /// Pinned because the launch script and the login seeded by `prepare_agent_web_pane`
 /// (`src-tauri/src/services/panes.rs`) rely on Paseo internals; re-check both when bumping.
@@ -41,9 +43,17 @@ const PASEO_UP_INSTALL_NEEDED: i32 = 10;
 const PASEO_UP_STARTING: i32 = 11;
 /// [`PASEO_UP_SCRIPT`] exit code: the delivered plugins are stale; deliver them and run it again.
 const PASEO_UP_PLUGINS_STALE: i32 = 12;
+/// `podman exec` exit code and stderr marker for a container that is not running.
+const PODMAN_EXEC_NOT_RUNNING_CODE: i32 = 125;
+const PODMAN_EXEC_NOT_RUNNING_MARKER: &str = "container state improper";
 /// Each starting run waits about 15s, so with the install and delivery runs this covers a cold
 /// start of about a minute.
 const PASEO_UP_ATTEMPTS: usize = 6;
+
+/// One lock per sandbox around `prepare_agent_web`. paseo-up's flock covers only the script, so a
+/// pre-warm racing a pane open would otherwise run the `mise use` and plugin delivery twice at once.
+static AGENT_WEB_LOCKS: LazyLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Replaces the in-sandbox plugin directory with the archive on stdin.
 const PASEO_PLUGINS_DELIVER_SCRIPT: &str = include_str!("../../resources/agent-web/paseo-plugins-deliver.sh");
@@ -139,13 +149,23 @@ impl MiseRuntime {
     }
 }
 
+/// Whether `out` is podman refusing an exec because the container is stopped.
+fn exec_hit_stopped_container(out: &Output) -> bool {
+    out.status.code() == Some(PODMAN_EXEC_NOT_RUNNING_CODE)
+        && String::from_utf8_lossy(&out.stderr).contains(PODMAN_EXEC_NOT_RUNNING_MARKER)
+}
+
 /// Splits a pinned mise tool spec such as `node@24.19.0` into its tool name and version.
 fn split_tool_spec(spec: &str) -> (&str, &str) {
     spec.rsplit_once('@').unwrap_or((spec, ""))
 }
 
 /// The plain inputs of [`PASEO_UP_SCRIPT`]; the password travels separately as a secret.
-fn paseo_up_env(project_name: &str, plugins: &paseo_plugins::PluginBundle) -> Vec<(String, String)> {
+fn paseo_up_env(
+    project_name: &str,
+    plugins: &paseo_plugins::PluginBundle,
+    prewarm: bool,
+) -> Vec<(String, String)> {
     let (node, node_version) = split_tool_spec(PASEO_NODE_TOOL);
     let (cli, cli_version) = split_tool_spec(PASEO_CLI_TOOL);
     [
@@ -158,6 +178,7 @@ fn paseo_up_env(project_name: &str, plugins: &paseo_plugins::PluginBundle) -> Ve
         ("MIO_PASEO_PLUGIN_DIR", PASEO_PLUGIN_DIR.to_string()),
         ("MIO_PASEO_PLUGIN_HASH", plugins.hash.clone()),
         ("MIO_PASEO_PLUGIN_IDS", plugins.ids.join(" ")),
+        ("MIO_PASEO_PREWARM", if prewarm { "1" } else { "0" }.to_string()),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v))
@@ -227,48 +248,74 @@ impl RuntimeManager for MiseRuntime {
         check(provider.exec(name, &["mise", "install"], self.network_opts(name)).await?).map(|_| ())
     }
 
+    async fn ensure_running(&self, name: &str, machine: &MachineRef) -> Result<(), RuntimeError> {
+        Ok(self.provider_on(machine).start(name).await?)
+    }
+
     async fn prepare_agent_web(
         &self,
         name: &str,
         machine: &MachineRef,
         password: &str,
-    ) -> Result<u16, RuntimeError> {
+        opening: bool,
+    ) -> Result<(), RuntimeError> {
+        let lock = AGENT_WEB_LOCKS.lock().unwrap().entry(name.to_string()).or_default().clone();
+        let _serialized = lock.lock().await;
         let provider = self.provider_on(machine);
-        // The container must be running before any `podman exec`.
-        provider.start(name).await?;
 
         // The script reads the workspace's `mise.toml`, and its `mise exec` launch puts the
         // workspace's tools on the daemon's PATH and applies `mise.toml [env]` to its agents.
         let plugins = paseo_plugins::plugin_bundle()?;
         let script_opts = || ExecOpts {
             workdir: Some(WORKSPACE_MOUNT.to_string()),
-            env: paseo_up_env(name, &plugins),
+            env: paseo_up_env(name, &plugins, !opening),
             secret_env: vec![("PASEO_PASSWORD".to_string(), password.to_string())],
             detached: false,
         };
         let argv = ["sh", "-c", PASEO_UP_SCRIPT, "paseo-up"];
         let mut installed = false;
         let mut delivered = false;
-        for _ in 0..PASEO_UP_ATTEMPTS {
-            let out = provider.exec(name, &argv, script_opts()).await?;
+        for attempt in 1..=PASEO_UP_ATTEMPTS {
+            let began = std::time::Instant::now();
+            let mut out = provider.exec(name, &argv, script_opts()).await?;
+            // Only the first exec: a container stopped on a later attempt was stopped during the
+            // open, and starting it again would undo the user's stop.
+            if opening && attempt == 1 && exec_hit_stopped_container(&out) {
+                provider.start(name).await?;
+                out = provider.exec(name, &argv, script_opts()).await?;
+            }
             let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            tracing::info!(
+                target: "runtime",
+                sandbox = name,
+                attempt,
+                code = out.status.code().unwrap_or(-1),
+                ms = began.elapsed().as_millis() as u64,
+                "paseo-up run"
+            );
+            for line in String::from_utf8_lossy(&out.stdout).lines().filter(|l| l.starts_with("timing ")) {
+                tracing::debug!(target: "runtime", sandbox = name, attempt, "paseo-up {line}");
+            }
             match out.status.code() {
                 Some(0) => {
                     if !stderr.is_empty() {
                         tracing::warn!(target: "runtime", sandbox = name, %stderr, "paseo-up reported a problem");
                     }
-                    return Ok(PASEO_WEB_PORT);
+                    return Ok(());
                 }
                 // Only when missing: a `mise use` on every open re-resolves the tools.
                 Some(PASEO_UP_INSTALL_NEEDED) if !installed => {
+                    let began = std::time::Instant::now();
                     check(
                         provider
                             .exec(name, &["mise", "use", PASEO_NODE_TOOL, PASEO_CLI_TOOL], self.network_opts(name))
                             .await?,
                     )?;
                     installed = true;
+                    tracing::info!(target: "runtime", sandbox = name, ms = began.elapsed().as_millis() as u64, "paseo tools installed");
                 }
                 Some(PASEO_UP_PLUGINS_STALE) if !delivered => {
+                    let began = std::time::Instant::now();
                     let deliver = [
                         "sh",
                         "-c",
@@ -285,6 +332,7 @@ impl RuntimeManager for MiseRuntime {
                         )));
                     }
                     delivered = true;
+                    tracing::info!(target: "runtime", sandbox = name, ms = began.elapsed().as_millis() as u64, "paseo plugins delivered");
                 }
                 Some(PASEO_UP_PLUGINS_STALE) => {
                     return Err(RuntimeError::AgentWebUnavailable(format!(

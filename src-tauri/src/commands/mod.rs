@@ -39,6 +39,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         panes::watch_workspace_ports,
         panes::open_terminal_pane,
         panes::open_agent_web,
+        panes::prewarm_agent_web,
         panes::open_agent_chat,
         agent_chat::agent_chat_attach,
         agent_chat::agent_chat_send,

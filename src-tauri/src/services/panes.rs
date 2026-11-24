@@ -1,16 +1,18 @@
 //! Preparation of the embedded panes: the native terminal's SSH session, and for the agent web UI a
 //! route, the service inside the sandbox, a Mutagen forward to it and the webview descriptor.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::error::AppError;
 use crate::mio_files;
 use crate::network::types::{NetworkManager, ServiceKind};
 use crate::runtime::types::{RuntimeError, RuntimeManager};
+use crate::runtime::PASEO_WEB_PORT;
 use crate::services::routing::SandboxRouter;
 use crate::terminal::types::{AttachRequest, TerminalEvent, TerminalHost};
-use crate::workspace::types::WebviewPane;
+use crate::workspace::types::{AppKind, WebviewPane, WorkspaceRegistry};
 
 /// Opens the native terminal's SSH session for `name`. Uses `locate`, not `resolve`: the session
 /// spawns the engine exec itself and needs no `~/.ssh` alias
@@ -64,26 +66,87 @@ fn read_paseo_password(app: &tauri::AppHandle, name: &str) -> Option<String> {
     password_in(&paseo_password_path(app, name).ok()?)
 }
 
-/// Brings `name`'s Paseo daemon up off the caller's path, so a later Agents tab open finds it
-/// running. Only for sandboxes that opened the agents UI before, which left a saved password.
-pub fn spawn_prewarm_agent_web(app: &tauri::AppHandle, name: &str) {
-    let Some(password) = read_paseo_password(app, name) else {
+/// Serializes [`paseo_password`]'s read-or-mint, so a pre-warm racing a pane open shares one password.
+static PASEO_PASSWORD_LOCK: Mutex<()> = Mutex::new(());
+
+/// The sandbox's Paseo password, minted and saved on first use. The daemon's launch hash includes
+/// it, so every start path must reuse the saved one or the daemon restarts.
+fn paseo_password(app: &tauri::AppHandle, name: &str) -> Result<String, AppError> {
+    let _guard = PASEO_PASSWORD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(password) = read_paseo_password(app, name) {
+        return Ok(password);
+    }
+    let password = uuid::Uuid::new_v4().simple().to_string();
+    let path = paseo_password_path(app, name).map_err(RuntimeError::agent_web_unavailable)?;
+    write_password(&path, &password).map_err(RuntimeError::agent_web_unavailable)?;
+    Ok(password)
+}
+
+/// Sandboxes with a Paseo pre-warm running, so a second trigger does not pile up execs.
+static PREWARMING: std::sync::LazyLock<Mutex<HashSet<String>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashSet::new()));
+
+struct PrewarmSlot(String);
+
+impl PrewarmSlot {
+    fn claim(name: &str) -> Option<Self> {
+        PREWARMING.lock().unwrap().insert(name.to_string()).then(|| Self(name.to_string()))
+    }
+}
+
+impl Drop for PrewarmSlot {
+    fn drop(&mut self) {
+        PREWARMING.lock().unwrap().remove(&self.0);
+    }
+}
+
+/// [`spawn_prewarm_agent_web`] for a sandbox the caller knows has an installed agent, the condition
+/// that makes the Agents app available: mints the password when none is saved yet.
+pub fn spawn_prewarm_installed(app: &tauri::AppHandle, name: &str) {
+    let Some(slot) = PrewarmSlot::claim(name) else {
         return;
     };
     let app = app.clone();
     let name = name.to_string();
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = prewarm_agent_web(&app, &name, &password).await {
+        let _slot = slot;
+        if let Err(e) = prewarm_agent_web(&app, &name).await {
             tracing::warn!(target: "panes", sandbox = %name, error = %e, "paseo pre-warm failed");
         }
     });
 }
 
-async fn prewarm_agent_web(app: &tauri::AppHandle, name: &str, password: &str) -> Result<(), AppError> {
+/// Brings `name`'s Paseo daemon up off the caller's path, so a later Agents tab open finds it
+/// running. Only for sandboxes that opened the agents UI before, which left a saved password; the
+/// frontend covers the rest once it sees an installed agent.
+pub fn spawn_prewarm_agent_web(app: &tauri::AppHandle, name: &str) {
+    if read_paseo_password(app, name).is_some() {
+        spawn_prewarm_installed(app, name);
+    }
+}
+
+/// Never starts a stopped sandbox, and skips deployed ones, whose route is never `running`.
+async fn prewarm_agent_web(app: &tauri::AppHandle, name: &str) -> Result<(), AppError> {
     use tauri::Manager;
+    let opened = app
+        .state::<WorkspaceRegistry>()
+        .lock()
+        .unwrap()
+        .apps
+        .iter()
+        .any(|p| p.sandbox == name && p.kind == AppKind::AgentWeb);
+    if opened {
+        return Ok(());
+    }
     let route = app.state::<SandboxRouter>().locate(name).await?;
+    if !route.running {
+        return Ok(());
+    }
+    let password = paseo_password(app, name)?;
+    let began = std::time::Instant::now();
     let runtime = app.state::<Arc<dyn RuntimeManager>>();
-    runtime.prepare_agent_web(name, &route.machine, password).await?;
+    runtime.prepare_agent_web(name, &route.machine, &password, false).await?;
+    tracing::info!(target: "panes", sandbox = %name, ms = began.elapsed().as_millis() as u64, "paseo pre-warmed");
     Ok(())
 }
 
@@ -127,28 +190,76 @@ pub async fn prepare_agent_web_pane(
     network: &Arc<dyn NetworkManager>,
     app: &tauri::AppHandle,
 ) -> Result<WebviewPane, AppError> {
+    let total = std::time::Instant::now();
     let route = router.resolve(name, app).await?;
+    let route_ms = total.elapsed().as_millis() as u64;
 
-    let password = read_paseo_password(app, name)
-        .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
+    let password = paseo_password(app, name)?;
 
-    let container_port = runtime
-        .prepare_agent_web(name, &route.machine, &password)
-        .await?;
+    // The route says whether a start is needed; a stopped container must run before the forward
+    // dials it through `podman exec`.
+    let began = std::time::Instant::now();
+    if !route.running {
+        runtime.ensure_running(name, &route.machine).await?;
+    }
+    let start_ms = began.elapsed().as_millis() as u64;
 
+    // The forward only dials the container; the daemon's port is dialled per connection, so
+    // creating it overlaps the daemon's start.
+    let began = std::time::Instant::now();
+    let forward = async {
+        let began = std::time::Instant::now();
+        let port = network
+            .open_forward(name, ServiceKind::AgentWeb, &route.forward_alias, PASEO_WEB_PORT)
+            .await;
+        (port, began.elapsed().as_millis() as u64)
+    };
+    let daemon = async {
+        let began = std::time::Instant::now();
+        let up = runtime.prepare_agent_web(name, &route.machine, &password, true).await;
+        (up, began.elapsed().as_millis() as u64)
+    };
+    let ((forward, forward_ms), (daemon, paseo_up_ms)) = tokio::join!(forward, daemon);
+    let parallel_ms = began.elapsed().as_millis() as u64;
+    if let Err(e) = daemon {
+        // A forward without a daemon behind it is only a leak.
+        if forward.is_ok() {
+            network.close_forward(name, ServiceKind::AgentWeb).await;
+        }
+        return Err(e.into());
+    }
+    // A stale `route.running` sends the forward at a stopped container, which paseo-up has since
+    // started.
+    let forward = match forward {
+        Err(e) => {
+            tracing::info!(target: "panes", sandbox = name, error = %e, "agent web forward failed beside paseo-up, retrying");
+            network
+                .open_forward(name, ServiceKind::AgentWeb, &route.forward_alias, PASEO_WEB_PORT)
+                .await
+        }
+        ok => ok,
+    };
     let forward_name = format!("agentweb-{name}");
-    let windows_port = network
-        .open_forward(name, ServiceKind::AgentWeb, &route.forward_alias, container_port)
-        .await
-        .map_err(RuntimeError::agent_web_unavailable)?;
+    let windows_port = forward.map_err(RuntimeError::agent_web_unavailable)?;
     let url = format!("http://127.0.0.1:{windows_port}/");
 
-    let password_path = paseo_password_path(app, name).map_err(RuntimeError::agent_web_unavailable)?;
-    write_password(&password_path, &password).map_err(RuntimeError::agent_web_unavailable)?;
-
+    let began = std::time::Instant::now();
     let (server_id, hostname) = fetch_paseo_server_info(windows_port, &password)
         .await
         .map_err(|e| RuntimeError::agent_web_unavailable(format!("paseo /api/status through forward: {e}")))?;
+    let status_ms = began.elapsed().as_millis() as u64;
+    tracing::info!(
+        target: "panes",
+        sandbox = name,
+        route_ms,
+        start_ms,
+        paseo_up_ms,
+        forward_ms,
+        parallel_ms,
+        status_ms,
+        total_ms = total.elapsed().as_millis() as u64,
+        "agent web pane prepared"
+    );
     let endpoint = format!("localhost:{windows_port}");
     let connection_id = format!("direct:{endpoint}");
     // Only the fields the client requires: it validates strictly and deletes the whole registry on

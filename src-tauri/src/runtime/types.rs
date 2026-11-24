@@ -72,14 +72,27 @@ pub trait RuntimeManager: Send + Sync {
         workspace_host_path: &str,
     ) -> Result<(), RuntimeError>;
 
-    /// Ensure the sandbox's paseo agent-web daemon runs with the current workspace environment and
-    /// `password`, restarting it only when either changed; returns its container port.
+    /// Starts the sandbox's container if it is stopped. For callers that need it running before
+    /// work that does not exec in it, such as a forward to it.
+    async fn ensure_running(
+        &self,
+        name: &str,
+        machine: &crate::provider::types::MachineRef,
+    ) -> Result<(), RuntimeError>;
+
+    /// Ensure the sandbox's paseo agent-web daemon runs on `crate::runtime::PASEO_WEB_PORT` with the
+    /// current workspace environment and `password`, restarting it only when either changed. Execs
+    /// straight into the container. `opening` is true for the user opening the pane: a container
+    /// podman reports stopped on the first exec is started once, covering a stale running flag.
+    /// False is a pre-warm: it fails on a stopped container and leaves a running daemon as is,
+    /// even a stale one, since restarting it would end agent sessions of a closed pane.
     async fn prepare_agent_web(
         &self,
         name: &str,
         machine: &crate::provider::types::MachineRef,
         password: &str,
-    ) -> Result<u16, RuntimeError>;
+        opening: bool,
+    ) -> Result<(), RuntimeError>;
 
     /// List available tools from the mise registry (process-wide cached).
     async fn registry(&self, name: &str) -> Result<Vec<RegistryEntry>, RuntimeError>;

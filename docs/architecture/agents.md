@@ -72,7 +72,7 @@ The app installs coding agents (Claude Code, OpenCode, pi) into a sandbox, lets 
 ## Agent Web UI (Paseo)
 
 - Paseo runs in-sandbox as a pinned mise tool behind a forward ([Workspace UI](workspace-ui.md)); the workspace is its project, named after the sandbox.
-- The daemon restarts only when `mise.toml`, the password or the set of app plugins changes; starting a Paseo-using sandbox pre-starts it.
+- The daemon restarts only when `mise.toml`, the password or the set of app plugins changes, and only on a pane open; the app pre-starts it, never starting a stopped sandbox, once a running sandbox has an installed agent (and when a sandbox that opened it before starts). Opening the pane creates the forward while the daemon starts.
 - App plugins ship in the binary, are streamed outside the workspace when stale, and reload in place.
 
 ## Native Chat (pi)

@@ -75,9 +75,28 @@ pub async fn open_agent_web(
         return workspace::switch_pane(&app, &name, AppKind::AgentWeb).map_err(Into::into);
     }
 
+    let total = std::time::Instant::now();
     let pane =
         prepare_agent_web_pane(&name, &router, &runtime, &network, &app).await?;
+    let embed = std::time::Instant::now();
     workspace::embed_agent_web(&app, &name, &workspace_path, pane)?;
+    tracing::info!(
+        target: "panes",
+        sandbox = %name,
+        embed_ms = embed.elapsed().as_millis() as u64,
+        total_ms = total.elapsed().as_millis() as u64,
+        "agent web pane opened"
+    );
+    Ok(())
+}
+
+/// Starts `name`'s Paseo daemon in the background when the sandbox is running, so the Agents app
+/// opens fast. The frontend calls it once the sandbox has an installed agent, which only it can
+/// tell. Fire and forget: failures are logged, never surfaced.
+#[tauri::command]
+pub fn prewarm_agent_web(name: String, app: tauri::AppHandle) -> Result<(), AppError> {
+    crate::backends::validate_name(&name)?;
+    crate::services::panes::spawn_prewarm_installed(&app, &name);
     Ok(())
 }
 

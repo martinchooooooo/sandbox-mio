@@ -69,13 +69,22 @@ impl RuntimeManager for MockRuntime {
         Ok(())
     }
 
+    async fn ensure_running(
+        &self,
+        _name: &str,
+        _machine: &crate::provider::types::MachineRef,
+    ) -> Result<(), RuntimeError> {
+        Ok(())
+    }
+
     async fn prepare_agent_web(
         &self,
         _name: &str,
         _machine: &crate::provider::types::MachineRef,
         _password: &str,
-    ) -> Result<u16, RuntimeError> {
-        Ok(0)
+        _opening: bool,
+    ) -> Result<(), RuntimeError> {
+        Ok(())
     }
 
     async fn registry(&self, _name: &str) -> Result<Vec<RegistryEntry>, RuntimeError> {
