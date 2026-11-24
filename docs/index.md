@@ -6,3 +6,4 @@ okf_version: "0.2"
 * [features/](features/index.md) - feature plans and their history, grouped by status
 * [Feature log](features/log.md) - dated record of feature status changes
 * [Technical Debt](techdebt.md) - deliberate workarounds and known defects awaiting a fix
+* [Improvement Backlog](improvement-backlog.md) - interim ranked task list of open improvements; delete once resolved
