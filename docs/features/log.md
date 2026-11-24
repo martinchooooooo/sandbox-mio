@@ -5,6 +5,10 @@ Records feature status changes only: creation (`Create`), reaching `implemented`
 history with at most one `Create` and one `Implement` entry per feature, so seeded dates are
 approximate. New entries go on top.
 
+## 2026-11-23
+
+* **Implement** [workspace-ux](workspace-ux/index.md): the sandbox header is gone and the left sidebar is the only app chrome, with opened apps nested under the in-view sandbox, a dashboard title bar with a visible Stop/Start, horizontal section tabs and Open folder; the standard e2e tier passes after the layout fixes
+
 ## 2026-11-22
 
 * **Implement** [remove-mitmproxy](remove-mitmproxy/index.md): the legacy pre-boundary mitmproxy sidecar path is removed; ProxyEngine stays with one variant as the seam, and a sidecar without an engine is treated as iron-proxy

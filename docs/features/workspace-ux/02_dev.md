@@ -5,7 +5,7 @@ feature: workspace-ux
 ---
 # Workspace UX: Sidebar as the Only App Chrome
 
-Build record for `workspace-ux`, written after implementation (no `01_ideas.md` exists; the goals came from user reports). The feature removes the 64px sandbox header, nests the in-view sandbox's apps in the global sidebar, replaces the Manage dashboard's vertical section nav with horizontal tabs, adds a dashboard title bar, and makes Open folder open the sandbox folder itself. Status: Phases 1–5 done; the user has not yet approved the working feature.
+Build record for `workspace-ux`, written after implementation (no `01_ideas.md` exists; the goals came from user reports). The feature removes the 64px sandbox header, nests the in-view sandbox's apps in the global sidebar, replaces the Manage dashboard's vertical section nav with horizontal tabs, adds a dashboard title bar, and makes Open folder open the sandbox folder itself. Status: Phases 1–5 done and approved.
 
 ## Problems Solved
 
