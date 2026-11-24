@@ -28,7 +28,7 @@ This document is an interim task list, compiled on 2026-11-23 at commit `2e0e665
 ### T2. A sandbox can rewrite its own egress policy and secret bindings — Decision needed
 
 - [ ] Resolved
-- **Problem:** `apply_sandbox_policy` (`src-tauri/src/commands/net_policy.rs:66-86`) loads `.mio/net-policy.json` from the workspace, which code inside the sandbox can write. `commitSecretChange()` and `save()` in `src/routes/projects/NetPolicyEditor.svelte` (lines 106-119, 178-195) trigger that apply. An agent can add an attacker host to a secret binding's `hosts` plus an allow rule; the next time the user stores any secret, the sidecar swaps the real value into requests to the attacker host.
+- **Problem:** `apply_sandbox_policy` (`src-tauri/src/commands/net_policy.rs:66-86`) loads `.mio/net-policy.json` from the workspace, which code inside the sandbox can write. `commitSecretChange()` and `save()` in `src/routes/projects/NetPolicyEditor.svelte` (lines 106-119, 178-195) trigger that apply. An agent can add an attacker host to a secret binding's `hosts` plus an allow rule; the next time the user stores any secret, the sidecar swaps the real value into requests to the attacker host. A deployed sandbox has the same exposure: Mutagen syncs the remote workspace's policy file back to the laptop, and every apply is pushed live to the remote sidecar (`docs/features/proxy-remote-deploy/02_dev.md`).
 - **Source:** finding 1 of `docs/features/podman-egress-boundary/05_dev_review.md` (deferred by the user to a separate feature).
 - **Options:** (a) apply only from the app-side snapshot (`net_policy::read_applied`, `src-tauri/src/net_policy.rs`) and treat the workspace file as a proposal; (b) require the user to confirm a diff whenever `net_policy_drift` reports a change made on disk before any apply. Either option must also stop `apply_sandbox_policy` from re-reading the workspace file after the user reviewed it.
 - **Done when:** no apply path can enforce a policy or binding host list the user has not seen; a light spec covers a drifted file with a widened binding.
@@ -51,7 +51,7 @@ This document is an interim task list, compiled on 2026-11-23 at commit `2e0e665
 ### T5a. Secret stdin is written to a plaintext temp file
 
 - [ ] Resolved
-- **Problem:** `run_with_stdin_file()` (`src-tauri/src/process/mod.rs:663-676`) writes a call's stdin to `%TEMP%`, so the GitHub token and Claude credential injection briefly land on host disk.
+- **Problem:** `run_with_stdin_file()` (`src-tauri/src/process/mod.rs:663-676`) writes a call's stdin to `%TEMP%`, so the GitHub token and Claude credential injection briefly land on host disk. Since proxy-remote-deploy, every remote policy apply and every remote sidecar start also pushes all staged secret values through this path (`push_secret_files`, `src-tauri/src/proxy/iron.rs`).
 - **Source:** "Feed secret stdin without a temp file" in `docs/features/github-cli-auth/04_improvements.md`.
 - **Done when:** stdin reaches the child through a pipe or in-memory handle while keeping the guard, breaker, timeout and logging of the Podman runner; the comment explaining why the temp file existed is updated or removed.
 

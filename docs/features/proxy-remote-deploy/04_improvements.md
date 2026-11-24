@@ -34,3 +34,7 @@ The `standard` tier's deploy target, `mio-tests-remote`, is a second WSL Podman 
 ## Measuring the Podman 4.0 floor
 
 The preflight accepts Podman 4.0 or newer with netavark (`02_dev.md`, Resolved Decision 6) on the strength of the upstream documentation; only Podman 5.8.6 was run (`spike/README.md`, check 4 not run). A measured run on a 4.x host, ideally with SELinux enforcing and firewalld, would confirm or raise the floor. Deferred until such a host is available.
+
+## Strict local start for a sidecar-less sandbox
+
+Deploy refuses a sandbox without its `<name>-proxy` sidecar (`proxy::require_sidecar`, `src-tauri/src/proxy/mod.rs`; `02_dev.md`, Resolved Decision 3), but `ensure_sidecar_running` (`src-tauri/src/proxy/iron.rs`) still skips a missing sidecar on a local start, so a legacy sidecar-less sandbox starts without an egress boundary. Making the local start fail needs the mock backend (`e2e/lib/mock.ts`) to script sidecar containers first, because light specs such as `sandbox-start-failure-ui` start sandboxes the mock lists without one. Neither the deploy refusal nor the start skip has a test today.
