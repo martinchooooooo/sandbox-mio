@@ -9,12 +9,13 @@ use crate::activity::types::TaskKind;
 use crate::backends;
 use crate::backends::types::SandboxBackend;
 use crate::error::AppError;
-use crate::provider::types::{ProviderCapabilities, ProviderId};
+use crate::domain::types::ProviderId;
+use crate::provider::types::ProviderCapabilities;
 use crate::provider::ProviderRegistry;
 
 #[tauri::command]
 pub fn base_image_version() -> u32 {
-    backends::BASE_IMAGE_VERSION
+    crate::provider::image::BASE_IMAGE_VERSION
 }
 
 /// Stages the base image on its own, without creating a sandbox: the onboarding flow's "download
@@ -47,12 +48,12 @@ pub async fn base_image_ready(
 
 #[tauri::command]
 pub fn get_dismissed_image_version(workspace_path: String) -> Option<u32> {
-    backends::dismissed_image_version(&workspace_path)
+    backends::image::dismissed_image_version(&workspace_path)
 }
 
 #[tauri::command]
 pub fn dismiss_image_update(workspace_path: String, version: u32) -> Result<(), AppError> {
-    Ok(backends::dismiss_image_update(&workspace_path, version)?)
+    Ok(backends::image::dismiss_image_update(&workspace_path, version)?)
 }
 
 /// Feature differences between provider engines, for UI that must hide what a provider cannot do

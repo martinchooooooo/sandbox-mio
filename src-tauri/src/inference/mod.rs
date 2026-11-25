@@ -12,9 +12,10 @@ use tauri::AppHandle;
 use tokio::io::AsyncWriteExt;
 
 use crate::process::{detached_command, detached_command_std};
+use crate::settings::types::EngineKind;
 use types::{
-    EngineKind, InferenceEngine, InferenceError, MachineSpecs, MachineSpecsCache,
-    ModelDownloadEvent, StaticMachineSpecs,
+    InferenceEngine, InferenceError, MachineSpecs, MachineSpecsCache, ModelDownloadEvent,
+    StaticMachineSpecs,
 };
 
 /// Port the inference forward listens on inside a sandbox; must equal `INFERENCE_GUEST_PORT` in

@@ -129,7 +129,7 @@ describe("Podman startup recovery", function () {
     assert(
       info.status === 0,
       `podman --connection ${DEFAULT_MACHINE} info failed (exit ${info.status}): ${info.stderr.trim()}. ` +
-        "The socket may not have been activated — check activate_podman_socket and poll_ready in backends/mod.rs.",
+        "The socket may not have been activated — check activate_podman_socket and poll_ready in machine/mod.rs.",
     );
   });
 

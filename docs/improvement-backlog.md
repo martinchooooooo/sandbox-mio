@@ -37,7 +37,7 @@ This document is an interim task list, compiled on 2026-11-23 at commit `2e0e665
 ### T3. Sandbox SSH aliases can shadow the user's own SSH hosts
 
 - [ ] Resolved
-- **Problem:** the managed SSH `Host` entry is the bare sandbox name, inside an `Include sandbox-mio/config` line prepended to `~/.ssh/config` (`src-tauri/src/ssh/mod.rs`). OpenSSH takes the first match, so a sandbox named `github.com` hijacks `git@github.com` for every SSH client on the machine. `validate_name()` and `validate_new_name()` (`src-tauri/src/backends/mod.rs:74-93`) allow dots and check no collisions.
+- **Problem:** the managed SSH `Host` entry is the bare sandbox name, inside an `Include sandbox-mio/config` line prepended to `~/.ssh/config` (`src-tauri/src/ssh/mod.rs`). OpenSSH takes the first match, so a sandbox named `github.com` hijacks `git@github.com` for every SSH client on the machine. `validate_name()` and `validate_new_name()` (`src-tauri/src/domain/mod.rs`) allow dots and check no collisions.
 - **Source:** "Namespaced per-sandbox alias" in `docs/features/host-tool-ssh-access/04_improvements.md`.
 - **Fix shape:** the cheap fix is in `validate_new_name()`: refuse new names containing a dot, and refuse names matching a `Host` pattern already in the user's `~/.ssh/config` outside the managed blocks. A prefixed alias (`sandbox-mio-<name>`) is the complete fix but touches every Mutagen path keyed on the alias (see the gotchas table in the source document); treat the prefix as Decision needed.
 - **Done when:** creating a sandbox whose name would shadow an existing or dotted host is refused with a clear error; existing sandboxes stay addressable.
@@ -83,7 +83,7 @@ This document is an interim task list, compiled on 2026-11-23 at commit `2e0e665
 ### T8. The light tier writes the real `~/.ssh` and runs real `ssh-keygen` — Decision needed
 
 - [ ] Resolved
-- **Problem:** under `MIO_MOCK_BACKEND=1`, a light-spec create still runs `ensure_sandbox_identity()` and `ensure_sandbox_alias()` (`src-tauri/src/backends/mod.rs`) against the developer's real `~/.ssh/sandbox-mio/config`. The `onComplete` comment in `e2e/wdio.conf.ts` wrongly claims a light run writes no SSH alias.
+- **Problem:** under `MIO_MOCK_BACKEND=1`, a light-spec create still runs `ensure_sandbox_identity()` and `ensure_sandbox_alias()` (`src-tauri/src/ssh/identity.rs`) against the developer's real `~/.ssh/sandbox-mio/config`. The `onComplete` comment in `e2e/wdio.conf.ts` wrongly claims a light run writes no SSH alias.
 - **Source:** "`e2e/wdio.conf.ts` claims a light run writes no SSH alias" in `docs/features/host-tool-ssh-access/04_improvements.md`; first section of `docs/features/techdebt-sweep/04_improvements.md`.
 - **Options:** gate the SSH writes with `mock_backend_enabled()` (the light tier then diverges from the real create path), or relocate the SSH config root per run as `MIO_APP_DATA_DIR` relocates app data. Correct the `onComplete` comment either way.
 
@@ -114,7 +114,7 @@ Each sub-task is a direct fix unless marked.
 
 | Tasks | Shared files |
 |---|---|
-| T3, T4, T8 | `src-tauri/src/backends/mod.rs`, `src-tauri/src/ssh/mod.rs` |
+| T3, T4, T8 | `src-tauri/src/backends/mod.rs`, `src-tauri/src/domain/mod.rs`, `src-tauri/src/ssh/mod.rs`, `src-tauri/src/ssh/identity.rs` |
 | T7, T8 | `e2e/wdio.conf.ts` |
 | T1, T2 | `src-tauri/src/proxy/`, `src-tauri/src/net_policy.rs` |
 | T5a, T6 | none in code; T6 should land first so T5a's change is checked by CI |

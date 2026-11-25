@@ -5,17 +5,16 @@ use std::sync::Arc;
 
 use crate::activity::types::TaskKind;
 use crate::activity::{self, TaskFailure, TaskScope};
-use crate::backends;
-use crate::backends::types::{BackendError, EgressRequest, Sandbox, SandboxBackend};
+use crate::backends::types::{EgressRequest, SandboxBackend};
+use crate::domain::types::{BackendError, ProviderId, Sandbox};
 use crate::error::AppError;
 use crate::network::types::NetworkManager;
-use crate::provider::types::{MachineRef, ProviderId};
+use crate::provider::types::MachineRef;
 use crate::provider::ProviderRegistry;
 use crate::proxy::flowlog::FlowWatchRegistry;
 use crate::proxy::types::SidecarSite;
 use crate::runtime::types::RuntimeManager;
 use crate::sync::types::{SyncEngine, SyncStatus};
-use crate::workspace;
 
 /// Removes the host-side state a sandbox leaves outside its container: the managed SSH alias, the
 /// identity directory (whose `known_hosts` is the pinned host key), the pane state directory, and
@@ -25,7 +24,7 @@ use crate::workspace;
 /// `name`'s own block from the host-global config, which is what keeps concurrent worktrees safe.
 fn cleanup_host_state(name: &str, app: &tauri::AppHandle) {
     // The name becomes a path component below; destroy takes it from IPC unvalidated.
-    if backends::validate_name(name).is_err() {
+    if crate::domain::validate_name(name).is_err() {
         tracing::warn!(target: "destroy", %name, "skipping host state cleanup for an invalid sandbox name");
         return;
     }
@@ -94,9 +93,9 @@ pub async fn create(
     // Checked before the sidecar is created, not only in `store.create`: a sidecar create on a taken
     // name fails, and its rollback removes `<name>-proxy` by name, which is then the existing
     // sandbox's live sidecar.
-    backends::validate_new_name(name)?;
+    crate::domain::validate_new_name(name)?;
     if let Some(existing) = store.list().await?.into_iter().find(|s| s.name == name) {
-        return Err(crate::backends::types::BackendError::NameTaken {
+        return Err(crate::domain::types::BackendError::NameTaken {
             name: name.to_string(),
             provider: existing.provider,
         }
@@ -211,7 +210,7 @@ async fn close_panes_and_forwards(
     network: &Arc<dyn NetworkManager>,
     app: &tauri::AppHandle,
 ) {
-    workspace::close_app(app, name).await;
+    super::panes::close_app(app, name).await;
     network.close_sandbox(name).await;
 }
 

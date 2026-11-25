@@ -18,7 +18,7 @@ pub async fn ensure_auth_container(
     store: State<'_, Arc<dyn SandboxBackend>>,
     runtime: State<'_, Arc<dyn RuntimeManager>>,
 ) -> Result<(), AppError> {
-    Ok(credentials::ensure_auth_container(&name, &store, &runtime).await?)
+    Ok(crate::services::auth_container::ensure(&name, &store, &runtime).await?)
 }
 
 /// Capture agent credentials from container into host store.

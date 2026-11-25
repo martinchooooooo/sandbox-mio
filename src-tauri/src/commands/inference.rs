@@ -11,8 +11,9 @@ use crate::inference;
 use crate::network::types::NetworkManager;
 use crate::services;
 use crate::inference::types::{
-    ActiveServer, EngineKind, InferenceStatus, MachineSpecs, MachineSpecsCache, SetupStep,
+    ActiveServer, InferenceStatus, MachineSpecs, MachineSpecsCache, SetupStep,
 };
+use crate::settings::types::EngineKind;
 
 /// Probe host CPU/RAM/GPU/NPU and Foundry availability (runs on host, uses cache after first call).
 #[tauri::command]

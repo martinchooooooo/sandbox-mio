@@ -12,7 +12,7 @@ const LLAMA_VERSION: &str = "b9835";
 
 /// Podman release whose Windows remote-client archive is staged as the bundled container engine
 /// (`src-tauri/binaries/podman`). Pinned so every checkout stages the same `podman`/`gvproxy`/
-/// `win-sshproxy` that `backends::podman_command()` resolves at runtime.
+/// `win-sshproxy` that `process::podman::podman_command()` resolves at runtime.
 const PODMAN_VERSION: &str = "v5.6.2";
 
 /// Mirrors `tauri.conf.json`'s `build.devUrl`. `run_dev_directly` polls this to know when the Vite
@@ -696,7 +696,7 @@ fn fetch_llama() {
 
 /// Download the official Podman Windows remote-client archive and stage `podman.exe`,
 /// `gvproxy.exe`, and `win-sshproxy.exe` flat into `src-tauri/binaries/podman` (see
-/// `src-tauri/binaries/podman/README.md`). `backends::podman_command()` resolves these from the
+/// `src-tauri/binaries/podman/README.md`). `process::podman::podman_command()` resolves these from the
 /// bundled resource dir at runtime instead of PATH.
 fn fetch_podman() {
     if !cfg!(windows) {

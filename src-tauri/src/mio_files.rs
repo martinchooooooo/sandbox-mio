@@ -8,9 +8,6 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::agents::types::AgentError;
-use crate::backends::types::BackendError;
-
 /// A failed read or write. Carries the path in its message, so a caller can wrap it in whatever
 /// error type its own subsystem surfaces.
 #[derive(Debug)]
@@ -22,21 +19,14 @@ impl std::fmt::Display for FileError {
     }
 }
 
-impl From<FileError> for BackendError {
-    fn from(e: FileError) -> Self {
-        BackendError::CommandFailed(e.0)
-    }
-}
-
-impl From<FileError> for AgentError {
-    fn from(e: FileError) -> Self {
-        AgentError::ConfigWriteFailed(e.0)
-    }
-}
-
 /// `<workspace_path>/.mio/<name>`.
 pub fn mio_path(workspace_path: &str, name: &str) -> PathBuf {
     Path::new(workspace_path).join(".mio").join(name)
+}
+
+/// The value at the dot-separated `path` of a JSON document, or `None` when any key is missing.
+pub fn json_path_get<'a>(val: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
+    path.split('.').fold(Some(val), |acc, key| acc?.get(key))
 }
 
 /// Reads a JSON object, treating an absent or empty file as an empty one. A file that exists but

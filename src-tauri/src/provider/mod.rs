@@ -1,3 +1,4 @@
+pub mod image;
 pub mod types;
 
 use std::process::Output;
@@ -5,11 +6,13 @@ use std::sync::Arc;
 
 use tokio::process::Command;
 
-use crate::backends::{base_image, podman_command};
+use crate::domain::types::{ProviderId, Sandbox};
+use crate::process::podman::{connection_name, podman_command};
 use crate::process::types::ProcessRunner;
+use image::base_image;
 use types::{
     EnginePool, ExecOpts, InstanceSpec, InstanceStats, MachineProvider, MachineRef,
-    ProviderCapabilities, ProviderError, ProviderId, SidecarSpec,
+    ProviderCapabilities, ProviderError, SidecarSpec,
 };
 
 /// Spelled literally because `podman -v` rejects a bare `~` and does not expand `$HOME`. Mirrored
@@ -90,7 +93,7 @@ impl ProviderRegistry {
 /// Construct the [`ProviderRegistry`] for Tauri state. The runner comes from `src-tauri/src/bootstrap.rs`, so
 /// scripted and real calls stay on the one director the rest of the app shares.
 pub fn default_registry(podman_runner: Arc<dyn ProcessRunner>) -> Arc<ProviderRegistry> {
-    let local_connection = crate::backends::connection_name();
+    let local_connection = connection_name();
     let local_podman = default_provider(podman_runner.clone(), local_connection.clone());
     Arc::new(ProviderRegistry { podman_runner, local_connection, local_podman })
 }
@@ -438,7 +441,7 @@ impl MachineProvider for PodmanProvider {
         Ok(check(out)?.trim().to_string())
     }
 
-    async fn list_instances(&self) -> Result<Vec<crate::backends::types::Sandbox>, ProviderError> {
+    async fn list_instances(&self) -> Result<Vec<Sandbox>, ProviderError> {
         let out = self.run(&["ps", "--all", "--format", "json"]).await?;
         let stdout = check(out)?;
         let containers: Vec<serde_json::Value> =
@@ -463,9 +466,9 @@ impl MachineProvider for PodmanProvider {
                     .get(WORKSPACE_LABEL)
                     .and_then(|v| v.as_str())
                     .map(str::to_string)
-                    .unwrap_or_else(|| crate::backends::workspace_path(&name).unwrap_or_default());
+                    .unwrap_or_else(|| crate::domain::workspace_path(&name).unwrap_or_default());
                 let image_version = parse_image_version(c["Image"].as_str().unwrap_or_default());
-                crate::backends::types::Sandbox {
+                Sandbox {
                     id: c["Id"].as_str().unwrap_or_default().to_string(),
                     status: c["State"].as_str().unwrap_or_default().to_string(),
                     name,

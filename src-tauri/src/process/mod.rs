@@ -6,6 +6,8 @@
 //! the other way round: the trait describes a production seam that the e2e `light` tier stands in
 //! for, not a mock facility production borrows.
 
+pub mod mutagen;
+pub mod podman;
 pub mod types;
 
 use std::process::Output;
@@ -312,7 +314,7 @@ async fn machine_list() -> SharedOutput {
             return result.clone();
         }
     }
-    let cmd = crate::backends::podman_command_std();
+    let cmd = podman::podman_command_std();
     let result: SharedOutput = Arc::new(
         run_via_blocking_process(
             cmd,
@@ -643,7 +645,7 @@ impl SystemPodmanRunner {
             // Blocking-thread + file-captured, not `tokio::process`: see `run_via_blocking_process`'s
             // doc comment — `tokio::process`'s async spawn/wait has been observed to hang the full
             // timeout even on a bare `podman machine list` under `cargo tauri dev`.
-            let mut cmd = crate::backends::podman_command_std();
+            let mut cmd = podman::podman_command_std();
             cmd.envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
             run_via_blocking_process(cmd, args, "podman", timeout_dur, stdin).await
         };
@@ -735,7 +737,7 @@ impl ProcessRunner for SystemMutagenRunner {
     async fn run(&self, args: &[&str]) -> std::io::Result<Output> {
         // Sidecar-resolution and data-dir errors collapse into one io::Error here; the caller
         // (`sync::run_via`) re-wraps it as `SyncError::Sidecar`, losing the `DataDir` distinction.
-        let mut command = crate::sync::command(&self.app).map_err(std::io::Error::other)?;
+        let mut command = mutagen::command(&self.app).map_err(std::io::Error::other)?;
         let started = std::time::Instant::now();
         tracing::info!(target: "mutagen", argv = %args.join(" "), "mutagen call starting");
         // `kill_on_drop` makes the timeout drop terminate the direct child; the Mutagen daemon a

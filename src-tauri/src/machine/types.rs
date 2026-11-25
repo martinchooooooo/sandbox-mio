@@ -1,6 +1,6 @@
 use tauri::ipc::Channel;
 
-use crate::backends::types::BackendError;
+use crate::domain::types::BackendError;
 
 /// Global Podman machine lifecycle (distinct from per-connection backends).
 /// Methods operate on the default machine's CLI, WSL kernel, and rootless API socket.

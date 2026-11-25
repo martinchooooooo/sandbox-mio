@@ -11,10 +11,9 @@ use std::time::Duration;
 use tauri::ipc::Channel;
 use tauri::AppHandle;
 
-use super::types::{
-    EngineKind, InferenceEngine, InferenceError, RuntimeSetupEvent, ServerHandle, SetupStep,
-};
+use super::types::{InferenceEngine, InferenceError, RuntimeSetupEvent, ServerHandle, SetupStep};
 use crate::process::detached_command;
+use crate::settings::types::EngineKind;
 
 pub struct FoundryLocalEngine {
     #[allow(dead_code)]

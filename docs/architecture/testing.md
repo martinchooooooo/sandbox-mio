@@ -60,4 +60,4 @@ Several worktrees can run `light` at once, alongside at most one `standard` or `
 
 - A spec's tier is decided by where the spec lives, not by command-line flags.
 - Every wait uses a named budget, because UI state arrives through events and polling rather than command responses.
-- Specs never hard-code the base image reference; they derive it from the backend's declaration.
+- Specs never hard-code the base image reference; they derive it from the provider's declaration.

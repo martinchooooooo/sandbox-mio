@@ -65,7 +65,7 @@ pub fn default_runtime(
     providers: Arc<crate::provider::ProviderRegistry>,
     secrets: Arc<dyn types::ToolchainSecrets>,
 ) -> Arc<dyn RuntimeManager> {
-    if crate::backends::mock_backend_enabled() {
+    if crate::domain::mock_backend_enabled() {
         return Arc::new(MockRuntime::new());
     }
     Arc::new(MiseRuntime {

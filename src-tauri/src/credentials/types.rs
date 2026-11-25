@@ -1,6 +1,5 @@
-use crate::backends::types::BackendError;
+use crate::domain::types::BackendError;
 use crate::provider::types::ProviderError;
-use crate::runtime::types::RuntimeError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CredentialError {
@@ -14,12 +13,6 @@ pub enum CredentialError {
     NotFound(String),
     #[error("invalid credential value: {0}")]
     InvalidValue(String),
-}
-
-impl From<RuntimeError> for CredentialError {
-    fn from(e: RuntimeError) -> Self {
-        CredentialError::ExecFailed(e.to_string())
-    }
 }
 
 impl From<BackendError> for CredentialError {

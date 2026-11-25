@@ -14,7 +14,7 @@ pub enum ServiceKind {
     Inference,
 }
 
-/// Errors from [`NetworkManager`]. Converts into [`crate::error::AppError`] via `#[from]`.
+/// Errors from [`NetworkManager`]. Converts into `AppError` via `#[from]`.
 #[derive(Debug, thiserror::Error)]
 pub enum NetworkError {
     #[error("failed to allocate a Windows-host port: {0}")]

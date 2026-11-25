@@ -29,7 +29,13 @@ pub fn workspace_layout(width: f64, height: f64, collapsed: bool) -> Rect {
     }
 }
 
-pub fn create_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), WorkspaceError> {
+/// Builds the main window. `on_destroyed` runs when the window is destroyed, so the owner of the
+/// panes' forwards and sessions can tear them down: this module only knows the panes' webviews.
+/// It runs on the main thread, so it must spawn its work: blocking there deadlocks `run_on_main`.
+pub fn create_main_window<R: Runtime>(
+    app: &AppHandle<R>,
+    on_destroyed: impl Fn(AppHandle<R>) + Send + 'static,
+) -> Result<(), WorkspaceError> {
     let win = |e: tauri::Error| WorkspaceError::Window(e.to_string());
 
     let window = tauri::window::WindowBuilder::new(app, MAIN_WINDOW)
@@ -57,10 +63,7 @@ pub fn create_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), Workspac
     let handler_app = app.clone();
     window.on_window_event(move |event| match event {
         WindowEvent::Resized(size) => relayout(&handler_app, *size),
-        WindowEvent::Destroyed => {
-            let app = handler_app.clone();
-            tauri::async_runtime::spawn(async move { close_all_apps(&app).await });
-        }
+        WindowEvent::Destroyed => on_destroyed(handler_app.clone()),
         _ => {}
     });
 
@@ -379,11 +382,9 @@ fn set_collapsed_on_main<R: Runtime>(
     Ok(())
 }
 
-/// Tear down every one of sandbox `name`'s embedded panes (Terminal and, if open, AgentWeb): close
-/// their webviews, activate the neighbouring tab, terminate their forwards, drop the forward-port
-/// entry, clear `sandbox_last_pane`. Idempotent and best-effort, so it is safe from the command,
-/// from undeploy/destroy, and from the Destroyed event alike.
-pub async fn close_app<R: Runtime>(app: &AppHandle<R>, name: &str) {
+/// Drops all of sandbox `name`'s panes: closes their webviews, activates the neighbouring tab,
+/// clears `sandbox_last_pane`. Returns them so the caller ends what backs them, then [`emit_state`].
+pub fn remove_panes<R: Runtime>(app: &AppHandle<R>, name: &str) -> Vec<AppPane> {
     let registry = app.state::<WorkspaceRegistry>();
     let removed = {
         let mut state = registry.lock().unwrap();
@@ -397,11 +398,11 @@ pub async fn close_app<R: Runtime>(app: &AppHandle<R>, name: &str) {
             }
         });
         // Clear unconditionally, before the early return below: a sandbox's last pane can already
-        // be gone from `apps` (closed individually via `close_pane`, which doesn't touch this map)
-        // by the time `close_app` runs, and this entry must not outlive the sandbox regardless.
+        // be gone from `apps` (closed individually via `remove_pane`, which doesn't touch this map)
+        // by the time this runs, and this entry must not outlive the sandbox regardless.
         state.sandbox_last_pane.remove(name);
         if panes.is_empty() {
-            return;
+            return panes;
         }
         if state.active_app.as_deref().is_some_and(|active| panes.iter().any(|p| p.label == active)) {
             state.active_app = state.apps.last().map(|p| p.label.clone());
@@ -415,23 +416,17 @@ pub async fn close_app<R: Runtime>(app: &AppHandle<R>, name: &str) {
     let _ = run_on_main(app, move || {
         close_app_on_main(&app_in, &pane_labels, next_active, collapsed)
     });
-
-    teardown_forwards(app, name, &panes).await;
-    emit_state(app);
+    panes
 }
 
-/// Close one pane of sandbox `name`, leaving its siblings open; no-op on an already-closed pane.
-/// Clears `active_app`/hides the overlay if the removed pane was active, letting the client-side
-/// view fall back to Dashboard — there is no Dashboard pane label to re-activate any more
-/// (docs/features/consolidate-app-container/02_dev.md Resolved Decision 4).
-pub async fn close_pane<R: Runtime>(app: &AppHandle<R>, name: &str, kind: AppKind) {
+/// Drops one pane of sandbox `name`; `None` if already closed. Clears `active_app` when it was the
+/// active one, so the client falls back to Dashboard (docs/features/consolidate-app-container/02_dev.md
+/// Resolved Decision 4). The caller ends what backs the pane, then calls [`emit_state`].
+pub fn remove_pane<R: Runtime>(app: &AppHandle<R>, name: &str, kind: AppKind) -> Option<AppPane> {
     let registry = app.state::<WorkspaceRegistry>();
     let removed = {
         let mut state = registry.lock().unwrap();
-        let Some(index) = state.apps.iter().position(|p| p.sandbox == name && p.kind == kind)
-        else {
-            return;
-        };
+        let index = state.apps.iter().position(|p| p.sandbox == name && p.kind == kind)?;
         let pane = state.apps.remove(index);
         if state.active_app.as_deref() == Some(pane.label.as_str()) {
             state.active_app = None;
@@ -445,32 +440,10 @@ pub async fn close_pane<R: Runtime>(app: &AppHandle<R>, name: &str, kind: AppKin
     let _ = run_on_main(app, move || {
         close_app_on_main(&app_in, &pane_labels, next_active, collapsed)
     });
-
-    teardown_forwards(app, name, std::slice::from_ref(&pane)).await;
-    emit_state(app);
+    Some(pane)
 }
 
-/// Ends what backs each closed pane: a forward, the native chat's attach stream (pi keeps running
-/// inside the sandbox), or the terminal's SSH session (the Herdr session keeps running).
-async fn teardown_forwards<R: Runtime>(app: &AppHandle<R>, name: &str, panes: &[AppPane]) {
-    let network = app.state::<std::sync::Arc<dyn crate::network::types::NetworkManager>>();
-    for pane in panes {
-        let kind = match pane.kind {
-            AppKind::Terminal => {
-                app.state::<std::sync::Arc<dyn crate::terminal::types::TerminalHost>>().detach(name).await;
-                continue;
-            }
-            AppKind::AgentWeb => crate::network::types::ServiceKind::AgentWeb,
-            AppKind::AgentChat => {
-                app.state::<std::sync::Arc<dyn crate::agent_host::types::AgentHost>>().detach(name).await;
-                continue;
-            }
-        };
-        network.close_forward(name, kind).await;
-    }
-}
-
-/// The window/webview-mutating half of [`close_app`], run on the main thread: close every pane's
+/// The window/webview-mutating half of [`remove_panes`], run on the main thread: close every pane's
 /// webview, show the neighbouring tab, re-layout the survivors.
 fn close_app_on_main<R: Runtime>(
     app: &AppHandle<R>,
@@ -494,19 +467,6 @@ fn close_app_on_main<R: Runtime>(
         if apply_layout(&window, &state, overlay).is_ok() {
             registry.lock().unwrap().overlay = overlay;
         }
-    }
-}
-
-/// Best-effort teardown of every embedded pane (main-window Destroyed → app is exiting, but the
-/// Mutagen daemon and its forwards would survive us).
-pub async fn close_all_apps<R: Runtime>(app: &AppHandle<R>) {
-    let registry = app.state::<WorkspaceRegistry>();
-    let names: Vec<String> = {
-        let state = registry.lock().unwrap();
-        state.apps.iter().map(|p| p.sandbox.clone()).collect()
-    };
-    for name in names {
-        close_app(app, &name).await;
     }
 }
 
@@ -534,7 +494,7 @@ fn relayout<R: Runtime>(app: &AppHandle<R>, size: tauri::PhysicalSize<u32>) {
 
 /// Broadcast the fresh state so the sidebar's app tree and collapse chrome
 /// track what Rust applied. Best-effort: a dropped event never fails the underlying operation.
-fn emit_state<R: Runtime>(app: &AppHandle<R>) {
+pub fn emit_state<R: Runtime>(app: &AppHandle<R>) {
     let state = app.state::<WorkspaceRegistry>().lock().unwrap().clone();
     let _ = app.emit("workspace://state", state);
 }

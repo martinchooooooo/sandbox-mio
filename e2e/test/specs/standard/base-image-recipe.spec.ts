@@ -5,7 +5,7 @@ import { fileURLToPath } from "url";
 // fails the build non-deterministically; pinning exact versions avoids the version-listing call.
 // This static guard needs no podman machine, so it is cheap to run on every recipe.
 //
-// The recipe baked into the binary (CONTAINERFILE in src-tauri/src/backends/mod.rs) and the spike
+// The recipe baked into the binary (CONTAINERFILE in src-tauri/src/provider/mod.rs) and the spike
 // docs that describe the build must stay pinned in lockstep — all are checked here.
 const CONTAINERFILES = [
   "../../../../src-tauri/resources/Containerfile",

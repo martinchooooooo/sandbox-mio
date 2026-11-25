@@ -50,7 +50,7 @@ pub fn missing_gh_scopes(header: Option<&str>) -> Vec<String> {
 /// yields an unverified check so a save never depends on the network.
 pub async fn verify_token(token: &str) -> Result<TokenCheck, CredentialError> {
     // The light tier must not call GitHub, and its specs save a sentinel token.
-    if crate::backends::mock_backend_enabled() {
+    if crate::domain::mock_backend_enabled() {
         return Ok(TokenCheck::default());
     }
     let client = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(10)).build() {

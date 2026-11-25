@@ -22,10 +22,6 @@ fn new_session_id() -> String {
     format!("{ts}-{count}")
 }
 
-pub(crate) fn json_path_get<'a>(val: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
-    path.split('.').fold(Some(val), |acc, key| acc?.get(key))
-}
-
 pub async fn install_packages(
     name: &str,
     packages: &[String],
@@ -232,7 +228,7 @@ pub async fn get_auth_status(
     let cred: serde_json::Value = serde_json::from_str(cred_json.trim())
         .map_err(|e| AgentError::CredentialReadFailed(e.to_string()))?;
 
-    let expires_at_ms = json_path_get(&cred, expires_at_json_key).and_then(|v| v.as_u64());
+    let expires_at_ms = crate::mio_files::json_path_get(&cred, expires_at_json_key).and_then(|v| v.as_u64());
 
     let account_email =
         if let (Some(src_path), Some(email_key)) = (account_source_path, account_email_json_key) {
@@ -242,7 +238,7 @@ pub async fn get_auth_status(
                 .ok()
                 .and_then(|s| serde_json::from_str::<serde_json::Value>(s.trim()).ok())
                 .and_then(|v| {
-                    json_path_get(&v, email_key)
+                    crate::mio_files::json_path_get(&v, email_key)
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string())
                 })

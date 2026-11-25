@@ -12,9 +12,9 @@ pub async fn access(
     app: &tauri::AppHandle,
 ) -> Result<SshAccess, AppError> {
     // Before any key is created: the name names files on the host and a block in `~/.ssh`.
-    crate::backends::validate_name(name)?;
+    crate::domain::validate_name(name)?;
     let route = router.resolve(name, app).await?;
-    let identity_path = crate::backends::ensure_sandbox_identity(app, name)?;
+    let identity_path = crate::ssh::identity::ensure_sandbox_identity(app, name)?;
     if route.running {
         // Also heals the empty pinned file of a sandbox created before host keys were seeded.
         let provider = router.provider_for(&route.machine);
@@ -22,8 +22,8 @@ pub async fn access(
     }
     Ok(SshAccess {
         alias: route.forward_alias,
-        known_hosts_path: crate::backends::sandbox_known_hosts_path(&identity_path),
-        proxy_command: crate::backends::sandbox_proxy_command(name, &route.machine),
+        known_hosts_path: crate::ssh::identity::sandbox_known_hosts_path(&identity_path),
+        proxy_command: crate::ssh::identity::sandbox_proxy_command(name, route.machine.provider, &route.machine.id),
         identity_path,
         running: route.running,
     })

@@ -3,6 +3,8 @@
 
 use tauri::ipc::Channel;
 
+use crate::settings::types::EngineKind;
+
 #[derive(Debug, thiserror::Error)]
 pub enum InferenceError {
     /// The bundled `llama-server` sidecar/resource could not be resolved or spawned.
@@ -39,20 +41,6 @@ pub struct MachineSpecs {
     pub foundry_installed: bool,
     /// Foundry Local is available on winget for installation.
     pub foundry_installable: bool,
-}
-
-/// Local inference engine: either bundled llama-server or installed Foundry Local.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
-#[serde(rename_all = "lowercase")]
-pub enum EngineKind {
-    Llama,
-    Foundry,
-}
-
-impl Default for EngineKind {
-    fn default() -> Self {
-        EngineKind::Llama
-    }
 }
 
 /// Streamed from `download_model` to the frontend `Channel`.

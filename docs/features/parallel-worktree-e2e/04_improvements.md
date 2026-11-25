@@ -124,7 +124,7 @@ serialised:
 - **Podman connections.** `LOCAL_CONNECTION`/`REMOTE_CONNECTION` (`e2e/lib/podman-connection.ts`) name
   fixed machines (`mio-tests`, `mio-tests-remote`) that `onPrepare` provisions and `onComplete` stops
   or removes, so two runs fight over one machine's lifecycle.
-- **The Mutagen daemon and its data directory.** `data_dir()` in `src-tauri/src/sync/mod.rs` exports
+- **The Mutagen daemon and its data directory.** `data_dir()` in `src-tauri/src/process/mutagen.rs` exports
   `MUTAGEN_DATA_DIRECTORY` under `app_data_dir()`, and the vendored daemon is shared by session name.
   `MutagenCli::shutdown()` issues `daemon stop` through its `ProcessRunner`, so a real run's exit stops
   the daemon a concurrent real run depends on. Redirecting the data directory is already covered by

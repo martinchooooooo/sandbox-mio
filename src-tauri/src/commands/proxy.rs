@@ -24,7 +24,7 @@ pub async fn proxy_status(
 /// notice. Counts the accepted policy only. A count only: no value or secret id is returned.
 #[tauri::command]
 pub fn deploy_secret_count(name: String, app: tauri::AppHandle) -> Result<usize, AppError> {
-    crate::backends::validate_name(&name)?;
+    crate::domain::validate_name(&name)?;
     Ok(proxy::iron::deploy_secret_count(&app, &name)?)
 }
 

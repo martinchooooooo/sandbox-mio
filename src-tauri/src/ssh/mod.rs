@@ -1,5 +1,6 @@
 //! App-managed OpenSSH config for Mutagen transport via Host aliases and Include insertion.
 
+pub mod identity;
 pub mod types;
 
 use std::fs::File;

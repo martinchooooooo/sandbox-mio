@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 use crate::backends::types::SandboxBackend;
 use crate::error::AppError;
-use crate::provider::types::{MachineRef, ProviderId};
+use crate::domain::types::ProviderId;
+use crate::provider::types::MachineRef;
 use crate::provider::ProviderRegistry;
 use crate::sync::types::SyncEngine;
 
@@ -120,8 +121,8 @@ async fn ensure_forward_alias(
 ) -> Result<(), AppError> {
     match machine.provider {
         ProviderId::Podman => {
-            let identity_path = crate::backends::ensure_sandbox_identity(app, name)?;
-            crate::backends::ensure_sandbox_alias(name, &machine.id, &identity_path).await?;
+            let identity_path = crate::ssh::identity::ensure_sandbox_identity(app, name)?;
+            crate::ssh::identity::ensure_sandbox_alias(name, &machine.id, &identity_path).await?;
         }
     }
     Ok(())

@@ -78,7 +78,7 @@ Always include the path so a future agent can locate the artefact without contex
 ## Content Rules (every document)
 
 **No source code or snippets.** Reference code by file path and function or command name only.
-Acceptable: "`ensure_sandbox_alias()` in `src-tauri/src/backends/mod.rs`"
+Acceptable: "`ensure_sandbox_alias()` in `src-tauri/src/ssh/identity.rs`"
 Not acceptable: a code block showing the function body. Mermaid diagrams are not source code.
 
 **No demonstratives or vague pronouns.** Replace "this", "that", "the above", "it", "the pull",

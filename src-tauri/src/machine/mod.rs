@@ -2,7 +2,7 @@
 //! Separate from backends since it drives the whole machine rather than single connections.
 //!
 //! Targets [`machine_name()`], not `connection_name()`'s `PODMAN_CONNECTION`
-//! (`src-tauri/src/backends/mod.rs`) — deliberately: a connection may name a remote SSH endpoint,
+//! (`src-tauri/src/process/podman.rs`) — deliberately: a connection may name a remote SSH endpoint,
 //! against which `podman machine start`/`wsl --unregister` are meaningless or destructive.
 
 pub mod types;
@@ -12,11 +12,11 @@ use std::sync::Arc;
 
 use tauri::ipc::Channel;
 
-use crate::backends::types::BackendError;
-use crate::backends::{podman_command, DEFAULT_MACHINE_NAME};
+use crate::domain::types::BackendError;
+use crate::process::podman::{podman_command, DEFAULT_MACHINE_NAME};
 use crate::process::types::ProcessRunner;
 use crate::process::detached_command_std;
-use crate::provider::types::ProviderId;
+use crate::domain::types::ProviderId;
 
 use types::{
     BringUpCause, BringUpEntry, BringUpEvent, BringUpFailure, BringUpNote, MachineManager,
@@ -44,7 +44,7 @@ pub fn default_machine_manager(runner: Arc<dyn ProcessRunner>) -> std::sync::Arc
 /// `None` means only "skipped, mock backend"; a panicked blocking task surfaces as `Some(Err(..))`
 /// so callers cannot mistake a failure for the skip.
 async fn run_host_wsl(args: &[&str]) -> Option<std::io::Result<Output>> {
-    if crate::backends::mock_backend_enabled() {
+    if crate::domain::mock_backend_enabled() {
         return None;
     }
     let owned: Vec<String> = args.iter().map(|a| a.to_string()).collect();
@@ -127,7 +127,7 @@ impl MachineManager for PodmanMachineManager {
     async fn activate_podman_socket(&self) -> Result<(), BackendError> {
         // A spawned child, so the scripted `ProcessRunner` seam every other podman call here routes
         // through cannot stand in for it: reaching it starts a service in the dev's real machine.
-        if crate::backends::mock_backend_enabled() {
+        if crate::domain::mock_backend_enabled() {
             return Ok(());
         }
 

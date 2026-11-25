@@ -1,6 +1,6 @@
 # Rust Backend Orientation
 
-The `src-tauri/src/` crate is the Tauri backend: every capability the frontend uses is a `#[tauri::command]` under `src-tauri/src/commands/` delegating to a service or a subsystem module. Read `src-tauri/src/backends/types.rs` first (core data shapes and the `SandboxBackend` trait), then `src-tauri/src/commands/mod.rs` (the command inventory) and `src-tauri/src/bootstrap.rs` (state wiring), then only the subsystem module the task touches. How the subsystems behave together at runtime is described, at a high level, in `docs/architecture/` (start with `docs/architecture/overview.md`); this file covers code structure, conventions and implementation-level gotchas.
+The `src-tauri/src/` crate is the Tauri backend: every capability the frontend uses is a `#[tauri::command]` under `src-tauri/src/commands/` delegating to a service or a subsystem module. Read `src-tauri/src/domain/types.rs` first (the shared data shapes: `Sandbox`, `ProviderId`, `BackendError`), then `src-tauri/src/backends/types.rs` (the `SandboxBackend` trait), then `src-tauri/src/commands/mod.rs` (the command inventory) and `src-tauri/src/bootstrap.rs` (state wiring), then only the subsystem module the task touches. How the subsystems behave together at runtime is described, at a high level, in `docs/architecture/` (start with `docs/architecture/overview.md`); this file covers code structure, conventions and implementation-level gotchas.
 
 ## Three Layers
 
@@ -8,13 +8,15 @@ The `src-tauri/src/` crate is the Tauri backend: every capability the frontend u
 
 `services/` holds orchestration spanning more than one subsystem, and is the only layer permitted to compose subsystems. A service may depend on any subsystem and must not depend on `commands/`.
 
-Subsystem modules never depend on each other — that independence is what keeps each one mockable on its own for the e2e `light` tier. A command needing more than two subsystems is the signal that a service is missing.
+Subsystem modules do not depend on each other — that independence is what keeps each one mockable on its own for the e2e `light` tier. A command needing more than two subsystems is the signal that a service is missing.
+
+**Dependency rule.** Every layer may use the shared modules: `domain/` (mock-mode switch, sandbox identity and naming rules, `Sandbox`, `ProviderId`, `BackendError`), `process/` (the bottom layer: depends on nothing but `paths`), `paths.rs`, `env_ext.rs`, `mio_files.rs` (depends on nothing), and `ssh/` (leaf: depends only on `domain`, `process` and `paths`). A subsystem that drives the container engine may also use `provider/` and `net_policy.rs` (the policy file module, built on `provider/` types), and one with a scripted twin uses `mockctl/`. `error.rs` (`AppError`) is the IPC boundary and is named only by `commands/` and `services/`. Cross-subsystem error conversions live on the side that already depends on the other (`provider`, `proxy`, `net_policy` and `ssh` convert into `BackendError`, which `domain/` owns; `credentials` converts from it), never in the shared module; a conversion only a service needs is a `map_err` in that service. The remaining subsystem-to-subsystem edges are deliberate: `backends -> proxy` (`ProxyAttachment` is the `SandboxBackend::create` argument), `proxy -> credentials` and `proxy -> activity` (the sidecar injects stored tokens and reports its image pull), `agents -> runtime` (package installs), `network -> sync` (forwards are built on the Mutagen primitives) and `inference -> activity`/`settings` (download progress, and the persisted engine choice and llama options). Check the graph before adding one: `grep -rhoE 'crate::[a-z_]+'` over each module directory.
 
 **State narrowing rule:** a command names the narrowest state handle that can do its job. One driving a single subsystem keeps its single `Arc<dyn Trait>` parameter; one spanning subsystems takes one service handle rather than four to six trait handles. `SandboxRouter` (`services/routing.rs`) is the worked example — it stands in for `SandboxBackend` + `SyncEngine` + `ProviderRegistry` across the pane and port commands. See `docs/features/lib-decomposition/02_dev.md`.
 
 ## Subsystem Pattern: Trait + Real Impl + Mock
 
-Every subsystem that touches external processes is a trait injected into Tauri state as `Arc<dyn Trait>`, constructed once at startup by a `default_*()` function. Under `MIO_MOCK_BACKEND=1` (checked by `mock_backend_enabled()` in `src-tauri/src/backends/mod.rs`) a subsystem takes one of two paths: the older ones swap in a hand-written in-memory mock struct, while `backends`/`machine`/`sync` keep their real struct and swap the `ProcessRunner` beneath it (see `mockctl/` below):
+Every subsystem that touches external processes is a trait injected into Tauri state as `Arc<dyn Trait>`, constructed once at startup by a `default_*()` function. Under `MIO_MOCK_BACKEND=1` (checked by `mock_backend_enabled()` in `src-tauri/src/domain/mod.rs`) a subsystem takes one of two paths: the older ones swap in a hand-written in-memory mock struct, while `backends`/`machine`/`sync` keep their real struct and swap the `ProcessRunner` beneath it (see `mockctl/` below):
 
 | Trait | Declared in | Real impl (drives) | Under `MIO_MOCK_BACKEND=1` | Constructor |
 |---|---|---|---|---|
@@ -32,7 +34,8 @@ Cross-subsystem orchestration lives in `services/` (e.g. the deploy teardown ord
 
 Modules follow one layout: `types.rs` declares the public types/trait, `mod.rs` implements.
 
-- `backends/` — sandbox (container) lifecycle via podman; owns the base image (`BASE_IMAGE_VERSION`, embedded Containerfile from `src-tauri/resources/Containerfile`) and workspace-path derivation.
+- `domain/` — the app-wide concepts every layer may use: `mock_backend_enabled()`, sandbox naming (`validate_name`, `validate_new_name`), the workspace root and `workspace_path()`, and in `domain/types.rs` the `Sandbox` shape, `ProviderId` and `BackendError`. Depends on no subsystem. Not named `core`, which would shadow the `core` crate.
+- `backends/` — sandbox (container) lifecycle via podman: `CliBackend` in `mod.rs` (create, deploy, event stream), remote host management in `hosts.rs`, the dismissed-image-update marker in `image.rs`.
 - `runtime/` — in-container tooling: mise package install/uninstall, agent web UI (paseo).
 - `sync/` — Mutagen file-sync and low-level port-forwarding primitives (`forward_create`/`forward_terminate`/`sweep_stale_forwards`) for remote deploys and embedded panes.
 - `network/` — owns forward lifecycle/registry on top of `sync`'s primitives: agent-web and inference forwards, and exposing an arbitrary user-chosen sandbox port to the host over the sandbox's SSH alias, without recreating the container.
@@ -40,7 +43,9 @@ Modules follow one layout: `types.rs` declares the public types/trait, `mod.rs` 
 - `process/` — the production process layer: the `ProcessRunner` trait, the real
   `SystemPodmanRunner`/`SystemMutagenRunner`, the detached-command constructors
   every external binary is spawned through, the startup handle sanitiser, the per-call-shape
-  timeouts, and the podman half-open breaker. See
+  timeouts, and the podman half-open breaker. `process/podman.rs` resolves the podman binary and
+  the connection name (`podman_command`, `connection_name`, `DEFAULT_MACHINE_NAME`);
+  `process/mutagen.rs` resolves the Mutagen sidecar and its data directory. See
   `docs/features/podman-process-isolation/02_dev.md`.
 - `mockctl/` — runtime control plane for the e2e `light` tier: the scripted half of each
   `ProcessRunner` pair (`ScriptedPodmanRunner`, `ScriptedMutagenRunner`),
@@ -50,7 +55,7 @@ Modules follow one layout: `types.rs` declares the public types/trait, `mod.rs` 
   one; all three run unmodified against them, so there is no separate mock struct for
   `backends`/`machine`/`sync`. Depends on `process/`, never the reverse. See
   `docs/features/scriptable-mock-backend/02_dev.md`.
-- `provider/` — the `MachineProvider` seam and `ProviderRegistry`: `PodmanProvider` (`provider/mod.rs`) behind `ProviderRegistry`. See `docs/architecture/providers.md`.
+- `provider/` — the `MachineProvider` seam and `ProviderRegistry`: `PodmanProvider` (`provider/mod.rs`) behind `ProviderRegistry`. Owns the base image (`BASE_IMAGE_VERSION` in `provider/image.rs`, embedded Containerfile from `src-tauri/resources/Containerfile`). See `docs/architecture/providers.md`.
 - `proxy/` — per-sandbox proxy sidecar (free functions, not a trait subsystem: every external call already crosses the `ProcessRunner` seam through a provider): the iron-proxy sidecar, config renderer and audit ingest, and the flow-log poller. See `docs/architecture/network.md`.
 - `net_policy.rs` — the `.mio/net-policy.json` schema, validation, the per-sandbox accepted policy (`applied.json`, with a revision) and the diff that turns a changed workspace file into a reviewable proposal; a plain file module like `mio_files.rs`, usable from any layer.
 - `activity/` — `TaskRegistry`, the source of truth for long-running task state; pushes `activity://task-updated` events consumed by `src/lib/activity/activity.svelte.ts`.
@@ -60,13 +65,13 @@ Modules follow one layout: `types.rs` declares the public types/trait, `mod.rs` 
 - `credentials/` — shared agent credential bundles (capture from one sandbox, inject into another).
 - `inference/` — local LLM serving: machine-spec probing, model downloads, llama.cpp (`inference/llama.rs`) and Foundry Local (`inference/foundry.rs`) engines.
 - `settings/` — persisted `AppSettings`.
-- `ssh/` — SSH config manipulation for remote hosts.
-- `workspace/` — embedded-pane registry (`WorkspaceRegistry`): which Terminal/agent-web/agent-chat panes are open per sandbox; emits `workspace://state`.
+- `ssh/` — SSH config manipulation (`write_alias`) and, in `ssh/identity.rs`, the per-sandbox keypair, its alias `ProxyCommand` and the pinned `known_hosts`. Takes no provider: whatever must run inside the sandbox is done by the caller.
+- `workspace/` — embedded-pane registry (`WorkspaceRegistry`) and the main window's webviews: which Terminal/agent-web/agent-chat panes are open per sandbox; emits `workspace://state`. It only drops panes; ending what backs them (forwards, attach streams) is `services/panes.rs`.
 - `commands/` — the `#[tauri::command]` surface, one file per domain (`panes`, `agent_chat`, `inference`, `machine`, `agents`, `sandbox`, `deploy`, `image`, `credentials`, `packages`, `hosts`, `ssh`, `app`, `network`, `proxy`, `net_policy`, `mockctl`), plus the `tauri::generate_handler!` inventory in `commands/mod.rs`.
-- `services/` — cross-subsystem orchestration: `routing.rs` (`SandboxRouter`, resolving a sandbox to its provider, machine, and SSH alias), `panes.rs` (the terminal session attach and agent-web pane preparation), `sandbox.rs` (create and teardown sequencing), `ssh_access.rs` (the alias handoff a host SSH client connects through).
+- `services/` — cross-subsystem orchestration: `routing.rs` (`SandboxRouter`, resolving a sandbox to its provider, machine, and SSH alias), `panes.rs` (pane teardown, the terminal session attach and agent-web pane preparation), `auth_container.rs` (the throwaway agent-login container), `sandbox.rs` (create and teardown sequencing), `ssh_access.rs` (the alias handoff a host SSH client connects through).
 - `bootstrap.rs` — startup wiring: process-runner construction, every `manage` call, and the exit handler.
 - `logging.rs` — `init_logging`. Returns a `WorkerGuard` whose `Drop` is the only thing that drains the log file's non-blocking writer, so it must be handed to `manage`.
-- `mio_files.rs` — reads and writes for the JSON documents under a workspace's `.mio` directory, formatting the path into the failure message in one place.
+- `mio_files.rs` — reads and writes for the JSON documents under a workspace's `.mio` directory, formatting the path into the failure message in one place, plus `json_path_get`.
 - `error.rs` — `AppError`, the IPC boundary type; see the Error Handling section of the root `AGENTS.md`.
 
 ## Adding a Tauri Command
@@ -83,9 +88,9 @@ Modules follow one layout: `types.rs` declares the public types/trait, `mod.rs` 
 |---|---|---|
 | `invoke()` rejects with "command not found" for a compiled command | Command fn missing from `generate_handler![]` in `src-tauri/src/commands/mod.rs` | Add the `<domain>::<name>` path to `generate_handler![]` in `src-tauri/src/commands/mod.rs` |
 | e2e `light` tier hangs or errors on a new command | New command shells out directly instead of going through a mocked trait, so `MIO_MOCK_BACKEND=1` has no effect on the command | Route the external call through one of the subsystem traits and implement the mock method |
-| `podman -v` rejects the workspace mount path | Podman does not expand `~` or `$HOME`, and rejects backslash Windows paths | Use `WORKSPACE_MOUNT` (`/root/work`) and `workspace_path()` in `src-tauri/src/backends/mod.rs`, which forward-slashes the host path |
-| Container base-image change silently ignored | `ensure_base_image` short-circuits on `podman image exists <tag>` | Bump `BASE_IMAGE_VERSION` in `src-tauri/src/backends/mod.rs` together with any `src-tauri/resources/Containerfile` change |
-| Sandbox name accepted by UI but rejected by backend | `validate_name()` in `src-tauri/src/backends/mod.rs` bars non-ASCII-alphanumeric leading chars and path-unsafe chars because the name becomes a workspace path segment | Surface the `InvalidName` error via `parseError` on the frontend; do not loosen `validate_name()` without securing `workspace_path()` |
+| `podman -v` rejects the workspace mount path | Podman does not expand `~` or `$HOME`, and rejects backslash Windows paths | Use `WORKSPACE_MOUNT` (`/root/work`) and `workspace_path()` in `src-tauri/src/domain/mod.rs`, which forward-slashes the host path |
+| Container base-image change silently ignored | `ensure_base_image` short-circuits on `podman image exists <tag>` | Bump `BASE_IMAGE_VERSION` in `src-tauri/src/provider/image.rs` together with any `src-tauri/resources/Containerfile` change |
+| Sandbox name accepted by UI but rejected by backend | `validate_name()` in `src-tauri/src/domain/mod.rs` bars non-ASCII-alphanumeric leading chars and path-unsafe chars because the name becomes a workspace path segment | Surface the `InvalidName` error via `parseError` on the frontend; do not loosen `validate_name()` without securing `workspace_path()` |
 | `check_podman_ready` / `start_podman_machine` behave unexpectedly under `MIO_MOCK_BACKEND=1` | Machine-lifecycle commands use `Arc<dyn MachineManager>` (`PodmanMachineManager`), routed through the same shared `ProcessRunner` as `backends` | Script `podman.machine-list`/`podman.machine-start` via `mock_configure`, or rely on `ScriptedPodmanRunner`'s built-in "already running" default (`src-tauri/src/mockctl/mod.rs`) |
 | `mock_configure` rejects a key that looks like a real `podman` call | The key is missing from `KNOWN_CALLS` in `src-tauri/src/mockctl/mod.rs` — only listed keys are scriptable | Add the key to `KNOWN_CALLS`; verify the derived key matches the matching strategy in `docs/features/scriptable-mock-backend/02_dev.md` |
 | A `light` run's activity scrollback shows container events for sandboxes no spec created, or a leftover `podman` process holds `target/debug` files locked | A subsystem method spawns a streamed child process, which `ProcessRunner::run` (`src-tauri/src/process/types.rs`) cannot represent because it models one-shot calls only, and no `mock_backend_enabled()` gate covers the spawn | Gate the spawning method on `mock_backend_enabled()`, as `CliBackend::listen_events` (`src-tauri/src/backends/mod.rs`) already does; clear a leftover process with `killStaleDevProcesses` in `e2e/wdio.conf.ts` |
@@ -97,3 +102,4 @@ Modules follow one layout: `types.rs` declares the public types/trait, `mod.rs` 
 | A dev or e2e build cannot find `llama-server` | Everything under `src-tauri/binaries/` (Podman client, Mutagen, llama.cpp) is gitignored and staged by the root `build.rs` at pinned versions, so a fresh or stale checkout lacks it or holds an old release | Run `./build dev --setup` (or `./build dev --setup-worktree <path>` in a new worktree) |
 | The app window goes white and "(Not responding)" during a model download or another frequent-progress task, with low CPU and no error in `mio.log` | tauri's `tracing` feature makes `emit` block on the main thread while holding tauri's JS-listener lock, so a background emit racing any main-thread emit (tauri's own focus/resize events, `emit_state` in `src-tauri/src/workspace/mod.rs`) deadlocks; `tauri-plugin-devtools` turns that feature on | Keep the `devtools` feature out of `default` in `src-tauri/Cargo.toml` and enable it only with `MIO_DEVTOOLS=1`; never add a dependency that enables `tauri/tracing` (check with `cargo tree -e features -i tauri`) |
 | A `BackendError` variant reaches the frontend as `kind: "Backend"` despite having its own `AppError` variant | `From<BackendError> for AppError` (`src-tauri/src/error.rs`) is hand-written and maps only the variants listed in it | Add the variant's arm to that `From` impl as well as to `kind()`, and mirror the discriminant into `AppErrorKind` (`src/lib/errors.ts`) |
+| A new `BackendError` variant needs a subsystem's error type as its payload | `domain/` sits below every subsystem and cannot name one; `BackendError::Ssh` carries a `String` for that reason | Carry the message and put the `From<SubsystemError> for BackendError` impl in that subsystem's `types.rs`, as `ssh/types.rs` does |

@@ -9,7 +9,7 @@ pub struct RegistryEntry {
     pub description: Option<String>,
 }
 
-/// Errors from [`RuntimeManager`]. Converts into [`crate::error::AppError`] via `#[from]`.
+/// Errors from [`RuntimeManager`]. Converts into `AppError` via `#[from]`.
 #[derive(Debug, thiserror::Error)]
 pub enum RuntimeError {
     #[error("invalid package name {name:?}: use letters, digits or '-', '_', '.', '/', '#', ':', '@', '+'")]
@@ -48,7 +48,7 @@ impl From<crate::provider::types::ProviderError> for RuntimeError {
 }
 
 /// Manages the mise tool environment embedded in a sandbox workspace. Distinct from
-/// [`crate::backends::types::SandboxBackend`], which owns container lifecycle. The sole
+/// `SandboxBackend`, which owns container lifecycle. The sole
 /// implementation is [`MiseRuntime`], held in Tauri state as `Arc<dyn RuntimeManager>`.
 #[async_trait]
 pub trait RuntimeManager: Send + Sync {

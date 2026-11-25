@@ -67,10 +67,10 @@ a time (`docs/features/parallel-worktree-e2e/02_dev.md`).
 
 All read via `std::env::var` at call time, never cached:
 
-- `PODMAN_CONNECTION` — Podman system connection name; default `podman-machine-default` (`src-tauri/src/backends/mod.rs`). Steers container/runtime operations only; machine lifecycle (`src-tauri/src/machine/mod.rs`) always targets the default machine, since a connection may name a remote SSH endpoint no `podman machine` subcommand can act on.
+- `PODMAN_CONNECTION` — Podman system connection name; default `podman-machine-default` (`connection_name()` in `src-tauri/src/process/podman.rs`). Steers container/runtime operations only; machine lifecycle (`src-tauri/src/machine/mod.rs`) always targets the default machine, since a connection may name a remote SSH endpoint no `podman machine` subcommand can act on.
 - `MIO_PODMAN_MACHINE` — test-only override for the machine `src-tauri/src/machine/mod.rs` targets; default `podman-machine-default`. Set only by the E2E harness.
-- `SANDBOX_WORKSPACE_ROOT` — root for sandbox workspace directories; default `<Documents>/sandbox-mio` (`workspace_root()` in `src-tauri/src/backends/mod.rs`).
-- `MIO_MOCK_BACKEND=1` — swaps every subsystem trait to its in-memory mock; used by the e2e `light` tier (`mock_backend_enabled()` in `src-tauri/src/backends/mod.rs`).
+- `SANDBOX_WORKSPACE_ROOT` — root for sandbox workspace directories; default `<Documents>/sandbox-mio` (`workspace_root()` in `src-tauri/src/domain/mod.rs`).
+- `MIO_MOCK_BACKEND=1` — swaps every subsystem trait to its in-memory mock; used by the e2e `light` tier (`mock_backend_enabled()` in `src-tauri/src/domain/mod.rs`).
 - `MIO_TEST_MODEL` — overrides the model used by inference e2e specs.
 - `MIO_APP_DATA_DIR` — app-data and log root; default the compiled-in `app_data_dir()`, and for logs `app_log_dir()` (`src-tauri/src/paths.rs`, `init_logging()` in `src-tauri/src/logging.rs`). Set by the e2e harness to a per-worktree directory, never by a shipped install.
 - `MIO_SETTINGS_DIR` — relocates `settings.json`; takes precedence over `MIO_APP_DATA_DIR` (`settings_path()` in `src-tauri/src/settings/mod.rs`).
@@ -200,7 +200,7 @@ Good — states the constraint the code can't show:
 | New Tauri command exists in Rust but `invoke()` rejects with "command not found" | Command function not added to the `tauri::generate_handler![]` inventory in `src-tauri/src/commands/mod.rs` | Add the command's `<domain>::<name>` path to `tauri::generate_handler![]` in `src-tauri/src/commands/mod.rs` |
 | New `AppError` variant does not compile | `kind()` in `src-tauri/src/error.rs` has an exhaustive match over variants | Add a `kind()` arm in `src-tauri/src/error.rs` and mirror the string in `AppErrorKind` in `src/lib/errors.ts` |
 | A status badge shows a raw English string like `up-to-date` in non-English locales | Backend emitted a status value with no `status_<value>` key | Add `status_<value>` to every file in `messages/` and an entry to the `map` in `translateStatus()` (`src/lib/sandbox.ts`) |
-| Containerfile change has no effect on new sandboxes | `ensure_base_image` short-circuits on `podman image exists`, so an unchanged image tag keeps the stale image | Bump `BASE_IMAGE_VERSION` in `src-tauri/src/backends/mod.rs` whenever `src-tauri/resources/Containerfile` changes |
+| Containerfile change has no effect on new sandboxes | `ensure_base_image` short-circuits on `podman image exists`, so an unchanged image tag keeps the stale image | Bump `BASE_IMAGE_VERSION` in `src-tauri/src/provider/image.rs` whenever `src-tauri/resources/Containerfile` changes |
 | Feature works with `./build e2e light` but fails against real Podman | The `light` tier runs entirely against in-memory mocks (`MIO_MOCK_BACKEND=1`) and proves UI/store logic only | Write or run the feature's `standard` tier spec (`e2e/test/specs/standard/`); `e2e/AGENTS.md` defines `standard` as the default tier |
 | A `$state` store resets on route change | Component-local state is destroyed by the router | Put shared state in a module-scoped `.svelte.ts` store under `src/lib/` (pattern: `src/lib/activity/activity.svelte.ts`); see `src/AGENTS.md` |
 | A component added via `pnpm dlx shadcn-svelte@latest add <name>` (no URL) looks visually inconsistent with the rest of the app | The plain command pulls from the default shadcn-svelte registry, not retro-ui-svelte | Always use `pnpm dlx shadcn-svelte@latest add https://retroui-svelte.netlify.app/r/<name>.json` |

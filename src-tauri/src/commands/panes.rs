@@ -95,7 +95,7 @@ pub async fn open_agent_web(
 /// tell. Fire and forget: failures are logged, never surfaced.
 #[tauri::command]
 pub fn prewarm_agent_web(name: String, app: tauri::AppHandle) -> Result<(), AppError> {
-    crate::backends::validate_name(&name)?;
+    crate::domain::validate_name(&name)?;
     crate::services::panes::spawn_prewarm_installed(&app, &name);
     Ok(())
 }
@@ -148,14 +148,14 @@ pub fn set_panel_collapsed(collapsed: bool, app: tauri::AppHandle) -> Result<(),
 /// Close every embedded pane of sandbox and reclaim forwards. No-op if none is open.
 #[tauri::command]
 pub async fn close_workspace(name: String, app: tauri::AppHandle) -> Result<(), AppError> {
-    workspace::close_app(&app, &name).await;
+    crate::services::panes::close_app(&app, &name).await;
     Ok(())
 }
 
 /// Close exactly one app tab of sandbox. No-op if none is open.
 #[tauri::command]
 pub async fn close_pane(name: String, kind: AppKind, app: tauri::AppHandle) -> Result<(), AppError> {
-    workspace::close_pane(&app, &name, kind).await;
+    crate::services::panes::close_pane(&app, &name, kind).await;
     Ok(())
 }
 

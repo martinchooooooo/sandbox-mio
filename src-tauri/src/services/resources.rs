@@ -11,7 +11,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tauri::{AppHandle, Emitter};
 
-use crate::provider::types::{EnginePool, InstanceStats, ProviderId};
+use crate::domain::types::ProviderId;
+use crate::provider::types::{EnginePool, InstanceStats};
 use crate::provider::ProviderRegistry;
 
 pub const SNAPSHOT_EVENT: &str = "resources://snapshot";
@@ -40,7 +41,7 @@ const RETENTION_SECS: u64 = 14 * 24 * 3600;
 const PRUNE_GROWTH_BYTES: u64 = 512 * 1024;
 
 /// The Podman machine's history file stem. A leading underscore cannot collide with a sandbox,
-/// whose name starts with an ASCII alphanumeric (`validate_name` in `src-tauri/src/backends/mod.rs`).
+/// whose name starts with an ASCII alphanumeric (`validate_name` in `src-tauri/src/domain/mod.rs`).
 const POOL_FILE_STEM: &str = "_podman-machine";
 
 /// One live reading of one sandbox.
@@ -284,7 +285,7 @@ impl ResourceMonitor {
             state.known.remove(name);
             state.snapshot.sandboxes.retain(|s| s.name != name);
         }
-        if crate::backends::validate_name(name).is_err() {
+        if crate::domain::validate_name(name).is_err() {
             return;
         }
         if let Ok(dir) = crate::paths::resource_history_dir(app) {
@@ -474,7 +475,7 @@ impl ResourceMonitor {
         }
         let mut lines: Vec<(PathBuf, String)> = Vec::new();
         for (name, rollup) in rollups {
-            if crate::backends::validate_name(&name).is_err() {
+            if crate::domain::validate_name(&name).is_err() {
                 continue;
             }
             if let Ok(line) = serde_json::to_string(&rollup) {
@@ -588,13 +589,13 @@ pub fn history(
     window: HistoryWindow,
 ) -> Result<ResourceHistory, crate::error::AppError> {
     let dir = crate::paths::resource_history_dir(app)
-        .map_err(|e| crate::backends::types::BackendError::CommandFailed(e.to_string()))?;
-    let io = |e: std::io::Error| crate::backends::types::BackendError::CommandFailed(e.to_string());
+        .map_err(|e| crate::domain::types::BackendError::CommandFailed(e.to_string()))?;
+    let io = |e: std::io::Error| crate::domain::types::BackendError::CommandFailed(e.to_string());
     let cutoff = unix_now().as_secs().saturating_sub(window.secs());
     let mut history = ResourceHistory::default();
     match name {
         Some(name) => {
-            crate::backends::validate_name(name)?;
+            crate::domain::validate_name(name)?;
             let rollups = read_rollups(&dir.join(format!("{name}.jsonl")), cutoff).map_err(io)?;
             history.sandboxes.push(SandboxHistory { name: name.to_string(), rollups });
         }

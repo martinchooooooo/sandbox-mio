@@ -20,6 +20,16 @@ pub enum SyncError {
     SessionNotFound { name: String },
 }
 
+impl From<crate::process::mutagen::SidecarError> for SyncError {
+    fn from(e: crate::process::mutagen::SidecarError) -> Self {
+        use crate::process::mutagen::SidecarError;
+        match e {
+            SidecarError::DataDir(m) => SyncError::DataDir(m),
+            SidecarError::Sidecar(m) => SyncError::Sidecar(m),
+        }
+    }
+}
+
 /// Collapsed sync state for one session (rendered as frontend status dot).
 #[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]

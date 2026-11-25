@@ -6,7 +6,8 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Manager};
 
-use crate::backends::types::{Sandbox, SandboxBackend};
+use crate::backends::types::SandboxBackend;
+use crate::domain::types::Sandbox;
 use crate::inference::types::ActiveServer;
 use crate::inference::INFERENCE_GUEST_PORT;
 use crate::network::types::{NetworkManager, ServiceKind};

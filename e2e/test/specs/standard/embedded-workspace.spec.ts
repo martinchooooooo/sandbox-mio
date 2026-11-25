@@ -367,7 +367,7 @@ describe("Embedded workspace (app sidebar and Dashboard in one webview)", functi
       panesFor(afterState, nameA).length,
       0,
       `workspace_state() still reports a pane for "${nameA}" after destroy — destroy_sandbox must call ` +
-        "workspace::close_app for every one of the sandbox's panes.",
+        "services::panes::close_app for every one of the sandbox's panes.",
     );
     assert.strictEqual(
       afterState.sandbox_last_pane[nameA],

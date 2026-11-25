@@ -11,11 +11,10 @@ use std::time::Duration;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager};
 
-use super::types::{
-    EngineKind, InferenceEngine, InferenceError, RuntimeSetupEvent, ServerHandle, SetupStep,
-};
+use super::types::{InferenceEngine, InferenceError, RuntimeSetupEvent, ServerHandle, SetupStep};
 use crate::process::detached_command;
 use crate::settings;
+use crate::settings::types::EngineKind;
 
 /// Default GPU offload when the user has not pinned `llama_gpu_layers`. 99 offloads every layer
 /// that fits; llama-server silently caps it to the model's real layer count.

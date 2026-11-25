@@ -36,7 +36,7 @@ pub struct Bootstrap {
 /// Builds the process layer.
 pub fn build() -> Bootstrap {
     let mock_director = Arc::new(mockctl::types::MockDirector::new());
-    let podman_runner: Arc<dyn ProcessRunner> = if backends::mock_backend_enabled() {
+    let podman_runner: Arc<dyn ProcessRunner> = if crate::domain::mock_backend_enabled() {
         Arc::new(mockctl::types::ScriptedPodmanRunner::new(mock_director.clone()))
     } else {
         Arc::new(process::types::SystemPodmanRunner)
@@ -75,12 +75,12 @@ impl Bootstrap {
             self.podman_runner.clone(),
             app.handle().clone(),
         ));
-        if !backends::mock_backend_enabled() {
+        if !crate::domain::mock_backend_enabled() {
             if let Ok(resource_dir) = app.path().resource_dir() {
-                backends::set_podman_resource_dir(resource_dir.join("podman"));
+                crate::process::podman::set_podman_resource_dir(resource_dir.join("podman"));
             }
         }
-        let mutagen_runner: Arc<dyn ProcessRunner> = if backends::mock_backend_enabled() {
+        let mutagen_runner: Arc<dyn ProcessRunner> = if crate::domain::mock_backend_enabled() {
             Arc::new(mockctl::types::ScriptedMutagenRunner::new(self.mock_director.clone()))
         } else {
             Arc::new(process::types::SystemMutagenRunner::new(app.handle().clone()))
@@ -108,8 +108,8 @@ impl Bootstrap {
         let monitor = Arc::new(crate::services::resources::ResourceMonitor::default());
         monitor.start(app.handle().clone(), registry.clone());
         app.manage(monitor);
-        workspace::create_main_window(app.handle())?;
-        if !backends::mock_backend_enabled() {
+        workspace::create_main_window(app.handle(), crate::services::panes::close_all_apps_in_background)?;
+        if !crate::domain::mock_backend_enabled() {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let live = match handle.state::<Arc<dyn SandboxBackend>>().list().await {

@@ -32,7 +32,7 @@ const WORKDIR: &str = "/root/work";
 /// the session's exec child bypasses the scripted `ProcessRunner` and would reach a real engine.
 /// Both transports run the same session lifecycle.
 pub fn default_terminal_host(registry: Arc<ProviderRegistry>, director: Arc<MockDirector>) -> Arc<dyn TerminalHost> {
-    if crate::backends::mock_backend_enabled() {
+    if crate::domain::mock_backend_enabled() {
         return Arc::new(LifecycleHost::new(mock::MockTransport::new(director)));
     }
     Arc::new(LifecycleHost::new(SshTransport { registry }))

@@ -4,8 +4,8 @@
 
 use std::sync::Arc;
 
-use crate::backends::types::BackendError;
-use crate::provider::types::{MachineProvider, MachineRef, ProviderId};
+use crate::domain::types::{BackendError, ProviderId};
+use crate::provider::types::{MachineProvider, MachineRef};
 use crate::provider::ProviderRegistry;
 
 /// Errors from the `proxy` subsystem. Converts into [`BackendError`] at the caller boundary — the
@@ -49,11 +49,6 @@ impl SidecarSite {
     }
 }
 
-/// The container-name suffix that marks a Podman container as a proxy sidecar rather than a
-/// sandbox — filtered out of `list_sandboxes` (`commands/sandbox.rs`) the same way
-/// `credentials::types::AUTH_CONTAINER_PREFIX` filters out throwaway auth containers.
-pub const PROXY_CONTAINER_SUFFIX: &str = "-proxy";
-
 /// What `SandboxBackend::create` needs to route a sandbox through its proxy sidecar.
 pub enum ProxyAttachment {
     /// Podman: the internal network to join *instead of* `pasta`, the environment (proxy vars, CA
@@ -73,7 +68,7 @@ pub struct ProxyStatus {
     pub running: bool,
     pub proxy_ip: String,
     pub network: String,
-    pub provider: crate::provider::types::ProviderId,
+    pub provider: ProviderId,
     pub engine: ProxyEngine,
     /// The deploy target's connection when the sidecar runs remotely; `None` locally.
     pub host: Option<String>,

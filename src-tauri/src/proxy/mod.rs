@@ -24,7 +24,8 @@ use tauri::AppHandle;
 
 use crate::activity::types::TaskKind;
 use crate::activity::TaskFailure;
-use crate::provider::types::{InstanceNetwork, MachineProvider, ProviderId, SidecarMount, SidecarSpec};
+use crate::domain::types::ProviderId;
+use crate::provider::types::{InstanceNetwork, MachineProvider, SidecarMount, SidecarSpec};
 use crate::provider::ProviderRegistry;
 use types::{ProxyAttachment, ProxyEngine, ProxyError, ProxyStatus, SidecarSite};
 
@@ -49,7 +50,7 @@ pub fn proxy_image(provider_id: ProviderId) -> String {
 }
 
 pub fn proxy_container_name(sandbox: &str) -> String {
-    format!("{sandbox}{}", types::PROXY_CONTAINER_SUFFIX)
+    format!("{sandbox}{}", crate::domain::PROXY_CONTAINER_SUFFIX)
 }
 
 pub fn proxy_network_name(sandbox: &str) -> String {
@@ -610,8 +611,8 @@ pub fn sidecar_provider(
 /// versioned `sandbox-mio/base:<n>` image and so carry an `image_version`; the sidecar image tags
 /// (iron-proxy `0.56.0`) must never parse as one
 /// (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 10).
-pub fn is_sidecar(instance: &crate::backends::types::Sandbox) -> bool {
-    instance.name.ends_with(types::PROXY_CONTAINER_SUFFIX) && instance.image_version.is_none()
+pub fn is_sidecar(instance: &crate::domain::types::Sandbox) -> bool {
+    instance.name.ends_with(crate::domain::PROXY_CONTAINER_SUFFIX) && instance.image_version.is_none()
 }
 
 /// Fails unless `sandbox`'s local sidecar exists on the provider its `meta.json` names. A failed
@@ -679,7 +680,7 @@ pub async fn sweep(app: &AppHandle, registry: &Arc<ProviderRegistry>, live: &[St
             continue;
         };
         for instance in instances.iter().filter(|s| is_sidecar(s)) {
-            let Some(base) = instance.name.strip_suffix(types::PROXY_CONTAINER_SUFFIX) else {
+            let Some(base) = instance.name.strip_suffix(crate::domain::PROXY_CONTAINER_SUFFIX) else {
                 continue;
             };
             if live.iter().any(|n| n == base) {
@@ -782,8 +783,8 @@ mod tests {
         assert_eq!(out.len(), 1, "a destroyed sandbox's value and an unnamed one go nowhere");
     }
 
-    fn instance(name: &str, image_version: Option<u32>) -> crate::backends::types::Sandbox {
-        crate::backends::types::Sandbox {
+    fn instance(name: &str, image_version: Option<u32>) -> crate::domain::types::Sandbox {
+        crate::domain::types::Sandbox {
             id: name.to_string(),
             name: name.to_string(),
             status: "running".to_string(),
@@ -805,10 +806,10 @@ mod tests {
     #[test]
     fn new_names_may_not_end_in_the_sidecar_suffix() {
         assert!(matches!(
-            crate::backends::validate_new_name("micro-proxy"),
-            Err(crate::backends::types::BackendError::ReservedName { .. })
+            crate::domain::validate_new_name("micro-proxy"),
+            Err(crate::domain::types::BackendError::ReservedName { .. })
         ));
-        assert!(crate::backends::validate_new_name("proxy-micro").is_ok());
-        assert!(crate::backends::validate_new_name("micro").is_ok());
+        assert!(crate::domain::validate_new_name("proxy-micro").is_ok());
+        assert!(crate::domain::validate_new_name("micro").is_ok());
     }
 }

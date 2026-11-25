@@ -422,7 +422,7 @@ pub fn default_network_manager(
     app: AppHandle,
     providers: Arc<ProviderRegistry>,
 ) -> std::sync::Arc<dyn NetworkManager> {
-    if crate::backends::mock_backend_enabled() {
+    if crate::domain::mock_backend_enabled() {
         return std::sync::Arc::new(MockNetworkManager::new(app));
     }
     std::sync::Arc::new(MutagenNetworkManager {

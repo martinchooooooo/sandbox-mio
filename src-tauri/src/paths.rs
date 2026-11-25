@@ -18,7 +18,7 @@ pub fn app_data_root<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, tauri::E
 }
 
 /// A sandbox's SSH identity directory: the keypair and the pinned `known_hosts`. Shared by
-/// `ensure_sandbox_identity` (`src-tauri/src/backends/mod.rs`) and the destroy cleanup in
+/// `ensure_sandbox_identity` (`src-tauri/src/ssh/identity.rs`) and the destroy cleanup in
 /// `src-tauri/src/services/sandbox.rs`, so create and teardown name the same directory.
 pub fn sandbox_key_dir<R: Runtime>(app: &AppHandle<R>, name: &str) -> Result<PathBuf, tauri::Error> {
     Ok(app_data_root(app)?.join("ssh-keys").join(name))

@@ -5,6 +5,9 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use tauri::{AppHandle, Manager, Runtime};
+
+use crate::agent_host::types::AgentHost;
 use crate::error::AppError;
 use crate::mio_files;
 use crate::network::types::{NetworkManager, ServiceKind};
@@ -12,7 +15,62 @@ use crate::runtime::types::{RuntimeError, RuntimeManager};
 use crate::runtime::PASEO_WEB_PORT;
 use crate::services::routing::SandboxRouter;
 use crate::terminal::types::{AttachRequest, TerminalEvent, TerminalHost};
-use crate::workspace::types::{AppKind, WebviewPane, WorkspaceRegistry};
+use crate::workspace::types::{AppKind, AppPane, WebviewPane, WorkspaceRegistry};
+
+/// Tears down every embedded pane of sandbox `name` and what backs them. Idempotent and
+/// best-effort, so it is safe from the command, from undeploy/destroy and from the Destroyed event.
+pub async fn close_app<R: Runtime>(app: &AppHandle<R>, name: &str) {
+    let panes = crate::workspace::remove_panes(app, name);
+    if panes.is_empty() {
+        return;
+    }
+    teardown_backing(app, name, &panes).await;
+    crate::workspace::emit_state(app);
+}
+
+/// Close one pane of sandbox `name`, leaving its siblings open; no-op on an already-closed pane.
+pub async fn close_pane<R: Runtime>(app: &AppHandle<R>, name: &str, kind: AppKind) {
+    let Some(pane) = crate::workspace::remove_pane(app, name, kind) else {
+        return;
+    };
+    teardown_backing(app, name, std::slice::from_ref(&pane)).await;
+    crate::workspace::emit_state(app);
+}
+
+/// Best-effort teardown of every embedded pane once the main window is destroyed: the app is
+/// exiting, but the Mutagen daemon and its forwards would survive us.
+pub fn close_all_apps_in_background<R: Runtime>(app: AppHandle<R>) {
+    tauri::async_runtime::spawn(async move {
+        let names: Vec<String> = {
+            let registry = app.state::<WorkspaceRegistry>();
+            let state = registry.lock().unwrap();
+            state.apps.iter().map(|p| p.sandbox.clone()).collect()
+        };
+        for name in names {
+            close_app(&app, &name).await;
+        }
+    });
+}
+
+/// Ends what backs each closed pane: a forward, the native chat's attach stream (pi keeps running
+/// inside the sandbox), or the terminal's SSH session (the Herdr session keeps running).
+async fn teardown_backing<R: Runtime>(app: &AppHandle<R>, name: &str, panes: &[AppPane]) {
+    let network = app.state::<Arc<dyn NetworkManager>>();
+    for pane in panes {
+        let kind = match pane.kind {
+            AppKind::Terminal => {
+                app.state::<Arc<dyn TerminalHost>>().detach(name).await;
+                continue;
+            }
+            AppKind::AgentWeb => ServiceKind::AgentWeb,
+            AppKind::AgentChat => {
+                app.state::<Arc<dyn AgentHost>>().detach(name).await;
+                continue;
+            }
+        };
+        network.close_forward(name, kind).await;
+    }
+}
 
 /// Opens the native terminal's SSH session for `name`. Uses `locate`, not `resolve`: the session
 /// spawns the engine exec itself and needs no `~/.ssh` alias
@@ -29,10 +87,10 @@ pub async fn attach_terminal_session(
     app: &tauri::AppHandle,
 ) -> Result<(), AppError> {
     // Before any key is created: the name reaches a remote shell and names files on the host.
-    crate::backends::validate_name(name)?;
+    crate::domain::validate_name(name)?;
     let route = router.locate(name).await?;
-    let identity_path = crate::backends::ensure_sandbox_identity(app, name)?;
-    let known_hosts_path = crate::backends::sandbox_known_hosts_path(&identity_path);
+    let identity_path = crate::ssh::identity::ensure_sandbox_identity(app, name)?;
+    let known_hosts_path = crate::ssh::identity::sandbox_known_hosts_path(&identity_path);
     let req = AttachRequest {
         name: name.to_string(),
         machine: route.machine,

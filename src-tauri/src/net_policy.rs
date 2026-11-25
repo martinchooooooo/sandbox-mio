@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use tauri::{AppHandle, Runtime};
 
-use crate::backends::types::BackendError;
+use crate::domain::types::BackendError;
 use crate::mio_files;
 use crate::provider::types::{
     EgressPolicy, EgressRule, EgressTarget, ProviderCapabilities, SecretBindingSpec,

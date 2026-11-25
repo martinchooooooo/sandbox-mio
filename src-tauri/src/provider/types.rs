@@ -1,6 +1,6 @@
 use std::process::Output;
 
-use crate::backends::types::{BackendError, Sandbox};
+use crate::domain::types::{BackendError, ProviderId, Sandbox};
 
 /// Errors from machine-provider operations. Mirrors [`BackendError`]'s process/parse variants so it
 /// converts into the caller's error type at the subsystem boundary with no new IPC values.
@@ -134,7 +134,7 @@ pub struct SecretBindingSpec {
 }
 
 /// Provider-neutral outbound policy for [`InstanceSpec::egress`], built from
-/// `.mio/net-policy.json` by `crate::net_policy`. Holds no secret value.
+/// `.mio/net-policy.json` by `net_policy`. Holds no secret value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EgressPolicy {
     pub mode: EgressMode,
@@ -237,46 +237,6 @@ pub struct ProviderCapabilities {
     pub sidecar_egress: bool,
 }
 
-/// Which engine a [`MachineRef`] names. Also crosses IPC directly as a command parameter
-/// (`machine_setup_steps`/`machine_readiness`/`prepare_machine` in `src-tauri/src/commands/machine.rs`), which is
-/// why it derives `Serialize`/`Deserialize` on top of the `MachineRef` prefix-string form below;
-/// both use the lowercase name. A new provider is a variant here, a registry field, one arm per
-/// `match` over this enum, and a `MachineProvider` implementation.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
-)]
-#[serde(rename_all = "lowercase")]
-pub enum ProviderId {
-    /// The default everywhere a provider is unstated.
-    #[default]
-    Podman,
-}
-
-impl ProviderId {
-    const fn tag(self) -> &'static str {
-        match self {
-            ProviderId::Podman => "podman",
-        }
-    }
-}
-
-impl std::fmt::Display for ProviderId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.tag())
-    }
-}
-
-impl std::str::FromStr for ProviderId {
-    type Err = ProviderError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "podman" => Ok(ProviderId::Podman),
-            other => Err(ProviderError::ParseError(format!("unknown provider id {other:?}"))),
-        }
-    }
-}
-
 /// A provider-tagged machine handle, replacing the untyped `connection: &str` threaded through
 /// `RuntimeManager`/`NetworkManager`/`sync` today. Serializes as a prefixed string (`podman:
 /// mio-tests`) so IPC payloads and persisted `.mio/` JSON stay plain strings. Resolved to a provider by
@@ -303,7 +263,10 @@ impl std::str::FromStr for MachineRef {
         if id.is_empty() {
             return Err(ProviderError::ParseError(format!("machine ref has empty id: {s:?}")));
         }
-        Ok(MachineRef { provider: tag.parse()?, id: id.to_string() })
+        let provider = tag
+            .parse::<ProviderId>()
+            .map_err(|e| ProviderError::ParseError(e.to_string()))?;
+        Ok(MachineRef { provider, id: id.to_string() })
     }
 }
 

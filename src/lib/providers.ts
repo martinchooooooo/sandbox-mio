@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { m } from "$lib/paraglide/messages.js";
 
-/** Which engine runs a sandbox (mirrors Rust `provider::types::ProviderId`). */
+/** Which engine runs a sandbox (mirrors Rust `domain::types::ProviderId`). */
 export type ProviderId = "podman";
 
 /** Every provider the app knows; a future provider is one more entry. */

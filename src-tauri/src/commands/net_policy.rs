@@ -5,10 +5,11 @@ use std::sync::Arc;
 
 use tauri::State;
 
-use crate::backends::types::{BackendError, SandboxBackend};
+use crate::backends::types::SandboxBackend;
+use crate::domain::types::BackendError;
 use crate::error::AppError;
 use crate::net_policy::{self, NetPolicy, PolicyChange, UnstampedBinding};
-use crate::provider::types::ProviderId;
+use crate::domain::types::ProviderId;
 use crate::provider::ProviderRegistry;
 
 /// A workspace policy file that differs from the accepted policy, with what changed.
@@ -43,7 +44,7 @@ pub struct StoreSecret {
 
 /// The sandbox's workspace path from its record, never from the frontend.
 async fn workspace_of(store: &Arc<dyn SandboxBackend>, name: &str) -> Result<String, AppError> {
-    crate::backends::validate_name(name)?;
+    crate::domain::validate_name(name)?;
     crate::services::sandbox::list_user(store)
         .await?
         .into_iter()

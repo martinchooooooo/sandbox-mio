@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use tauri::State;
 
-use crate::backends;
 use crate::error::AppError;
 use crate::mockctl;
 
@@ -16,7 +15,7 @@ pub fn mock_configure(
     behaviour: mockctl::types::Behaviour,
     director: State<'_, Arc<mockctl::types::MockDirector>>,
 ) -> Result<(), AppError> {
-    if !backends::mock_backend_enabled() {
+    if !crate::domain::mock_backend_enabled() {
         return Err(AppError::MockControl(
             "mock_configure is only available under MIO_MOCK_BACKEND=1".to_string(),
         ));
@@ -27,7 +26,7 @@ pub fn mock_configure(
 /// Clear every installed mock override. See [`mock_configure`].
 #[tauri::command]
 pub fn mock_reset(director: State<'_, Arc<mockctl::types::MockDirector>>) -> Result<(), AppError> {
-    if !backends::mock_backend_enabled() {
+    if !crate::domain::mock_backend_enabled() {
         return Err(AppError::MockControl(
             "mock_reset is only available under MIO_MOCK_BACKEND=1".to_string(),
         ));
@@ -43,7 +42,7 @@ pub fn mock_calls(
     key: String,
     director: State<'_, Arc<mockctl::types::MockDirector>>,
 ) -> Result<Vec<mockctl::types::RecordedCall>, AppError> {
-    if !backends::mock_backend_enabled() {
+    if !crate::domain::mock_backend_enabled() {
         return Err(AppError::MockControl(
             "mock_calls is only available under MIO_MOCK_BACKEND=1".to_string(),
         ));

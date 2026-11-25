@@ -1,4 +1,16 @@
-use crate::inference::types::EngineKind;
+/// Local inference engine: either bundled llama-server or installed Foundry Local.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum EngineKind {
+    Llama,
+    Foundry,
+}
+
+impl Default for EngineKind {
+    fn default() -> Self {
+        EngineKind::Llama
+    }
+}
 
 /// Errors loading or saving app settings.
 #[derive(Debug, thiserror::Error)]

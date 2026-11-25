@@ -5,6 +5,7 @@ mod backends;
 mod bootstrap;
 mod commands;
 mod credentials;
+mod domain;
 mod env_ext;
 mod error;
 mod inference;

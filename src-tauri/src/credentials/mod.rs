@@ -9,10 +9,8 @@ use std::sync::Arc;
 
 use tauri::AppHandle;
 
-use crate::backends::types::SandboxBackend;
 use crate::env_ext::env_dir;
-use crate::provider::types::{ExecOpts, MachineProvider, ProviderId};
-use crate::runtime::types::RuntimeManager;
+use crate::provider::types::{ExecOpts, MachineProvider};
 use types::{CredentialError, CredentialManifest, OnboardingSeed};
 
 fn now_ms() -> u64 {
@@ -156,23 +154,6 @@ pub fn delete(app: &AppHandle, service_id: &str) -> Result<(), CredentialError> 
     }
 }
 
-/// Create ephemeral auth container if absent (idempotent; destroyed after capture).
-pub async fn ensure_auth_container(
-    name: &str,
-    backend: &Arc<dyn SandboxBackend>,
-    runtime: &Arc<dyn RuntimeManager>,
-) -> Result<(), CredentialError> {
-    let exists = backend.list().await?.iter().any(|s| s.name == name);
-    if !exists {
-        // An auth container is a throwaway the app creates and destroys around one login.
-        backend.ensure_base_image(ProviderId::Podman).await?;
-        // Never proxied.
-        let sandbox = backend.create(name, None, ProviderId::Podman, None, None).await?;
-        runtime.init(&sandbox.workspace_path).await?;
-    }
-    Ok(())
-}
-
 /// Capture credential and account-source files into a tar archive. Works for both auth containers and user sandboxes.
 pub async fn capture(
     app: &AppHandle,
@@ -187,7 +168,7 @@ pub async fn capture(
     let cred_json = exec_read(provider, name, &["cat", credential_path]).await?;
     let cred: serde_json::Value =
         serde_json::from_str(cred_json.trim()).map_err(|e| CredentialError::Parse(e.to_string()))?;
-    let expires_at_ms = crate::agents::json_path_get(&cred, expires_at_json_key).and_then(|v| v.as_u64());
+    let expires_at_ms = crate::mio_files::json_path_get(&cred, expires_at_json_key).and_then(|v| v.as_u64());
 
     let mut account_email = None;
     if let Some(src_path) = account_source_path {
@@ -195,7 +176,7 @@ pub async fn capture(
         let src: serde_json::Value =
             serde_json::from_str(src_json.trim()).map_err(|e| CredentialError::Parse(e.to_string()))?;
         if let Some(email_key) = account_email_json_key {
-            account_email = crate::agents::json_path_get(&src, email_key)
+            account_email = crate::mio_files::json_path_get(&src, email_key)
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
         }

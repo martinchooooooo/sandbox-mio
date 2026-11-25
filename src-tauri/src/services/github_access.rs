@@ -100,7 +100,7 @@ fn credential_stamp(app: &AppHandle) -> Result<Option<u64>, CredentialError> {
 }
 
 fn state_path(app: &AppHandle, name: &str) -> Result<std::path::PathBuf, AppError> {
-    crate::backends::validate_name(name)?;
+    crate::domain::validate_name(name)?;
     crate::paths::sandbox_github_state_path(app, name).map_err(|e| CredentialError::Io(e.to_string()).into())
 }
 

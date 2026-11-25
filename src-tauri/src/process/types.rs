@@ -41,12 +41,12 @@ pub trait ProcessRunner: Send + Sync {
     }
 }
 
-/// Real `podman` invocations: wraps `podman_command_std()` (`src-tauri/src/backends/mod.rs`),
+/// Real `podman` invocations: wraps `podman_command_std()` (`src-tauri/src/process/podman.rs`),
 /// preserving its resource-dir/env resolution. Also the podman seam's single health verdict — see
 /// [`super::breaker`] and `docs/features/podman-process-isolation/02_dev.md`, Phase D.
 pub struct SystemPodmanRunner;
 
-/// Real Mutagen sidecar invocations: wraps `sync::command()` (`src-tauri/src/sync/mod.rs`),
+/// Real Mutagen sidecar invocations: wraps `mutagen::command()` (`src-tauri/src/process/mutagen.rs`),
 /// preserving its `MUTAGEN_DATA_DIRECTORY` isolation. Holds the [`tauri::AppHandle`] because the
 /// sidecar is resolved through it, which is why this is a separate runner from
 /// [`SystemPodmanRunner`].

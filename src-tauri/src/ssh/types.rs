@@ -11,6 +11,12 @@ pub enum SshError {
     WriteError(String),
 }
 
+impl From<SshError> for crate::domain::types::BackendError {
+    fn from(e: SshError) -> Self {
+        crate::domain::types::BackendError::Ssh(e.to_string())
+    }
+}
+
 /// One OpenSSH `Host` alias for a remote sandbox. Supplies port and identity that Mutagen's
 /// `alias:path` URLs cannot embed. `Direct` is keyed to a Podman connection (many sandboxes share
 /// one); `Proxied` is keyed to a sandbox name (one per sandbox) and backs the podman-exec-transport
