@@ -3,6 +3,7 @@
 
 ## in-progress
 
+* [codebase-restructure](codebase-restructure/index.md) - Behaviour-preserving restructure: break backend import cycles, move dashboard panels into src/lib, add a typed IPC layer, split oversized backend files, and turn the build tool into a Cargo crate.
 * [fastest-time-to-wow](fastest-time-to-wow/index.md) - Reshape first-run onboarding around one metric, the fastest time to a local-model wow: story-voiced setup, a local model downloaded with consent, a pre-built hello-world sandbox with pi, and one consistent word for models.
 * [github-cli-auth](github-cli-auth/index.md) - Log in to GitHub once through the GitHub CLI in the auth container, then apply that token to every sandbox's gh and git, at create and to existing sandboxes, with a per-sandbox opt-out.
 * [host-tool-ssh-access](host-tool-ssh-access/index.md) - Let host SSH clients (e.g. the Claude Code desktop app) attach to a sandbox over the existing exec transport.

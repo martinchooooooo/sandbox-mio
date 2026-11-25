@@ -5,6 +5,10 @@ Records feature status changes only: creation (`Create`), reaching `implemented`
 history with at most one `Create` and one `Implement` entry per feature, so seeded dates are
 approximate. New entries go on top.
 
+## 2026-11-25
+
+* **Create** [codebase-restructure](codebase-restructure/index.md): behaviour-preserving restructure in six phases; Phase 1 (backend import cycles broken through a shared `domain` module) and Phase 2 (dashboard panels moved from `src/routes/projects/` into `src/lib/` feature folders) implemented, Phases 3 to 6 remain
+
 ## 2026-11-24
 
 * **Implement** [net-policy-review](net-policy-review/index.md): every sidecar apply enforces only the app-side accepted policy, a changed workspace policy file is a proposal reviewed in a diff dialog, and secret values are per sandbox
