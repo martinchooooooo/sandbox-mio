@@ -8,6 +8,7 @@ generated:
 stale_after: 2027-02-21T00:00:00+11:00
 code:
   - .github/workflows/ci.yml
+  - build.rs
   - e2e/wdio.conf.ts
   - e2e/lib/
   - src-tauri/src/mockctl/
@@ -31,7 +32,7 @@ Sandbox-mio is tested mainly end to end: WebdriverIO drives the real debug build
   - `light`: no Podman; the app runs against a scripted process layer. Seconds. Proves UI, routing, stores and command round trips.
   - `standard`: real sandboxes on a dedicated test Podman machine, plus a second machine as a deploy target. Minutes. The default tier and the source of regression truth.
   - `heavy`: real model downloads and inference, and deploy-forward chains. Many minutes.
-- CI runs the static checks, the Rust unit tests and the docs check on GitHub-hosted Windows runners, plus the `light` tier as an advisory job that does not fail the run until backlog T7 is fixed; `standard` and `heavy` run only locally.
+- CI runs the static checks, the Rust unit tests and the docs check on GitHub-hosted Windows runners, plus the `light` tier as an advisory job that does not fail the run until backlog T7 is fixed; `standard` and `heavy` run only locally. Each CI job is a single build-tool command, so the same sequence runs locally.
 
 ## The Mock Seam
 

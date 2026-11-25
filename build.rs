@@ -1,4 +1,4 @@
-use std::{env, fs, net::TcpStream, path::{Path, PathBuf}, process::Command, time::{Duration, Instant}};
+use std::{env, ffi::OsStr, fs, net::TcpStream, path::{Path, PathBuf}, process::Command, time::{Duration, Instant}};
 
 /// `build docs`: the documentation rules, as code (`docs_check.rs`).
 mod docs_check;
@@ -21,6 +21,17 @@ const PODMAN_VERSION: &str = "v5.6.2";
 /// `TcpStream::connect` does no hostname fallback across families the way letting `localhost`
 /// resolve does.
 const DEV_SERVER_ADDR: &str = "localhost:1420";
+
+/// `TAURI_CONFIG` merge patch for `ci checks`' cargo commands: drops `tauri.conf.json`'s bundle paths,
+/// which tauri-build rejects when missing and which compiling and unit-testing never read, so no
+/// stand-in files are written. Never set for `dev`, `e2e` or `package`, which need the real bundle.
+const CHECKS_TAURI_CONFIG: &str = r#"{"bundle":{"externalBin":null,"resources":null}}"#;
+
+/// `ci diagnostics`' output folder; no leading dot, since upload-artifact skips hidden paths.
+const E2E_DIAGNOSTICS_DIR: &str = "e2e-diagnostics";
+
+/// Evergreen WebView2 bootstrapper that `ensure_webview2` runs on CI when the runtime is missing.
+const WEBVIEW2_BOOTSTRAPPER_URL: &str = "https://go.microsoft.com/fwlink/p/?LinkId=2124703";
 
 fn e2e_dir() -> PathBuf { PathBuf::from(env::current_dir().unwrap()).join("e2e") }
 fn tools_dir() -> PathBuf { PathBuf::from(env::current_dir().unwrap()).join("tools") }
@@ -46,9 +57,7 @@ fn main() {
     match args.get(1).map(String::as_str) {
         Some("dev") if args.get(2).map(String::as_str) == Some("--setup") => {
             run(root_dir(), "pnpm", &["install"]);
-            fetch_mutagen();
-            fetch_llama();
-            fetch_podman();
+            fetch_bundled_binaries();
         }
         // The entry point for a fresh worktree, ahead of every other arm: nothing else — `dev`,
         // `e2e`, `package` — can run until this has staged the gitignored assets.
@@ -70,23 +79,7 @@ fn main() {
         // Any further `e2e --<flag>` arm belongs above this one, which forwards its second argument
         // straight into `pnpm run test:{suite}` — an arm added below would run `pnpm run test:--<flag>`.
         Some("e2e") => {
-            check_e2e_driver();
-            let mut suite = "standard";
-            if args.len() > 2 {
-                suite = args.get(2).map(String::as_str).unwrap();
-            }
-
-            // tsx caches transforms by file content under the OS temp dir but bakes each file's own
-            // path in (`import.meta.url`), so worktrees sharing one temp dir run each other's
-            // wdio.conf.ts and run-identity.ts paths. A per-worktree temp dir keeps the caches apart.
-            let tmp = e2e_dir().join(".tmp");
-            fs::create_dir_all(&tmp).unwrap();
-            run_env(
-                e2e_dir(),
-                "pnpm",
-                &["run", &format!("test:{}", suite)],
-                &[("TEMP", tmp.as_path()), ("TMP", tmp.as_path())],
-            );
+            run_e2e_suite(args.get(2).map(String::as_str).unwrap_or("standard"));
         }
         Some("docs") if matches!(args.get(2).map(String::as_str), None | Some("check")) => {
             std::process::exit(docs_check::run(&root_dir(), false));
@@ -94,12 +87,26 @@ fn main() {
         Some("docs") if args.get(2).map(String::as_str) == Some("--fix") => {
             std::process::exit(docs_check::run(&root_dir(), true));
         }
+        Some("ci")
+            if matches!(
+                args.get(2).map(String::as_str),
+                None | Some("checks") | Some("e2e-light") | Some("diagnostics")
+            ) =>
+        {
+            match args.get(2).map(String::as_str) {
+                Some("checks") => ci_checks(),
+                Some("e2e-light") => ci_e2e_light(),
+                Some("diagnostics") => collect_e2e_diagnostics(),
+                _ => {
+                    ci_checks();
+                    ci_e2e_light();
+                }
+            }
+        }
         Some("package") => {
             // Bundling copies from src-tauri/binaries at build time (unlike `dev`, which needs
             // `stage_*` to mirror them into target/debug); make sure they're present first.
-            fetch_mutagen();
-            fetch_llama();
-            fetch_podman();
+            fetch_bundled_binaries();
             run(root_dir(), "pnpm", &["tauri", "build"]);
         }
         _ => {
@@ -114,8 +121,17 @@ fn main() {
             eprintln!("                       comment. Rerun after a Rust change; no auto-relaunch)");
             eprintln!("  build dev --setup  - install app dependencies and stage the Mutagen sidecar + llama.cpp engine + Podman");
             eprintln!("  build e2e          - run `pnpm test` in the e2e folder, first re-staging");
-            eprintln!("                       tools/msedgedriver.exe if it no longer matches WebView2");
-            eprintln!("  build e2e --setup  - install e2e test dependencies");
+            eprintln!("                       tools/msedgedriver.exe if it no longer matches WebView2 and");
+            eprintln!("                       appending ssh-keygen's folder to PATH if it is missing");
+            eprintln!("  build e2e --setup  - install e2e test dependencies; on CI, first installs the");
+            eprintln!("                       WebView2 runtime if it is missing");
+            eprintln!("  build ci           - run the CI sequence locally: `ci checks`, then `ci e2e-light`");
+            eprintln!("  build ci checks    - docs check, pnpm install/build/check, paseo-plugins typecheck, then");
+            eprintln!("                       cargo check + cargo test with the bundled-binary paths dropped");
+            eprintln!("  build ci e2e-light - stage the real bundled binaries, `e2e --setup`, then the light tier");
+            eprintln!("  build ci diagnostics");
+            eprintln!("                     - collect the light run's failure log, page dumps and mio.log files");
+            eprintln!("                       into e2e-diagnostics/ (CI uploads it when e2e-light fails)");
             eprintln!("  build package      - stage bundled binaries and build the release NSIS installer");
             eprintln!("  build docs         - check docs/ against the documentation rules in docs_check.rs");
             eprintln!("  build docs --fix   - regenerate every docs/ index.md from frontmatter, then check");
@@ -133,8 +149,35 @@ fn set_dev_diagnostics_env() {
     }
 }
 
+/// Stages the three bundled binaries into `src-tauri/binaries` (each a no-op once present).
+fn fetch_bundled_binaries() {
+    fetch_mutagen();
+    fetch_llama();
+    fetch_podman();
+}
+
+/// Runs one e2e tier through `pnpm run test:{suite}` in `e2e/`, after the pre-run checks every tier gets.
+fn run_e2e_suite(suite: &str) {
+    check_e2e_driver();
+    ensure_ssh_keygen_on_path();
+
+    // tsx caches transforms by file content under the OS temp dir but bakes each file's own
+    // path in (`import.meta.url`), so worktrees sharing one temp dir run each other's
+    // wdio.conf.ts and run-identity.ts paths. A per-worktree temp dir keeps the caches apart.
+    let tmp = e2e_dir().join(".tmp");
+    fs::create_dir_all(&tmp).unwrap();
+    run_env(
+        e2e_dir(),
+        "pnpm",
+        &["run", &format!("test:{}", suite)],
+        &[("TEMP", tmp.as_os_str()), ("TMP", tmp.as_os_str())],
+    );
+}
+
 fn setup_e2e() {
     if cfg!(windows) {
+        // First: msedgedriver-tool reads the runtime's version to pick the driver to fetch.
+        ensure_webview2();
         run(
             root_dir(),
             "cargo",
@@ -212,6 +255,68 @@ fn check_e2e_driver() {
              `session not created` until then."
         );
     }
+}
+
+/// Whether this run is a GitHub Actions job, whose runners are throwaway and elevated.
+fn in_github_actions() -> bool {
+    env::var("GITHUB_ACTIONS").as_deref() == Ok("true")
+}
+
+/// Prints the installed WebView2 runtime version; when it is missing, installs the Evergreen runtime
+/// on CI only (a silent machine-wide installer is not run on a developer machine) and panics otherwise.
+fn ensure_webview2() {
+    if let Some(version) = webview2_version() {
+        println!("[e2e] WebView2 runtime {version}");
+        return;
+    }
+    assert!(
+        in_github_actions(),
+        "WebView2 runtime not found; install the Evergreen runtime from \
+         https://developer.microsoft.com/microsoft-edge/webview2 (CI installs it automatically)"
+    );
+    let setup = env::temp_dir().join("MicrosoftEdgeWebview2Setup.exe");
+    println!("[e2e] WebView2 runtime missing; installing the Evergreen runtime");
+    run(root_dir(), "curl", &["-fsSL", "-o", &setup.to_string_lossy(), WEBVIEW2_BOOTSTRAPPER_URL]);
+    // Not `run`: that joins `win_job`'s kill-on-close job, which would kill an installer child that
+    // outlives this process.
+    let status = Command::new(&setup)
+        .args(["/silent", "/install"])
+        .status()
+        .unwrap_or_else(|e| panic!("failed to run {}: {}", setup.display(), e));
+    let _ = fs::remove_file(&setup);
+    let version = webview2_version();
+    assert!(version.is_some(), "WebView2 runtime install failed (installer exited with {})", status);
+    println!("[e2e] WebView2 runtime {}", version.unwrap());
+}
+
+/// Appends ssh-keygen's folder to this process's PATH (inherited by the e2e children) when no PATH entry has it;
+/// the app runs it by name on create (backlog T8). Appended so Git's msys tools never shadow System32's.
+/// Never fails the run: with no ssh-keygen anywhere it warns and leaves the specs to report.
+fn ensure_ssh_keygen_on_path() {
+    let exe = if cfg!(windows) { "ssh-keygen.exe" } else { "ssh-keygen" };
+    let path = env::var_os("PATH").unwrap_or_default();
+    let mut dirs: Vec<PathBuf> = env::split_paths(&path).collect();
+    if dirs.iter().any(|d| d.join(exe).is_file()) {
+        return;
+    }
+    let system_root = env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into());
+    let program_files = env::var("ProgramFiles").unwrap_or_else(|_| "C:\\Program Files".into());
+    let found = vec![
+        PathBuf::from(system_root).join("System32").join("OpenSSH"),
+        PathBuf::from(program_files).join("Git").join("usr").join("bin"),
+    ]
+    .into_iter()
+    .find(|d| d.join(exe).is_file());
+    let Some(dir) = found else {
+        println!(
+            "[e2e] warning: ssh-keygen not found; sandbox creates will fail with `failed to run \
+             ssh-keygen`. Install the Windows OpenSSH client."
+        );
+        return;
+    };
+    println!("[e2e] ssh-keygen not on PATH; appended {} for this run", dir.display());
+    dirs.push(dir);
+    env::set_var("PATH", env::join_paths(dirs).unwrap());
 }
 
 /// The installed Evergreen WebView2 runtime's version (`pv` under its EdgeUpdate client key),
@@ -867,7 +972,7 @@ fn run(dir: PathBuf, cmd: &str, args: &[&str]) {
 }
 
 /// [`run`] with extra environment variables set on the child.
-fn run_env(dir: PathBuf, cmd: &str, args: &[&str], envs: &[(&str, &Path)]) {
+fn run_env(dir: PathBuf, cmd: &str, args: &[&str], envs: &[(&str, &OsStr)]) {
     let mut command = if cfg!(windows) {
         let mut c = Command::new("cmd");
         c.arg("/C").arg(cmd).args(args);
@@ -977,6 +1082,134 @@ fn spawn_background(dir: PathBuf, cmd: &str, args: &[&str]) -> std::process::Chi
     #[cfg(windows)]
     win_job::assign(&child);
     child
+}
+
+/// Runs one CI step under a log group, ending the whole run at the first failing step. Every helper
+/// signals failure by panicking; the panic is caught here so the group closes before the error
+/// annotation, and the default panic hook has already printed the message.
+fn ci_step(name: &str, step: impl FnOnce()) {
+    let on_ci = in_github_actions();
+    if on_ci {
+        println!("::group::{name}");
+    } else {
+        println!("\n==> [ci] {name}");
+    }
+    let start = Instant::now();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(step));
+    if on_ci {
+        println!("::endgroup::");
+    }
+    match result {
+        Ok(()) => println!("[ci] {name} passed in {:.0}s", start.elapsed().as_secs_f64()),
+        Err(_) => {
+            if on_ci {
+                println!("::error title=ci::{name} failed");
+            }
+            eprintln!("[ci] {name} failed");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// The CI `checks` job: every verification command that needs no Podman machine or bundled binaries.
+fn ci_checks() {
+    ci_step("./build docs", || {
+        assert!(docs_check::run(&root_dir(), false) == 0, "docs check reported errors");
+    });
+    ci_step("pnpm install", || run(root_dir(), "pnpm", &["install", "--frozen-lockfile"]));
+    // svelte-check imports `$lib/paraglide/*`, which only the Paraglide Vite plugin generates.
+    ci_step("pnpm build", || run(root_dir(), "pnpm", &["build"]));
+    ci_step("pnpm check", || run(root_dir(), "pnpm", &["check"]));
+    ci_step("paseo-plugins typecheck", || {
+        run(root_dir(), "pnpm", &["--filter", "paseo-plugins", "typecheck"]);
+    });
+    let src_tauri = root_dir().join("src-tauri");
+    let envs = [("TAURI_CONFIG", OsStr::new(CHECKS_TAURI_CONFIG))];
+    ci_step("cargo check", || run_env(src_tauri.clone(), "cargo", &["check", "--locked"], &envs));
+    ci_step("cargo test", || run_env(src_tauri.clone(), "cargo", &["test", "--locked"], &envs));
+}
+
+/// The CI `e2e-light` job's build-and-run sequence.
+fn ci_e2e_light() {
+    ci_step("pnpm install", || run(root_dir(), "pnpm", &["install", "--frozen-lockfile"]));
+    // The real sidecar binaries, as on a developer machine: only one-shot podman/Mutagen calls are
+    // scripted under MIO_MOCK_BACKEND, so a stand-in exe could be reached and fail only in CI.
+    ci_step("fetch bundled binaries", fetch_bundled_binaries);
+    ci_step("./build e2e --setup", setup_e2e);
+    ci_step("./build e2e light", || run_e2e_suite("light"));
+}
+
+/// Mirrors `sanitize()` in `e2e/lib/run-identity.ts`: runs of `<>:"/\|?*` or whitespace become `-`,
+/// outer `-` are trimmed, and an empty result is `root`. Keep the two in step.
+fn slug_segment(name: &str) -> String {
+    let mut out = String::new();
+    let mut in_run = false;
+    for c in name.chars() {
+        if c.is_whitespace() || "<>:\"/\\|?*".contains(c) {
+            if !in_run {
+                out.push('-');
+            }
+            in_run = true;
+        } else {
+            out.push(c);
+            in_run = false;
+        }
+    }
+    let trimmed = out.trim_matches('-');
+    if trimmed.is_empty() { "root".into() } else { trimmed.into() }
+}
+
+/// Bundles the light run's failure log, page dumps and `mio.log*` files into `e2e-diagnostics/` for
+/// CI to upload. Never fails, so the `failure() || cancelled()` step adds no second red error.
+fn collect_e2e_diagnostics() {
+    let out = root_dir().join(E2E_DIAGNOSTICS_DIR);
+    let _ = fs::remove_dir_all(&out);
+    if let Err(e) = fs::create_dir_all(&out) {
+        println!("[ci] warning: cannot create {}: {e}", out.display());
+        return;
+    }
+    let mut collected = 0;
+
+    let log = e2e_dir().join("failures-light.log");
+    if log.is_file() && fs::copy(&log, out.join("failures-light.log")).is_ok() {
+        collected += 1;
+    }
+    // Copied as `diag`: upload-artifact skips hidden paths such as `.diag`.
+    let diag = e2e_dir().join(".diag");
+    if diag.is_dir() && copy_dir(&diag, &out.join("diag")).is_ok() {
+        collected += 1;
+    }
+
+    // Narrowed to this worktree by its folder name (the app writes `mio.log*` under `logs/`); the slug's hash suffix needs sha256, which std lacks.
+    let home = env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from);
+    let basename = root_dir().file_name().map(|n| slug_segment(&n.to_string_lossy())).unwrap_or_default();
+    let prefix = format!(".sandbox-mio-e2e-appdata-{basename}-");
+    for dir in home.and_then(|h| fs::read_dir(h).ok()).into_iter().flatten().flatten() {
+        let name = dir.file_name().to_string_lossy().into_owned();
+        if !name.starts_with(&prefix) || !dir.path().is_dir() {
+            continue;
+        }
+        // Exactly the 8-hex digest, so `mi-sandbox` skips sibling worktrees such as `mi-sandbox-base-<digest>`.
+        let rest = &name[prefix.len()..];
+        if rest.len() != 8 || !rest.bytes().all(|b| b.is_ascii_hexdigit()) {
+            continue;
+        }
+        let dest = out.join(name.trim_start_matches('.'));
+        let _ = fs::create_dir_all(&dest);
+        for file in fs::read_dir(dir.path().join("logs")).into_iter().flatten().flatten() {
+            if file.file_name().to_string_lossy().starts_with("mio.log")
+                && fs::copy(file.path(), dest.join(file.file_name())).is_ok()
+            {
+                collected += 1;
+            }
+        }
+    }
+
+    if collected == 0 {
+        println!("[ci] nothing to collect for {E2E_DIAGNOSTICS_DIR}/");
+    } else {
+        println!("[ci] collected {collected} item(s) into {}", out.display());
+    }
 }
 
 /// A Windows job object that kills every process still assigned to it the instant this binary's

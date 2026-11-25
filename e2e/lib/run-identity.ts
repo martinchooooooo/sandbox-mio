@@ -13,7 +13,8 @@ const __dirname = fileURLToPath(new URL(".", import.meta.url));
 // This file lives at e2e/lib/, so the worktree root is two levels up.
 export const WORKTREE_ROOT = path.resolve(__dirname, "..", "..");
 
-// Characters illegal in a Windows path segment or filename, collapsed to `-`.
+// Characters illegal in a Windows path segment or filename, collapsed to `-`. Mirrored by `slug_segment`
+// in the root build.rs (`ci diagnostics` finds the app-data folder by it); keep the two in step.
 function sanitize(segment: string): string {
   return segment.replace(/[<>:"/\\|?*\s]+/g, "-").replace(/^-+|-+$/g, "") || "root";
 }

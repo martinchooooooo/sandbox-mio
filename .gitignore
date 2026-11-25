@@ -22,6 +22,7 @@ tools/mutagen-agents.tar.gz
 /src/lib/paraglide
 
 e2e/.diag
+/e2e-diagnostics
 e2e/failures-*.log
 e2e/.tmp
 

@@ -102,8 +102,6 @@ workflow's minimum scope.
   version constants, never `restore-keys`: the `fetch_*` functions in `build.rs` skip any group whose
   files exist without checking versions. Making `fetch_*` compare `.staged-versions.json` to the
   pinned constants would make any cache safe.
-- **Shared CI definition.** A `ci` arm in `build.rs` running the `checks` job sequence (including the
-  binary stand-ins) would let local runs and CI share one definition.
 - **More CI signal.** Add `pnpm --filter e2e typecheck` to the `checks` job, a `git diff --exit-code`
   step for tool-regenerated tracked files, and a desktop screenshot on `e2e-light` failure to
   diagnose `about:blank` launches (backlog T7).

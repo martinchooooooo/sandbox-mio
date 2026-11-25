@@ -39,6 +39,7 @@ How these layers and the e2e harness fit together: `docs/architecture/testing.md
 - `./build docs` (repo root) — required after any change under `docs/`. Checks frontmatter, feature statuses, generated indexes, the feature log, links, architecture-document size, and `docs/...` citations from code; the rules are code in `docs_check.rs` (repo root), the single source of truth for them. `./build docs --fix` regenerates the indexes first.
 - `./build e2e light` (repo root; `build.exe` on Windows) — seconds, no Podman needed (`MIO_MOCK_BACKEND=1`); the cheapest end-to-end signal.
 - `./build e2e` (repo root) — the `standard` tier against a real Podman machine; minutes. See `e2e/AGENTS.md` for tier selection.
+- `./build ci` (repo root) — runs the CI sequence locally: `ci checks` (docs check, frontend build and check, paseo-plugins typecheck, `cargo check`/`cargo test`), then `ci e2e-light`. The jobs in `.github/workflows/ci.yml` run the same commands, so a green `./build ci` predicts a green CI run. `ci diagnostics` bundles a failed light run's logs into `e2e-diagnostics/`.
 
 ## Tier cadence
 
@@ -50,10 +51,10 @@ not per change — `standard` proves real behaviour and remains the source of re
 - `./build e2e` (`standard`) — at merge, or daily if merges are infrequent.
 - `./build e2e heavy` — weekly, or before a release.
 
-`.github/workflows/ci.yml` runs `./build docs`, `pnpm check`, the paseo-plugins typecheck, `cargo check`
-and `cargo test` on every pull request and every push to `main`, and the `light` tier in a second job
-(advisory until backlog T7's launch flake is fixed). `standard`/`heavy` stay agent/developer habit,
-codified here and in `e2e/AGENTS.md`'s decision rules: hosted runners have no Podman machine.
+`.github/workflows/ci.yml` runs `./build ci checks` (docs check, `pnpm check`, the paseo-plugins typecheck,
+`cargo check` and `cargo test`) on every pull request and every push to `main`, and `./build ci e2e-light`
+(the `light` tier) in a second job (advisory until backlog T7's launch flake is fixed). `standard`/`heavy`
+stay agent/developer habit, codified here and in `e2e/AGENTS.md`'s decision rules: hosted runners have no Podman machine.
 
 A feature is typically developed in its own git worktree, driven almost entirely by
 `./build e2e light` — many worktrees can run the `light` tier concurrently, each isolated by a

@@ -57,6 +57,14 @@ This will run the `standard` tests by default. To select a different suite, pass
 
 The test suite builds the debug binary automatically before launching the app.
 
+### CI
+
+```sh
+./build ci [checks|e2e-light|diagnostics]
+```
+
+Runs locally what `.github/workflows/ci.yml` runs; with no argument it runs `checks`, then `e2e-light`.
+
 ## Documentation checks
 
 ```sh
