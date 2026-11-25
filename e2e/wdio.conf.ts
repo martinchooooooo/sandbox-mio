@@ -192,6 +192,11 @@ const LIGHT_SPECS = MIO_SPEC
   ? [`./test/specs/light/**/*${MIO_SPEC}*.ts`]
   : ["./test/specs/light/**/*.ts"];
 
+// CI-only msedgedriver logging; a local run is unchanged.
+const ON_GITHUB_ACTIONS = process.env.GITHUB_ACTIONS === "true";
+// `./build ci diagnostics` uploads this directory with a failed run.
+const DIAG_DIR = path.join(__dirname, ".diag");
+
 // Starting value only. A freshly forked worker inherits the port the launcher allocated (process.env
 // as of onPrepare's return — see run-identity.ts IS_LAUNCHER), and the launcher's own first parse
 // runs before onPrepare so it falls back to the window base. Either way `beforeSession` overwrites
@@ -611,9 +616,15 @@ async function spawnDriver(
     config.port = driverPort;
 
     let spawnFailure: string | undefined;
+    const driverArgs = [`--port=${driverPort}`];
+    if (ON_GITHUB_ACTIONS) {
+      // Records the WebView2 launch and why a session failed, which the runner otherwise loses.
+      fs.mkdirSync(DIAG_DIR, { recursive: true });
+      driverArgs.push("--verbose", `--log-path=${path.join(DIAG_DIR, `msedgedriver-${driverPort}.log`)}`);
+    }
     const child = spawn(
       path.resolve(__dirname, "..", "tools", "msedgedriver.exe"),
-      [`--port=${driverPort}`],
+      driverArgs,
       {
         // stdout is the driver's own chatter, kept out of the reporter's output.
         stdio: ["ignore", "ignore", process.stderr],
