@@ -4,13 +4,14 @@ The `src/` tree is a SvelteKit app (Svelte 5 runes, static adapter, Tailwind 4) 
 
 ## Route Map
 
-- `src/routes/projects/` — Home: sandbox cards (`SandboxItem.svelte`, `StatusRow.svelte`), the create card (`CreateSandboxItem.svelte`), plus the panels the Manage dashboard mounts (`PackageManager.svelte`, `AgentManager.svelte`, and others).
+- `src/routes/projects/` — Home: the page plus the two components only it mounts, the sandbox card (`SandboxItem.svelte`) and the create card (`CreateSandboxItem.svelte`). Nothing under `src/lib/` imports from `src/routes/`; a component that library code mounts lives in a `src/lib/` feature folder instead.
 - `src/lib/workspace/` — not a route: the app shell rendered by the root layout (app sidebar `AppSidebar.svelte`, sandbox view `SandboxView.svelte`, Manage dashboard and its title bar `SandboxTitleBar.svelte`, launchable-app catalogue in `apps.ts`); pane state comes from the Rust `WorkspaceRegistry` via `state.svelte.ts`, and every page/sandbox navigation action lives in `navigation.svelte.ts`. See `docs/architecture/workspace-ui.md`.
 - `src/routes/models/` — local LLM catalogue, download, and inference control.
 - `src/routes/agent-auth/`, `src/routes/credentials/` — agent login flow and shared credential bundles.
 - `src/routes/settings/`, `src/routes/intro/` — settings page and first-run intro.
 - `src/lib/onboarding/` — not a route: the illustrated onboarding book the welcome flow (`src/lib/welcome/`) shows, its reusable page kit, and the background first-run setup store. See `src/lib/onboarding/AGENTS.md` before adding a chapter.
 - `src/lib/story-stage/` — not a route: the whiteboard animation engine used by the onboarding book. See `src/lib/story-stage/AGENTS.md`.
+- Manage dashboard panels (mounted by `src/lib/workspace/WorkspaceDashboard.svelte` and `DashboardOverview.svelte`) live in the `src/lib/` folder of what they manage: `agents/`, `packages/` (mise tools, with their per-sandbox store), `network/` (ports and SSH access), `proxy/`, `net-policy/` (the egress policy editor, its review dialog and the policy types) and `remote/`. `StatusRow.svelte`, the busy/message/error line shared by Home cards, the title bar and the dashboard, is in `src/lib/sandbox/`.
 - `src/routes/+layout.svelte` — mounts the single `<Toaster />`, the app sidebar (which holds the activity center), and the content area: the sandbox view when a sandbox is in view, otherwise the routed page.
 
 ## Module-Scoped Rune Stores

@@ -33,7 +33,7 @@
     import { forgetSection } from "$lib/workspace/dashboard.svelte";
     import { closeSandbox } from "$lib/workspace/navigation.svelte";
     import HealthChip from "$lib/sandbox/HealthChip.svelte";
-    import StatusRow from "../../routes/projects/StatusRow.svelte";
+    import StatusRow from "$lib/sandbox/StatusRow.svelte";
 
     let { sandbox, dashboardBusy = false }: { sandbox: string; dashboardBusy?: boolean } = $props();
 

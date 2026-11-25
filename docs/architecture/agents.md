@@ -19,7 +19,6 @@ code:
   - src-tauri/src/commands/agents.rs
   - src-tauri/src/commands/credentials.rs
   - src/routes/credentials/
-  - src/routes/projects/AgentManager.svelte
   - src-tauri/src/services/github_access.rs
   - src/lib/workspace/GithubAccess.svelte
 sources:

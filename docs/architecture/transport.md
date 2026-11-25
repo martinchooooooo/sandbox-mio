@@ -11,6 +11,7 @@ code:
   - src-tauri/src/sync/
   - src-tauri/src/network/
   - src-tauri/src/services/routing.rs
+  - src/lib/network/
 sources:
   - resource: docs/features/podman-exec-transport/02_dev.md
   - resource: docs/features/mutagen-transport/02_dev.md

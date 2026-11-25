@@ -14,7 +14,7 @@ code:
   - src-tauri/src/services/proxy.rs
   - src-tauri/src/proxy/
   - src-tauri/src/runtime/
-  - src/routes/projects/RemoteManager.svelte
+  - src/lib/remote/
 sources:
   - resource: docs/features/remote-deploys/01_ideas.md
   - resource: docs/features/remote-sync/02_dev.md

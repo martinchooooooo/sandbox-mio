@@ -4,7 +4,7 @@ import ProjectsPage from "../../pageobjects/projects.page.js";
 import workspaceDashboard from "../../pageobjects/workspace-dashboard.page.js";
 import { captureDiagOnFailure } from "../../../lib/diag.js";
 
-// LIGHT spec (mock backend) for src/lib/workspace/packages.svelte.ts. Reproduces the fixed regression:
+// LIGHT spec (mock backend) for src/lib/packages/packages.svelte.ts. Reproduces the fixed regression:
 // switching directly between two Dashboards (no Terminal/AgentWeb pane ever opened) skipped the
 // `dashboardSandbox=null` reset, so the reused (non-remounted) WorkspaceDashboard kept the previous sandbox's state.
 describe("Dashboard package list follows the active sandbox on direct switch (mock backend)", function () {

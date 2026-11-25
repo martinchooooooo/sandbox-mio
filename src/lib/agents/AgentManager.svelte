@@ -10,7 +10,7 @@
     import { agentAuthFor, refreshAgentAuth } from "$lib/agents/authStatus.svelte";
     import type { InferenceStatus } from "$lib/models/types";
     import type { createActionRunner } from "$lib/actions.svelte";
-    import { packagesFor, ensurePackages, refreshPackages } from "$lib/workspace/packages.svelte";
+    import { packagesFor, ensurePackages, refreshPackages } from "$lib/packages/packages.svelte";
 
     let {
         sandboxName,

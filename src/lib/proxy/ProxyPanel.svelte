@@ -1,7 +1,7 @@
 <script lang="ts">
     import type { createActionRunner } from "$lib/actions.svelte";
     import type { ProviderId } from "$lib/providers";
-    import NetPolicyEditor from "./NetPolicyEditor.svelte";
+    import NetPolicyEditor from "$lib/net-policy/NetPolicyEditor.svelte";
     import { ensureProxyStatus, proxyStatusFor } from "$lib/proxy/status.svelte";
     import { m } from "$lib/paraglide/messages.js";
 

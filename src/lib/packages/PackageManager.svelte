@@ -5,7 +5,7 @@
     import { registryEntries, ensureRegistry } from "$lib/registry.svelte";
     import { portal } from "$lib/portal";
     import type { createActionRunner } from "$lib/actions.svelte";
-    import { packagesFor, ensurePackages, refreshPackages } from "$lib/workspace/packages.svelte";
+    import { packagesFor, ensurePackages, refreshPackages } from "$lib/packages/packages.svelte";
 
     let {
         sandboxName,

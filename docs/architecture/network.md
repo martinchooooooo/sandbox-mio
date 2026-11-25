@@ -11,8 +11,7 @@ code:
   - src-tauri/src/net_policy.rs
   - src-tauri/src/services/sandbox.rs
   - src/lib/proxy/
-  - src/routes/projects/NetPolicyEditor.svelte
-  - src/routes/projects/NetPolicyProposalDialog.svelte
+  - src/lib/net-policy/
 sources:
   - resource: docs/features/network-proxy/02_dev.md
   - resource: docs/features/proxy-traffic-viewer/02_dev.md

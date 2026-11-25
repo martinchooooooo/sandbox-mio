@@ -14,7 +14,7 @@
     import { createActionRunner } from "$lib/actions.svelte";
     import { HugeiconsIcon } from "@hugeicons/svelte";
     import { DashboardSquare01Icon, PlayIcon, StopIcon } from "@hugeicons/core-free-icons";
-    import StatusRow from "./StatusRow.svelte";
+    import StatusRow from "$lib/sandbox/StatusRow.svelte";
     import { openSandbox } from "$lib/workspace/navigation.svelte";
     import {
         translateStatus,

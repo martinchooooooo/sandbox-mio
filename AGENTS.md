@@ -11,7 +11,6 @@ Sandbox-mio is a Tauri 2 desktop app (Windows-first) that manages per-project "s
 | `docs/architecture/` | A brief, high-level picture of how the system works today, one document per subsystem; read before planning or changing a subsystem | `docs/architecture/overview.md` |
 | `docs/features/<name>/` | Feature plans and their history: `feature.md` (status), core `01_ideas.md` → `02_dev.md` → `03_e2e.md`, optional `04_improvements.md` and `05_dev_review.md` | `docs/features/README.md` |
 | `messages/` | Paraglide locale files (`en.json`, `de.json`, `ru.json`) | Translations section below |
-| `onboarding-story/` | Standalone animated explainer (brain, arms, chat, sandbox) for non-technical users; plain HTML/JS, separate from the app. The copy that ships in the app lives in `src/lib/onboarding/` | `onboarding-story/AGENTS.md` |
 
 Read the orientation doc for an area before editing files in that area. `AGENTS.md` files in subdirectories override the root file for their subtree.
 
@@ -168,7 +167,7 @@ All `invoke()` catch blocks use `parseError(e).message` for display. Branch on `
 - One idea per sentence
 - Never write comments about your current work or process ("added X", "updated as requested", "new helper") — the git history is the record. The same applies at document scale: no work-log or change-summary files, apart from the one dated feature history in `docs/features/log.md`.
 - TODO's for future are the exception and definitely allowed
-- When two values in different files must stay equal, comment both ends with the other's path (pattern: `INFERENCE_VM_PORT` in `src-tauri/src/sync/mod.rs` ↔ `src/lib/agents/local-llm.ts`)
+- When two values in different files must stay equal, comment both ends with the other's path (pattern: `DEFAULT_LLAMA_CTX_SIZE` in `src-tauri/src/inference/llama.rs` ↔ `src/lib/agents/pi.ts`)
 - Reference resolved design decisions by doc path (`docs/features/<x>/02_dev.md, Resolved Decision N`) instead of restating the rationale inline. Cite plans, never `docs/architecture/` sections: plans are never moved or renumbered, while architecture documents are rewritten freely. `./build docs` warns about a cited `docs/...` path that no longer exists
 - Exception: trait, interface, and public type declarations may carry fuller doc comments — they are the discovery surface for agents reading `types.rs`/module heads instead of whole files
 - Use doc-comment form (`///`, `/** */`) on public items so tooling and outlines surface them; plain `//` belongs inside function bodies

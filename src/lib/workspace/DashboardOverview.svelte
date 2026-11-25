@@ -9,9 +9,9 @@
     import { LAUNCHABLE_APPS, type AppDescriptor } from "$lib/workspace/apps";
     import { panesOf, sandboxHasPane } from "$lib/workspace/state.svelte";
     import { closePane, launchApp } from "$lib/workspace/navigation.svelte";
-    import { packagesFor } from "$lib/workspace/packages.svelte";
+    import { packagesFor } from "$lib/packages/packages.svelte";
     import { liveStatus, sandboxesList } from "$lib/sandbox/state.svelte";
-    import AgentManager from "../../routes/projects/AgentManager.svelte";
+    import AgentManager from "$lib/agents/AgentManager.svelte";
     import StatusSummary from "./StatusSummary.svelte";
     import GithubAccess from "./GithubAccess.svelte";
     import type { DashboardSectionId } from "./sections";
