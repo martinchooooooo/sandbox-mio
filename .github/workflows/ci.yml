@@ -1,0 +1,161 @@
+name: ci
+
+# The root AGENTS.md Verification Commands that need no Podman machine. `standard`/`heavy` stay a
+# developer cadence (AGENTS.md, Tier cadence): hosted runners have no Podman machine.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  # A newer push supersedes a PR run; every other run (main push, manual dispatch) gets a unique
+  # group, so none is cancelled or dropped from the pending queue.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: pwsh
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  checks:
+    name: Static checks and unit tests
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # package.json has no `packageManager` field, so the version must be given here.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # `./build` is the root build.rs compiled with plain rustc; `build/` is Vite's output directory.
+      - name: Compile the build tool
+        run: rustc build.rs -o build.exe
+
+      - name: ./build docs
+        run: ./build.exe docs
+
+      - name: pnpm install
+        run: pnpm install --frozen-lockfile
+
+      # svelte-check imports `$lib/paraglide/*`, which only the Paraglide Vite plugin generates.
+      - name: Build the frontend
+        run: pnpm build
+
+      - name: pnpm check
+        run: pnpm check
+
+      - name: paseo-plugins typecheck
+        run: pnpm --filter paseo-plugins typecheck
+
+      # tauri-build rejects a missing bundle.externalBin/resources path from src-tauri/tauri.conf.json;
+      # empty stand-ins suffice to compile and unit-test.
+      - name: Stub the bundled binaries
+        run: |
+          New-Item -ItemType Directory -Force src-tauri/binaries/llama, src-tauri/binaries/podman | Out-Null
+          New-Item -ItemType File -Force src-tauri/binaries/mutagen-x86_64-pc-windows-msvc.exe, src-tauri/binaries/mutagen-agents.tar.gz | Out-Null
+
+      - name: cargo check
+        working-directory: src-tauri
+        run: cargo check --locked
+
+      - name: cargo test
+        working-directory: src-tauri
+        run: cargo test --locked
+
+  e2e-light:
+    name: e2e light tier
+    runs-on: windows-latest
+    timeout-minutes: 60
+    # TODO(T7): remove once three consecutive main runs pass; until then a red light run is advisory.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Compile the build tool
+        run: rustc build.rs -o build.exe
+
+      # Real sidecar binaries, as on a developer machine: only one-shot podman/Mutagen calls are
+      # scripted under MIO_MOCK_BACKEND, so a stand-in exe could be reached and fail CI-only.
+      - name: Install dependencies and stage bundled binaries
+        run: ./build.exe dev --setup
+
+      # The driver must match the WebView2 runtime, which is installed separately from Edge.
+      # Light creates also spawn a real ssh-keygen (backlog T8).
+      - name: Check WebView2 and ssh-keygen
+        run: |
+          $key = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          $pv = (Get-ItemProperty $key -ErrorAction SilentlyContinue).pv
+          if (-not $pv -or $pv -eq '0.0.0.0') {
+            $setup = Join-Path $env:RUNNER_TEMP 'MicrosoftEdgeWebview2Setup.exe'
+            Invoke-WebRequest 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $setup
+            Start-Process $setup -ArgumentList '/silent', '/install' -Wait
+            $pv = (Get-ItemProperty $key -ErrorAction SilentlyContinue).pv
+            if (-not $pv -or $pv -eq '0.0.0.0') { throw "WebView2 runtime install failed (pv='$pv')" }
+          }
+          "WebView2 runtime: $pv"
+          if (-not (Get-Command ssh-keygen -ErrorAction SilentlyContinue)) {
+            'C:\Program Files\Git\usr\bin' | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          }
+
+      - name: Stage msedgedriver
+        run: ./build.exe e2e --setup
+
+      - name: ./build e2e light
+        run: ./build.exe e2e light
+
+      - name: Collect diagnostics
+        if: failure() || cancelled()
+        run: |
+          $out = New-Item -ItemType Directory -Force e2e-diagnostics
+          Copy-Item e2e/failures-light.log $out -ErrorAction SilentlyContinue
+          if (Test-Path e2e/.diag) { Copy-Item e2e/.diag (Join-Path $out 'diag') -Recurse }
+          Get-ChildItem $HOME -Directory -Filter '.sandbox-mio-e2e-appdata-*' |
+            ForEach-Object { Get-ChildItem $_.FullName -File -Filter 'mio.log*' } |
+            Copy-Item -Destination $out
+
+      - uses: actions/upload-artifact@v4
+        if: failure() || cancelled()
+        with:
+          name: e2e-light-diagnostics
+          path: e2e-diagnostics/
+          if-no-files-found: ignore
+          retention-days: 14

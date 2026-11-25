@@ -50,9 +50,10 @@ not per change — `standard` proves real behaviour and remains the source of re
 - `./build e2e` (`standard`) — at merge, or daily if merges are infrequent.
 - `./build e2e heavy` — weekly, or before a release.
 
-No CI pipeline enforces this today (none exists in the repository — see
-`docs/features/scriptable-mock-backend/04_improvements.md`); it is agent/developer habit codified
-here and in `e2e/AGENTS.md`'s decision rules.
+`.github/workflows/ci.yml` runs `./build docs`, `pnpm check`, the paseo-plugins typecheck, `cargo check`
+and `cargo test` on every pull request and every push to `main`, and the `light` tier in a second job
+(advisory until backlog T7's launch flake is fixed). `standard`/`heavy` stay agent/developer habit,
+codified here and in `e2e/AGENTS.md`'s decision rules: hosted runners have no Podman machine.
 
 A feature is typically developed in its own git worktree, driven almost entirely by
 `./build e2e light` — many worktrees can run the `light` tier concurrently, each isolated by a

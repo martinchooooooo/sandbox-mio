@@ -76,11 +76,41 @@ Rejected alternatives, with the reason each was dropped:
   UI state, so a Rust-only harness would delete the coverage rather than relocate it, contradicting
   `docs/features/scriptable-mock-backend/02_dev.md` Resolved Decision 9.
 
-A cheaper interim option was also identified: run the existing windowed light tier on a
-GitHub-hosted `windows-latest` runner. Such a runner has an interactive desktop session with WebView2
-preinstalled and the light tier needs no podman, so the suite may pass there with only the
-`01_ideas.md` isolation fixes applied. Not headless — it still depends on a desktop session and cannot
-run in a container — but it would deliver CI without the headless binary.
+The cheaper interim option, running the existing windowed light tier on a GitHub-hosted
+`windows-latest` runner, is the `e2e-light` job in `.github/workflows/ci.yml`. It is advisory
+(`continue-on-error`) until backlog T7 is fixed, and whether a hosted runner's desktop session lets
+msedgedriver attach to the Tauri webview is unproven until the job has run; if it cannot, record the
+cause here and keep only the `checks` job. Not headless — it still depends on a desktop session and
+cannot run in a container.
+
+## CI follow-ups
+
+Surfaced while adding `.github/workflows/ci.yml` (backlog T6); deferred because each is outside the
+workflow's minimum scope.
+
+- **`release.yml` cannot resolve a pnpm version.** `.github/workflows/release.yml` uses
+  `pnpm/action-setup@v4` without `version`, and `package.json` has no `packageManager` field, so the
+  action fails with "No pnpm version is specified". Fix by adding `"packageManager": "pnpm@11.9.0"` to
+  `package.json` and dropping `with.version` from both workflows (setting both makes the action
+  error), or by adding `version: 11.9.0` to `release.yml`.
+- **Stale `cargo run --bin build` advice.** `e2e/AGENTS.md` (the `dev --setup-worktree` instruction)
+  and user-facing strings in `build.rs` name `cargo run --bin build -- ...`, which does not work
+  because no root `Cargo.toml` exists; the tool is built with `rustc build.rs -o build.exe`.
+- **Unpinned `msedgedriver-tool`.** `setup_e2e()` in `build.rs` runs `cargo install --git` without
+  `--rev` or `--locked`, so an upstream push can break CI. Pin to a known revision.
+- **Binaries cache.** Cache `src-tauri/binaries/` in CI with an exact key derived from the pinned
+  version constants, never `restore-keys`: the `fetch_*` functions in `build.rs` skip any group whose
+  files exist without checking versions. Making `fetch_*` compare `.staged-versions.json` to the
+  pinned constants would make any cache safe.
+- **Shared CI definition.** A `ci` arm in `build.rs` running the `checks` job sequence (including the
+  binary stand-ins) would let local runs and CI share one definition.
+- **More CI signal.** Add `pnpm --filter e2e typecheck` to the `checks` job, a `git diff --exit-code`
+  step for tool-regenerated tracked files, and a desktop screenshot on `e2e-light` failure to
+  diagnose `about:blank` launches (backlog T7).
+- **`standard` on a self-hosted runner.** The AGENTS.md cadence ("at merge, or daily") needs a
+  self-hosted Windows runner with a Podman machine; hosted runners cannot run `standard`.
+- **Cost controls.** If the repository is private, Windows minutes bill at 2x; add `needs: checks` to
+  `e2e-light` or run it only on pull requests.
 
 ## Concurrent `standard` and `heavy` tier runs
 

@@ -66,6 +66,7 @@ This document is an interim task list, compiled on 2026-11-23 at commit `2e0e665
 ### T6. No CI runs the verification commands
 
 - [ ] Resolved
+- **Status:** `.github/workflows/ci.yml` is in place but has never run. Tick this task after the first pull request run reports the outcome of the `e2e-light` job, or after the reason it cannot pass on a hosted runner is recorded in `docs/features/parallel-worktree-e2e/04_improvements.md`.
 - **Problem:** `.github/workflows/` holds only `release.yml`; nothing runs `pnpm check`, `cargo test`, `./build docs` or the `light` e2e tier on push.
 - **Source:** "CI pipeline for the tier cadence" in `docs/features/scriptable-mock-backend/04_improvements.md`; the interim `windows-latest` option in "Headless light tier for CI" in `docs/features/parallel-worktree-e2e/04_improvements.md`.
 - **Done when:** a workflow on `windows-latest` runs `pnpm check`, `pnpm --filter paseo-plugins typecheck`, `cargo check`, `cargo test` and `./build docs` on push and pull request; a second job runs `./build e2e light`. If the light job cannot pass on a hosted runner, record why in the parallel-worktree-e2e document and keep the first job. Update "Tier cadence" in the root `AGENTS.md`, which states no CI exists.
@@ -75,6 +76,7 @@ This document is an interim task list, compiled on 2026-11-23 at commit `2e0e665
 - [ ] Resolved
 - **Problem:** in a full `./build e2e light` run, some app instances stay on `about:blank` for the 30-second `before` hook in `e2e/wdio.conf.ts`; `mio.log` stops at "cleared inheritable handles at startup". Which spec fails depends on its predecessor, and each failing spec passes when run without that predecessor. The unconfirmed suspect is the WebView2 user-data folder that every instance shares beside `src-tauri/target/debug/sandbox-mio.exe`.
 - **Source:** "Some e2e app launches never load the UI" in `docs/features/techdebt-sweep/04_improvements.md`; "Light spec `activity-center-ui` fails on a clean checkout" in `docs/features/manage-dashboard-redesign/04_improvements.md`.
+- **CI:** the `e2e-light` job in `.github/workflows/ci.yml` carries `continue-on-error: true` until this task is fixed; remove that line (and its `TODO(T7)` comment) once three consecutive `main` runs pass.
 - **Fix shape:** give each app session its own WebView2 user-data folder (for example through `WEBVIEW2_USER_DATA_FOLDER` set per session in `beforeSession`, `e2e/wdio.conf.ts`), then confirm with several consecutive full light runs.
 - **Done when:** three consecutive full light runs pass with no `about:blank` launch failure.
 

@@ -4,9 +4,10 @@ title: "Testing"
 description: "The verification layers, the process-level mock seam behind the fast e2e tier, and how concurrent e2e runs stay isolated; spec-writing rules are in e2e/AGENTS.md."
 generated:
   by: claude-code/sonnet-5-5
-  at: 2026-11-21T20:00:00+11:00
+  at: 2026-11-24T12:00:00+11:00
 stale_after: 2027-02-21T00:00:00+11:00
 code:
+  - .github/workflows/ci.yml
   - e2e/wdio.conf.ts
   - e2e/lib/
   - src-tauri/src/mockctl/
@@ -30,7 +31,7 @@ Sandbox-mio is tested mainly end to end: WebdriverIO drives the real debug build
   - `light`: no Podman; the app runs against a scripted process layer. Seconds. Proves UI, routing, stores and command round trips.
   - `standard`: real sandboxes on a dedicated test Podman machine, plus a second machine as a deploy target. Minutes. The default tier and the source of regression truth.
   - `heavy`: real model downloads and inference, and deploy-forward chains. Many minutes.
-- No CI runs any tier.
+- CI runs the static checks, the Rust unit tests and the docs check on GitHub-hosted Windows runners, plus the `light` tier as an advisory job that does not fail the run until backlog T7 is fixed; `standard` and `heavy` run only locally.
 
 ## The Mock Seam
 

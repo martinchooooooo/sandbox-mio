@@ -48,10 +48,6 @@ Unchanged: a `Behaviour` variant that delays a scripted response, for loading-st
 
 Unchanged: move `mock_configure`/`mock_reset` behind `#[cfg(debug_assertions)]`. Still deferred per the same reasoning — conditional `generate_handler![]` entries complicate `src-tauri/src/lib.rs`'s state wiring, and the commands are already inert without `MIO_MOCK_BACKEND=1`.
 
-## CI pipeline for the tier cadence
-
-Unchanged: no CI configuration exists in the repository; introducing one is its own feature.
-
 ## `std::process::Output` vs. a shared local output type
 
 New, surfaced during the process-level rewrite: `ProcessRunner::run` is specified in `02_dev.md` Phase D as returning `std::process::Output`, but `tauri_plugin_shell::process::Output` (what the real Mutagen sidecar call produces) is a different type with no documented public path to construct a `std::process::Output` from raw bytes on this toolchain. Phase D flags this as needing a short spike before committing to the exact trait return type — the fallback is a small crate-local `struct ProcRunOutput` shared by both `PodmanProcessRunner` and `MutagenProcessRunner`. Recorded here in case the spike takes longer than expected and needs to be pulled out of Phase D into its own preparatory step.
