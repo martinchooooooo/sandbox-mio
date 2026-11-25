@@ -161,6 +161,9 @@ pub trait SandboxBackend: Send + Sync {
     /// the provider's default network mode (`docs/features/network-proxy/02_dev.md`).
     /// `egress` is the create dialog's network choice; only a provider that enforces
     /// `.mio/net-policy.json` itself accepts it.
+    /// A failure after the instance exists removes the instance, its SSH alias and keypair, and its
+    /// accepted policy, best-effort (a failed step is only logged). The workspace directory and any
+    /// `.mio/net-policy.json` written into it stay, including in a pre-existing project folder.
     async fn create(
         &self,
         name: &str,

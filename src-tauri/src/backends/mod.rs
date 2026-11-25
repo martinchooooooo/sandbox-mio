@@ -363,13 +363,6 @@ impl CliBackend {
         check(out).map(|_| ())
     }
 
-    /// Resolve where a freshly created sandbox's workspace lives. `None` derives and creates a
-    /// fresh directory under `workspace_root()` (today's behavior). `Some(p)` canonicalizes `p`
-    /// via `dunce::canonicalize` (plain `std::fs::canonicalize` would return a Windows `\\?\`
-    /// UNC-prefixed path that `podman -v` does not understand), rejects it if not found or not a
-    /// directory, and rejects it as `PathAlreadyTracked` if it falls inside `workspace_root()` or
-    /// exactly matches an already-tracked sandbox's workspace — without touching the filesystem
-    /// further.
     /// Installs the sandbox's SSH key and writes its alias, after which the exec transport works. A
     /// recreated instance has a fresh host key, which `forget_sandbox_host_key` clears.
     async fn provision_exec_transport(
@@ -397,6 +390,32 @@ impl CliBackend {
         }
         tracing::info!(target: "backends", %name, "ssh key installed and alias written");
         Ok(())
+    }
+
+    /// Undoes a create that failed once its instance existed, so a same-name retry starts clean.
+    /// Every step is best-effort and warn-logged; the caller's error is what surfaces.
+    async fn rollback_create(
+        &self,
+        provider: &Arc<dyn crate::provider::types::MachineProvider>,
+        name: &str,
+    ) {
+        // The instance goes first: it is what blocks a same-name retry. The alias goes before the
+        // key file it names.
+        if let Err(e) = provider.remove(name).await {
+            tracing::warn!(target: "backends", %name, error = %e, "rollback: could not remove the instance");
+        }
+        if let Err(e) = crate::ssh::remove_alias(name) {
+            tracing::warn!(target: "backends", %name, error = %e, "rollback: could not remove the ssh alias");
+        }
+        match crate::paths::sandbox_key_dir(&self.app, name) {
+            Ok(dir) => match std::fs::remove_dir_all(&dir) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => tracing::warn!(target: "backends", %name, dir = %dir.display(), error = %e, "rollback: could not remove the ssh identity directory"),
+            },
+            Err(e) => tracing::warn!(target: "backends", %name, error = %e, "rollback: could not resolve the ssh identity directory"),
+        }
+        crate::net_policy::remove_applied(&self.app, name);
     }
 
     /// Settles the accepted policy from the create dialog alone; an existing workspace file stays a
@@ -434,6 +453,13 @@ impl CliBackend {
         Ok((net_policy::to_egress(&applied.policy)?, guest_vars))
     }
 
+    /// Resolve where a freshly created sandbox's workspace lives. `None` derives and creates a
+    /// fresh directory under `workspace_root()` (today's behavior). `Some(p)` canonicalizes `p`
+    /// via `dunce::canonicalize` (plain `std::fs::canonicalize` would return a Windows `\\?\`
+    /// UNC-prefixed path that `podman -v` does not understand), rejects it if not found or not a
+    /// directory, and rejects it as `PathAlreadyTracked` if it falls inside `workspace_root()` or
+    /// exactly matches an already-tracked sandbox's workspace — without touching the filesystem
+    /// further.
     async fn resolve_create_workspace(
         &self,
         name: &str,
@@ -589,7 +615,11 @@ impl SandboxBackend for CliBackend {
                 return Err(e.into());
             }
         };
-        self.provision_exec_transport(&provider, name, provider_id).await?;
+        if let Err(e) = self.provision_exec_transport(&provider, name, provider_id).await {
+            tracing::error!(target: "backends", %name, error = %e, "exec transport provisioning failed, rolling back create");
+            self.rollback_create(&provider, name).await;
+            return Err(e);
+        }
         Ok(Sandbox {
             id,
             name: name.to_string(),

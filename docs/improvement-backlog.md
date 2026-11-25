@@ -44,7 +44,7 @@ This document is an interim task list, compiled on 2026-11-23 at commit `2e0e665
 
 ### T4. A failed create leaves the container, alias and key behind
 
-- [ ] Resolved
+- [x] Resolved
 - **Problem:** `CliBackend::create` calls `self.provision_exec_transport(...).await?` (`src-tauri/src/backends/mod.rs:562`) after the container exists, with no rollback. A failure in `install_sandbox_key` or `ensure_sandbox_alias` leaves the container, the alias block and `ssh-keys/<name>/`, so a retry with the same name fails.
 - **Source:** "A failure inside `store.create` leaves the container, alias and key behind" in `docs/features/techdebt-sweep/04_improvements.md`.
 - **Done when:** a failed `provision_exec_transport` removes the container, the alias (`crate::ssh::remove_alias`) and the key directory before returning the error; a light spec scripts the failure through `configureMock` (`e2e/lib/mock.ts`) and asserts a same-name retry succeeds.
@@ -107,7 +107,6 @@ Each sub-task is a direct fix unless marked.
 - `NOTES.md` lists four TODOs that features such as `shared-agent-auth` may already have fixed; verify each against the app and delete the resolved lines, or the file.
 - Several `04_improvements.md` entries describe microsandbox or mitmproxy code removed by `docs/features/remove-microsandbox/` and `docs/features/podman-egress-boundary/` (for example the msb items in `docs/features/techdebt-sweep/04_improvements.md`, `docs/features/local-llm-reachability/04_improvements.md` and `docs/features/sandbox-resource-monitor/04_improvements.md`); mark each obsolete or delete it.
 - `docs/features/fastest-time-to-wow/04_review.md` breaks the `05_dev_review.md` naming convention in `docs/features/README.md`; rename it and fix links.
-- An orphaned doc comment ("Resolve where a freshly created sandbox's workspace lives", `src-tauri/src/backends/mod.rs:336-342`) sits above `provision_exec_transport`; move it to the function it describes or delete it.
 
 ## Overlapping tasks
 

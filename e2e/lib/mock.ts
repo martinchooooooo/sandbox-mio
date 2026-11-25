@@ -65,6 +65,29 @@ export async function configureMockExpectingError(
   );
 }
 
+/**
+ * Invokes a Tauri command that is expected to fail and returns its `AppError`, or null if it
+ * succeeded. Catches inside the webview for the same reason as `configureMockExpectingError`.
+ */
+export async function invokeCmdExpectingError(
+  cmd: string,
+  args?: Record<string, unknown>,
+): Promise<{ kind: string; message: string } | null> {
+  return browser.execute(
+    async (c, a) => {
+      try {
+        // @ts-expect-error __TAURI_INTERNALS__ is injected into the webview at runtime.
+        await window.__TAURI_INTERNALS__.invoke(c, a);
+        return null;
+      } catch (e) {
+        return e as { kind: string; message: string };
+      }
+    },
+    cmd,
+    args,
+  );
+}
+
 /** One journalled scripted call (mirrors `RecordedCall` in src-tauri/src/mockctl/types.rs). */
 export interface RecordedCall {
   key: string;

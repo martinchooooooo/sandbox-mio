@@ -11,10 +11,6 @@ Work noticed while building `docs/features/techdebt-sweep/02_dev.md` and left ou
 
 Under `MIO_MOCK_BACKEND=1` only the Podman and Mutagen runners are scripted, so a `light` spec's `create` still calls `ensure_sandbox_alias()` and `ensure_sandbox_identity()` (`src-tauri/src/backends/mod.rs`) against the developer's real `~/.ssh/sandbox-mio/config`. Phase G's destroy cleanup now removes those blocks, so the leak no longer accumulates, and the `onComplete` comment in `e2e/wdio.conf.ts` now says so. Deferred because gating the SSH writes off under the mock switch changes what the `light` tier exercises and needs its own decision.
 
-## A failure inside `store.create` leaves the container, alias and key behind
-
-`CliBackend::create` (`src-tauri/src/backends/mod.rs`) writes the SSH identity and alias and installs the key after the container exists, with no rollback of its own. A failure there (for example in `install_sandbox_key`) returns an error from `store.create`, so `create()` in `src-tauri/src/services/sandbox.rs` never reaches its rollbacks and the container, alias and key directory survive. Deferred because the fix belongs inside the provider-dispatched create path, which Phase D was already rewriting.
-
 ## msb calls are logged twice
 
 Phase B logs every msb call in the runner (`msb call ok`, `src-tauri/src/process/mod.rs`) while `MsbProvider::run_env` (`src-tauri/src/provider/msb.rs`) still logs its own `msb ok` line. Drop one of the two. Deferred to avoid a conflict with Phase D, which edited the provider file at the same time.
