@@ -314,8 +314,14 @@ async fn machine_list() -> SharedOutput {
     }
     let cmd = crate::backends::podman_command_std();
     let result: SharedOutput = Arc::new(
-        run_via_blocking_process(cmd, &MACHINE_LIST_ARGV, "podman-machine-list", MACHINE_LIST_PROBE_TIMEOUT)
-            .await,
+        run_via_blocking_process(
+            cmd,
+            &MACHINE_LIST_ARGV,
+            "podman-machine-list",
+            MACHINE_LIST_PROBE_TIMEOUT,
+            None,
+        )
+        .await,
     );
     let seq = MACHINE_LIST_SEQ.fetch_add(1, Ordering::AcqRel) + 1;
     *guard = Some((seq, result.clone()));
@@ -395,17 +401,25 @@ static CAPTURE_CALL_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// The blocking thread hands a duplicate of the child's process handle back before it blocks, so a
 /// child that outlives `timeout` is terminated rather than abandoned. Terminating it also releases
 /// the blocking wait, which is what lets the OS thread exit too.
+///
+/// `stdin`, when given, is a pipe a writer thread fills and then closes. Its EOF never waits on a
+/// grandchild, because this app is the only writer. A grandchild holding the read end can block a
+/// write larger than the pipe buffer, so the wait does not depend on the writer: a writer still
+/// blocked once the child exits is detached and its outcome ignored.
 async fn run_via_blocking_process(
     mut cmd: std::process::Command,
     args: &[&str],
     label: &str,
     timeout: Duration,
+    stdin: Option<&[u8]>,
 ) -> std::io::Result<Output> {
     let id = CAPTURE_CALL_COUNTER.fetch_add(1, Ordering::Relaxed);
     let stem = format!("sandbox-mio-{label}-{}-{id}", std::process::id());
     let stdout_path = std::env::temp_dir().join(format!("{stem}.stdout"));
     let stderr_path = std::env::temp_dir().join(format!("{stem}.stderr"));
     let args_owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+    // Owned because the thread outlives this call when the timeout fires.
+    let stdin_owned: Option<Vec<u8>> = stdin.map(<[u8]>::to_vec);
 
     let (tx, rx) = tokio::sync::oneshot::channel();
     let (child_tx, mut child_rx) = tokio::sync::oneshot::channel();
@@ -415,6 +429,9 @@ async fn run_via_blocking_process(
         let spawned = (|| -> std::io::Result<std::process::Child> {
             let stdout_file = std::fs::File::create(&thread_stdout_path)?;
             let stderr_file = std::fs::File::create(&thread_stderr_path)?;
+            if stdin_owned.is_some() {
+                cmd.stdin(std::process::Stdio::piped());
+            }
             cmd.args(&args_owned)
                 .stdout(std::process::Stdio::from(stdout_file))
                 .stderr(std::process::Stdio::from(stderr_file))
@@ -427,14 +444,33 @@ async fn run_via_blocking_process(
                 return;
             }
         };
-        // Sent before the wait, not after: a handle delivered once the wait returns would only ever
-        // reach the timeout branch too late to be of any use.
+        // Sent before the stdin write and the wait, not after: a write blocked on a stalled child
+        // is released only by the timeout branch terminating it with this handle.
         let _ = child_tx.send(duplicate_process_handle(&child));
-        let outcome = child.wait().map(|status| Output {
-            status,
-            stdout: std::fs::read(&thread_stdout_path).unwrap_or_default(),
-            stderr: std::fs::read(&thread_stderr_path).unwrap_or_default(),
-        });
+        // Written off this thread so a grandchild holding the read end cannot keep the wait from
+        // seeing the child exit.
+        let writer = match (child.stdin.take(), stdin_owned) {
+            (Some(mut pipe), Some(bytes)) => Some(std::thread::spawn(move || {
+                use std::io::Write;
+                match pipe.write_all(&bytes) {
+                    // A child that exits without draining stdin is reported by its exit status.
+                    Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => Some(e),
+                    _ => None,
+                }
+            })),
+            _ => None,
+        };
+        let waited = child.wait();
+        // A writer still blocked after the child exited is stuck on a grandchild: the exit status wins.
+        let write_error = writer.filter(|w| w.is_finished()).and_then(|w| w.join().ok().flatten());
+        let outcome = match (write_error, waited) {
+            (Some(e), _) => Err(e),
+            (None, waited) => waited.map(|status| Output {
+                status,
+                stdout: std::fs::read(&thread_stdout_path).unwrap_or_default(),
+                stderr: std::fs::read(&thread_stderr_path).unwrap_or_default(),
+            }),
+        };
         let _ = tx.send(outcome);
     });
 
@@ -609,10 +645,7 @@ impl SystemPodmanRunner {
             // timeout even on a bare `podman machine list` under `cargo tauri dev`.
             let mut cmd = crate::backends::podman_command_std();
             cmd.envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
-            match stdin {
-                Some(bytes) => run_with_stdin_file(cmd, args, bytes, timeout_dur).await,
-                None => run_via_blocking_process(cmd, args, "podman", timeout_dur).await,
-            }
+            run_via_blocking_process(cmd, args, "podman", timeout_dur, stdin).await
         };
         let result = result.map_err(|e| {
             if e.kind() == std::io::ErrorKind::TimedOut {
@@ -658,28 +691,6 @@ impl SystemPodmanRunner {
         }
         result
     }
-}
-
-/// [`run_via_blocking_process`] with `stdin` fed from a temp file, which suits its file-captured
-/// blocking spawn: the child reads the file to EOF with no writer thread to coordinate.
-async fn run_with_stdin_file(
-    mut cmd: std::process::Command,
-    args: &[&str],
-    stdin: &[u8],
-    timeout: Duration,
-) -> std::io::Result<Output> {
-    let id = CAPTURE_CALL_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path = std::env::temp_dir().join(format!("sandbox-mio-podman-{}-{id}.stdin", std::process::id()));
-    std::fs::write(&path, stdin)?;
-    let result = match std::fs::File::open(&path) {
-        Ok(file) => {
-            cmd.stdin(std::process::Stdio::from(file));
-            run_via_blocking_process(cmd, args, "podman", timeout).await
-        }
-        Err(e) => Err(e),
-    };
-    let _ = std::fs::remove_file(&path);
-    result
 }
 
 /// Bound on every Mutagen one-shot call through [`SystemMutagenRunner`].
@@ -758,11 +769,16 @@ pub(crate) fn exit_status(code: i32) -> std::process::ExitStatus {
 mod tests {
     use std::os::windows::io::AsRawHandle;
 
+    /// The sanitiser strips inheritance from every handle the process owns, so it must not run
+    /// while another test is spawning a child with piped or file stdio.
+    static SPAWN_GATE: tokio::sync::RwLock<()> = tokio::sync::RwLock::const_new(());
+
     /// The sanitiser's contract in one round trip: a handle deliberately marked inheritable is not
     /// inheritable afterwards. Uses a real file handle rather than a synthetic one, because the
     /// snapshot the sanitiser walks only reports handles the kernel actually holds for us.
     #[test]
     fn clears_the_inherit_flag_on_an_inheritable_handle() {
+        let _gate = SPAWN_GATE.blocking_write();
         let path = std::env::temp_dir().join(format!("mio-sanitise-{}.tmp", std::process::id()));
         let file = std::fs::File::create(&path).expect("temp file");
         let handle = file.as_raw_handle().cast();
@@ -806,5 +822,117 @@ mod tests {
         assert_eq!(super::call_timeout(&plain), super::PODMAN_CALL_TIMEOUT);
         // Only an exec qualifies: a container literally named `mise` in a `start` is still tight.
         assert_eq!(super::call_timeout(&["start", "mise", "use"]), super::PODMAN_CALL_TIMEOUT);
+    }
+
+    fn system32(exe: &str) -> std::process::Command {
+        // Absolute path so a GNU `sort` earlier on PATH cannot shadow the Windows one.
+        let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+        super::detached_command_std(format!(r"{root}\System32\{exe}"))
+    }
+
+    #[tokio::test]
+    async fn stdin_larger_than_the_pipe_buffer_round_trips() {
+        let _gate = SPAWN_GATE.read().await;
+        let payload: String = (0..20_000).map(|n| format!("{n:06}\r\n")).collect();
+        // `sort` reads all of stdin before writing, so a write/wait deadlock would time out.
+        let out = super::run_via_blocking_process(
+            system32("sort.exe"),
+            &[],
+            "stdin-test",
+            std::time::Duration::from_secs(30),
+            Some(payload.as_bytes()),
+        )
+        .await
+        .expect("run");
+        assert!(out.status.success());
+        assert_eq!(out.stdout.len(), payload.len());
+        assert!(out.stdout == payload.as_bytes(), "sorted output differs from the input");
+    }
+
+    #[tokio::test]
+    async fn a_child_that_ignores_stdin_still_reports_its_exit() {
+        let _gate = SPAWN_GATE.read().await;
+        let payload = vec![b'x'; 1 << 20];
+        let started = std::time::Instant::now();
+        let out = super::run_via_blocking_process(
+            system32("cmd.exe"),
+            &["/c", "exit 3"],
+            "stdin-test",
+            std::time::Duration::from_secs(30),
+            Some(&payload),
+        )
+        .await
+        .expect("a broken pipe must not surface as an error");
+        assert_eq!(out.status.code(), Some(3));
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    }
+
+    #[tokio::test]
+    async fn a_stalled_child_is_killed_at_the_timeout_while_stdin_is_blocked() {
+        use std::os::windows::process::CommandExt;
+        let _gate = SPAWN_GATE.read().await;
+        let payload = vec![b'x'; 1 << 20];
+        let marker = std::env::temp_dir().join(format!("mio-stdin-kill-{}.marker", std::process::id()));
+        let _ = std::fs::remove_file(&marker);
+        let mut cmd = system32("cmd.exe");
+        // `<nul` keeps ping off the stdin pipe, so killing cmd alone closes the read end.
+        cmd.raw_arg(format!("/d /c \"ping -n 5 127.0.0.1 >nul <nul & type nul > \"{}\"\"", marker.display()));
+        let err = super::run_via_blocking_process(
+            cmd,
+            &[],
+            "stdin-test",
+            std::time::Duration::from_secs(2),
+            Some(&payload),
+        )
+        .await
+        .expect_err("a child that never reads stdin must time out");
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+        // Past ping's natural end: a surviving cmd would have written the marker by now.
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        let survived = marker.exists();
+        let _ = std::fs::remove_file(&marker);
+        assert!(!survived, "the timed-out child was not terminated");
+    }
+
+    #[tokio::test]
+    async fn a_grandchild_holding_stdin_does_not_stall_a_child_that_exited() {
+        use std::os::windows::process::CommandExt;
+        let _gate = SPAWN_GATE.read().await;
+        let payload = vec![b'x'; 1 << 20];
+        let mut cmd = system32("cmd.exe");
+        // The background ping inherits stdin's read end and outlives cmd; `>nul` frees stdout/stderr.
+        cmd.raw_arg("/d /c \"start /b ping -n 8 127.0.0.1 >nul 2>&1\"");
+        let started = std::time::Instant::now();
+        let out = super::run_via_blocking_process(
+            cmd,
+            &[],
+            "stdin-test",
+            std::time::Duration::from_secs(30),
+            Some(&payload),
+        )
+        .await
+        .expect("the exit status must win over a writer blocked on a grandchild");
+        assert!(out.status.success());
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "the call waited for the grandchild: {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_stdin_gives_the_child_eof() {
+        let _gate = SPAWN_GATE.read().await;
+        let out = super::run_via_blocking_process(
+            system32("sort.exe"),
+            &[],
+            "stdin-test",
+            std::time::Duration::from_secs(30),
+            Some(&[]),
+        )
+        .await
+        .expect("run");
+        assert!(out.status.success());
+        assert!(out.stdout.is_empty());
     }
 }
