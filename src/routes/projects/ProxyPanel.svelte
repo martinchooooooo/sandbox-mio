@@ -55,5 +55,5 @@
 
 <!-- A stopped iron-proxy sidecar keeps the editor: saving starts it (docs/features/podman-egress-boundary/02_dev.md, Resolved Decision 13). -->
 {#if provider && iron && status?.exists}
-    <NetPolicyEditor {sandboxName} {workspacePath} {provider} />
+    <NetPolicyEditor {sandboxName} />
 {/if}

@@ -65,27 +65,27 @@ describe("Podman egress boundary — editor gating and failure paths (mock backe
     assert(!(await $("button=block-and-log").isExisting()), "violation actions are not for the sidecar dialect");
   });
 
-  it("shows drift and an unstamped binding after an on-disk edit, and lists its missing value on apply", async () => {
+  it("shows an on-disk edit as a proposal, and lists the accepted binding's missing value after Review", async () => {
     const policy = JSON.parse(fs.readFileSync(policyFile, "utf8"));
     policy.rules.push({ action: "allow", host: "api.example.com" });
     policy.secrets.push({ secretId: `pebui-${stamp}`, envVar: "PEBUI_KEY", hosts: ["api.example.com"], headers: ["authorization"] });
     fs.writeFileSync(policyFile, JSON.stringify(policy, null, 2));
 
     await openNetwork(name);
-    await workspaceDashboard.netPolicyDrift.waitForExist({ timeout: COMMAND });
+    await workspaceDashboard.netPolicyProposal.waitForExist({ timeout: COMMAND });
+    // The proposal is not in force until reviewed, so its binding is not accepted yet.
+    assert(!(await $("[data-net-policy-secret='PEBUI_KEY']").isExisting()), "an unreviewed binding must not show as accepted");
+    await workspaceDashboard.reviewProposal();
+    await workspaceDashboard.applyProposal();
     const unstamped = $("[data-net-policy-unstamped='PEBUI_KEY']");
     await unstamped.waitForExist({ timeout: COMMAND });
     assert.match(await unstamped.getText(), /export PEBUI_KEY=mio-placeholder-pebui_key/);
 
-    // Drift alone enables Save: the file is applied unchanged.
-    await workspaceDashboard.saveNetPolicy();
     assert.match(await workspaceDashboard.applyReportText(), /\$PEBUI_KEY/);
-    // The report renders before the editor's refresh clears the drift flag.
-    await workspaceDashboard.netPolicyDrift.waitForExist({ reverse: true, timeout: COMMAND, timeoutMsg: "drift must clear after the apply" });
   });
 
   it("adds, edits and removes a secret from one form, saving each change at once", async () => {
-    const secretsFile = path.join(APP_DATA_ROOT, "proxy", "secrets.json");
+    const secretsFile = path.join(stateDir, "values.json");
     const storedValues = (): Record<string, string> => JSON.parse(fs.readFileSync(secretsFile, "utf8"));
     const onDisk = () => JSON.parse(fs.readFileSync(policyFile, "utf8"));
     const newId = `${name}-pebui_new`;

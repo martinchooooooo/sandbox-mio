@@ -399,36 +399,39 @@ impl CliBackend {
         Ok(())
     }
 
-    /// Settles a policy-enforcing sandbox's policy before its create: loads the workspace file, seeds
-    /// the starter allowlist when the dialog chose allowlist and the file has no rules, applies the
-    /// dialog's mode (an imported workspace's file wins otherwise), validates, and snapshots it as
-    /// `applied.json`.
+    /// Settles the accepted policy from the create dialog alone; an existing workspace file stays a
+    /// proposal and only its binding variables get placeholders
+    /// (`docs/features/net-policy-review/02_dev.md`, Resolved Decision 5).
     fn prepare_egress(
         &self,
         name: &str,
         workspace: &str,
         request: Option<&types::EgressRequest>,
         caps: crate::provider::types::ProviderCapabilities,
-    ) -> Result<crate::provider::types::EgressPolicy, BackendError> {
+    ) -> Result<(crate::provider::types::EgressPolicy, Vec<String>), BackendError> {
         use crate::net_policy;
-        let mut policy = net_policy::load(workspace)?;
-        let mode = request.and_then(|r| r.mode);
-        if let Some(mode) = mode {
-            if mode == net_policy::EgressMode::Allowlist && policy.rules.is_empty() {
-                let starter = net_policy::starter(caps, &request.map(|r| r.starter_hosts.clone()).unwrap_or_default());
-                policy.rules = starter.rules;
+        let mut policy = net_policy::NetPolicy::default();
+        if let Some(mode) = request.and_then(|r| r.mode) {
+            if mode == net_policy::EgressMode::Allowlist {
+                let hosts = request.map(|r| r.starter_hosts.clone()).unwrap_or_default();
+                policy.rules = net_policy::starter(caps, &hosts).rules;
             }
             policy.egress = mode;
         }
         net_policy::validate(&policy, caps)?;
-        if mode.is_some() {
+        // An unparsable file is left alone; the network section reports it after create.
+        let (guest_vars, write_file) = match net_policy::load_if_present(workspace) {
+            Ok(Some(file)) => (net_policy::stampable_vars(&file), false),
+            Ok(None) => (Vec::new(), true),
+            Err(_) => (Vec::new(), false),
+        };
+        if write_file {
             net_policy::save(workspace, &policy)?;
         }
-        let guest_env =
-            caps.sidecar_egress.then(|| policy.secrets.iter().map(|b| b.env_var.clone()).collect());
-        let applied = net_policy::AppliedPolicy { policy, guest_env };
+        let guest_env = caps.sidecar_egress.then(|| guest_vars.clone());
+        let applied = net_policy::AppliedPolicy { policy, revision: 0, guest_env };
         net_policy::write_applied(&self.app, name, &applied)?;
-        Ok(net_policy::to_egress(&applied.policy)?)
+        Ok((net_policy::to_egress(&applied.policy)?, guest_vars))
     }
 
     async fn resolve_create_workspace(
@@ -556,15 +559,12 @@ impl SandboxBackend for CliBackend {
         let workspace = self.resolve_create_workspace(name, existing_path).await?;
         let mut env = bridge.as_ref().map(|(_, env, _)| env.clone()).unwrap_or_default();
         let egress_policy = if caps.egress_policy {
-            Some(self.prepare_egress(name, &workspace, egress, caps)?)
+            Some(self.prepare_egress(name, &workspace, egress, caps)?.0)
         } else if sidecar_enforced {
-            // Runs even with no request, so `applied.json` always snapshots the workspace file; the
-            // sidecar, not the engine, enforces the result. Placeholders exist only from create
-            // (Resolved Decision 7).
-            let policy = self.prepare_egress(name, &workspace, egress, caps)?;
-            env.extend(
-                policy.secrets.iter().map(|b| (b.env_var.clone(), crate::net_policy::placeholder(&b.env_var))),
-            );
+            // Runs even with no request, so `applied.json` always exists; the sidecar, not the
+            // engine, enforces the result. Placeholders exist only from create (Resolved Decision 7).
+            let (_, guest_vars) = self.prepare_egress(name, &workspace, egress, caps)?;
+            env.extend(guest_vars.iter().map(|v| (v.clone(), crate::net_policy::placeholder(v))));
             None
         } else {
             None

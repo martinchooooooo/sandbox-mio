@@ -116,6 +116,7 @@ impl Bootstrap {
                     Ok(sandboxes) => sandboxes.into_iter().map(|s| s.name).collect::<Vec<_>>(),
                     Err(_) => return,
                 };
+                crate::proxy::migrate_legacy_secrets(&handle, &live);
                 handle.state::<Arc<dyn NetworkManager>>().sweep(&live).await;
                 crate::proxy::sweep(&handle, handle.state::<Arc<provider::ProviderRegistry>>().inner(), &live)
                     .await;

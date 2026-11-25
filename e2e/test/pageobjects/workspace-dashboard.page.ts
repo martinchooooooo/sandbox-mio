@@ -355,8 +355,37 @@ class WorkspaceDashboardPage {
     return $("[data-net-policy-apply-report]");
   }
 
-  get netPolicyDrift(): Element {
-    return $("[data-net-policy-drift]");
+  /** The banner shown while the workspace policy file differs from the accepted policy. */
+  get netPolicyProposal(): Element {
+    return $("[data-net-policy-proposal]");
+  }
+
+  /** Opens the review dialog from the proposal banner. */
+  async reviewProposal(): Promise<void> {
+    await $("[data-net-policy-review]").waitForClickable({ timeout: COMMAND });
+    await $("[data-net-policy-review]").click();
+    await $("[data-net-policy-proposal-dialog]").waitForDisplayed({ timeout: COMMAND });
+  }
+
+  /** The widening flag of every change row in the open review dialog, in display order. */
+  async proposalWidenFlags(): Promise<boolean[]> {
+    const flags: boolean[] = [];
+    for (const row of await $$("[data-proposal-change]")) flags.push((await row.getAttribute("data-widens")) === "true");
+    return flags;
+  }
+
+  /** Applies the displayed proposal and waits for the dialog and banner to clear. */
+  async applyProposal(): Promise<void> {
+    await $("[data-proposal-apply]").click();
+    await $("[data-net-policy-proposal-dialog]").waitForExist({ reverse: true, timeout: SUBPROCESS, timeoutMsg: "the review dialog stayed open after Apply" });
+    await this.netPolicyProposal.waitForExist({ reverse: true, timeout: SUBPROCESS, timeoutMsg: "the proposal banner stayed after Apply" });
+  }
+
+  /** Discards the proposal from the banner and waits for it to clear. */
+  async discardProposal(): Promise<void> {
+    await $("[data-net-policy-discard]").waitForClickable({ timeout: COMMAND });
+    await $("[data-net-policy-discard]").click();
+    await this.netPolicyProposal.waitForExist({ reverse: true, timeout: SUBPROCESS, timeoutMsg: "the proposal banner stayed after Discard" });
   }
 
   async #typeInto(input: Element, text: string): Promise<void> {

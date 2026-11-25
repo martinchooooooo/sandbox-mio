@@ -21,31 +21,11 @@ pub async fn proxy_status(
 }
 
 /// How many secret values deploying `name` would copy to the target host, for the deploy picker's
-/// notice. A count only: no value or secret id is returned.
+/// notice. Counts the accepted policy only. A count only: no value or secret id is returned.
 #[tauri::command]
-pub fn deploy_secret_count(
-    name: String,
-    workspace_path: String,
-    app: tauri::AppHandle,
-) -> Result<usize, AppError> {
+pub fn deploy_secret_count(name: String, app: tauri::AppHandle) -> Result<usize, AppError> {
     crate::backends::validate_name(&name)?;
-    Ok(proxy::iron::deploy_secret_count(&app, &name, &workspace_path)?)
-}
-
-/// Stores (or overwrites) the value a secret binding's `secretId` resolves to. Never logged or
-/// returned.
-#[tauri::command]
-pub async fn set_proxy_secret(
-    secret_id: String,
-    value: String,
-    app: tauri::AppHandle,
-) -> Result<(), AppError> {
-    Ok(proxy::set_secret(&app, &secret_id, &value)?)
-}
-
-#[tauri::command]
-pub async fn delete_proxy_secret(secret_id: String, app: tauri::AppHandle) -> Result<(), AppError> {
-    Ok(proxy::delete_secret(&app, &secret_id)?)
+    Ok(proxy::iron::deploy_secret_count(&app, &name)?)
 }
 
 /// Starts the flow-log poll task behind `proxy://flows-changed` for `name`, or counts one more

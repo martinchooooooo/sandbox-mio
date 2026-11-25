@@ -109,7 +109,8 @@ describe("Podman egress boundary — bounded sandbox on a real machine", functio
     await ProjectsPage.ensurePodmanReady();
     await ProjectsPage.openAdvanced();
     await ProjectsPage.egressOption("allowlist").waitForDisplayed({ timeout: COMMAND });
-    // The dialog always sends its mode and the default `open` would overwrite the seeded allowlist.
+    // The accepted policy comes from the dialog alone; the seeded file stays a proposal until reviewed
+    // (docs/features/net-policy-review/02_dev.md, Resolved Decision 5).
     await ProjectsPage.chooseEgress("allowlist");
 
     // The first proxied create of a fresh machine pulls the iron-proxy image.
@@ -142,6 +143,21 @@ describe("Podman egress boundary — bounded sandbox on a real machine", functio
     assert(applied.guestEnv.includes(ENV_VAR), "applied.json must record the create-time placeholder variable");
 
     assert.equal(guestSh(name, `printenv ${ENV_VAR}`).stdout, PLACEHOLDER);
+  });
+
+  it("shows the seeded policy file as a proposal and accepts it through Review", async () => {
+    await ProjectsPage.row(name).openWorkspace();
+    await workspaceDashboard.waitForRendered(name);
+    await workspaceDashboard.openSection("network");
+    await workspaceDashboard.netPolicyProposal.waitForExist({ timeout: COMMAND, timeoutMsg: "the seeded file did not show as a proposal" });
+    const before = JSON.parse(fs.readFileSync(path.join(APP_DATA_ROOT, "net-policy", name, "applied.json"), "utf8"));
+    assert(!JSON.stringify(before.policy).includes(ECHO_HOST), "the seeded host must not be accepted before review");
+
+    await workspaceDashboard.reviewProposal();
+    assert((await workspaceDashboard.proposalWidenFlags()).some(Boolean), "the seeded binding must be flagged as widening");
+    await workspaceDashboard.applyProposal();
+    const after = JSON.parse(fs.readFileSync(path.join(APP_DATA_ROOT, "net-policy", name, "applied.json"), "utf8"));
+    assert(after.policy.secrets.some((b: { envVar: string }) => b.envVar === ENV_VAR), "the reviewed binding must be accepted");
   });
 
   it("has no direct route out and refuses an unlisted host", () => {
@@ -188,11 +204,10 @@ describe("Podman egress boundary — bounded sandbox on a real machine", functio
 
     await workspaceDashboard.addAllowRule("example.com");
     await workspaceDashboard.saveNetPolicy();
-    // The report renders before the editor's refresh clears the drift flag.
-    await workspaceDashboard.netPolicyDrift.waitForExist({
-      reverse: true,
+    // The report renders before the editor's refresh clears the unsaved-edit flag.
+    await browser.waitUntil(async () => !(await workspaceDashboard.netPolicySave.isEnabled()), {
       timeout: COMMAND,
-      timeoutMsg: "drift must clear after a successful apply",
+      timeoutMsg: "Save must disable after a successful apply",
     });
 
     const r = guestCurl(name, "https://example.com/");
@@ -237,7 +252,7 @@ describe("Podman egress boundary — bounded sandbox on a real machine", functio
     const logs = walk(path.join(APP_DATA_ROOT, "logs")).filter((f) => path.basename(f).startsWith("mio.log"));
     for (const f of logs) assert(!fs.readFileSync(f, "utf8").includes(needle), `${f} holds the value`);
 
-    assert(readFileIfExists(path.join(APP_DATA_ROOT, "proxy", "secrets.json")).includes(needle), "secrets.json lost the value");
+    assert(readFileIfExists(path.join(stateDir, "values.json")).includes(needle), "values.json lost the value");
     assert.equal(
       fs.readFileSync(path.join(stateDir, "secrets", ENV_VAR), "utf8"),
       needle,

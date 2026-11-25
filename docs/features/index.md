@@ -44,6 +44,7 @@
 * [mutagen-transport](mutagen-transport/index.md) - Provider-neutral port forwarding and workspace transport over the Mutagen sidecar.
 * [native-agent-ui](native-agent-ui/index.md) - Built-in chat UI in the app's own frontend, driving pi inside the sandbox over its RPC mode, kept alive by an in-sandbox supervisor.
 * [nav-responsive](nav-responsive/index.md) - Responsive layout for the NavigationColumn's collapsed rail and expanded sidebar.
+* [net-policy-review](net-policy-review/index.md) - Stop a sandbox from rewriting its own egress policy and secret bindings: every sidecar apply enforces only the app-side accepted policy, and a changed workspace policy file is a proposal the user reviews as a diff before it applies.
 * [network-proxy](network-proxy/index.md) - Per-sandbox mitmproxy sidecar for outbound traffic inspection and secret injection.
 * [opencode-agent](opencode-agent/index.md) - OpenCode as an installable agent, pre-wired to the host local-LLM inference server.
 * [package-autocomplete](package-autocomplete/index.md) - Registry-backed suggestion dropdown for the sandbox package install input.

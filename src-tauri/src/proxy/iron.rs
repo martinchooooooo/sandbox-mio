@@ -442,18 +442,71 @@ fn app_bindings(github: bool) -> Vec<iron_config::AppBinding> {
     if github { vec![iron_config::github_app_binding()] } else { Vec::new() }
 }
 
-/// Makes the sidecar on `site` run `policy`, already validated: reload when running, start when
-/// stopped (Resolved Decision 13). A failure restores the previous files, and `applied.json` changes
-/// only once the new policy runs. A deployed sandbox is applied live on the remote sidecar
-/// (`docs/features/proxy-remote-deploy/02_dev.md`, Resolved Decisions 3, 4, 12).
+/// A secret-value change that rides on a policy apply. Deliberately not `Debug`, so a value cannot
+/// reach a log.
+#[derive(Default)]
+pub struct ValueEdit {
+    /// `(secret id, value)`, stored before the apply and restored if it fails.
+    pub store: Option<(String, String)>,
+    /// Removed once the apply succeeded.
+    pub drop: Option<String>,
+}
+
+/// Makes the sidecar on `site` run `policy`, already validated; remote sites apply live too. A failure
+/// restores the previous files and values. A revision other than `expected_revision` is refused
+/// (`docs/features/net-policy-review/02_dev.md`, Resolved Decision 10).
 pub async fn apply_policy(
     app: &AppHandle,
     site: &SidecarSite,
     sandbox: &str,
     policy: NetPolicy,
+    expected_revision: u64,
+    edit: ValueEdit,
 ) -> Result<ApplyReport, ProxyError> {
     let lock = apply_lock(sandbox);
     let _guard = lock.lock().await;
+    let current = net_policy::read_accepted(app, sandbox).map_err(policy_err)?.revision;
+    if current != expected_revision {
+        return Err(ProxyError::CommandFailed(format!(
+            "the network policy of {sandbox:?} changed since the editor loaded it; reload the network section and redo the edit"
+        )));
+    }
+    // Stored only now, under the lock and after the revision check, so a refused or failed apply
+    // never leaves a value behind that a later refresh would put into a secret file.
+    let before = match &edit.store {
+        Some((id, value)) => {
+            let before = super::load_secrets(app, sandbox)?;
+            super::set_secret(app, sandbox, id, value)?;
+            Some(before)
+        }
+        None => None,
+    };
+    let result = apply_policy_locked(app, site, sandbox, policy).await;
+    match (&result, before) {
+        (Err(_), Some(before)) => {
+            if let Err(e) = super::save_secrets(app, sandbox, &before) {
+                tracing::error!(target: "proxy", %sandbox, error = %e, "failed to restore the previous secret values");
+            }
+        }
+        (Ok(_), _) => {
+            if let Some(id) = &edit.drop {
+                if let Err(e) = super::delete_secret(app, sandbox, id) {
+                    tracing::warn!(target: "proxy", %sandbox, error = %e, "applied, but failed to delete the dropped secret value");
+                }
+            }
+        }
+        (Err(_), None) => {}
+    }
+    result
+}
+
+/// Applies the accepted policy as it stands under the apply lock, so an editor apply landing in
+/// between is never reverted. Used by create and deploy.
+pub async fn apply_accepted(app: &AppHandle, site: &SidecarSite, sandbox: &str) -> Result<ApplyReport, ProxyError> {
+    let lock = apply_lock(sandbox);
+    let _guard = lock.lock().await;
+    let policy = net_policy::read_accepted(app, sandbox).map_err(policy_err)?.policy;
+    net_policy::validate(&policy, site.provider.capabilities()).map_err(policy_err)?;
     apply_policy_locked(app, site, sandbox, policy).await
 }
 
@@ -513,7 +566,7 @@ async fn apply_local_locked(
     let guest_env = net_policy::read_applied(app, sandbox).map_err(policy_err)?.and_then(|a| a.guest_env);
 
     let secrets = secrets_dir(&state);
-    let values = super::load_secrets(app)?;
+    let values = super::load_secrets(app, sandbox)?;
     let github_token = fail_closed_binding(sandbox, github_binding(app, sandbox));
     let snapshot = snapshot_secret_files(&secrets)?;
     // Every failure from here on puts the secret files back, so a value from a policy that never ran
@@ -548,6 +601,17 @@ async fn apply_local_locked(
     finish_apply(app, sandbox, policy, guest_env, missing_secrets)
 }
 
+/// A first apply that differs from the implicit empty allowlist moves to revision 1, so two editors
+/// loaded at revision 0 cannot both apply.
+fn next_revision(prev: Option<&net_policy::AppliedPolicy>, policy: &NetPolicy) -> u64 {
+    match prev {
+        Some(p) if p.policy == *policy => p.revision,
+        Some(p) => p.revision + 1,
+        None if *policy == net_policy::empty_accepted_policy() => 0,
+        None => 1,
+    }
+}
+
 /// Records the applied snapshot once the new policy runs, and reports what had no stored value.
 fn finish_apply(
     app: &AppHandle,
@@ -556,7 +620,11 @@ fn finish_apply(
     guest_env: Option<Vec<String>>,
     missing_secrets: Vec<String>,
 ) -> Result<ApplyReport, ProxyError> {
-    let applied = net_policy::AppliedPolicy { policy, guest_env };
+    // The revision moves only when the accepted policy does, so a background re-render never
+    // invalidates an open editor.
+    let prev = net_policy::read_applied(app, sandbox).map_err(policy_err)?;
+    let revision = next_revision(prev.as_ref(), &policy);
+    let applied = net_policy::AppliedPolicy { policy, revision, guest_env };
     net_policy::write_applied(app, sandbox, &applied).map_err(policy_err)?;
     if !missing_secrets.is_empty() {
         tracing::warn!(target: "proxy", %sandbox, ?missing_secrets, "bindings without a stored secret were not applied");
@@ -586,7 +654,7 @@ async fn apply_remote_locked(
     let guest_env = net_policy::read_applied(app, sandbox).map_err(policy_err)?.and_then(|a| a.guest_env);
 
     let secrets = secrets_dir(&state);
-    let values = super::load_secrets(app)?;
+    let values = super::load_secrets(app, sandbox)?;
     let github_token = fail_closed_binding(sandbox, github_binding(app, sandbox));
     let snapshot = snapshot_secret_files(&secrets)?;
     let snapshot_names: Vec<String> = snapshot
@@ -703,7 +771,7 @@ pub async fn refresh_github_binding(
     let binding = github_binding(app, sandbox);
     let lookup_error = binding.as_ref().err().map(ToString::to_string);
     let token = fail_closed_binding(sandbox, binding);
-    let values = super::load_secrets(app)?;
+    let values = super::load_secrets(app, sandbox)?;
     let config = rendered(&applied.policy, &proxy_ip, &values, token.is_some());
     if !github_files_current(&state, &config, token.as_deref()) {
         let sidecar = super::proxy_container_name(sandbox);
@@ -731,12 +799,12 @@ pub async fn refresh_github_binding(
     Ok(if token.is_some() { BindingState::Live } else { BindingState::NotLive })
 }
 
-/// How many secret values a deploy would send to the target: workspace bindings with a stored value
+/// How many secret values a deploy would send to the target: accepted-policy bindings with a stored value
 /// plus the live GitHub binding. A count only, so no value or secret id crosses IPC
 /// (`docs/features/proxy-remote-deploy/02_dev.md`, Resolved Decision 2).
-pub fn deploy_secret_count(app: &AppHandle, sandbox: &str, workspace_path: &str) -> Result<usize, ProxyError> {
-    let policy = net_policy::load(workspace_path).map_err(policy_err)?;
-    let values = super::load_secrets(app)?;
+pub fn deploy_secret_count(app: &AppHandle, sandbox: &str) -> Result<usize, ProxyError> {
+    let policy = net_policy::read_applied(app, sandbox).map_err(policy_err)?.map(|a| a.policy).unwrap_or_default();
+    let values = super::load_secrets(app, sandbox)?;
     let github = fail_closed_binding(sandbox, github_binding(app, sandbox)).is_some();
     Ok(planned_files(&policy, &values, github).len())
 }
@@ -794,7 +862,7 @@ pub fn github_binding_live(app: &AppHandle, sandbox: &str) -> Result<bool, Proxy
         return Ok(false);
     };
     let proxy_ip = meta["proxyIp"].as_str().unwrap_or_default();
-    let values = super::load_secrets(app)?;
+    let values = super::load_secrets(app, sandbox)?;
     let config = rendered(&applied.policy, proxy_ip, &values, true);
     Ok(github_files_current(&super::state_dir(app, sandbox)?, &config, Some(&token)))
 }
@@ -828,6 +896,21 @@ fn write_offline(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_first_apply_of_a_changed_policy_moves_past_revision_zero() {
+        let empty = net_policy::empty_accepted_policy();
+        let open = NetPolicy::default();
+        let applied = |policy: &NetPolicy, revision| net_policy::AppliedPolicy {
+            policy: policy.clone(),
+            revision,
+            guest_env: None,
+        };
+        assert_eq!(next_revision(None, &empty), 0, "a re-render of the implicit default keeps revision 0");
+        assert_eq!(next_revision(None, &open), 1);
+        assert_eq!(next_revision(Some(&applied(&open, 4)), &open), 4);
+        assert_eq!(next_revision(Some(&applied(&open, 4)), &empty), 5);
+    }
 
     #[test]
     fn remove_github_file_deletes_a_stale_token_and_tolerates_none() {

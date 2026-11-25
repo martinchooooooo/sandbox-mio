@@ -7,6 +7,8 @@ approximate. New entries go on top.
 
 ## 2026-11-24
 
+* **Implement** [net-policy-review](net-policy-review/index.md): every sidecar apply enforces only the app-side accepted policy, a changed workspace policy file is a proposal reviewed in a diff dialog, and secret values are per sandbox
+* **Create** [net-policy-review](net-policy-review/index.md): planned; every sidecar apply renders only the app-side accepted policy, a changed workspace `.mio/net-policy.json` becomes a proposal reviewed as a diff, and secret values become per sandbox; all design decisions await the user
 * **Implement** [proxy-remote-deploy](proxy-remote-deploy/index.md): a sandbox with a sidecar can deploy to a remote Podman host, which gets its own internal network, sidecar and memory-only secret files, live policy applies and audit polling; the remote standard specs pass on `mio-tests-remote`, a real Linux host was not tried
 
 ## 2026-11-23

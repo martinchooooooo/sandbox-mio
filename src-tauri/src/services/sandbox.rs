@@ -158,10 +158,10 @@ async fn create_steps(
         }
     };
     // Order is load-bearing: the sidecar denies everything until the first apply (Resolved
-    // Decision 18), and the policy can only be read once `store.create` resolved the workspace.
+    // Decision 18 of podman-egress-boundary).
     task.progress(None, "Applying network policy");
     let site = crate::proxy::types::SidecarSite::local(registry, provider);
-    if let Err(e) = apply_policy_and_inject_ca(app, &site, name, &sandbox.workspace_path).await {
+    if let Err(e) = apply_policy_and_inject_ca(app, &site, name).await {
         tracing::error!(target: "create", %name, error = %e, "create_sandbox: proxy setup failed, rolling back");
         match store.destroy(name).await {
             Ok(()) => cleanup_host_state(name, app),
@@ -193,13 +193,10 @@ async fn apply_policy_and_inject_ca(
     app: &tauri::AppHandle,
     site: &crate::proxy::types::SidecarSite,
     name: &str,
-    workspace_path: &str,
 ) -> Result<(), AppError> {
     let podman = &site.provider;
     tracing::info!(target: "create", %name, "create_sandbox: applying network policy");
-    let policy = crate::net_policy::load(workspace_path).map_err(BackendError::from)?;
-    crate::net_policy::validate(&policy, podman.capabilities()).map_err(BackendError::from)?;
-    crate::proxy::iron::apply_policy(app, site, name, policy).await?;
+    crate::proxy::iron::apply_accepted(app, site, name).await?;
     tracing::info!(target: "create", %name, "create_sandbox: injecting proxy CA");
     let pem = crate::proxy::read_ca_pem(app, name, ProviderId::Podman)?;
     crate::proxy::inject_ca(podman, name, &pem).await?;
@@ -387,11 +384,10 @@ async fn deploy_to_target(
     let deployment = store.deploy(name, plan, &attachment, &extra_env).await?;
 
     // Order is load-bearing: the remote sidecar denies everything until this apply (Resolved
-    // Decision 18 of podman-egress-boundary), so `reproduce_remote` must come after it.
+    // Decision 18 of podman-egress-boundary), so `reproduce_remote` must come after it. Only the
+    // accepted policy is deployed (`docs/features/net-policy-review/02_dev.md`, Resolved Decision 7).
     task.progress(None, "Applying network policy");
-    let policy = crate::net_policy::load(&deployment.alpha).map_err(BackendError::from)?;
-    crate::net_policy::validate(&policy, remote.provider.capabilities()).map_err(BackendError::from)?;
-    crate::proxy::iron::apply_policy(app, remote, name, policy).await?;
+    crate::proxy::iron::apply_accepted(app, remote, name).await?;
     let pem = crate::proxy::read_remote_ca_pem(app, name)?;
     crate::proxy::inject_ca(&remote.provider, name, &pem).await?;
     // Stopped, never removed: the stopped local sandbox's network is fixed at create

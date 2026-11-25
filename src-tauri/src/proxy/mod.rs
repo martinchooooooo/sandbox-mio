@@ -114,20 +114,20 @@ fn meta_path_if_exists(app: &AppHandle, sandbox: &str) -> Option<PathBuf> {
     path.is_file().then_some(path)
 }
 
-/// Root of the app-global secret-value store: `<app_data_root>/proxy/secrets.json`. Written by
-/// `set_proxy_secret`/`delete_proxy_secret`, never read back over IPC; only the iron-proxy apply
-/// reads it.
-fn secrets_path(app: &AppHandle) -> Result<PathBuf, ProxyError> {
-    let root = crate::paths::app_data_root(app)
-        .map_err(|e| ProxyError::CommandFailed(e.to_string()))?
-        .join("proxy");
-    std::fs::create_dir_all(&root)
-        .map_err(|e| ProxyError::Io { path: root.to_string_lossy().to_string(), error: e.to_string() })?;
-    Ok(root.join("secrets.json"))
+/// A sandbox's secret-value store, deleted with its state directory at destroy. Written only by
+/// `iron::apply_policy`, never read back over IPC
+/// (`docs/features/net-policy-review/02_dev.md`, Resolved Decision 8).
+fn values_path(app: &AppHandle, sandbox: &str) -> Result<PathBuf, ProxyError> {
+    Ok(state_dir(app, sandbox)?.join("values.json"))
 }
 
-pub fn load_secrets(app: &AppHandle) -> Result<HashMap<String, String>, ProxyError> {
-    let path = secrets_path(app)?;
+/// `sandbox`'s stored values; a sandbox with none stored resolves nothing. A read creates no directory.
+pub fn load_secrets(app: &AppHandle, sandbox: &str) -> Result<HashMap<String, String>, ProxyError> {
+    let path = crate::paths::app_data_root(app)
+        .map_err(|e| ProxyError::CommandFailed(e.to_string()))?
+        .join("proxy")
+        .join(sandbox)
+        .join("values.json");
     match crate::mio_files::read_value(&path) {
         Some(v) => serde_json::from_value(v).map_err(|e| {
             ProxyError::CommandFailed(format!("failed to parse {}: {e}", path.to_string_lossy()))
@@ -136,22 +136,87 @@ pub fn load_secrets(app: &AppHandle) -> Result<HashMap<String, String>, ProxyErr
     }
 }
 
-fn save_secrets(app: &AppHandle, secrets: &HashMap<String, String>) -> Result<(), ProxyError> {
-    let path = secrets_path(app)?;
+/// Overwrites the whole value store; `apply_policy` uses it to restore a failed apply.
+fn save_secrets(app: &AppHandle, sandbox: &str, secrets: &HashMap<String, String>) -> Result<(), ProxyError> {
+    let path = values_path(app, sandbox)?;
     crate::mio_files::write_pretty(&path, secrets).map_err(|e| ProxyError::CommandFailed(e.to_string()))
 }
 
-/// Set (or overwrite) the value stored for `secret_id`. Never logged or returned.
-pub fn set_secret(app: &AppHandle, secret_id: &str, value: &str) -> Result<(), ProxyError> {
-    let mut secrets = load_secrets(app)?;
+/// Set (or overwrite) the value stored for `secret_id` in `sandbox`. Never logged or returned.
+pub fn set_secret(app: &AppHandle, sandbox: &str, secret_id: &str, value: &str) -> Result<(), ProxyError> {
+    let mut secrets = load_secrets(app, sandbox)?;
     secrets.insert(secret_id.to_string(), value.to_string());
-    save_secrets(app, &secrets)
+    save_secrets(app, sandbox, &secrets)
 }
 
-pub fn delete_secret(app: &AppHandle, secret_id: &str) -> Result<(), ProxyError> {
-    let mut secrets = load_secrets(app)?;
+pub fn delete_secret(app: &AppHandle, sandbox: &str, secret_id: &str) -> Result<(), ProxyError> {
+    let mut secrets = load_secrets(app, sandbox)?;
     secrets.remove(secret_id);
-    save_secrets(app, &secrets)
+    save_secrets(app, sandbox, &secrets)
+}
+
+/// Owner of each legacy value (`docs/features/net-policy-review/02_dev.md`, Resolved Decision 9).
+/// `users` pairs each live sandbox with the secret ids its accepted policy names.
+fn split_legacy_secrets(
+    legacy: &HashMap<String, String>,
+    users: &[(String, Vec<String>)],
+) -> HashMap<String, HashMap<String, String>> {
+    let mut out: HashMap<String, HashMap<String, String>> = HashMap::new();
+    for (id, value) in legacy {
+        // The longest prefix wins, so `a` never claims `a-b-key`; a prefixed id never falls through
+        // to the sole-user rule.
+        let prefix_owner = users
+            .iter()
+            .filter(|(name, _)| id.starts_with(&format!("{name}-")))
+            .max_by_key(|(name, _)| name.len())
+            .map(|(name, _)| name);
+        let owner = prefix_owner.or_else(|| {
+            let mut named_by = users.iter().filter(|(_, ids)| ids.contains(id)).map(|(name, _)| name);
+            named_by.next().filter(|_| named_by.next().is_none())
+        });
+        if let Some(owner) = owner {
+            out.entry(owner.clone()).or_default().insert(id.clone(), value.clone());
+        }
+    }
+    out
+}
+
+/// Moves the app-global `proxy/secrets.json` into the value stores of the `live` sandboxes, then
+/// deletes it. A failure leaves the file for the next start.
+pub fn migrate_legacy_secrets(app: &AppHandle, live: &[String]) {
+    if let Err(e) = migrate_legacy_secrets_inner(app, live) {
+        tracing::warn!(target: "proxy", error = %e, "legacy secret migration failed; will retry at next start");
+    }
+}
+
+fn migrate_legacy_secrets_inner(app: &AppHandle, live: &[String]) -> Result<(), ProxyError> {
+    let root = crate::paths::app_data_root(app).map_err(|e| ProxyError::CommandFailed(e.to_string()))?;
+    let legacy_path = root.join("proxy").join("secrets.json");
+    let Some(value) = crate::mio_files::read_value(&legacy_path) else {
+        return Ok(());
+    };
+    let legacy: HashMap<String, String> = serde_json::from_value(value)
+        .map_err(|e| ProxyError::CommandFailed(format!("failed to parse {}: {e}", legacy_path.to_string_lossy())))?;
+    // A sandbox without a snapshot still takes its prefixed values; a snapshot of a destroyed one
+    // takes nothing.
+    let users: Vec<(String, Vec<String>)> = live
+        .iter()
+        .map(|name| {
+            let ids = match crate::net_policy::read_applied(app, name) {
+                Ok(Some(applied)) => applied.policy.secrets.into_iter().map(|b| b.secret_id).collect(),
+                _ => Vec::new(),
+            };
+            (name.clone(), ids)
+        })
+        .collect();
+    for (sandbox, values) in split_legacy_secrets(&legacy, &users) {
+        let mut current = load_secrets(app, &sandbox)?;
+        for (id, value) in values {
+            current.entry(id).or_insert(value);
+        }
+        save_secrets(app, &sandbox, &current)?;
+    }
+    std::fs::remove_file(&legacy_path).map_err(|e| io_err(&legacy_path, e))
 }
 
 /// Pulls `provider_id`'s sidecar image if absent, reported through `activity::TaskRegistry` — a
@@ -681,6 +746,41 @@ pub async fn status(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_values_split_by_prefix_or_sole_user() {
+        let legacy: HashMap<String, String> = ["a-key", "a-b-key", "shared", "solo", "orphan", "a-borrowed"]
+            .iter()
+            .map(|id| (id.to_string(), format!("v-{id}")))
+            .collect();
+        let users = vec![
+            ("a".to_string(), vec!["a-key".to_string(), "shared".to_string()]),
+            (
+                "a-b".to_string(),
+                vec!["a-b-key".to_string(), "shared".to_string(), "solo".to_string(), "a-borrowed".to_string()],
+            ),
+            ("bare".to_string(), Vec::new()),
+        ];
+        let out = split_legacy_secrets(&legacy, &users);
+        let has = |sb: &str, id: &str| out.get(sb).is_some_and(|m| m.contains_key(id));
+        assert!(has("a", "a-key") && !has("a-b", "a-key"));
+        assert!(has("a-b", "a-b-key") && !has("a", "a-b-key"), "longest sandbox name owns the prefix");
+        assert!(!has("a", "shared") && !has("a-b", "shared"), "two users, no prefix: dropped");
+        assert!(has("a-b", "solo"));
+        assert!(!has("a-b", "a-borrowed") && has("a", "a-borrowed"), "a prefixed id never goes to a naming sandbox");
+        assert!(!out.values().any(|m| m.contains_key("orphan")));
+    }
+
+    #[test]
+    fn a_sandbox_without_a_snapshot_keeps_its_prefixed_values_only() {
+        let legacy: HashMap<String, String> =
+            [("bare-key", "1"), ("gone-key", "2"), ("loose", "3")].map(|(k, v)| (k.to_string(), v.to_string())).into();
+        let users = vec![("bare".to_string(), Vec::new())];
+        let out = split_legacy_secrets(&legacy, &users);
+        assert_eq!(out.get("bare").map(HashMap::len), Some(1));
+        assert!(out["bare"].contains_key("bare-key"));
+        assert_eq!(out.len(), 1, "a destroyed sandbox's value and an unnamed one go nowhere");
+    }
 
     fn instance(name: &str, image_version: Option<u32>) -> crate::backends::types::Sandbox {
         crate::backends::types::Sandbox {

@@ -37,6 +37,8 @@
     let chosenHost = $state("");
     // How many secret values deploying would copy to the chosen host; null until counted.
     let secretCount = $state<number | null>(null);
+    // Whether the workspace policy file holds changes the user has not accepted; deploy ignores them.
+    let proposalPending = $state(false);
 
     // The toggle is optimistic: Mutagen does not surface a "paused" status, so on/off is tracked
     // locally, defaulting on for a freshly listed deployment.
@@ -51,8 +53,12 @@
     $effect(() => {
         if (!picking) return;
         secretCount = null;
-        invoke<number>("deploy_secret_count", { name: sandboxName, workspacePath })
+        proposalPending = false;
+        invoke<number>("deploy_secret_count", { name: sandboxName })
             .then((n) => (secretCount = n))
+            .catch((e) => console.warn(parseError(e).message));
+        invoke<{ proposal: unknown | null; proposalError: string | null }>("net_policy_state", { name: sandboxName })
+            .then((s) => (proposalPending = s.proposal !== null || s.proposalError !== null))
             .catch((e) => console.warn(parseError(e).message));
     });
 
@@ -131,6 +137,11 @@
                     {m.projects_cancel()}
                 </Button>
             </div>
+            {#if proposalPending}
+                <span class="text-xs text-amber-700 dark:text-amber-300" data-deploy-proposal-notice>
+                    Unreviewed network policy changes will not be deployed. <!-- TODO(i18n) -->
+                </span>
+            {/if}
             {#if chosenHost && secretCount}
                 <span class="text-muted-foreground text-xs" data-deploy-secret-notice>
                     {secretCount} secret{secretCount === 1 ? "" : "s"} will be copied to {chosenHost}'s memory. <!-- TODO(i18n) -->

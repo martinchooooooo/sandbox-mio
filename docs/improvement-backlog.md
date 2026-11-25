@@ -25,11 +25,12 @@ This document is an interim task list, compiled on 2026-11-23 at commit `2e0e665
 - **Source:** `docs/features/proxy-remote-deploy/feature.md` (status note). The existing `01_ideas.md` and `02_dev.md` there describe the removed mitmproxy sidecar and must not be implemented from.
 - **Done when:** a proxied sandbox deploys to a remote Podman host with its internal network, dual-homed iron-proxy sidecar, per-binding secret files, policy reload and audit-log polling recreated on the target; the skipped remote specs run again.
 
-### T2. A sandbox can rewrite its own egress policy and secret bindings — Decision needed
+### T2. A sandbox can rewrite its own egress policy and secret bindings
 
-- [ ] Resolved
+- [x] Resolved
 - **Problem:** `apply_sandbox_policy` (`src-tauri/src/commands/net_policy.rs:66-86`) loads `.mio/net-policy.json` from the workspace, which code inside the sandbox can write. `commitSecretChange()` and `save()` in `src/routes/projects/NetPolicyEditor.svelte` (lines 106-119, 178-195) trigger that apply. An agent can add an attacker host to a secret binding's `hosts` plus an allow rule; the next time the user stores any secret, the sidecar swaps the real value into requests to the attacker host. A deployed sandbox has the same exposure: Mutagen syncs the remote workspace's policy file back to the laptop, and every apply is pushed live to the remote sidecar (`docs/features/proxy-remote-deploy/02_dev.md`).
 - **Source:** finding 1 of `docs/features/podman-egress-boundary/05_dev_review.md` (deferred by the user to a separate feature).
+- **Feature:** implemented in `docs/features/net-policy-review/` ([02_dev.md](features/net-policy-review/02_dev.md)): applies render only the accepted policy, the workspace file is a proposal reviewed as a diff, and secret values are per sandbox, which also closes a binding naming another sandbox's `secretId`.
 - **Options:** (a) apply only from the app-side snapshot (`net_policy::read_applied`, `src-tauri/src/net_policy.rs`) and treat the workspace file as a proposal; (b) require the user to confirm a diff whenever `net_policy_drift` reports a change made on disk before any apply. Either option must also stop `apply_sandbox_policy` from re-reading the workspace file after the user reviewed it.
 - **Done when:** no apply path can enforce a policy or binding host list the user has not seen; a light spec covers a drifted file with a widened binding.
 

@@ -2,54 +2,14 @@
     import { invoke } from "@tauri-apps/api/core";
     import Button from "$lib/components/ui/button/button.svelte";
     import { parseError } from "$lib/errors";
-    import type { ProviderId } from "$lib/providers";
     import { Switch } from "$lib/components/ui/switch";
     import PencilIcon from "@lucide/svelte/icons/pencil";
     import { m } from "$lib/paraglide/messages.js";
+    import NetPolicyProposalDialog from "./NetPolicyProposalDialog.svelte";
+    import type { ApplyReport, NetPolicyState, NetRule, NetPolicy, Proposal, SecretBinding, UnstampedBinding } from "./net-policy";
 
-    // Mirrors Rust `net_policy::NetPolicy` (camelCase, `.mio/net-policy.json` on disk).
-    interface NetRule {
-        action: "allow" | "deny";
-        host?: string;
-        cidr?: string;
-        group?: "public" | "private" | "host";
-        protocol?: "tcp" | "udp";
-    }
-    interface SecretBinding {
-        secretId: string;
-        envVar: string;
-        hosts: string[];
-        headers: string[];
-        query: boolean;
-        body: boolean;
-    }
-    interface NetPolicy {
-        version: number;
-        egress: "open" | "allowlist";
-        rules: NetRule[];
-        strictHostnames: boolean;
-        secrets: SecretBinding[];
-        interactive?: boolean;
-    }
+    let { sandboxName }: { sandboxName: string } = $props();
 
-    let {
-        sandboxName,
-        workspacePath,
-        provider,
-    }: {
-        sandboxName: string;
-        workspacePath: string;
-        provider: ProviderId;
-    } = $props();
-
-    // Mirrors Rust `proxy::iron::ApplyReport` and `net_policy::UnstampedBinding`.
-    interface ApplyReport {
-        missingSecrets: string[];
-    }
-    interface UnstampedBinding {
-        envVar: string;
-        placeholder: string;
-    }
     let report = $state<ApplyReport | null>(null);
     let unstamped = $state<UnstampedBinding[]>([]);
     const unstampedByVar = $derived(new Map(unstamped.map((u) => [u.envVar, u.placeholder])));
@@ -63,9 +23,15 @@
     const TARGET_PLACEHOLDER = "host, *.suffix, or CIDR to deny"; // TODO(i18n)
 
     let policy = $state<NetPolicy | null>(null);
-    let drift = $state(false);
+    let baseRevision = $state(0);
+    let proposal = $state<Proposal | null>(null);
+    let proposalError = $state<string | null>(null);
+    let reviewOpen = $state(false);
     let dirty = $state(false);
     let busy = $state(false);
+    // Editing waits for the user to apply or discard a pending proposal
+    // (docs/features/net-policy-review/02_dev.md, Resolved Decision 3).
+    const locked = $derived(busy || proposal !== null || proposalError !== null);
     let editorError = $state<string | null>(null);
 
     let newAction = $state<"allow" | "deny">("allow");
@@ -82,14 +48,17 @@
         formEnvVar.trim() !== "" && formHostList.length > 0 && (editingVar !== null || formValue.trim() !== ""),
     );
 
+    let lastRefresh = 0;
+
     async function refresh() {
+        lastRefresh = Date.now();
         try {
-            const name = sandboxName;
-            [policy, drift, unstamped] = await Promise.all([
-                invoke<NetPolicy>("get_net_policy", { workspacePath }),
-                invoke<boolean>("net_policy_drift", { name, workspacePath }),
-                invoke<UnstampedBinding[]>("net_policy_unstamped_bindings", { name, workspacePath }),
-            ]);
+            const state = await invoke<NetPolicyState>("net_policy_state", { name: sandboxName });
+            policy = state.accepted;
+            baseRevision = state.revision;
+            unstamped = state.unstamped;
+            proposal = state.proposal;
+            proposalError = state.proposalError;
             dirty = false;
         } catch (e) {
             editorError = parseError(e).message;
@@ -108,14 +77,35 @@
         busy = true;
         editorError = null;
         try {
-            if (dirty) await invoke("set_net_policy", { workspacePath, policy, provider });
-            report = await invoke<ApplyReport>("apply_sandbox_policy", { name: sandboxName, workspacePath });
+            report = await invoke<ApplyReport>("apply_sandbox_policy", {
+                name: sandboxName,
+                policy: $state.snapshot(policy),
+                baseRevision,
+            });
             await refresh();
         } catch (e) {
             editorError = parseError(e).message;
         } finally {
             busy = false;
         }
+    }
+
+    async function discardProposal() {
+        busy = true;
+        editorError = null;
+        try {
+            await invoke("discard_net_policy_proposal", { name: sandboxName });
+            await refresh();
+        } catch (e) {
+            editorError = parseError(e).message;
+        } finally {
+            busy = false;
+        }
+    }
+
+    async function proposalResolved(applied: ApplyReport | null) {
+        report = applied;
+        await refresh();
     }
 
     function targetLabel(rule: NetRule): string {
@@ -172,38 +162,35 @@
     }
 
     /**
-     * Saves a secret change at once, with any other unsaved edits, then applies it on the sidecar.
-     * The policy is written first, so a rejected binding never replaces or deletes a stored value.
+     * Applies a secret change at once, with any other unsaved edits, in one backend call: the value
+     * is stored only when the new policy applies, so a rejected binding never replaces or deletes a
+     * stored value.
      */
     async function commitSecretChange(
         edit: (p: NetPolicy) => void,
         { store, removedId }: { store?: { secretId: string; value: string }; removedId?: string } = {},
     ): Promise<boolean> {
         if (!policy) return false;
-        const before = $state.snapshot(policy) as NetPolicy;
-        const wasDirty = dirty;
-        let written = false;
         busy = true;
         editorError = null;
         try {
             mutate(edit);
-            await invoke("set_net_policy", { workspacePath, policy, provider });
-            written = true;
-            if (store) await invoke("set_proxy_secret", store);
             // The sidecar reads values only at an apply
             // (docs/features/podman-egress-boundary/02_dev.md, Resolved Decision 15).
-            report = await invoke<ApplyReport>("apply_sandbox_policy", { name: sandboxName, workspacePath });
-            if (removedId) await invoke("delete_proxy_secret", { secretId: removedId });
+            report = await invoke<ApplyReport>("apply_sandbox_policy", {
+                name: sandboxName,
+                policy: $state.snapshot(policy),
+                baseRevision,
+                storeSecret: store,
+                dropSecretId: removedId,
+            });
             await refresh();
             return true;
         } catch (e) {
+            // The apply may have taken effect before the error (a failed cleanup), so reload rather
+            // than restore the pre-edit copy; a stale revision needs the reload too.
+            await refresh();
             editorError = parseError(e).message;
-            if (written) {
-                await refresh();
-            } else {
-                policy = before;
-                dirty = wasDirty;
-            }
             return false;
         } finally {
             busy = false;
@@ -220,8 +207,7 @@
             editorError = m.netpolicy_secret_exists({ envVar });
             return;
         }
-        // Scoped to the sandbox: the value store is app-wide, and an id shared across sandboxes
-        // would let an edit here silently change another sandbox's secret.
+        // Values are stored per sandbox, so this id resolves only within this sandbox.
         const secretId = existing?.secretId ?? `${sandboxName}-${envVar.toLowerCase()}`;
         const ok = await commitSecretChange(
             (p) => {
@@ -254,12 +240,20 @@
         return reachable.length ? reachable.join(", ") : null;
     });
 
+    // Nothing watches the workspace file, so a window focus is when a new proposal shows up.
+    const FOCUS_REFRESH_MIN_MS = 5000;
+    function refreshOnFocus() {
+        if (busy || dirty || reviewOpen || Date.now() - lastRefresh < FOCUS_REFRESH_MIN_MS) return;
+        refresh();
+    }
+
     $effect(() => {
         void sandboxName;
-        void workspacePath;
         refresh();
     });
 </script>
+
+<svelte:window onfocus={refreshOnFocus} />
 
 {#snippet secretForm()}
     {@const editing = editingVar !== null}
@@ -267,27 +261,27 @@
         <div class="flex flex-wrap items-center gap-2">
             <input class="w-36 rounded border bg-background px-2 py-1 font-mono text-xs disabled:opacity-50"
                 placeholder={m.netpolicy_env_var_placeholder()} bind:value={formEnvVar}
-                disabled={busy || editing} data-secret-env-var />
+                disabled={locked || editing} data-secret-env-var />
             <input class="min-w-40 flex-1 rounded border bg-background px-2 py-1 text-xs disabled:opacity-50"
                 placeholder={m.netpolicy_secret_hosts_placeholder()} bind:value={formHosts}
-                disabled={busy} data-secret-hosts />
+                disabled={locked} data-secret-hosts />
         </div>
         <div class="flex items-center gap-2">
             <input class="flex-1 rounded border bg-background px-2 py-1 font-mono text-xs disabled:opacity-50"
                 type={showValue ? "text" : "password"} autocomplete="off" spellcheck="false"
                 placeholder={editing ? m.netpolicy_secret_replace_placeholder() : m.netpolicy_secret_value_placeholder()}
-                bind:value={formValue} disabled={busy} data-secret-value />
+                bind:value={formValue} disabled={locked} data-secret-value />
             <label class="text-muted-foreground flex shrink-0 items-center gap-1.5 text-xs">
-                <Switch checked={showValue} disabled={busy} onCheckedChange={(v) => (showValue = v)} data-secret-show />
+                <Switch checked={showValue} disabled={locked} onCheckedChange={(v) => (showValue = v)} data-secret-show />
                 {m.netpolicy_secret_show()}
             </label>
         </div>
         <div class="flex items-center gap-2">
-            <Button size="sm" disabled={busy || !formReady} onclick={saveSecret} data-secret-save>
+            <Button size="sm" disabled={locked || !formReady} onclick={saveSecret} data-secret-save>
                 {editing ? m.netpolicy_secret_save() : m.netpolicy_secret_add()}
             </Button>
             {#if editing}
-                <Button size="sm" variant="ghost" disabled={busy} onclick={resetSecretForm} data-secret-cancel>
+                <Button size="sm" variant="ghost" disabled={locked} onclick={resetSecretForm} data-secret-cancel>
                     {m.projects_cancel()}
                 </Button>
             {/if}
@@ -298,10 +292,20 @@
 <div class="flex flex-col gap-1.5 border-t pt-2" data-net-policy-editor>
     <span class="text-muted-foreground text-xs shrink-0">{m.netpolicy_title()}</span>
 
-    {#if drift}
-        <span class="rounded bg-amber-100 px-2 py-1 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200" data-net-policy-drift>
-            The workspace file differs from what the sidecar runs; save to apply it. <!-- TODO(i18n) -->
-        </span>
+    {#if proposal || proposalError}
+        <div class="flex flex-wrap items-center gap-2 rounded bg-amber-100 px-2 py-1 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200" data-net-policy-proposal>
+            <span class="flex-1">
+                {#if proposal}
+                    The workspace file has network policy changes that are not applied. <!-- TODO(i18n) -->
+                {:else}
+                    The workspace file cannot be used: {proposalError} <!-- TODO(i18n) -->
+                {/if}
+            </span>
+            {#if proposal}
+                <Button size="sm" disabled={busy} onclick={() => (reviewOpen = true)} data-net-policy-review>Review <!-- TODO(i18n) --></Button>
+            {/if}
+            <Button size="sm" variant="outline" disabled={busy} onclick={discardProposal} data-net-policy-discard>Discard <!-- TODO(i18n) --></Button>
+        </div>
     {/if}
 
     {#if policy}
@@ -313,7 +317,7 @@
                     aria-pressed={policy.egress === value}
                     variant={policy.egress === value ? "default" : "outline"}
                     size="sm"
-                    disabled={busy}
+                    disabled={locked}
                     onclick={() => mutate((p) => (p.egress = value))}
                 >{label}</Button>
             {/each}
@@ -333,9 +337,9 @@
                     <div class="flex items-center gap-2 rounded bg-muted px-2 py-1 text-xs" data-net-policy-rule>
                         <span class={rule.action === "deny" ? "text-destructive" : ""}>{rule.action}</span>
                         <span class="flex-1 truncate font-mono">{targetLabel(rule)}</span>
-                        <Button variant="ghost" size="icon" disabled={busy || i === 0} onclick={() => moveRule(i, -1)}>↑</Button>
-                        <Button variant="ghost" size="icon" disabled={busy || i === policy.rules.length - 1} onclick={() => moveRule(i, 1)}>↓</Button>
-                        <Button variant="ghost" size="icon" disabled={busy}
+                        <Button variant="ghost" size="icon" disabled={locked || i === 0} onclick={() => moveRule(i, -1)}>↑</Button>
+                        <Button variant="ghost" size="icon" disabled={locked || i === policy.rules.length - 1} onclick={() => moveRule(i, 1)}>↓</Button>
+                        <Button variant="ghost" size="icon" disabled={locked}
                             onclick={() => mutate((p) => p.rules.splice(i, 1))}>✕</Button>
                     </div>
                 {/each}
@@ -345,12 +349,12 @@
         {/if}
 
         <div class="flex flex-wrap items-center gap-2">
-            <Button size="sm" variant="outline" disabled={busy}
+            <Button size="sm" variant="outline" disabled={locked}
                 onclick={() => (newAction = newAction === "allow" ? "deny" : "allow")}>{newAction}</Button>
             <input class="w-40 rounded border bg-background px-2 py-1 text-xs disabled:opacity-50"
                 placeholder={TARGET_PLACEHOLDER}
-                bind:value={newTarget} disabled={busy} data-net-policy-target />
-            <Button size="sm" disabled={busy} onclick={addRule} data-net-policy-add-rule>
+                bind:value={newTarget} disabled={locked} data-net-policy-target />
+            <Button size="sm" disabled={locked} onclick={addRule} data-net-policy-add-rule>
                 {m.rule_add()}
             </Button>
         </div>
@@ -370,9 +374,9 @@
             {:else}
                 <div class="flex items-center gap-2 rounded bg-muted px-2 py-1 text-xs" data-net-policy-secret={binding.envVar}>
                     <span class="flex-1 truncate font-mono">${binding.envVar} → {binding.hosts.join(", ")}</span>
-                    <Button variant="ghost" size="icon" disabled={busy} aria-label={m.netpolicy_secret_edit()}
+                    <Button variant="ghost" size="icon" disabled={locked} aria-label={m.netpolicy_secret_edit()}
                         onclick={() => startEdit(binding)} data-secret-edit><PencilIcon class="size-3.5" /></Button>
-                    <Button variant="ghost" size="icon" disabled={busy} aria-label={m.netpolicy_secret_remove()}
+                    <Button variant="ghost" size="icon" disabled={locked} aria-label={m.netpolicy_secret_remove()}
                         onclick={() => removeSecret(binding)} data-secret-remove>✕</Button>
                 </div>
             {/if}
@@ -393,14 +397,17 @@
         {/if}
 
         <div class="flex items-center gap-2">
-            <!-- Sidecar drift is applied by saving the file unchanged, so it needs no edit first. -->
-            <Button size="sm" disabled={busy || !(dirty || drift)} onclick={save} data-net-policy-save>
+            <Button size="sm" disabled={locked || !dirty} onclick={save} data-net-policy-save>
                 {m.netpolicy_save()}
             </Button>
             <span class="text-muted-foreground text-xs">
                 Saving applies the policy to the running sidecar at once. <!-- TODO(i18n) -->
             </span>
         </div>
+
+        {#if proposal}
+            <NetPolicyProposalDialog bind:open={reviewOpen} sandboxName={sandboxName} {baseRevision} {proposal} onresolved={proposalResolved} />
+        {/if}
 
         {#if report}
             <span class="text-muted-foreground text-xs" data-net-policy-apply-report>
