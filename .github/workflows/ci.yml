@@ -2,20 +2,20 @@ name: ci
 
 # The root AGENTS.md Verification Commands that need no Podman machine, each job one `./build ci` step a
 # developer can run locally. `standard`/`heavy` stay a developer cadence (AGENTS.md, Tier cadence).
+# Runs only on a pushed tag (any name, so a `v*` release tag runs it alongside release.yml) or a
+# manual dispatch, to keep Windows runner minutes down; branch pushes and pull requests do not run it.
 on:
   push:
-    branches: [main]
-  pull_request:
+    tags: ["**"]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  # A newer push supersedes a PR run; every other run (main push, manual dispatch) gets a unique
-  # group, so none is cancelled or dropped from the pending queue.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # One run per tag or dispatched ref; a re-push of the same tag queues behind the running one.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 defaults:
   run:
@@ -61,7 +61,7 @@ jobs:
     name: e2e light tier
     runs-on: windows-latest
     timeout-minutes: 60
-    # TODO(T7): remove once three consecutive main runs pass; until then a red light run is advisory.
+    # TODO(T7): remove once three consecutive runs pass; until then a red light run is advisory.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4

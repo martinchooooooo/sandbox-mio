@@ -52,7 +52,7 @@ not per change — `standard` proves real behaviour and remains the source of re
 - `./build e2e heavy` — weekly, or before a release.
 
 `.github/workflows/ci.yml` runs `./build ci checks` (docs check, `pnpm check`, the paseo-plugins typecheck,
-`cargo check` and `cargo test`) on every pull request and every push to `main`, and `./build ci e2e-light`
+`cargo check` and `cargo test`) when a tag is pushed or the workflow is dispatched by hand (never on branch pushes or pull requests, to save runner minutes), and `./build ci e2e-light`
 (the `light` tier) in a second job (advisory until backlog T7's launch flake is fixed). `standard`/`heavy`
 stay agent/developer habit, codified here and in `e2e/AGENTS.md`'s decision rules: hosted runners have no Podman machine.
 
