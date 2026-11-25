@@ -60,6 +60,7 @@ Add a provider identifier, a registry field and one arm in each registry lookup,
 - One-shot calls go through a runner seam whose scripted implementations back the `light` test tier ([Testing](testing.md)). Streaming calls (interactive exec, event streams) bypass the seam and must check the mock switch themselves.
 - Only one container event stream runs at a time: a new subscription, such as a frontend reload's, ends the previous one and its Podman process, since the old stream cannot tell its page is gone.
 - Podman calls carry per-call-shape timeouts. A timeout trips a process-wide breaker: while it is open, one probe call at a time goes through and the rest fail fast until an answer closes it.
+- A Podman call's stdin reaches the child through a pipe the app writes and closes. Stdout and stderr are captured through temporary files, because a pipe held open by a grandchild never reaches end-of-file.
 - Mutagen one-shot calls are bounded too; a timeout kills only the called process.
 
 ## Invariants

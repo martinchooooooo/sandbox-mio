@@ -39,6 +39,6 @@ The store holds one `github` credential. Work and personal accounts with a per-s
 
 Applying the token to every running sandbox after a login runs silently in the background, and only the Manage card shows the outcome. A `TaskRegistry` entry (`src-tauri/src/activity/`) per apply-all would show progress and failures in the activity center. Deferred because each apply takes about a second and failures are already visible per sandbox.
 
-## Feed secret stdin without a temp file
+## Capture secret stdout without a temp file
 
-The Podman process runner writes a call's stdin to a plaintext temporary file and captures stdout to temporary files (`src-tauri/src/process/mod.rs`), so the GitHub token briefly lands on host disk during an apply and during the `gh auth token` capture. A pipe, or an in-memory handle passed to the child, would keep secret bytes off disk. Deferred because it is a process-layer change affecting every stdin caller, including Claude credential injection, and the temporary files are removed after each call.
+The Podman process runner feeds a call's stdin through a pipe, but still captures stdout and stderr to plaintext temporary files (`src-tauri/src/process/mod.rs`), so the GitHub token briefly lands on host disk during the `gh auth token` capture, as does the Claude credential archive during credential capture. Stdout cannot simply become a pipe: a grandchild holding the pipe open keeps `wait_with_output()` from ever seeing end-of-file. Candidate fixes are a delete-on-close temporary capture file read back through the app's own handle, or pipe reader threads with a bounded drain after the direct child exits. Deferred because the temporary files are removed after each call.

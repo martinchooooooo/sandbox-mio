@@ -51,9 +51,9 @@ This document is an interim task list, compiled on 2026-11-23 at commit `2e0e665
 
 ### T5a. Secret stdin is written to a plaintext temp file
 
-- [ ] Resolved
+- [x] Resolved
 - **Problem:** `run_with_stdin_file()` (`src-tauri/src/process/mod.rs:663-676`) writes a call's stdin to `%TEMP%`, so the GitHub token and Claude credential injection briefly land on host disk. Since proxy-remote-deploy, every remote policy apply and every remote sidecar start also pushes all staged secret values through this path (`push_secret_files`, `src-tauri/src/proxy/iron.rs`).
-- **Source:** "Feed secret stdin without a temp file" in `docs/features/github-cli-auth/04_improvements.md`.
+- **Source:** "Feed secret stdin without a temp file" in `docs/features/github-cli-auth/04_improvements.md` (the entry is now titled "Capture secret stdout without a temp file" and keeps the stdout half).
 - **Done when:** stdin reaches the child through a pipe or in-memory handle while keeping the guard, breaker, timeout and logging of the Podman runner; the comment explaining why the temp file existed is updated or removed.
 
 ### T5b. Credential store is unencrypted at rest — Decision needed
