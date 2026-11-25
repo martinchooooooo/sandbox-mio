@@ -44,10 +44,7 @@ pub fn create_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), Workspac
     // to the https scheme must update it.
     window
         .add_child(
-            tauri::webview::WebviewBuilder::new(
-                NAVIGATION_PANEL_LABEL,
-                tauri::WebviewUrl::App(Default::default()),
-            ),
+            child_webview(NAVIGATION_PANEL_LABEL, tauri::WebviewUrl::App(Default::default())),
             tauri::LogicalPosition::new(0.0, 0.0),
             tauri::LogicalSize::new(size.width, size.height),
         )
@@ -68,6 +65,53 @@ pub fn create_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), Workspac
     });
 
     Ok(())
+}
+
+/// wry's WebView2 arguments when a webview sets none of its own (wry `webview2::create_environment`);
+/// the autoplay switch is what Tauri's default `autoplay` adds.
+const WRY_DEFAULT_BROWSER_ARGS: &str =
+    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required";
+
+/// Every child webview shares one WebView2 environment, so all of them must be built with the same
+/// browser arguments; this is the one place that sets them.
+fn child_webview<R: Runtime>(label: &str, url: tauri::WebviewUrl) -> tauri::webview::WebviewBuilder<R> {
+    let builder = tauri::webview::WebviewBuilder::new(label, url);
+    match std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") {
+        // The arguments wry always passes replace this variable on some WebView2 runtimes (157 on
+        // the GitHub runner), which drops msedgedriver's --remote-debugging-port and fails every
+        // e2e session; passing the variable's arguments explicitly works on all of them.
+        Ok(extra) if !extra.trim().is_empty() => {
+            builder.additional_browser_args(&merge_browser_args(WRY_DEFAULT_BROWSER_ARGS, &extra))
+        }
+        _ => builder,
+    }
+}
+
+/// Joins two WebView2 argument strings. Chromium keeps only the last `--disable-features=` switch,
+/// so every list is folded into one instead of the later one silently dropping wry's.
+fn merge_browser_args(base: &str, extra: &str) -> String {
+    const DISABLE: &str = "--disable-features=";
+    let mut features: Vec<&str> = Vec::new();
+    let mut rest: Vec<&str> = Vec::new();
+    for arg in base.split_whitespace().chain(extra.split_whitespace()) {
+        match arg.strip_prefix(DISABLE) {
+            Some(list) => {
+                for feature in list.split(',').filter(|f| !f.is_empty()) {
+                    if !features.contains(&feature) {
+                        features.push(feature);
+                    }
+                }
+            }
+            None => rest.push(arg),
+        }
+    }
+    let mut args = Vec::with_capacity(rest.len() + 1);
+    let disable = format!("{DISABLE}{}", features.join(","));
+    if !features.is_empty() {
+        args.push(disable.as_str());
+    }
+    args.extend(rest);
+    args.join(" ")
 }
 
 pub fn embed_agent_web<R: Runtime>(
@@ -114,11 +158,8 @@ fn embed_external_on_main<R: Runtime>(
 
     window
         .add_child(
-            tauri::webview::WebviewBuilder::new(
-                &label,
-                tauri::WebviewUrl::External(pane.url.clone()),
-            )
-            .initialization_script(&pane.init_script),
+            child_webview(&label, tauri::WebviewUrl::External(pane.url.clone()))
+                .initialization_script(&pane.init_script),
             tauri::LogicalPosition::new(overlay.x, overlay.y),
             tauri::LogicalSize::new(overlay.width, overlay.height),
         )
@@ -582,6 +623,24 @@ fn show_webview<R: Runtime>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn merge_browser_args_folds_disable_features_and_keeps_other_switches() {
+        let merged = merge_browser_args(
+            WRY_DEFAULT_BROWSER_ARGS,
+            "--enable-automation --disable-features=IgnoreDuplicateNavs,Prewarm,msWebOOUI --remote-debugging-port=0",
+        );
+        assert_eq!(
+            merged,
+            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,IgnoreDuplicateNavs,Prewarm \
+             --autoplay-policy=no-user-gesture-required --enable-automation --remote-debugging-port=0"
+        );
+    }
+
+    #[test]
+    fn merge_browser_args_without_disable_features_only_concatenates() {
+        assert_eq!(merge_browser_args("--a", "--b  --c"), "--a --b --c");
+    }
 
     #[test]
     fn expanded_layout_places_overlay_beside_sidebar_at_full_height() {
