@@ -112,6 +112,16 @@ function killStaleDevProcesses(): void {
   );
 }
 
+// @wdio/cli injects its tsx `--import` into NODE_OPTIONS and the nested pnpm inherits it; on Node versions where tsx runs
+// its loader off-thread that breaks pnpm 11's `.pnpmfile.mjs` probe (e2e/AGENTS.md, Common Gotchas). Keeps any other option.
+function envWithoutWdioTsx(): NodeJS.ProcessEnv {
+  const nodeOptions = (process.env.NODE_OPTIONS ?? "")
+    .replace(/--(?:import|loader)[ =]\S*\/tsx\/dist\/loader\.mjs/g, "")
+    .trim();
+  // spawn ignores undefined values, so an emptied NODE_OPTIONS is dropped rather than passed as "".
+  return { ...process.env, NODE_OPTIONS: nodeOptions || undefined };
+}
+
 // Hard-links (falling back to a byte copy) when the destination is missing or a different size —
 // the assets are version-pinned, so a same-size destination is already the right file. Skipping the
 // re-copy is what keeps a light run from moving ~180 MB of pinned assets on every iteration of the
@@ -341,6 +351,7 @@ export const config: WebdriverIO.Config = {
         cwd: path.resolve(__dirname, ".."),
         stdio: "inherit",
         shell: true,
+        env: envWithoutWdioTsx(),
       },
     );
     if (build.status !== 0 || !fs.existsSync(appExe)) {
