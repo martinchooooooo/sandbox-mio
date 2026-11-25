@@ -46,7 +46,7 @@ A failure before the session exists removes what was created on the target and r
 ## Deployment State
 
 - A sync session named exactly after a sandbox is the only record that the sandbox is deployed. Routing sends a deployed sandbox's terminal and port operations to its remote connection.
-- Policy changes, GitHub binding refreshes and sandbox starts reach the remote sidecar live. An unreachable target fails the apply and leaves the drift banner showing; starting a sandbox first restarts its sidecar and re-sends its secrets.
+- Policy changes, GitHub binding refreshes and sandbox starts reach the remote sidecar live. An unreachable target fails the apply and leaves the accepted policy unchanged; starting a sandbox first restarts its sidecar and re-sends its secrets.
 - Sync status (syncing, up to date, conflict, error) is shown per sandbox. Sync can be paused and resumed without undeploying.
 - The terminal and agent web UI work unchanged on a deployed sandbox, because their forwards tunnel through the sandbox's alias, which now points at the remote container.
 

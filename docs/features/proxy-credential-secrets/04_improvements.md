@@ -17,7 +17,7 @@ iron-proxy 0.56.0 leaves responses untouched in its `secrets` transform. An exte
 
 ## Credential-store values for workspace bindings
 
-A picker in `NetPolicyEditor.svelte` (`src/routes/projects/`) could let a hand-made workspace binding take its value from a credential-store entry instead of `set_proxy_secret`. Deferred: a workspace binding is sandbox-writable, so a credential it references could be rebound to any host (`01_ideas.md`, "An app-owned GitHub binding"); a safe design needs the host list stored app-side.
+A picker in `NetPolicyEditor.svelte` (`src/routes/projects/`) could let a hand-made workspace binding take its value from a credential-store entry instead of `set_proxy_secret`. Deferred: a workspace binding is sandbox-writable, so a credential it references could be rebound to any host (`01_ideas.md`, "An app-owned GitHub binding"). Unblocked by [net-policy-review](../net-policy-review/02_dev.md): the accepted policy, with its binding host lists, is stored app-side and a widened host list needs the user's review.
 
 ## microsandbox start environment merge
 

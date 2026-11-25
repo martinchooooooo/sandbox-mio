@@ -90,7 +90,7 @@ Backend only; the editor keeps working through the renamed commands once Phase B
 
 - `src-tauri/src/proxy/mod.rs`: `secrets_path(app, sandbox)` returns `<app_data_root>/proxy/<sandbox>/values.json`; `load_secrets()`, `set_secret()` and `delete_secret()` take `sandbox`. The comment naming `set_proxy_secret`/`delete_proxy_secret` as the writers changes to `apply_sandbox_policy`.
 - `src-tauri/src/proxy/iron.rs`: `apply_local_locked()`, `apply_remote_locked()`, `refresh_github_binding()`, `github_binding_live()` and `deploy_secret_count()` pass the sandbox name to `load_secrets()`.
-- Migration (Decision 9): a new `proxy::migrate_legacy_secrets(app)` in `src-tauri/src/proxy/mod.rs`, called from startup in `src-tauri/src/bootstrap.rs` after `proxy::sweep`, splits `proxy/secrets.json` per sandbox by the chosen rule over each sandbox's accepted policy, then deletes the legacy file. The split rule is a pure function with unit tests.
+- Migration (Decision 9): a new `proxy::migrate_legacy_secrets(app, live)` in `src-tauri/src/proxy/mod.rs`, called from the startup task in `src-tauri/src/bootstrap.rs` with the live sandbox list (so not under `MIO_MOCK_BACKEND`), splits `proxy/secrets.json` per live sandbox by the chosen rule, then deletes the legacy file. The split rule is a pure function with unit tests.
 - `src/routes/projects/NetPolicyEditor.svelte`: the `<sandbox>-<envvar>` id scheme stays, and the comment explaining it changes to say values are per sandbox.
 
 ## Implemented: Phase D — Create From an Existing Policy File

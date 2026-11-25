@@ -71,7 +71,7 @@ Deploy composes the backend, the proxy, the runtime and the sync engine, so its 
 
 ### Placeholders on the remote sandbox: the snapshot's `guestEnv` (proposed) vs. every current binding
 
-- **`guestEnv` from `applied.json` (proposed).** Keeps one `guestEnv` valid for both containers, so `net_policy_unstamped_bindings` and the editor's export hint stay correct across deploy and undeploy.
+- **`guestEnv` from `applied.json` (proposed).** Keeps one `guestEnv` valid for both containers, so the editor's export hint stays correct across deploy and undeploy.
 - **Stamp every current binding on the fresh remote container.** Rejected: the remote and local containers would then hold different variable sets under one snapshot, which `AppliedPolicy` (`src-tauri/src/net_policy.rs`) cannot express without a per-site field.
 
 ### Image on the target: pull from the registry (proposed) vs. transfer from the laptop
