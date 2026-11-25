@@ -78,10 +78,10 @@ Rejected alternatives, with the reason each was dropped:
 
 The cheaper interim option, running the existing windowed light tier on a GitHub-hosted
 `windows-latest` runner, is the `e2e-light` job in `.github/workflows/ci.yml`. It is advisory
-(`continue-on-error`) until backlog T7 is fixed, and whether a hosted runner's desktop session lets
-msedgedriver attach to the Tauri webview is unproven until the job has run; if it cannot, record the
-cause here and keep only the `checks` job. Not headless — it still depends on a desktop session and
-cannot run in a container.
+(`continue-on-error`) until backlog T7 is fixed. A hosted runner's interactive desktop session does
+let msedgedriver attach to the Tauri webview, once the child webviews pass
+`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` explicitly (`e2e/AGENTS.md`, Common Gotchas). Not headless —
+it still depends on a desktop session and cannot run in a container.
 
 ## CI follow-ups
 
@@ -107,8 +107,8 @@ workflow's minimum scope.
   diagnose `about:blank` launches (backlog T7).
 - **`standard` on a self-hosted runner.** The AGENTS.md cadence ("at merge, or daily") needs a
   self-hosted Windows runner with a Podman machine; hosted runners cannot run `standard`.
-- **Cost controls.** If the repository is private, Windows minutes bill at 2x; add `needs: checks` to
-  `e2e-light` or run it only on pull requests.
+- **Cost controls.** The workflow runs only on a pushed tag or a manual dispatch. If runs become more
+  frequent again, add `needs: checks` to `e2e-light` so a red `checks` job skips the light tier.
 
 ## Concurrent `standard` and `heavy` tier runs
 
