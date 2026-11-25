@@ -63,6 +63,14 @@ means the builds themselves never contend. See `docs/features/parallel-worktree-
 the full design and `03_e2e.md` for the manual procedures (P1–P5) that exercise the locks and the
 process-filter isolation directly.
 
+## Running on Linux
+
+The harness also runs on Linux, proven by `.github/workflows/ci-linux.yml` with one light spec. There
+it drives WebKitGTK through tauri-driver rather than msedgedriver: `./build e2e --setup` installs
+tauri-driver and needs the system `WebKitWebDriver` (Debian/Ubuntu package `webkit2gtk-driver`), and
+`./build e2e` runs the suite under `xvfb-run` when no display is set. The app uses the system `podman`
+and bundles neither Podman nor llama.cpp on Linux, so only the `light` tier is expected to work there.
+
 ## Writing a light spec
 
 Only reach for this once you've confirmed the corresponding real (`standard`/`heavy`) coverage

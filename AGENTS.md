@@ -55,6 +55,8 @@ not per change — `standard` proves real behaviour and remains the source of re
 `cargo check` and `cargo test`) when a tag is pushed or the workflow is dispatched by hand (never on branch pushes or pull requests, to save runner minutes), and `./build ci e2e-light`
 (the `light` tier) in a second job (advisory until backlog T7's launch flake is fixed). `standard`/`heavy`
 stay agent/developer habit, codified here and in `e2e/AGENTS.md`'s decision rules: hosted runners have no Podman machine.
+`.github/workflows/ci-linux.yml` builds the app on Ubuntu and runs one light spec (`MIO_SPEC=sandbox-list-ui`)
+through `./build ci e2e-light`; on Linux the build tool is compiled as `build.exe` too, since `build/` is Vite's output directory.
 
 A feature is typically developed in its own git worktree, driven almost entirely by
 `./build e2e light` — many worktrees can run the `light` tier concurrently, each isolated by a
