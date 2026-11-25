@@ -233,11 +233,12 @@ function isPortFree(port: number): Promise<boolean> {
 // Probes upward inside this worktree's own window for the first free port.
 // Probing rather than a fixed offset absorbs a re-run started while the previous run's ports are
 // still in TIME_WAIT; the window keeps two worktrees from ever probing the same numbers except at
-// the rare digest collision above.
-export async function allocateDriverPort(): Promise<number> {
+// the rare digest collision above. `exclude` skips a port already handed out but not yet bound, such
+// as tauri-driver's own port when picking its native one.
+export async function allocateDriverPort(exclude?: number): Promise<number> {
   for (let offset = 0; offset < PORT_WINDOW_SIZE; offset++) {
     const driverPort = PORT_WINDOW_BASE + offset;
-    if (await isPortFree(driverPort)) return driverPort;
+    if (driverPort !== exclude && (await isPortFree(driverPort))) return driverPort;
   }
   throw new Error(
     `[e2e] no free port in window ${PORT_WINDOW_BASE}-${PORT_WINDOW_BASE + PORT_WINDOW_SIZE - 1} ` +

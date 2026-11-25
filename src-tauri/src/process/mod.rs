@@ -31,6 +31,7 @@ use types::{ProcessRunner, SystemMutagenRunner, SystemPodmanRunner};
 /// in the first place — only [`clear_inheritable_handles`] does (`inheritance-ab-test.rs` in
 /// `docs/features/podman-process-isolation/spike/`). The spike also timed podman under this exact
 /// flag with an inherited console stdin and saw no hang (`spike/README.md`, Captured results).
+#[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// Clears `HANDLE_FLAG_INHERIT` on every inheritable handle this process already owns, so no child
@@ -160,7 +161,9 @@ fn system_handle_snapshot() -> Option<Vec<u64>> {
 /// [`detached_command_std`] twin.
 pub(crate) fn detached_command(program: impl AsRef<std::ffi::OsStr>) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new(program);
-    cmd.creation_flags(CREATE_NO_WINDOW).stdin(std::process::Stdio::null());
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd.stdin(std::process::Stdio::null());
     cmd
 }
 
@@ -170,6 +173,7 @@ pub(crate) fn detached_command_std(
     program: impl AsRef<std::ffi::OsStr>,
 ) -> std::process::Command {
     let mut cmd = std::process::Command::new(program);
+    #[cfg(windows)]
     std::os::windows::process::CommandExt::creation_flags(&mut cmd, CREATE_NO_WINDOW);
     cmd.stdin(std::process::Stdio::null());
     cmd
@@ -183,6 +187,7 @@ pub(crate) fn detached_command_std(
 /// contract holds if the plugin ever changes it. Every command this app builds itself must go through
 /// [`detached_command`] instead.
 pub(crate) fn detach(mut cmd: std::process::Command) -> tokio::process::Command {
+    #[cfg(windows)]
     std::os::windows::process::CommandExt::creation_flags(&mut cmd, CREATE_NO_WINDOW);
     cmd.stdin(std::process::Stdio::null());
     tokio::process::Command::from(cmd)

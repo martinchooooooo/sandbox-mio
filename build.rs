@@ -149,11 +149,15 @@ fn set_dev_diagnostics_env() {
     }
 }
 
-/// Stages the three bundled binaries into `src-tauri/binaries` (each a no-op once present).
+/// Stages the bundled binaries into `src-tauri/binaries` (each a no-op once present). Off Windows only
+/// Mutagen is bundled: the app runs the system `podman`, and `tauri.linux.conf.json` drops the llama.cpp
+/// and Podman resources, so a Linux build has no local inference engine yet.
 fn fetch_bundled_binaries() {
     fetch_mutagen();
-    fetch_llama();
-    fetch_podman();
+    if cfg!(windows) {
+        fetch_llama();
+        fetch_podman();
+    }
 }
 
 /// Runs one e2e tier through `pnpm run test:{suite}` in `e2e/`, after the pre-run checks every tier gets.
@@ -166,12 +170,16 @@ fn run_e2e_suite(suite: &str) {
     // wdio.conf.ts and run-identity.ts paths. A per-worktree temp dir keeps the caches apart.
     let tmp = e2e_dir().join(".tmp");
     fs::create_dir_all(&tmp).unwrap();
-    run_env(
-        e2e_dir(),
-        "pnpm",
-        &["run", &format!("test:{}", suite)],
-        &[("TEMP", tmp.as_os_str()), ("TMP", tmp.as_os_str())],
-    );
+    let script = format!("test:{}", suite);
+    let envs = [("TEMP", tmp.as_os_str()), ("TMP", tmp.as_os_str())];
+    // A headless Linux host (a CI runner) has no display for the app's GTK window, so give it a virtual one.
+    let headless = cfg!(target_os = "linux") && env::var_os("DISPLAY").is_none() && env::var_os("WAYLAND_DISPLAY").is_none();
+    if headless {
+        println!("[e2e] no display; running the suite under xvfb-run");
+        run_env(e2e_dir(), "xvfb-run", &["-a", "pnpm", "run", &script], &envs);
+    } else {
+        run_env(e2e_dir(), "pnpm", &["run", &script], &envs);
+    }
 }
 
 fn setup_e2e() {
@@ -189,9 +197,21 @@ fn setup_e2e() {
         );
         fs::create_dir_all(tools_dir()).unwrap();
         run(tools_dir(), "msedgedriver-tool.exe", &[]);
+    } else if cfg!(target_os = "linux") {
+        // tauri-driver fronts WebKitWebDriver, the system package that matches the installed WebKitGTK.
+        assert!(
+            on_path("WebKitWebDriver"),
+            "WebKitWebDriver not found on PATH; install it (Debian/Ubuntu: `apt install webkit2gtk-driver`)"
+        );
+        run(root_dir(), "cargo", &["install", "tauri-driver", "--locked"]);
     } else {
-        todo!()
+        todo!("e2e setup is implemented for Windows and Linux only")
     }
+}
+
+/// Whether an executable named `name` sits in a PATH directory.
+fn on_path(name: &str) -> bool {
+    env::split_paths(&env::var_os("PATH").unwrap_or_default()).any(|d| d.join(name).is_file())
 }
 
 /// Runs before every `e2e` tier: re-stages `tools/msedgedriver.exe` whenever its major version
@@ -580,11 +600,20 @@ fn setup_worktree(target: Option<String>) {
 }
 
 fn fetch_mutagen() {
-    if !cfg!(windows) {
-        todo!("Mutagen sidecar fetch is implemented for Windows only");
-    }
-    let triple = format!("{}-pc-windows-msvc", env::consts::ARCH);
-    let dest = binaries_dir().join(format!("mutagen-{triple}.exe"));
+    // Tauri's `externalBin` resolves `binaries/mutagen` by appending the target triple (and `.exe`).
+    let (triple, exe, os) = if cfg!(windows) {
+        (format!("{}-pc-windows-msvc", env::consts::ARCH), ".exe", "windows")
+    } else if cfg!(target_os = "linux") {
+        (format!("{}-unknown-linux-gnu", env::consts::ARCH), "", "linux")
+    } else {
+        todo!("Mutagen sidecar fetch is implemented for Windows and Linux only");
+    };
+    let mutagen_arch = match env::consts::ARCH {
+        "x86_64" => "amd64",
+        "aarch64" => "arm64",
+        other => panic!("unsupported arch for the Mutagen release: {}", other),
+    };
+    let dest = binaries_dir().join(format!("mutagen-{triple}{exe}"));
     let agents_dest = binaries_dir().join("mutagen-agents.tar.gz");
     if dest.exists() && agents_dest.exists() {
         // Recorded on this path too: the manifest states what this checkout's constants assert about
@@ -596,7 +625,8 @@ fn fetch_mutagen() {
     }
     fs::create_dir_all(binaries_dir()).unwrap();
 
-    let asset = format!("mutagen_windows_amd64_{MUTAGEN_VERSION}.zip");
+    let archive_ext = if cfg!(windows) { "zip" } else { "tar.gz" };
+    let asset = format!("mutagen_{os}_{mutagen_arch}_{MUTAGEN_VERSION}.{archive_ext}");
     let url = format!(
         "https://github.com/mutagen-io/mutagen/releases/download/{MUTAGEN_VERSION}/{asset}"
     );
@@ -611,16 +641,17 @@ fn fetch_mutagen() {
     let extract_arg = extract.to_string_lossy();
     println!("Downloading Mutagen {MUTAGEN_VERSION} for {triple}...");
     run(root_dir(), "curl", &["-fsSL", "-o", &zip_arg, &url]);
-    run(root_dir(), &windows_tar(), &["-xf", &zip_arg, "-C", &extract_arg]);
+    let tar = if cfg!(windows) { windows_tar() } else { "tar".into() };
+    run(root_dir(), &tar, &["-xf", &zip_arg, "-C", &extract_arg]);
 
-    // The archive holds `mutagen.exe` plus `mutagen-agents.tar.gz`. Mutagen does not embed remote
+    // The archive holds `mutagen[.exe]` plus `mutagen-agents.tar.gz`. Mutagen does not embed remote
     // agents in the exe (it's a 13 MB binary; the agents tarball alone is ~90 MB) — it looks for
     // the tarball next to its own exe at runtime, so both files must ship together.
-    let produced = extract.join("mutagen.exe");
+    let produced = extract.join(format!("mutagen{exe}"));
     let produced_agents = extract.join("mutagen-agents.tar.gz");
     assert!(
         produced.exists(),
-        "expected mutagen.exe in extracted archive at {}",
+        "expected mutagen{exe} in extracted archive at {}",
         produced.display()
     );
     assert!(

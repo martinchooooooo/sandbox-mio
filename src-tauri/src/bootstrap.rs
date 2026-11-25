@@ -75,7 +75,8 @@ impl Bootstrap {
             self.podman_runner.clone(),
             app.handle().clone(),
         ));
-        if !backends::mock_backend_enabled() {
+        // Only Windows bundles Podman; elsewhere `podman_command` resolves the system `podman` on PATH.
+        if cfg!(windows) && !backends::mock_backend_enabled() {
             if let Ok(resource_dir) = app.path().resource_dir() {
                 backends::set_podman_resource_dir(resource_dir.join("podman"));
             }

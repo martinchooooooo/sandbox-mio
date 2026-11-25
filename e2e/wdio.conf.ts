@@ -152,7 +152,12 @@ function stageTreeIfMissing(src: string, dst: string): void {
 let driver: ChildProcess | undefined;
 let exit = false;
 
-const ext = process.platform === "win32" ? ".exe" : "";
+const IS_WINDOWS = process.platform === "win32";
+const ext = IS_WINDOWS ? ".exe" : "";
+const APP_EXE = path.resolve(__dirname, `../src-tauri/target/debug/sandbox-mio${ext}`);
+// Windows drives WebView2 through msedgedriver directly; Linux goes through tauri-driver, which
+// fronts the system WebKitWebDriver on a second ("native") port.
+const DRIVER_NAME = IS_WINDOWS ? "msedgedriver" : "tauri-driver";
 
 // Repeated or comma-separated CLI flag values in either form (`--spec a --spec b`, `--spec a,b`,
 // `--spec=a,b`). The equals form must parse too, or IS_LIGHT_RUN below silently reads false.
@@ -215,14 +220,18 @@ export const config: WebdriverIO.Config = {
   },
   maxInstances: 1,
   capabilities: [
-    {
-      maxInstances: 1,
-      // msedgedriver's own WebView2 form of what tauri-driver's `tauri:options` used to translate to.
-      browserName: "webview2",
-      "ms:edgeOptions": {
-        binary: path.resolve(__dirname, `../src-tauri/target/debug/sandbox-mio${ext}`),
-      },
-    } as WebdriverIO.Capabilities,
+    IS_WINDOWS
+      ? ({
+          maxInstances: 1,
+          // msedgedriver's own WebView2 form of what tauri-driver's `tauri:options` used to translate to.
+          browserName: "webview2",
+          "ms:edgeOptions": { binary: APP_EXE },
+        } as WebdriverIO.Capabilities)
+      : ({
+          maxInstances: 1,
+          // tauri-driver translates this into WebKitWebDriver's own launch options.
+          "tauri:options": { application: APP_EXE },
+        } as WebdriverIO.Capabilities),
   ],
   reporters: ["spec"],
   framework: "mocha",
@@ -337,7 +346,7 @@ export const config: WebdriverIO.Config = {
     // change leaves cargo relinking nothing — a stale `tauri dev` exe would point at devUrl and
     // show "lost connection" under wdio. Deleting it forces a relink every run.
     killStaleDevProcesses();
-    const appExe = path.resolve(__dirname, `../src-tauri/target/debug/sandbox-mio${ext}`);
+    const appExe = APP_EXE;
     fs.rmSync(appExe, { force: true });
     // Abort on a failed build: spawnSync does not throw on a non-zero exit, and a silent failure
     // would leave no exe (or a stale one) for msedgedriver to launch.
@@ -486,9 +495,9 @@ const stripAnsi = (s: string) => s.replace(/\x1B\[[0-9;]*[A-Za-z]/g, "");
 // is the slowest.
 const APP_LAUNCH_TIMEOUT_MS = 30000;
 
-// The main webview's `WebviewUrl::App` address on Windows (`create_main_window` in
-// src-tauri/src/workspace/mod.rs); it becomes `https://` if that webview opts into the https scheme.
-const APP_URL = "http://tauri.localhost/";
+// The main webview's `WebviewUrl::App` address (`create_main_window` in src-tauri/src/workspace/mod.rs);
+// on Windows it becomes `https://` if that webview opts into the https scheme.
+const APP_URL = IS_WINDOWS ? "http://tauri.localhost/" : "tauri://localhost/";
 // The app navigates within milliseconds of the driver attaching, so a window still blank after this
 // has lost that navigation rather than not started it.
 const APP_BLANK_GRACE_MS = 3000;
@@ -588,10 +597,10 @@ async function waitForDriverReady(
   return false;
 }
 
-// Allocates the session's port, spawns msedgedriver on it, and assigns it to `config.port`.
+// Allocates the session's port, spawns the driver on it, and assigns it to `config.port`.
 //
-// msedgedriver is spawned directly rather than through tauri-driver, for the port-retry control
-// below.
+// On Windows msedgedriver is spawned directly rather than through tauri-driver, for the port-retry
+// control below. On Linux tauri-driver is the only way in; its native port comes from the same window.
 //
 // Allocation lives here, not in onPrepare, because this hook owns the config the WebdriverIO
 // session is built from: a retry that rebinds the driver to a different port must move the client
@@ -616,18 +625,22 @@ async function spawnDriver(
     config.port = driverPort;
 
     let spawnFailure: string | undefined;
-    const driverArgs = [`--port=${driverPort}`];
-    if (ON_GITHUB_ACTIONS) {
+    const [driverBin, driverArgs]: [string, string[]] = IS_WINDOWS
+      ? [path.resolve(__dirname, "..", "tools", "msedgedriver.exe"), [`--port=${driverPort}`]]
+      : ["tauri-driver", ["--port", String(driverPort), "--native-port", String(await allocateDriverPort(driverPort))]];
+    if (IS_WINDOWS && ON_GITHUB_ACTIONS) {
       // Records the WebView2 launch and why a session failed, which the runner otherwise loses.
       fs.mkdirSync(DIAG_DIR, { recursive: true });
       driverArgs.push("--verbose", `--log-path=${path.join(DIAG_DIR, `msedgedriver-${driverPort}.log`)}`);
     }
     const child = spawn(
-      path.resolve(__dirname, "..", "tools", "msedgedriver.exe"),
+      driverBin,
       driverArgs,
       {
         // stdout is the driver's own chatter, kept out of the reporter's output.
         stdio: ["ignore", "ignore", process.stderr],
+        // Its own process group off Windows, so killDriverTree can take the app down with it.
+        detached: !IS_WINDOWS,
         env: {
           ...process.env,
           // Tauri only exposes the webview to WebDriver when this is set.
@@ -643,7 +656,7 @@ async function spawnDriver(
     // Captured rather than fatal while the readiness poll is still running: a failure here is one
     // failed attempt, and the retry below decides whether it ends the run.
     child.on("error", (error) => {
-      spawnFailure = `msedgedriver error: ${error.message ?? error}`;
+      spawnFailure = `${DRIVER_NAME} error: ${error.message ?? error}`;
     });
 
     if (await waitForDriverReady(child, driverPort, () => spawnFailure)) {
@@ -655,12 +668,12 @@ async function spawnDriver(
         process.exit(1);
       }
       child.on("error", (error) => {
-        logCrash(`msedgedriver error: ${error.message ?? error}`, specs);
+        logCrash(`${DRIVER_NAME} error: ${error.message ?? error}`, specs);
         process.exit(1);
       });
       child.on("exit", (code) => {
         if (exit) return;
-        logCrash(`msedgedriver exited unexpectedly with code: ${code}`, specs);
+        logCrash(`${DRIVER_NAME} exited unexpectedly with code: ${code}`, specs);
         process.exit(1);
       });
       return;
@@ -669,20 +682,29 @@ async function spawnDriver(
     killDriverTree(child);
     const why = spawnFailure ?? `it did not bind the port (exit code ${child.exitCode})`;
     if (attempt === ATTEMPTS) {
-      logCrash(`msedgedriver failed to start on port ${driverPort}: ${why}`, specs);
+      logCrash(`${DRIVER_NAME} failed to start on port ${driverPort}: ${why}`, specs);
       process.exit(1);
     }
     console.warn(
-      `[e2e] msedgedriver did not come up on port ${driverPort} (${why}); ` +
+      `[e2e] ${DRIVER_NAME} did not come up on port ${driverPort} (${why}); ` +
         "retrying once against a freshly probed port.",
     );
   }
 }
 
-// Kills the driver and the app it launched: msedgedriver dying alone leaves the app running.
+// Kills the driver and the app it launched: the driver dying alone leaves the app running.
 function killDriverTree(child: ChildProcess): void {
   if (child.pid === undefined || child.exitCode !== null) return;
-  spawnSync("taskkill", ["/T", "/F", "/PID", String(child.pid)], { stdio: "ignore" });
+  if (IS_WINDOWS) {
+    spawnSync("taskkill", ["/T", "/F", "/PID", String(child.pid)], { stdio: "ignore" });
+    return;
+  }
+  try {
+    // Negative pid: the driver's whole process group (spawned `detached`), app included.
+    process.kill(-child.pid, "SIGKILL");
+  } catch {
+    // Already gone.
+  }
 }
 
 function closeDriver(): void {
