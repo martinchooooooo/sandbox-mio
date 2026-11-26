@@ -11,7 +11,7 @@ Build plan for a structural refactor of Sandbox-mio with no behaviour change: th
 
 - One phase per agent pair, run sequentially in one worktree: an implementer agent makes the change, then a separate reviewer agent reviews the uncommitted diff, fixes every real problem, re-runs verification and proposes a commit message. The phase is committed only after the review passes.
 - Every phase is a pure refactor: no change to behaviour, IPC shapes, error `kind` discriminants, error Display text, `settings.json` shape or visuals.
-- Verification per phase, from the repository root unless noted: `cargo check --all-targets` and `cargo test` in `src-tauri/` (any Rust change); `pnpm check` (any `src/` or `e2e/` TypeScript change); `cargo test` in `xtask/` (any build-tool change); `cargo xtask docs`; `cargo xtask e2e light`.
+- Verification per phase, from the repository root unless noted: `cargo check --all-targets` and `cargo test` in `src-tauri/` (any Rust change); `pnpm check` (any `src/` or `e2e/` TypeScript change); `cargo clippy --all-targets` in `xtask/` plus a run of the changed subcommand (any build-tool change; the package has no unit tests); `cargo xtask docs`; `cargo xtask e2e light`.
 - Follow the Code Comments rules in the root `AGENTS.md`; moved comments travel with their code, and a comment a move makes false is updated in the same phase.
 - `docs/features/**` plans of other features are history and are not rewritten for moved paths; `docs/improvement-backlog.md`, `docs/architecture/*.md` and the `AGENTS.md` files are live and are updated.
 
@@ -100,14 +100,14 @@ Splits the oversized backend files along the seams they already had. No file und
 
 - `src-tauri/src/runtime/paseo_plugins.rs` carries an unused `use super::*` warning predating this feature.
 - `cargo xtask docs` warns that `docs/features/tailscale-access/02_dev.md` cites a missing `03_e2e.md`; the warning predates this feature.
-- `cargo xtask ci checks` does not run `cargo test` in `xtask/`, as the old CI never ran the docs-check tests; adding it is a one-step change to `ci_checks()` in `xtask/src/ci.rs` if wanted.
+- Resolved by [xtask-hardening](../xtask-hardening/02_dev.md) (Resolved Decision 6): the `xtask` package carries no unit tests, so `cargo xtask ci checks` has none to run.
 
 ## Common Gotchas
 
 | Gotcha | Cause | Fix |
 |---|---|---|
 | A backslash literal such as `'\\'` in a Rust file becomes `'\'` and fails to compile after an edit | Bash heredocs and Python-in-heredoc in this Windows environment collapse doubled backslashes | Edit Rust files with the Edit tool, not with heredocs |
-| `cargo xtask e2e light --spec <file>` is rejected | `run_e2e_suite()` in `xtask/src/e2e.rs` takes only a tier | Rerun one spec from `e2e/` with `pnpm exec wdio run wdio.conf.ts --spec ./test/specs/light/<name>.spec.ts`, setting the environment `run_e2e_suite()` sets |
+| `cargo xtask e2e light --spec <file>` is rejected | `parse()` in `xtask/src/main.rs` accepts only a tier after `e2e`, and `run_e2e_suite()` in `xtask/src/e2e.rs` takes only a tier | Rerun one spec from `e2e/` with `pnpm exec wdio run wdio.conf.ts --spec ./test/specs/light/<name>.spec.ts`, setting the environment `run_e2e_suite()` sets |
 | `models-page-caching.spec.ts` fails one test on a 1-second warm-cache budget during a full light run | Twenty-five light specs run in parallel and slow the warm `/models` visit | Rerun `models-page-caching.spec.ts` alone; treat a failure only in the parallel run as a timing flake |
 | Some light-run app instances stay on `about:blank` | Backlog task T7 in `docs/improvement-backlog.md`, unrelated to this feature | Rerun the failing spec alone before calling the failure a regression |
 | A moved function's old path is still cited in a comment, an `AGENTS.md` or `e2e/lib/podman-machine.ts` | Comments and regex parsers cite file paths, which a move does not update | Grep the repository (excluding `node_modules` and history plans under `docs/features/`) for the old path after every move |

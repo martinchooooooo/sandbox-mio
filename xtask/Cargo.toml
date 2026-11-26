@@ -9,4 +9,12 @@ description = "Repository build tool: `cargo xtask <dev|e2e|ci|package|docs>`"
 # target directory, so it never shares a build with `src-tauri/`.
 [workspace]
 
+# Each replaces hand-rolled parsing or hashing that was wrong at the edges; add no CLI or utility
+# crate that std covers (docs/features/xtask-hardening/02_dev.md, Resolved Decision 1).
 [dependencies]
+# Markdown links, code and prose words for the docs check.
+pulldown-cmark = { version = "0.13.6", default-features = false }
+# SHA-256 of bundled-binary downloads.
+sha2 = { version = "0.11.2", default-features = false }
+# Docs frontmatter.
+yaml-rust2 = { version = "0.13.2", default-features = false }

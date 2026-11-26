@@ -11,7 +11,7 @@ An app to help non-technical users learn how to use AI agents inside of a sandbo
 
 The build tool is the `xtask` Cargo package, run as `cargo xtask <subcommand>` from the repository
 root; the alias lives in `.cargo/config.toml` and the first run compiles the tool (a few seconds).
-Run `cargo xtask` with no arguments for the usage text.
+Run `cargo xtask --help` for the usage text; an unknown or extra argument prints it and exits non-zero.
 
 ```sh
 cargo xtask dev --setup
@@ -65,7 +65,7 @@ cargo xtask docs --fix  # regenerate every index.md from frontmatter, then check
 Checks `docs/` against the documentation rules (OKF frontmatter, feature statuses, generated
 indexes, the feature log, links, architecture-document size, and `docs/...` citations from code).
 Every `index.md` except the root `docs/index.md` is generated; never edit one by hand. The rules
-are code in `xtask/src/docs_check.rs`; its unit tests run with `cargo test` in `xtask/`.
+are code in `xtask/src/docs_check.rs`.
 
 ## Packaging
 

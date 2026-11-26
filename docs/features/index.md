@@ -75,6 +75,7 @@
 * [welcome-onboarding](welcome-onboarding/index.md) - First-run hero and onboarding flow that sets up the VM and base image.
 * [workspace-app-tabs](workspace-app-tabs/index.md) - Open a sandbox on a Manage launcher tab and let the user open app tabs from it.
 * [workspace-ux](workspace-ux/index.md) - Make the in-sandbox workspace friendlier for non-technical users by making the left app sidebar the only app chrome, so hosted apps feel like the app itself.
+* [xtask-hardening](xtask-hardening/index.md) - Harden the xtask build tool: strict CLI arguments, a correct staged-version manifest, SHA-256-pinned binary downloads, and yaml-rust2 and pulldown-cmark in place of the hand-written frontmatter and Markdown parsers.
 
 ## superseded
 

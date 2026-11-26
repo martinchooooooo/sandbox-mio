@@ -3,10 +3,10 @@
 
 use std::{ffi::OsStr, path::PathBuf, process::Command};
 
-/// `run` without the panic: returns whether the command both launched and exited successfully, for
-/// callers that have a printable fallback.
-pub(crate) fn try_run(dir: PathBuf, cmd: &str, args: &[&str]) -> bool {
-    let mut command = if cfg!(windows) {
+/// The command every helper spawns. On Windows it goes through `cmd /C` so `.cmd` shims such as
+/// `pnpm` resolve the way they do in a terminal.
+fn base_command(cmd: &str, args: &[&str]) -> Command {
+    if cfg!(windows) {
         let mut c = Command::new("cmd");
         c.arg("/C").arg(cmd).args(args);
         c
@@ -14,7 +14,13 @@ pub(crate) fn try_run(dir: PathBuf, cmd: &str, args: &[&str]) -> bool {
         let mut c = Command::new(cmd);
         c.args(args);
         c
-    };
+    }
+}
+
+/// `run` without the panic: returns whether the command both launched and exited successfully, for
+/// callers that have a printable fallback.
+pub(crate) fn try_run(dir: PathBuf, cmd: &str, args: &[&str]) -> bool {
+    let mut command = base_command(cmd, args);
     let Ok(mut child) = command.current_dir(dir).spawn() else {
         return false;
     };
@@ -29,15 +35,7 @@ pub(crate) fn run(dir: PathBuf, cmd: &str, args: &[&str]) {
 
 /// [`run`] with extra environment variables set on the child.
 pub(crate) fn run_env(dir: PathBuf, cmd: &str, args: &[&str], envs: &[(&str, &OsStr)]) {
-    let mut command = if cfg!(windows) {
-        let mut c = Command::new("cmd");
-        c.arg("/C").arg(cmd).args(args);
-        c
-    } else {
-        let mut c = Command::new(cmd);
-        c.args(args);
-        c
-    };
+    let mut command = base_command(cmd, args);
     let mut child = command
         .current_dir(dir)
         .envs(envs.iter().copied())
@@ -55,15 +53,7 @@ pub(crate) fn run_env(dir: PathBuf, cmd: &str, args: &[&str], envs: &[(&str, &Os
 /// returns the [`std::process::Child`] immediately instead of waiting — for a long-running sidecar
 /// like the Vite dev server that has to keep running alongside whatever `dev` does next.
 pub(crate) fn spawn_background(dir: PathBuf, cmd: &str, args: &[&str]) -> std::process::Child {
-    let mut command = if cfg!(windows) {
-        let mut c = Command::new("cmd");
-        c.arg("/C").arg(cmd).args(args);
-        c
-    } else {
-        let mut c = Command::new(cmd);
-        c.args(args);
-        c
-    };
+    let mut command = base_command(cmd, args);
     let child = command
         .current_dir(dir)
         .spawn()

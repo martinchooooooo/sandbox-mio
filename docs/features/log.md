@@ -5,8 +5,13 @@ Records feature status changes only: creation (`Create`), reaching `implemented`
 history with at most one `Create` and one `Implement` entry per feature, so seeded dates are
 approximate. New entries go on top.
 
+## 2026-11-26
+
+* **Implement** [xtask-hardening](xtask-hardening/index.md): `cargo xtask` rejects unknown or extra arguments, re-fetches a bundled binary whose staged version differs from the pin, verifies every bundled-binary download against a pinned SHA-256, and reads docs frontmatter and Markdown with `yaml-rust2` and `pulldown-cmark`
+
 ## 2026-11-25
 
+* **Create** [xtask-hardening](xtask-hardening/index.md): the build tool gets strict CLI arguments, a correct staged-version manifest, SHA-256-pinned binary downloads, and yaml-rust2 and pulldown-cmark in place of its hand-written parsers
 * **Create** [codebase-restructure](codebase-restructure/index.md): behaviour-preserving restructure in six phases; Phase 1 (backend import cycles broken through a shared `domain` module) and Phase 2 (dashboard panels moved from `src/routes/projects/` into `src/lib/` feature folders) implemented, Phases 3 to 6 remain
 
 ## 2026-11-24

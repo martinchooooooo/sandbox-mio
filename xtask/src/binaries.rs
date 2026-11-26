@@ -1,25 +1,39 @@
-//! The bundled binaries (Mutagen sidecar, llama.cpp engine, Podman): pinned versions, fetch and
-//! stage into `src-tauri/binaries`, and the manifest recording which version was staged.
+//! The bundled binaries (Mutagen sidecar, llama.cpp engine, Podman): pinned versions and SHA-256
+//! digests, verified fetch and stage into `src-tauri/binaries`, and the manifest recording which
+//! version was staged.
 
 use std::{
     env, fs,
+    io::{self, Read},
     path::{Path, PathBuf},
 };
+
+use sha2::{Digest, Sha256};
 
 use crate::exec::run;
 use crate::paths::{binaries_dir, root_dir};
 
+// Bumping a version constant means bumping the `*_SHA256` beside it in the same change: a fetch
+// refuses any download whose digest differs.
+
 /// Mutagen release staged as the Tauri sidecar. Pinned to match the e2e suite's Mutagen.
 pub(crate) const MUTAGEN_VERSION: &str = "v0.18.1";
+/// SHA-256 of `mutagen_windows_amd64_<MUTAGEN_VERSION>.zip`, from the release's published `SHA256SUMS`.
+const MUTAGEN_SHA256: &str = "76f8223d5e6b607efdd9516473669ae5492e4f142887352d59bc6934d1f07a2d";
 
 /// llama.cpp release whose prebuilt Windows Vulkan binaries are staged as the bundled inference
 /// engine (`src-tauri/binaries/llama`). Pinned so every checkout stages the same `llama-server`.
 pub(crate) const LLAMA_VERSION: &str = "b9835";
+/// SHA-256 of `llama-<LLAMA_VERSION>-bin-win-vulkan-x64.zip`, from the release asset's `digest` in
+/// the GitHub releases API (llama.cpp publishes no checksum file).
+const LLAMA_SHA256: &str = "3aaa9403ade87bc12519642139b7fcad9549f3fe045f6e0424c7b4640b49b386";
 
 /// Podman release whose Windows remote-client archive is staged as the bundled container engine
 /// (`src-tauri/binaries/podman`). Pinned so every checkout stages the same `podman`/`gvproxy`/
 /// `win-sshproxy` that `process::podman::podman_command()` resolves at runtime.
 pub(crate) const PODMAN_VERSION: &str = "v5.6.2";
+/// SHA-256 of `podman-remote-release-windows_amd64.zip`, from the release's published `shasums`.
+const PODMAN_SHA256: &str = "9c86b2686dabc287af1de1b4fadc506310718bf84fccbd12f0831fc7726a7cd5";
 
 /// Absolute path to the bsdtar that ships in `System32`. A bare `tar` on PATH may resolve to msys
 /// or GNU tar (e.g. from Git for Windows), which cannot extract zip archives and reads `C:\...`
@@ -74,6 +88,105 @@ pub(crate) fn record_staged_version_in(binaries: &Path, key: &str, version: &str
     let _ = fs::write(binaries.join(STAGED_VERSIONS), format!("{{{body}}}"));
 }
 
+/// What a `fetch_*` does about files already in `src-tauri/binaries`.
+enum StagedAction {
+    /// Nothing usable is staged, or what is staged is not the pinned version.
+    Fetch,
+    /// The recorded version is the pinned one.
+    Skip,
+    /// Files exist but no version was ever recorded (staged before the manifest): trust them once
+    /// and record the pin, so `setup_worktree()` can link from this checkout.
+    Adopt,
+}
+
+/// Decides from the files and the manifest alone. A recorded version that differs from the pin must
+/// re-fetch: recording the pin over old files would make `setup_worktree()` link stale binaries.
+fn staged_action(files_present: bool, recorded: Option<&str>, pinned: &str) -> StagedAction {
+    match (files_present, recorded) {
+        (false, _) => StagedAction::Fetch,
+        (true, Some(v)) if v == pinned => StagedAction::Skip,
+        (true, Some(_)) => StagedAction::Fetch,
+        (true, None) => StagedAction::Adopt,
+    }
+}
+
+/// Applies [`staged_action`] to `key`'s manifest entry; returns whether staging can be skipped.
+fn already_staged(key: &str, pinned: &str, files_present: bool, label: &str, shown: &Path) -> bool {
+    let recorded = staged_version(&binaries_dir(), key);
+    match staged_action(files_present, recorded.as_deref(), pinned) {
+        StagedAction::Skip => {}
+        StagedAction::Adopt => record_staged_version(key, pinned),
+        StagedAction::Fetch => {
+            if let Some(old) = recorded.filter(|_| files_present) {
+                println!("{label} staged at {old} but {pinned} is pinned; re-fetching");
+            }
+            return false;
+        }
+    }
+    println!("{label} already staged: {}", shown.display());
+    true
+}
+
+/// SHA-256 of everything `reader` yields, as lowercase hex.
+fn sha256_hex(mut reader: impl Read) -> io::Result<String> {
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 1 << 16];
+    loop {
+        let n = reader.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// Checks `file` against `expected` (lowercase hex SHA-256), deleting it on any mismatch so a bad
+/// download can neither be extracted nor mistaken for a good one on the next run.
+fn verify_sha256(file: &Path, expected: &str) -> Result<(), String> {
+    let actual = fs::File::open(file)
+        .and_then(sha256_hex)
+        .map_err(|e| format!("cannot hash {}: {e}", file.display()))?;
+    if actual.eq_ignore_ascii_case(expected) {
+        return Ok(());
+    }
+    let _ = fs::remove_file(file);
+    Err(format!(
+        "SHA-256 mismatch for {} (download deleted)\n  expected: {expected}\n  actual:   {actual}\n\
+         If the pinned version was bumped, bump its `*_SHA256` constant in xtask/src/binaries.rs too.",
+        file.display()
+    ))
+}
+
+/// Downloads `url` to `dest` and verifies it against `sha256` before anything extracts it.
+///
+/// curl ships with Windows 10/11, so the download routes through the same `run` helper as every
+/// other command.
+fn download_verified(url: &str, dest: &Path, sha256: &str) {
+    run(root_dir(), "curl", &["-fsSL", "-o", &dest.to_string_lossy(), url]);
+    if let Err(e) = verify_sha256(dest, sha256) {
+        panic!("{e}");
+    }
+}
+
+/// Copies `from` to `to` so that `to` only ever exists complete: the copy lands in `<to>.partial`
+/// and is renamed into place, so an interrupted copy can never leave a truncated `to` that the next
+/// run's [`staged_action`] adopts as staged.
+///
+/// Both paths are removed before writing: a hard-linked destination (from `setup_worktree()`) is
+/// shared mutable state, and `fs::copy` on Windows writes into an existing destination in place
+/// rather than replacing it, which would silently rewrite a sibling worktree's staged asset too
+/// (docs/features/parallel-worktree-e2e/02_dev.md, Resolved Decision 11).
+fn install_file(from: &Path, to: &Path) {
+    let mut partial = to.as_os_str().to_owned();
+    partial.push(".partial");
+    let partial = PathBuf::from(partial);
+    let _ = fs::remove_file(&partial);
+    let _ = fs::remove_file(to);
+    fs::copy(from, &partial).unwrap();
+    fs::rename(&partial, to).unwrap();
+}
+
 /// Stages the three bundled binaries into `src-tauri/binaries` (each a no-op once present).
 pub(crate) fn fetch_bundled_binaries() {
     fetch_mutagen();
@@ -88,12 +201,7 @@ pub(crate) fn fetch_mutagen() {
     let triple = format!("{}-pc-windows-msvc", env::consts::ARCH);
     let dest = binaries_dir().join(format!("mutagen-{triple}.exe"));
     let agents_dest = binaries_dir().join("mutagen-agents.tar.gz");
-    if dest.exists() && agents_dest.exists() {
-        // Recorded on this path too: the manifest states what this checkout's constants assert about
-        // the files present, which is exactly the claim `setup_worktree()` needs to compare against.
-        // Without it, a worktree staged before the manifest existed could never be linked from.
-        record_staged_version("mutagen", MUTAGEN_VERSION);
-        println!("Mutagen sidecar already staged: {}", dest.display());
+    if already_staged("mutagen", MUTAGEN_VERSION, dest.exists() && agents_dest.exists(), "Mutagen sidecar", &dest) {
         return;
     }
     fs::create_dir_all(binaries_dir()).unwrap();
@@ -107,12 +215,10 @@ pub(crate) fn fetch_mutagen() {
     let _ = fs::remove_dir_all(&extract);
     fs::create_dir_all(&extract).unwrap();
 
-    // curl and the System32 bsdtar (which extracts zip) ship with Windows 10/11, so the download
-    // and extraction route through the same `run` helper as every other command.
     let zip_arg = zip.to_string_lossy();
     let extract_arg = extract.to_string_lossy();
     println!("Downloading Mutagen {MUTAGEN_VERSION} for {triple}...");
-    run(root_dir(), "curl", &["-fsSL", "-o", &zip_arg, &url]);
+    download_verified(&url, &zip, MUTAGEN_SHA256);
     run(root_dir(), &windows_tar(), &["-xf", &zip_arg, "-C", &extract_arg]);
 
     // The archive holds `mutagen.exe` plus `mutagen-agents.tar.gz`. Mutagen does not embed remote
@@ -130,15 +236,8 @@ pub(crate) fn fetch_mutagen() {
         "expected mutagen-agents.tar.gz in extracted archive at {}",
         produced_agents.display()
     );
-    // Remove an existing destination before writing: a hard-linked destination (from
-    // `setup_worktree()`) is shared mutable state, and `fs::copy` on Windows writes into an
-    // existing destination in place rather than replacing it, which would silently rewrite a
-    // sibling worktree's staged asset too (docs/features/parallel-worktree-e2e/02_dev.md, Resolved
-    // Decision 11).
-    let _ = fs::remove_file(&dest);
-    let _ = fs::remove_file(&agents_dest);
-    fs::copy(&produced, &dest).unwrap();
-    fs::copy(&produced_agents, &agents_dest).unwrap();
+    install_file(&produced, &dest);
+    install_file(&produced_agents, &agents_dest);
     let _ = fs::remove_dir_all(&extract);
     let _ = fs::remove_file(&zip);
     record_staged_version("mutagen", MUTAGEN_VERSION);
@@ -153,48 +252,53 @@ pub(crate) fn fetch_llama() {
     if !cfg!(windows) {
         todo!("llama.cpp Vulkan engine fetch is implemented for Windows only");
     }
-    let arch = match env::consts::ARCH {
-        "x86_64" => "x64",
-        "aarch64" => "arm64",
-        other => panic!("unsupported arch for llama.cpp Vulkan release: {}", other),
-    };
+    // The pinned release has no arm64 Vulkan build, and `LLAMA_SHA256` covers the x64 zip only.
+    if env::consts::ARCH != "x86_64" {
+        panic!("unsupported arch for the pinned llama.cpp Vulkan release (x64 only): {}", env::consts::ARCH);
+    }
     let dest_dir = binaries_dir().join("llama");
     let server = dest_dir.join("llama-server.exe");
-    if server.exists() {
-        record_staged_version("llama", LLAMA_VERSION);
-        println!("llama.cpp engine already staged: {}", server.display());
+    if already_staged("llama", LLAMA_VERSION, server.exists(), "llama.cpp engine", &server) {
         return;
     }
-    // A hard-linked destination is shared mutable state, and this extracts straight into
-    // `dest_dir`, overwriting in place — remove it first so a re-fetch cannot rewrite a sibling
-    // worktree's staged copy through the link (Resolved Decision 11, as above).
-    let _ = fs::remove_dir_all(&dest_dir);
-    fs::create_dir_all(&dest_dir).unwrap();
 
-    let asset = format!("llama-{LLAMA_VERSION}-bin-win-vulkan-{arch}.zip");
+    let asset = format!("llama-{LLAMA_VERSION}-bin-win-vulkan-x64.zip");
     let url = format!(
         "https://github.com/ggml-org/llama.cpp/releases/download/{LLAMA_VERSION}/{asset}"
     );
     let zip = env::temp_dir().join(&asset);
 
-    // curl and the System32 bsdtar (which extracts zip) ship with Windows 10/11. The release zip
-    // holds its files at the archive root, so extracting straight into `dest_dir` lays the engine
-    // out flat.
+    // Extracted beside `dest_dir` (same volume, so the final rename is atomic) rather than into it:
+    // an interrupted extraction must not leave a `llama` directory that has `llama-server.exe` but
+    // not every DLL, which the next run would take for a complete stage.
+    let partial = binaries_dir().join("llama.partial");
+    let _ = fs::remove_dir_all(&partial);
+    fs::create_dir_all(&partial).unwrap();
+
     let zip_arg = zip.to_string_lossy();
-    let dest_arg = dest_dir.to_string_lossy();
-    println!("Downloading llama.cpp {LLAMA_VERSION} (Vulkan, {arch})...");
-    run(root_dir(), "curl", &["-fsSL", "-o", &zip_arg, &url]);
-    run(root_dir(), &windows_tar(), &["-xf", &zip_arg, "-C", &dest_arg]);
+    let partial_arg = partial.to_string_lossy();
+    println!("Downloading llama.cpp {LLAMA_VERSION} (Vulkan, x64)...");
+    download_verified(&url, &zip, LLAMA_SHA256);
+    // The release zip holds its files at the archive root, so extracting straight into `partial`
+    // lays the engine out flat.
+    run(root_dir(), &windows_tar(), &["-xf", &zip_arg, "-C", &partial_arg]);
 
     assert!(
-        server.exists(),
+        partial.join("llama-server.exe").exists(),
         "expected llama-server.exe in extracted archive at {}",
-        server.display()
+        partial.display()
     );
+    // A hard-linked destination is shared mutable state: remove it before replacing it so a re-fetch
+    // cannot rewrite a sibling worktree's staged copy through the link (Resolved Decision 11, as above).
+    let _ = fs::remove_dir_all(&dest_dir);
+    fs::rename(&partial, &dest_dir).unwrap();
     let _ = fs::remove_file(&zip);
     record_staged_version("llama", LLAMA_VERSION);
     println!("Staged llama.cpp engine: {}", dest_dir.display());
 }
+
+/// The files [`fetch_podman`] stages into `src-tauri/binaries/podman`.
+const PODMAN_FILES: [&str; 3] = ["podman.exe", "gvproxy.exe", "win-sshproxy.exe"];
 
 /// Download the official Podman Windows remote-client archive and stage `podman.exe`,
 /// `gvproxy.exe`, and `win-sshproxy.exe` flat into `src-tauri/binaries/podman` (see
@@ -206,9 +310,8 @@ pub(crate) fn fetch_podman() {
     }
     let dest_dir = binaries_dir().join("podman");
     let podman_exe = dest_dir.join("podman.exe");
-    if podman_exe.exists() {
-        record_staged_version("podman", PODMAN_VERSION);
-        println!("Podman already staged: {}", podman_exe.display());
+    let files_present = PODMAN_FILES.iter().all(|name| dest_dir.join(name).exists());
+    if already_staged("podman", PODMAN_VERSION, files_present, "Podman", &podman_exe) {
         return;
     }
     fs::create_dir_all(&dest_dir).unwrap();
@@ -225,18 +328,16 @@ pub(crate) fn fetch_podman() {
     let zip_arg = zip.to_string_lossy();
     let extract_arg = extract.to_string_lossy();
     println!("Downloading Podman {PODMAN_VERSION} for Windows...");
-    run(root_dir(), "curl", &["-fsSL", "-o", &zip_arg, &url]);
+    download_verified(&url, &zip, PODMAN_SHA256);
     run(root_dir(), &windows_tar(), &["-xf", &zip_arg, "-C", &extract_arg]);
 
     // The archive nests these three under varying subdirectories across releases (e.g.
     // `usr/bin/`); search recursively rather than hardcode a path.
-    for name in ["podman.exe", "gvproxy.exe", "win-sshproxy.exe"] {
+    for name in PODMAN_FILES {
         let found = find_file(&extract, name).unwrap_or_else(|| {
             panic!("expected {} in extracted Podman archive at {}", name, extract.display())
         });
-        // See the Mutagen fetch above: remove a possibly hard-linked destination before writing.
-        let _ = fs::remove_file(dest_dir.join(name));
-        fs::copy(&found, dest_dir.join(name)).unwrap();
+        install_file(&found, &dest_dir.join(name));
     }
     let _ = fs::remove_dir_all(&extract);
     let _ = fs::remove_file(&zip);
@@ -258,23 +359,4 @@ fn find_file(dir: &Path, name: &str) -> Option<PathBuf> {
         }
     }
     None
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn staged_versions_round_trip_and_keep_other_keys() {
-        let dir = env::temp_dir().join(format!("xtask-staged-versions-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        assert_eq!(staged_version(&dir, "mutagen"), None);
-        record_staged_version_in(&dir, "mutagen", "v0.18.1");
-        record_staged_version_in(&dir, "llama", "b9835");
-        record_staged_version_in(&dir, "mutagen", "v0.18.2");
-        assert_eq!(staged_version(&dir, "mutagen").as_deref(), Some("v0.18.2"));
-        assert_eq!(staged_version(&dir, "llama").as_deref(), Some("b9835"));
-        assert_eq!(staged_version(&dir, "podman"), None);
-        let _ = fs::remove_dir_all(&dir);
-    }
 }

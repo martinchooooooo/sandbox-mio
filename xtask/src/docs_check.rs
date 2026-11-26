@@ -9,13 +9,15 @@
 //! (the root `docs/index.md` may declare `okf_version`), and `log.md` holds dated sections. The
 //! project rules on top are listed on [`check`].
 //!
-//! Part of the std-only `xtask` package, so frontmatter is read by [`parse_frontmatter`], a parser
-//! for the restricted YAML subset the docs use rather than a crate. Unit tests: `cargo test` in
-//! `xtask/`.
+//! Frontmatter is parsed by `yaml-rust2` and Markdown by `pulldown-cmark`; both are converted at the
+//! edge ([`parse_frontmatter`], [`markdown_facts`]) so the checks below never see a crate type.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+
+use pulldown_cmark::{Event, LinkType, Options, Parser, Tag};
+use yaml_rust2::parser::{Event as YamlEvent, Parser as YamlParser};
 
 /// Every allowed `type` value. Mirrored in the frontmatter-keys table of `docs/features/README.md`.
 pub const TYPES: &[&str] = &[
@@ -46,7 +48,8 @@ const CITATION_ROOTS: &[&str] = &[
     "AGENTS.md", "CLAUDE.md", "README.md", "src-tauri/AGENTS.md", "xtask/src",
 ];
 
-/// File names the citation scan skips: this file's tests quote `docs/...` paths that do not exist.
+/// File names the citation scan skips: this file's comments quote `docs/...` patterns that are not
+/// paths.
 const CITATION_SKIP_FILES: &[&str] = &["docs_check.rs"];
 
 /// File extensions the citation scan reads.
@@ -109,7 +112,7 @@ pub fn run(root: &Path, fix: bool) -> i32 {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Frontmatter: a parser for the YAML subset the docs use.
+// Frontmatter: YAML read by yaml-rust2 into a small value tree the checks walk.
 // ---------------------------------------------------------------------------------------------
 
 /// A frontmatter value: a scalar, a list, or a mapping (insertion-ordered).
@@ -146,161 +149,96 @@ impl Value {
 
 /// Splits a document into its frontmatter source (without the `---` fences) and its body.
 /// `text` must already be LF-normalised. `None` means the document has no frontmatter block.
+/// A leading UTF-8 BOM and trailing whitespace after a `---` fence are tolerated.
 pub fn split_frontmatter(text: &str) -> Option<(&str, &str)> {
-    let rest = text.strip_prefix("---\n")?;
-    if let Some(body) = rest.strip_prefix("---\n") {
-        return Some(("", body));
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let mut lines = text.split_inclusive('\n');
+    let first = lines.next()?;
+    if first.trim_end() != "---" {
+        return None;
     }
-    let end = rest.find("\n---\n").or_else(|| {
-        if rest.ends_with("\n---") { Some(rest.len() - 4) } else { None }
-    })?;
-    let body_start = (end + 5).min(rest.len());
-    Some((&rest[..end], &rest[body_start..]))
+    let start = first.len();
+    let mut pos = start;
+    for line in lines {
+        if line.trim_end() == "---" {
+            let source = text[start..pos].strip_suffix('\n').unwrap_or(&text[start..pos]);
+            return Some((source, &text[pos + line.len()..]));
+        }
+        pos += line.len();
+    }
+    None
 }
 
-/// Parses the restricted YAML subset: `key: scalar`, `key: [a, b]`, double- or single-quoted
-/// scalars, and nested block mappings and `- ` lists by indentation. Comments and blank lines are
-/// skipped. Anything else is an error rather than a guess.
+/// Parses frontmatter YAML into a [`Value`]: a mapping of scalars, lists and nested mappings.
+///
+/// Every scalar keeps its source text (`007`, `yes` and `1.0` stay strings), so the checks see what
+/// is written. Duplicate keys, aliases, non-scalar keys and a second document are errors, and the
+/// top level must be a mapping (an empty source is an empty mapping).
 pub fn parse_frontmatter(src: &str) -> Result<Value, String> {
-    let lines: Vec<(usize, &str)> = src
-        .lines()
-        .filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'))
-        .map(|l| (l.len() - l.trim_start().len(), l.trim_end()))
-        .map(|(indent, l)| (indent, &l[indent..]))
-        .collect();
-    if lines.is_empty() {
-        return Ok(Value::Map(Vec::new()));
-    }
-    if lines[0].0 != 0 {
-        return Err("first frontmatter line is indented".to_string());
-    }
-    parse_block(&lines)
-}
-
-fn parse_block(lines: &[(usize, &str)]) -> Result<Value, String> {
-    let base = lines[0].0;
-    if is_list_item(lines[0].1) {
-        let mut items = Vec::new();
-        let mut i = 0;
-        while i < lines.len() {
-            let (indent, text) = lines[i];
-            if indent != base || !is_list_item(text) {
-                return Err(format!("expected a `- ` list item at indent {base}: `{text}`"));
-            }
-            let after = text[1..].trim_start();
-            let mut j = i + 1;
-            while j < lines.len() && lines[j].0 > base {
-                j += 1;
-            }
-            if after.is_empty() {
-                if j == i + 1 {
-                    return Err("empty list item".to_string());
+    let mut stack: Vec<Frame> = Vec::new();
+    let mut root: Option<Value> = None;
+    let mut documents = 0;
+    let mut parser = YamlParser::new_from_str(src);
+    loop {
+        let (event, mark) = parser.next_token().map_err(|e| e.to_string())?;
+        if matches!(event, YamlEvent::StreamEnd) {
+            break;
+        }
+        let finished = match event {
+            YamlEvent::DocumentStart => {
+                documents += 1;
+                if documents > 1 {
+                    return Err("more than one YAML document".to_string());
                 }
-                items.push(parse_block(&lines[i + 1..j])?);
-            } else if split_key(after).is_some() && !after.starts_with('"') && !after.starts_with('[') {
-                // A mapping item: its first key sits on the dash line, the rest are indented below.
-                let mut nested = vec![(base + 2, after)];
-                nested.extend_from_slice(&lines[i + 1..j]);
-                items.push(parse_block(&nested)?);
-            } else if j > i + 1 {
-                return Err(format!("scalar list item `{after}` has indented children"));
-            } else {
-                items.push(parse_scalar(after)?);
+                None
             }
-            i = j;
-        }
-        return Ok(Value::List(items));
-    }
-    let mut entries: Vec<(String, Value)> = Vec::new();
-    let mut i = 0;
-    while i < lines.len() {
-        let (indent, text) = lines[i];
-        if indent != base {
-            return Err(format!("unexpected indentation at `{text}`"));
-        }
-        let (key, rest) = split_key(text).ok_or_else(|| format!("expected `key: value`, got `{text}`"))?;
-        if entries.iter().any(|(k, _)| k == key) {
-            return Err(format!("duplicate key `{key}`"));
-        }
-        let mut j = i + 1;
-        while j < lines.len() && lines[j].0 > base {
-            j += 1;
-        }
-        let value = if rest.is_empty() {
-            if j == i + 1 { Value::Str(String::new()) } else { parse_block(&lines[i + 1..j])? }
-        } else if j > i + 1 {
-            return Err(format!("key `{key}` has both an inline value and indented children"));
-        } else {
-            parse_scalar(rest)?
+            YamlEvent::Scalar(text, ..) => Some(Value::Str(text)),
+            YamlEvent::SequenceStart(..) => {
+                stack.push(Frame::List(Vec::new()));
+                None
+            }
+            YamlEvent::MappingStart(..) => {
+                stack.push(Frame::Map { entries: Vec::new(), key: None });
+                None
+            }
+            YamlEvent::SequenceEnd | YamlEvent::MappingEnd => match stack.pop() {
+                Some(Frame::List(items)) => Some(Value::List(items)),
+                Some(Frame::Map { entries, .. }) => Some(Value::Map(entries)),
+                None => return Err("unbalanced YAML collection".to_string()),
+            },
+            YamlEvent::Alias(_) => return Err(format!("YAML aliases are not supported (line {})", mark.line())),
+            YamlEvent::Nothing | YamlEvent::StreamStart | YamlEvent::StreamEnd | YamlEvent::DocumentEnd => None,
         };
-        entries.push((key.to_string(), value));
-        i = j;
-    }
-    Ok(Value::Map(entries))
-}
-
-fn is_list_item(text: &str) -> bool {
-    text == "-" || text.starts_with("- ")
-}
-
-/// Splits `key: rest` at the first `:` that is followed by a space or ends the line. Keys are
-/// identifier-like; a line whose prefix is not one is not a key line.
-fn split_key(text: &str) -> Option<(&str, &str)> {
-    let colon = text.find(':')?;
-    let key = &text[..colon];
-    if key.is_empty() || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
-        return None;
-    }
-    let rest = &text[colon + 1..];
-    if !rest.is_empty() && !rest.starts_with(' ') {
-        return None;
-    }
-    Some((key, rest.trim()))
-}
-
-fn parse_scalar(raw: &str) -> Result<Value, String> {
-    let raw = raw.trim();
-    if raw.starts_with('[') {
-        let inner = raw
-            .strip_prefix('[')
-            .and_then(|r| r.strip_suffix(']'))
-            .ok_or_else(|| format!("unterminated flow list `{raw}`"))?;
-        if inner.trim().is_empty() {
-            return Ok(Value::List(Vec::new()));
-        }
-        return inner.split(',').map(|item| parse_scalar(item)).collect::<Result<Vec<_>, _>>().map(Value::List);
-    }
-    if raw.starts_with('"') {
-        let inner = raw
-            .strip_prefix('"')
-            .and_then(|r| r.strip_suffix('"'))
-            .ok_or_else(|| format!("unterminated double-quoted scalar `{raw}`"))?;
-        let mut out = String::new();
-        let mut chars = inner.chars();
-        while let Some(c) = chars.next() {
-            if c == '\\' {
-                match chars.next() {
-                    Some('n') => out.push('\n'),
-                    Some('t') => out.push('\t'),
-                    Some(other) => out.push(other),
-                    None => return Err(format!("dangling escape in `{raw}`")),
+        let Some(value) = finished else { continue };
+        match stack.last_mut() {
+            None => root = Some(value),
+            Some(Frame::List(items)) => items.push(value),
+            Some(Frame::Map { entries, key }) => match key.take() {
+                None => {
+                    let Value::Str(k) = value else {
+                        return Err("a mapping key must be a plain scalar".to_string());
+                    };
+                    if entries.iter().any(|(existing, _)| *existing == k) {
+                        return Err(format!("duplicate key `{k}` at line {}", mark.line()));
+                    }
+                    *key = Some(k);
                 }
-            } else if c == '"' {
-                return Err(format!("unescaped `\"` inside `{raw}`"));
-            } else {
-                out.push(c);
-            }
+                Some(k) => entries.push((k, value)),
+            },
         }
-        return Ok(Value::Str(out));
     }
-    if raw.starts_with('\'') {
-        let inner = raw
-            .strip_prefix('\'')
-            .and_then(|r| r.strip_suffix('\''))
-            .ok_or_else(|| format!("unterminated single-quoted scalar `{raw}`"))?;
-        return Ok(Value::Str(inner.replace("''", "'")));
+    match root {
+        None => Ok(Value::Map(Vec::new())),
+        Some(v @ Value::Map(_)) => Ok(v),
+        Some(_) => Err("frontmatter must be a mapping of keys to values".to_string()),
     }
-    Ok(Value::Str(raw.to_string()))
+}
+
+/// An open collection while [`parse_frontmatter`] assembles the event stream into a [`Value`].
+enum Frame {
+    List(Vec<Value>),
+    /// `key` holds a parsed key whose value has not arrived yet.
+    Map { entries: Vec<(String, Value)>, key: Option<String> },
 }
 
 /// ISO 8601 date-time with seconds and an explicit offset (`Z` or `±HH:MM`), as OKF v0.2 requires.
@@ -328,15 +266,24 @@ pub fn is_timestamp(s: &str) -> bool {
     r.len() == 6 && (r[0] == b'+' || r[0] == b'-') && digits(&r[1..3]) && r[3] == b':' && digits(&r[4..6])
 }
 
-/// `YYYY-MM-DD` with plausible month and day.
+/// `YYYY-MM-DD` naming a day that exists in the Gregorian calendar.
 pub fn is_date(s: &str) -> bool {
     let b = s.as_bytes();
     if b.len() != 10 || b[4] != b'-' || b[7] != b'-' || !digits(&b[..4]) || !digits(&b[5..7]) || !digits(&b[8..10]) {
         return false;
     }
+    let year: u32 = s[..4].parse().unwrap_or(0);
     let month: u32 = s[5..7].parse().unwrap_or(0);
     let day: u32 = s[8..10].parse().unwrap_or(0);
-    (1..=12).contains(&month) && (1..=31).contains(&day)
+    let leap = year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
+    let days_in_month = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return false,
+    };
+    (1..=days_in_month).contains(&day)
 }
 
 fn digits(b: &[u8]) -> bool {
@@ -365,63 +312,62 @@ pub fn today_utc() -> String {
 // Markdown helpers.
 // ---------------------------------------------------------------------------------------------
 
-/// Removes fenced code blocks and inline code spans, so example links inside code are not checked.
-pub fn strip_code(body: &str) -> String {
-    let mut out = String::new();
-    let mut in_fence = false;
-    for line in body.lines() {
-        if line.trim_start().starts_with("```") {
-            in_fence = !in_fence;
-            out.push('\n');
-            continue;
-        }
-        if in_fence {
-            out.push('\n');
-            continue;
-        }
-        let mut in_span = false;
-        for c in line.chars() {
-            if c == '`' {
-                in_span = !in_span;
-            } else if !in_span {
-                out.push(c);
+/// What the checks read from a markdown body, gathered in one pass of a CommonMark parse.
+#[derive(Default)]
+pub struct MarkdownFacts {
+    /// Relative link and image targets without `#fragment`, in document order. External URLs, pure
+    /// fragments and `mailto:` links are skipped. Inline, reference-style and angle-bracket
+    /// destinations all resolve to their target; links inside code never appear.
+    pub links: Vec<String>,
+    /// Text of every inline code span.
+    pub code_spans: Vec<String>,
+    /// Whitespace-separated words outside code blocks (diagrams and examples do not count).
+    pub words: usize,
+}
+
+impl MarkdownFacts {
+    /// `docs/...md` paths cited inside inline code spans. A span holding a placeholder (`*`, `<`)
+    /// or a space is a pattern, not a path.
+    pub fn cited_doc_paths(&self) -> impl Iterator<Item = &str> {
+        self.code_spans
+            .iter()
+            .map(String::as_str)
+            .filter(|s| s.starts_with("docs/") && s.ends_with(".md") && !s.contains([' ', '*', '<']))
+    }
+}
+
+/// Reads `body` as CommonMark with tables, as GitHub renders it.
+pub fn markdown_facts(body: &str) -> MarkdownFacts {
+    let mut facts = MarkdownFacts::default();
+    // Everything before this offset is already counted or belongs to a code block.
+    let mut counted_to = 0;
+    for (event, range) in Parser::new_ext(body, Options::ENABLE_TABLES).into_offset_iter() {
+        match event {
+            // An email autolink's destination has no `mailto:` prefix, so it is skipped by type.
+            Event::Start(Tag::Link { link_type: LinkType::Email, .. }) => {}
+            Event::Start(Tag::Link { dest_url, .. } | Tag::Image { dest_url, .. }) => {
+                if let Some(target) = relative_target(&dest_url) {
+                    facts.links.push(target);
+                }
             }
+            Event::Code(text) => facts.code_spans.push(text.into_string()),
+            // The range of a block's start event spans the whole block, fences included.
+            Event::Start(Tag::CodeBlock(_)) => {
+                facts.words += body[counted_to.min(range.start)..range.start].split_whitespace().count();
+                counted_to = range.end;
+            }
+            _ => {}
         }
-        out.push('\n');
     }
-    out
+    facts.words += body[counted_to..].split_whitespace().count();
+    facts
 }
 
-/// Relative link targets of `[text](target)` links, without `#fragment`. External URLs, pure
-/// fragments and `mailto:` links are skipped. Code is stripped first.
-pub fn relative_links(body: &str) -> Vec<String> {
-    let text = strip_code(body);
-    let mut links = Vec::new();
-    let mut rest = text.as_str();
-    while let Some(pos) = rest.find("](") {
-        rest = &rest[pos + 2..];
-        let Some(end) = rest.find(')') else { break };
-        let target = rest[..end].trim();
-        rest = &rest[end..];
-        let target = target.split('#').next().unwrap_or("");
-        if target.is_empty() || target.contains("://") || target.starts_with("mailto:") || target.contains(' ') {
-            continue;
-        }
-        links.push(target.to_string());
-    }
-    links
-}
-
-/// `docs/...md` paths cited inside inline code spans.
-fn cited_doc_paths(body: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    for (i, span) in body.split('`').enumerate() {
-        let placeholder = span.contains('*') || span.contains('<');
-        if i % 2 == 1 && span.starts_with("docs/") && span.ends_with(".md") && !span.contains(' ') && !placeholder {
-            out.push(span.to_string());
-        }
-    }
-    out
+/// The file part of a link destination, or `None` for a pure fragment or an external link.
+fn relative_target(dest: &str) -> Option<String> {
+    let target = dest.split('#').next().unwrap_or("");
+    let external = target.contains("://") || target.starts_with("mailto:");
+    (!target.is_empty() && !external).then(|| target.to_string())
 }
 
 /// Lexically resolves `target` against `dir` (no filesystem access), collapsing `.` and `..`.
@@ -463,20 +409,6 @@ pub fn code_citations(text: &str) -> Vec<String> {
     out
 }
 
-/// Words of prose in a markdown body; fenced blocks (diagrams, examples) do not count.
-pub fn prose_words(body: &str) -> usize {
-    let mut in_fence = false;
-    let mut words = 0;
-    for line in body.lines() {
-        if line.trim_start().starts_with("```") {
-            in_fence = !in_fence;
-        } else if !in_fence {
-            words += line.split_whitespace().count();
-        }
-    }
-    words
-}
-
 /// An OKF actor: `<producer>/<version>`, `human:<id>` or `process:<id>`.
 pub fn is_actor(s: &str) -> bool {
     if s.contains(char::is_whitespace) {
@@ -503,6 +435,8 @@ struct Doc {
     has_block: bool,
     /// `Some` when the document has a frontmatter block that parsed.
     fm: Option<Value>,
+    /// What the checks read from `body`, parsed once.
+    facts: MarkdownFacts,
 }
 
 /// What a feature's `feature.md` declares, keyed by feature directory name in [`features`].
@@ -573,7 +507,8 @@ fn load(root: &Path, report: &mut Report) -> Vec<Doc> {
             },
             None => (false, None, text.clone()),
         };
-        docs.push(Doc { rel, abs, body, has_block, fm });
+        let facts = markdown_facts(&body);
+        docs.push(Doc { rel, abs, body, has_block, fm, facts });
     }
     docs
 }
@@ -751,8 +686,8 @@ fn check_links_and_reachability(
     for doc in docs {
         let dir = doc.abs.parent().unwrap_or(root);
         let is_index = file_name(&doc.abs) == "index.md";
-        for target in relative_links(&doc.body) {
-            let resolved = resolve(dir, &target);
+        for target in &doc.facts.links {
+            let resolved = resolve(dir, target);
             if !resolved.exists() {
                 report.error(&doc.rel, format!("broken link `{target}`"));
                 continue;
@@ -766,8 +701,8 @@ fn check_links_and_reachability(
             continue;
         }
         let mut seen = BTreeSet::new();
-        for cited in cited_doc_paths(&doc.body) {
-            if seen.insert(cited.clone()) && !root.join(&cited).exists() {
+        for cited in doc.facts.cited_doc_paths() {
+            if seen.insert(cited) && !root.join(cited).exists() {
                 report.warn(&doc.rel, format!("cites missing `{cited}`"));
             }
         }
@@ -857,7 +792,7 @@ fn check_architecture(report: &mut Report, root: &Path, docs: &[Doc], today: &st
         if doc.body.lines().any(|l| l.starts_with('#') && l.to_ascii_lowercase().contains("gotcha")) {
             report.error(rel, "architecture documents carry no gotchas section; state rules as Invariants, and put code-level gotchas in code comments or the area's AGENTS.md".to_string());
         }
-        let words = prose_words(&doc.body);
+        let words = doc.facts.words;
         if words > ARCHITECTURE_WORD_BUDGET {
             report.warn(rel, format!("{words} words is over the {ARCHITECTURE_WORD_BUDGET}-word budget; move detail to code comments or plans"));
         }
@@ -1115,146 +1050,5 @@ fn check_code_citations(report: &mut Report, root: &Path) {
                 report.warn(&rel, format!("cites missing `{cited}`"));
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_the_frontmatter_shapes_the_docs_use() {
-        let src = "type: architecture\ntitle: \"A: B\"\nfeature: x\ndepends_on: [a, b]\n\
-                   generated:\n  by: claude-code/opus-5-5\n  at: 2026-11-05T23:10:11+11:00\n\
-                   code:\n  - src/a/\n  - src/b.rs\n\
-                   sources:\n  - resource: docs/a.md\n  - resource: docs/b.md\n";
-        let v = parse_frontmatter(src).unwrap();
-        assert_eq!(v.get("title").and_then(Value::as_str), Some("A: B"));
-        assert_eq!(v.get("depends_on").map(Value::strings), Some(vec!["a".to_string(), "b".to_string()]));
-        assert_eq!(v.get("generated").and_then(|g| g.get("by")).and_then(Value::as_str), Some("claude-code/opus-5-5"));
-        assert_eq!(v.get("code").map(Value::strings), Some(vec!["src/a/".to_string(), "src/b.rs".to_string()]));
-        match v.get("sources") {
-            Some(Value::List(items)) => {
-                assert_eq!(items.len(), 2);
-                assert_eq!(items[1].get("resource").and_then(Value::as_str), Some("docs/b.md"));
-            }
-            other => panic!("sources parsed as {:?}", other),
-        }
-    }
-
-    #[test]
-    fn code_citations_find_doc_paths_but_not_urls() {
-        let text = "// see docs/features/x/02_dev.md, Resolved Decision 2.\n\
-                    // `docs/architecture/` and docs/features/<x>/02_dev.md\n\
-                    // https://example.com/docs/y.md and mydocs/z.md and docs/notes.txt";
-        assert_eq!(
-            code_citations(text),
-            vec!["docs/features/x/02_dev.md".to_string(), "docs/architecture/".to_string(), "docs/features/".to_string()]
-        );
-    }
-
-    #[test]
-    fn prose_words_skip_fenced_blocks() {
-        assert_eq!(prose_words("one two\n```mermaid\nA --> B\n```\nthree\n"), 3);
-    }
-
-    #[test]
-    fn actors_follow_okf() {
-        assert!(is_actor("claude-code/opus-5-5"));
-        assert!(is_actor("human:martin"));
-        assert!(!is_actor("claude"));
-        assert!(!is_actor("human:"));
-        assert!(!is_actor("a b/c"));
-    }
-
-    #[test]
-    fn generated_indexes_pass_the_check() {
-        let root = std::env::temp_dir().join(format!("docs-check-test-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        let write = |rel: &str, text: &str| {
-            let p = root.join(rel);
-            fs::create_dir_all(p.parent().unwrap()).unwrap();
-            fs::write(p, text).unwrap();
-        };
-        fs::create_dir_all(root.join("src/x")).unwrap();
-        write("docs/index.md", "* [architecture/](architecture/index.md) - a\n* [features/](features/index.md) - f\n");
-        write("docs/features/README.md", "---\ntype: workflow\ntitle: \"Features\"\ndescription: \"How plans work.\"\n---\n# Features\n");
-        write("docs/features/log.md", "## 2026-11-05\n\n* **Create** [x](x/index.md): drafted\n");
-        write(
-            "docs/features/x/feature.md",
-            "---\ntype: feature\ntitle: \"x\"\ndescription: \"Does x.\"\nstatus: planned\narchitecture: [docs/architecture/overview.md]\n---\n# x\n",
-        );
-        write("docs/features/x/01_ideas.md", "---\ntype: ideas\ntitle: \"X Ideas\"\nfeature: x\n---\n# X Ideas\n");
-        write("docs/features/x/spike/run.sh", "echo\n");
-        write(
-            "docs/architecture/overview.md",
-            "---\ntype: architecture\ntitle: \"Overview\"\ndescription: \"The map.\"\n\
-             generated:\n  by: claude-code/opus-5-5\n  at: 2026-11-05T23:10:11+11:00\n\
-             verified:\n  by: human:martin\n  at: 2026-11-06T09:00:00+11:00\n\
-             stale_after: 2099-01-01T00:00:00Z\ncode:\n  - src/x/\nsources:\n  - resource: docs/features/x/01_ideas.md\n---\n# Overview\n",
-        );
-        let before = check(&root, "2026-11-05");
-        assert!(before.errors.iter().any(|e| e.message.contains("--fix")));
-        let written = write_indexes(&root).unwrap();
-        assert_eq!(written.len(), 3, "{written:?}");
-        let report = check(&root, "2026-11-05");
-        assert!(report.errors.is_empty(), "{:?}", report.errors.iter().map(|e| format!("{}: {}", e.path, e.message)).collect::<Vec<_>>());
-        let feature_index = fs::read_to_string(root.join("docs/features/x/index.md")).unwrap();
-        assert_eq!(
-            feature_index,
-            "* [Feature status](feature.md) - planned: Does x.\n\
-             * [X Ideas](01_ideas.md) - ideation and scope\n\
-             * [spike/](spike/) - spike scripts (no markdown)\n"
-        );
-        let arch_index = fs::read_to_string(root.join("docs/architecture/index.md")).unwrap();
-        assert!(arch_index.contains("* [x](../features/x/index.md) - planned, changes overview.md: Does x."), "{}", arch_index);
-        let _ = fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn rejects_malformed_frontmatter() {
-        assert!(parse_frontmatter("type feature\n").is_err());
-        assert!(parse_frontmatter("type: a\ntype: b\n").is_err());
-        assert!(parse_frontmatter("title: \"unterminated\n").is_err());
-        assert!(parse_frontmatter("  type: indented\n").is_err());
-    }
-
-    #[test]
-    fn splits_frontmatter_from_body() {
-        let (fm, body) = split_frontmatter("---\ntype: x\n---\n# T\n").unwrap();
-        assert_eq!(fm, "type: x");
-        assert_eq!(body, "# T\n");
-        assert!(split_frontmatter("# No frontmatter\n").is_none());
-    }
-
-    #[test]
-    fn timestamps_need_an_offset() {
-        assert!(is_timestamp("2026-11-05T23:10:11+11:00"));
-        assert!(is_timestamp("2026-11-05T12:10:11Z"));
-        assert!(is_timestamp("2026-11-05T12:10:11.5Z"));
-        assert!(!is_timestamp("2026-11-05T23:10:11"));
-        assert!(!is_timestamp("2026-11-05"));
-        assert!(!is_timestamp("2026-13-05T23:10:11Z"));
-    }
-
-    #[test]
-    fn links_inside_code_are_ignored() {
-        let body = "See [a](a.md) and `[b](b.md)` and [c](https://x.y/c.md) and [d](d.md#frag).\n```\n[e](e.md)\n```\n";
-        assert_eq!(relative_links(body), vec!["a.md".to_string(), "d.md".to_string()]);
-    }
-
-    #[test]
-    fn log_rules() {
-        let mut r = Report::default();
-        check_log(&mut r, "log.md", "# Log\n\n## 2026-11-05\n\n* **Create** [x](x/index.md): y\n\n## 2026-11-04\n\n* **Implement** z\n");
-        assert!(r.errors.is_empty(), "{:?}", r.errors.iter().map(|e| &e.message).collect::<Vec<_>>());
-        let mut r = Report::default();
-        check_log(&mut r, "log.md", "## 2026-11-04\n\n* **Create** a\n\n## 2026-11-05\n\n* Did a thing\n");
-        assert_eq!(r.errors.len(), 2);
-    }
-
-    #[test]
-    fn today_is_a_date() {
-        assert!(is_date(&today_utc()));
     }
 }

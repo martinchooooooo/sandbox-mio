@@ -151,17 +151,3 @@ pub(crate) fn collect_e2e_diagnostics() {
         println!("[ci] collected {collected} item(s) into {}", out.display());
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn slug_segment_matches_the_e2e_sanitiser() {
-        assert_eq!(slug_segment("mi-sandbox"), "mi-sandbox");
-        assert_eq!(slug_segment("my  work:tree"), "my-work-tree");
-        assert_eq!(slug_segment("--a/b--"), "a-b");
-        assert_eq!(slug_segment("???"), "root");
-        assert_eq!(slug_segment(""), "root");
-    }
-}

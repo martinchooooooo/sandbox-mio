@@ -47,10 +47,12 @@ jobs:
 
       - uses: swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
+          workspaces: |
+            src-tauri
+            xtask
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      # `cargo xtask` compiles the std-only xtask package on first use (alias in .cargo/config.toml).
+      # `cargo xtask` compiles the xtask package on first use (alias in .cargo/config.toml).
       - name: cargo xtask ci checks
         run: cargo xtask ci checks
 
@@ -76,7 +78,9 @@ jobs:
 
       - uses: swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
+          workspaces: |
+            src-tauri
+            xtask
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: cargo xtask ci e2e-light

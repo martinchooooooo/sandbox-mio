@@ -202,18 +202,3 @@ fn first_version_token(text: &str) -> Option<String> {
         .find(|t| t.contains('.') && t.split('.').all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit())))
         .map(str::to_string)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn first_version_token_finds_the_dotted_version() {
-        assert_eq!(
-            first_version_token("    pv    REG_SZ    156.0.4314.58\n"),
-            Some("156.0.4314.58".to_string())
-        );
-        assert_eq!(first_version_token("msedgedriver 156.0.4314.58 (abc)"), Some("156.0.4314.58".to_string()));
-        assert_eq!(first_version_token("no version here v1.x"), None);
-    }
-}

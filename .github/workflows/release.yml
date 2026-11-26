@@ -28,7 +28,9 @@ jobs:
 
       - uses: swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
+          workspaces: |
+            src-tauri
+            xtask
 
       # Stages the bundled Mutagen sidecar + llama.cpp engine + Podman binaries into
       # src-tauri/binaries before the bundler runs (see xtask/src/main.rs, `dev --setup` arm).
