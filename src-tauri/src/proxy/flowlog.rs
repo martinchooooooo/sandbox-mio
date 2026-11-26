@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use tauri::{AppHandle, Emitter};
 
+use super::store::ProxyStore;
 use super::types::{ProxyEngine, SidecarSite};
 
 const EVENT_NAME: &str = "proxy://flows-changed";
@@ -71,6 +72,7 @@ struct Watch {
 /// boundary — it aborts the process.
 pub fn start_watch(
     app: &AppHandle,
+    store: &ProxyStore,
     registry: &FlowWatchRegistry,
     site: &SidecarSite,
     sandbox: &str,
@@ -85,7 +87,12 @@ pub fn start_watch(
         Some(watch) => watch.watchers + 1,
         None => 1,
     };
-    let handle = tauri::async_runtime::spawn(watch_flows(app.clone(), site.clone(), sandbox.to_string()));
+    let handle = tauri::async_runtime::spawn(watch_flows(
+        app.clone(),
+        store.clone(),
+        site.clone(),
+        sandbox.to_string(),
+    ));
     tasks.insert(sandbox.to_string(), Watch { handle, watchers });
     true
 }
@@ -93,13 +100,24 @@ pub fn start_watch(
 /// Points a running watch of `sandbox` at `site`, keeping its watcher count, so deploy and undeploy
 /// move the traffic panel to the active sidecar. Does nothing when no panel watches it; the next
 /// `start_watch` resolves the site afresh.
-pub fn retarget(app: &AppHandle, registry: &FlowWatchRegistry, sandbox: &str, site: &SidecarSite) {
+pub fn retarget(
+    app: &AppHandle,
+    store: &ProxyStore,
+    registry: &FlowWatchRegistry,
+    sandbox: &str,
+    site: &SidecarSite,
+) {
     let mut tasks = registry.0.lock().unwrap();
     let Some(watch) = tasks.get_mut(sandbox) else {
         return;
     };
     watch.handle.abort();
-    watch.handle = tauri::async_runtime::spawn(watch_flows(app.clone(), site.clone(), sandbox.to_string()));
+    watch.handle = tauri::async_runtime::spawn(watch_flows(
+        app.clone(),
+        store.clone(),
+        site.clone(),
+        sandbox.to_string(),
+    ));
 }
 
 /// Counts one watcher of `sandbox` gone and stops its poll task with the last one: for an iron-proxy
@@ -119,11 +137,11 @@ pub fn stop_watch(registry: &FlowWatchRegistry, sandbox: &str) {
 
 /// Emits every newly appended flow until the log disappears, which is how proxy teardown is noticed
 /// (`02_dev.md`, Teardown), or until [`stop_watch`] aborts it.
-async fn watch_flows(app: AppHandle, site: SidecarSite, sandbox: String) {
-    let Ok(path) = super::flows_path(&app, &sandbox) else {
+async fn watch_flows(app: AppHandle, store: ProxyStore, site: SidecarSite, sandbox: String) {
+    let Ok(path) = store.flows_path(&sandbox) else {
         return;
     };
-    let engine = super::sidecar_engine(&app, &sandbox);
+    let engine = store.sidecar_engine(&sandbox);
     let sidecar = super::proxy_container_name(&sandbox);
     let mut offset: u64 = 0;
     let mut last_id: u64 = 0;

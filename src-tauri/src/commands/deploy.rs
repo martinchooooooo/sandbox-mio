@@ -9,6 +9,7 @@ use crate::error::AppError;
 use crate::network::types::NetworkManager;
 use crate::provider::ProviderRegistry;
 use crate::proxy::flowlog::FlowWatchRegistry;
+use crate::proxy::store::ProxyStore;
 use crate::runtime::types::RuntimeManager;
 use crate::services;
 use crate::sync::types::{SessionInfo, SyncEngine};
@@ -23,9 +24,10 @@ pub async fn deploy_sandbox(
     engine: State<'_, Arc<dyn SyncEngine>>,
     registry: State<'_, Arc<ProviderRegistry>>,
     flows: State<'_, FlowWatchRegistry>,
+    proxy: State<'_, ProxyStore>,
     app: tauri::AppHandle,
 ) -> Result<(), AppError> {
-    services::sandbox::deploy(&name, &host, &store, &runtime, &engine, &registry, &flows, &app).await
+    services::sandbox::deploy(&name, &host, &store, &runtime, &engine, &registry, &flows, &proxy, &app).await
 }
 
 /// Reverse a deploy: flush remote edits and tear down remote session.
@@ -37,9 +39,10 @@ pub async fn undeploy_sandbox(
     network: State<'_, Arc<dyn NetworkManager>>,
     registry: State<'_, Arc<ProviderRegistry>>,
     flows: State<'_, FlowWatchRegistry>,
+    proxy: State<'_, ProxyStore>,
     app: tauri::AppHandle,
 ) -> Result<(), AppError> {
-    services::sandbox::undeploy(&name, &store, &engine, &network, &registry, &flows, &app).await
+    services::sandbox::undeploy(&name, &store, &engine, &network, &registry, &flows, &proxy, &app).await
 }
 
 /// Report active sync sessions as deployment state.

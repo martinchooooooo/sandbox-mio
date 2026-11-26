@@ -6,7 +6,7 @@ import { classify, type Health } from "$lib/sandbox/health";
 // Module-scoped store; owns the single `resources://snapshot` subscription
 // (docs/features/sandbox-resource-monitor/02_dev.md, Resolved Decision 9).
 
-/** Mirrors Rust `services::resources::ResourceSample`. */
+/** Mirrors Rust `resources::rollup::ResourceSample`. */
 export interface ResourceSample {
     atMs: number;
     /** Fraction (0 to 1) of the allotted CPUs; null for the first sample after start. */
@@ -15,7 +15,7 @@ export interface ResourceSample {
     memoryLimit: number;
 }
 
-/** Mirrors Rust `services::resources::SandboxResources`. */
+/** Mirrors Rust `resources::monitor::SandboxResources`. */
 export interface SandboxResources {
     name: string;
     provider: ProviderId;
@@ -33,7 +33,7 @@ export interface EnginePool {
     memoryFree: number;
 }
 
-/** Mirrors Rust `services::resources::ResourceSnapshot`. */
+/** Mirrors Rust `resources::monitor::ResourceSnapshot`. */
 export interface ResourceSnapshot {
     atMs: number;
     sandboxes: SandboxResources[];

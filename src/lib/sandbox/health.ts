@@ -5,7 +5,7 @@ import type { SandboxResources } from "$lib/sandbox/resources.svelte";
 
 export type Health = "unknown" | "ok" | "busy" | "strained";
 
-/** Equal to `PRESSURE_FRACTION` in `src-tauri/src/services/resources.rs`. */
+/** Equal to `PRESSURE_FRACTION` in `src-tauri/src/resources/rollup.rs`. */
 export const STRAINED_MEMORY = 0.9;
 export const BUSY_MEMORY = 0.75;
 export const BUSY_CPU = 0.9;

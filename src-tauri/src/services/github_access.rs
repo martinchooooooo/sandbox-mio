@@ -12,7 +12,8 @@ use crate::credentials::types::CredentialError;
 use crate::credentials::{self, GITHUB_SERVICE};
 use crate::error::AppError;
 use crate::provider::ProviderRegistry;
-use crate::proxy::iron::BindingState;
+use crate::proxy::github::BindingState;
+use crate::proxy::store::ProxyStore;
 use crate::sync::types::SyncEngine;
 
 /// Serialises every reconcile, so an apply-all after a save cannot race a start hook on the same
@@ -165,7 +166,7 @@ async fn reconcile_locked(
         // (the same call) re-run the refresh.
         if opted_out {
             let site = locate_site(app, name).await?;
-            refreshed = Some(Ok(crate::proxy::iron::refresh_github_binding(app, &site, name).await?));
+            refreshed = Some(Ok(crate::proxy::github::refresh_github_binding(app, &app.state::<ProxyStore>(), &site, name).await?));
         }
     }
 
@@ -181,7 +182,7 @@ async fn reconcile_locked(
     // refreshed here even when gh needs no action, which is how a rotation reaches the sidecar.
     if refreshed.is_none() {
         let site = locate_site(app, name).await?;
-        refreshed = Some(crate::proxy::iron::refresh_github_binding(app, &site, name).await.map_err(|e| e.to_string()));
+        refreshed = Some(crate::proxy::github::refresh_github_binding(app, &app.state::<ProxyStore>(), &site, name).await.map_err(|e| e.to_string()));
     }
     if is_deployed(app, name).await? {
         return Ok(state);
@@ -254,7 +255,7 @@ pub fn spawn_reconcile_all(app: &AppHandle) {
         };
         for sandbox in sandboxes.iter().filter(|s| s.status != "running") {
             let refreshed = match locate_site(&app, &sandbox.name).await {
-                Ok(site) => crate::proxy::iron::refresh_github_binding(&app, &site, &sandbox.name)
+                Ok(site) => crate::proxy::github::refresh_github_binding(&app, &app.state::<ProxyStore>(), &site, &sandbox.name)
                     .await
                     .map_err(|e| e.to_string()),
                 Err(e) => Err(e.to_string()),

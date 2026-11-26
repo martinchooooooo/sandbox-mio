@@ -55,7 +55,7 @@ export interface NetPolicyState {
     proposalError: string | null;
 }
 
-// Mirrors Rust `proxy::iron::ApplyReport`.
+// Mirrors Rust `proxy::apply::ApplyReport`.
 export interface ApplyReport {
     missingSecrets: string[];
 }

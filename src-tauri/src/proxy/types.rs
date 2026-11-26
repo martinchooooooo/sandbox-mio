@@ -1,6 +1,5 @@
-//! Types for the per-sandbox proxy sidecar: the subsystem's own error, the attachment
-//! `SandboxBackend::create` needs to build a proxy-enabled `InstanceSpec`, and the frontend-facing
-//! status shape. See `docs/features/network-proxy/02_dev.md`.
+//! Types for the per-sandbox proxy sidecar: the subsystem's own error, the site a sidecar runs on,
+//! and the frontend-facing status shape. See `docs/features/network-proxy/02_dev.md`.
 
 use std::sync::Arc;
 
@@ -47,15 +46,6 @@ impl SidecarSite {
             local: true,
         }
     }
-}
-
-/// What `SandboxBackend::create` needs to route a sandbox through its proxy sidecar.
-pub enum ProxyAttachment {
-    /// Podman: the internal network to join *instead of* `pasta`, the environment (proxy vars, CA
-    /// trust vars) to stamp on the sandbox container at create time, and the sidecar address the
-    /// sandbox resolves every name through
-    /// (`docs/features/podman-egress-boundary/02_dev.md`, Concrete Model).
-    PodmanBridge { network: String, env: Vec<(String, String)>, dns: String },
 }
 
 /// Frontend-facing proxy status. Derived from the `<sandbox>-proxy` sidecar's presence rather

@@ -12,6 +12,7 @@ use crate::network::types::NetworkManager;
 use crate::provider::types::MachineRef;
 use crate::provider::ProviderRegistry;
 use crate::proxy::flowlog::FlowWatchRegistry;
+use crate::proxy::store::ProxyStore;
 use crate::proxy::types::SidecarSite;
 use crate::runtime::types::RuntimeManager;
 use crate::sync::types::{SyncEngine, SyncStatus};
@@ -41,7 +42,7 @@ fn cleanup_host_state(name: &str, app: &tauri::AppHandle) {
     });
     // A sandbox recreated under the same name must not inherit this one's usage history.
     if let Some(monitor) =
-        tauri::Manager::try_state::<Arc<crate::services::resources::ResourceMonitor>>(app)
+        tauri::Manager::try_state::<Arc<crate::resources::monitor::ResourceMonitor>>(app)
     {
         monitor.forget(app, name);
     }
@@ -62,16 +63,17 @@ fn remove_dir_best_effort(name: &str, what: &str, dir: Result<std::path::PathBuf
     }
 }
 
+/// Whether an engine instance is a sandbox a user manages, as opposed to an auth container or a
+/// proxy sidecar.
+pub fn is_user_sandbox(instance: &Sandbox) -> bool {
+    !instance.name.starts_with(crate::credentials::types::AUTH_CONTAINER_PREFIX)
+        && !crate::proxy::is_sidecar(instance)
+}
+
 /// The sandboxes a user manages: everything the backend lists except auth containers and proxy
 /// sidecars.
 pub async fn list_user(store: &Arc<dyn SandboxBackend>) -> Result<Vec<Sandbox>, AppError> {
-    Ok(store
-        .list()
-        .await?
-        .into_iter()
-        .filter(|s| !s.name.starts_with(crate::credentials::types::AUTH_CONTAINER_PREFIX))
-        .filter(|s| !crate::proxy::is_sidecar(s))
-        .collect())
+    Ok(store.list().await?.into_iter().filter(is_user_sandbox).collect())
 }
 
 /// Creates a sandbox on `provider` and brings its workspace up. Every sandbox gets a per-sandbox
@@ -88,6 +90,7 @@ pub async fn create(
     store: &Arc<dyn SandboxBackend>,
     runtime: &Arc<dyn RuntimeManager>,
     registry: &Arc<ProviderRegistry>,
+    proxy: &ProxyStore,
     app: &tauri::AppHandle,
 ) -> Result<Sandbox, AppError> {
     // Checked before the sidecar is created, not only in `store.create`: a sidecar create on a taken
@@ -104,7 +107,7 @@ pub async fn create(
 
     let id = format!("sandbox-create:{name}");
     activity::scope(app, &id, TaskKind::SandboxCreate, Some(name.to_string()), |task| async move {
-        create_steps(&task, name, existing_path, provider, egress, store, runtime, registry, app)
+        create_steps(&task, name, existing_path, provider, egress, store, runtime, registry, proxy, app)
             .await
             .map_err(TaskFailure::same)
     })
@@ -121,6 +124,7 @@ async fn create_steps(
     store: &Arc<dyn SandboxBackend>,
     runtime: &Arc<dyn RuntimeManager>,
     registry: &Arc<ProviderRegistry>,
+    proxy: &ProxyStore,
     app: &tauri::AppHandle,
 ) -> Result<Sandbox, AppError> {
     // Stage markers, so a failed create is attributable to a step from the log alone: failures
@@ -133,13 +137,13 @@ async fn create_steps(
     let sidecar = registry.local(provider);
     tracing::info!(target: "create", %name, "create_sandbox: ensuring proxy image");
     task.progress(None, "Preparing network proxy");
-    crate::proxy::ensure_proxy_image(app, &sidecar, provider).await?;
+    crate::proxy::sidecar::ensure_proxy_image(app, &sidecar, provider).await?;
     tracing::info!(target: "create", %name, "create_sandbox: creating proxy sidecar");
     task.progress(None, "Starting network proxy");
-    let attachment = match crate::proxy::create_proxy(app, &sidecar, provider, name).await {
+    let attachment = match crate::proxy::sidecar::create_proxy(proxy, &sidecar, provider, name).await {
         Ok(a) => a,
         Err(e) => {
-            crate::proxy::remove_proxy(app, &sidecar, provider, name).await;
+            crate::proxy::sidecar::remove_proxy(proxy, &sidecar, provider, name).await;
             return Err(e.into());
         }
     };
@@ -152,7 +156,7 @@ async fn create_steps(
             // The proxy container and network exist ahead of the sandbox they attach to
             // (`docs/features/network-proxy/02_dev.md`, Concrete Model); a failed sandbox create
             // must not strand them.
-            crate::proxy::remove_proxy(app, &sidecar, provider, name).await;
+            crate::proxy::sidecar::remove_proxy(proxy, &sidecar, provider, name).await;
             return Err(e.into());
         }
     };
@@ -160,7 +164,7 @@ async fn create_steps(
     // Decision 18 of podman-egress-boundary).
     task.progress(None, "Applying network policy");
     let site = crate::proxy::types::SidecarSite::local(registry, provider);
-    if let Err(e) = apply_policy_and_inject_ca(app, &site, name).await {
+    if let Err(e) = apply_policy_and_inject_ca(app, proxy, &site, name).await {
         tracing::error!(target: "create", %name, error = %e, "create_sandbox: proxy setup failed, rolling back");
         match store.destroy(name).await {
             Ok(()) => cleanup_host_state(name, app),
@@ -169,8 +173,8 @@ async fn create_steps(
                 "create_sandbox: rollback after proxy setup failure also failed"
             ),
         }
-        crate::net_policy::remove_applied(app, name);
-        crate::proxy::remove_proxy(app, &sidecar, provider, name).await;
+        crate::net_policy::applied::remove_applied(app, name);
+        crate::proxy::sidecar::remove_proxy(proxy, &sidecar, provider, name).await;
         return Err(e);
     }
     tracing::info!(
@@ -190,14 +194,15 @@ async fn create_steps(
 /// sidecar's CA into the sandbox.
 async fn apply_policy_and_inject_ca(
     app: &tauri::AppHandle,
+    proxy: &ProxyStore,
     site: &crate::proxy::types::SidecarSite,
     name: &str,
 ) -> Result<(), AppError> {
     let podman = &site.provider;
     tracing::info!(target: "create", %name, "create_sandbox: applying network policy");
-    crate::proxy::iron::apply_accepted(app, site, name).await?;
+    crate::proxy::apply::apply_accepted(app, proxy, site, name).await?;
     tracing::info!(target: "create", %name, "create_sandbox: injecting proxy CA");
-    let pem = crate::proxy::read_ca_pem(app, name, ProviderId::Podman)?;
+    let pem = proxy.read_ca_pem(name, ProviderId::Podman)?;
     crate::proxy::inject_ca(podman, name, &pem).await?;
     Ok(())
 }
@@ -221,10 +226,10 @@ pub async fn start(
     name: &str,
     store: &Arc<dyn SandboxBackend>,
     router: &super::routing::SandboxRouter,
-    app: &tauri::AppHandle,
+    proxy: &ProxyStore,
 ) -> Result<(), AppError> {
     let site = super::proxy::locate_sidecar(router, name).await?;
-    crate::proxy::ensure_sidecar_running(app, &site, name).await?;
+    crate::proxy::sidecar::ensure_sidecar_running(proxy, &site, name).await?;
     if site.local {
         return Ok(store.start(name).await?);
     }
@@ -251,6 +256,7 @@ pub async fn deploy(
     engine: &Arc<dyn SyncEngine>,
     registry: &Arc<ProviderRegistry>,
     flows: &FlowWatchRegistry,
+    proxy: &ProxyStore,
     app: &tauri::AppHandle,
 ) -> Result<(), AppError> {
     // A second deploy would meet the live deployment's containers, which a rollback must never touch.
@@ -262,11 +268,11 @@ pub async fn deploy(
     }
     // Deploy always moves the sidecar; a sandbox without one has no boundary to recreate
     // (`docs/features/proxy-remote-deploy/02_dev.md`, Resolved Decision 3).
-    crate::proxy::require_sidecar(app, registry, name).await?;
+    crate::proxy::sidecar::require_sidecar(proxy, registry, name).await?;
     let plan = store.plan_deploy(name, host).await?;
     let id = format!("sandbox-deploy:{name}");
     activity::scope(app, &id, TaskKind::SandboxDeploy, Some(name.to_string()), |task| async move {
-        deploy_steps(&task, name, host, &plan, store, runtime, engine, registry, flows, app)
+        deploy_steps(&task, name, host, &plan, store, runtime, engine, registry, flows, proxy, app)
             .await
             .map_err(TaskFailure::same)
     })
@@ -284,17 +290,18 @@ async fn deploy_steps(
     engine: &Arc<dyn SyncEngine>,
     registry: &Arc<ProviderRegistry>,
     flows: &FlowWatchRegistry,
+    proxy: &ProxyStore,
     app: &tauri::AppHandle,
 ) -> Result<(), AppError> {
     let local = SidecarSite::local(registry, ProviderId::Podman);
     let remote = remote_site(registry, host);
     let mut undo = DeployUndo::default();
-    match deploy_to_target(task, name, plan, store, runtime, engine, flows, app, &local, &remote, &mut undo).await {
+    match deploy_to_target(task, name, plan, store, runtime, engine, flows, proxy, app, &local, &remote, &mut undo).await {
         Ok(()) => Ok(()),
         Err(e) => {
             tracing::error!(target: "deploy", %name, %host, error = %e, "deploy failed, rolling back");
             task.progress(None, "Rolling back");
-            rollback(name, host, store, flows, app, &local, &remote, &undo).await;
+            rollback(name, host, store, flows, proxy, app, &local, &remote, &undo).await;
             Err(e)
         }
     }
@@ -349,6 +356,7 @@ async fn deploy_to_target(
     runtime: &Arc<dyn RuntimeManager>,
     engine: &Arc<dyn SyncEngine>,
     flows: &FlowWatchRegistry,
+    proxy: &ProxyStore,
     app: &tauri::AppHandle,
     local: &SidecarSite,
     remote: &SidecarSite,
@@ -364,18 +372,18 @@ async fn deploy_to_target(
         .into());
     }
     task.progress(None, "Preparing network proxy on the host");
-    crate::proxy::ensure_proxy_image(app, &remote.provider, ProviderId::Podman).await?;
+    crate::proxy::sidecar::ensure_proxy_image(app, &remote.provider, ProviderId::Podman).await?;
     task.progress(None, "Starting network proxy on the host");
-    let attachment = crate::proxy::create_remote_proxy(app, remote, name).await?;
+    let attachment = crate::proxy::sidecar::create_remote_proxy(proxy, remote, name).await?;
     undo.remote_proxy = true;
     // The remote sandbox carries the placeholders of the applied snapshot, so one snapshot stays
     // valid for both containers (Resolved Decision 10).
-    let guest_env = crate::net_policy::read_applied(app, name)
+    let guest_env = crate::net_policy::applied::read_applied(app, name)
         .map_err(BackendError::from)?
         .and_then(|a| a.guest_env)
         .unwrap_or_default();
     let extra_env: Vec<(String, String)> =
-        guest_env.iter().map(|v| (v.clone(), crate::net_policy::placeholder(v))).collect();
+        guest_env.iter().map(|v| (v.clone(), crate::net_policy::schema::placeholder(v))).collect();
 
     task.progress(None, "Creating the sandbox on the host");
     undo.remote_sandbox = true;
@@ -386,8 +394,8 @@ async fn deploy_to_target(
     // Decision 18 of podman-egress-boundary), so `reproduce_remote` must come after it. Only the
     // accepted policy is deployed (`docs/features/net-policy-review/02_dev.md`, Resolved Decision 7).
     task.progress(None, "Applying network policy");
-    crate::proxy::iron::apply_accepted(app, remote, name).await?;
-    let pem = crate::proxy::read_remote_ca_pem(app, name)?;
+    crate::proxy::apply::apply_accepted(app, proxy, remote, name).await?;
+    let pem = proxy.read_remote_ca_pem(name)?;
     crate::proxy::inject_ca(&remote.provider, name, &pem).await?;
     // Stopped, never removed: the stopped local sandbox's network is fixed at create
     // (Resolved Decision 12).
@@ -395,7 +403,7 @@ async fn deploy_to_target(
     if let Err(e) = local.provider.stop_sidecar(&crate::proxy::proxy_container_name(name)).await {
         tracing::warn!(target: "deploy", %name, error = %e, "could not stop the local proxy sidecar");
     }
-    crate::proxy::flowlog::retarget(app, flows, name, remote);
+    crate::proxy::flowlog::retarget(app, proxy, flows, name, remote);
     undo.watch_retargeted = true;
 
     task.progress(None, "Installing tools on the host");
@@ -412,6 +420,7 @@ async fn rollback(
     host: &str,
     store: &Arc<dyn SandboxBackend>,
     flows: &FlowWatchRegistry,
+    proxy: &ProxyStore,
     app: &tauri::AppHandle,
     local: &SidecarSite,
     remote: &SidecarSite,
@@ -425,12 +434,12 @@ async fn rollback(
                 }
             }
             UndoStep::RemoveRemoteProxy => {
-                crate::proxy::remove_remote_proxy(remote, name).await;
-                crate::proxy::remove_remote_state(app, name);
+                crate::proxy::sidecar::remove_remote_proxy(remote, name).await;
+                proxy.remove_remote_state(name);
             }
-            UndoStep::RetargetWatchLocal => crate::proxy::flowlog::retarget(app, flows, name, local),
+            UndoStep::RetargetWatchLocal => crate::proxy::flowlog::retarget(app, proxy, flows, name, local),
             UndoStep::StartLocalSidecar => {
-                if let Err(e) = crate::proxy::ensure_sidecar_running(app, local, name).await {
+                if let Err(e) = crate::proxy::sidecar::ensure_sidecar_running(proxy, local, name).await {
                     tracing::warn!(target: "deploy", %name, error = %e, "rollback: could not restart the local proxy sidecar");
                 }
             }
@@ -499,6 +508,7 @@ pub async fn undeploy(
     network: &Arc<dyn NetworkManager>,
     registry: &Arc<ProviderRegistry>,
     flows: &FlowWatchRegistry,
+    proxy: &ProxyStore,
     app: &tauri::AppHandle,
 ) -> Result<(), AppError> {
     let session = engine
@@ -514,15 +524,15 @@ pub async fn undeploy(
     engine.flush(name).await?;
     store.remove_remote(name, &session.host).await?;
     let remote = remote_site(registry, &session.host);
-    crate::proxy::remove_remote_proxy(&remote, name).await;
+    crate::proxy::sidecar::remove_remote_proxy(&remote, name).await;
     engine.terminate(name).await?;
     let local = SidecarSite::local(registry, ProviderId::Podman);
-    crate::proxy::flowlog::retarget(app, flows, name, &local);
+    crate::proxy::flowlog::retarget(app, proxy, flows, name, &local);
     // Order is load-bearing: the local sidecar was stopped by deploy and the local sandbox has no
     // network until it runs again.
-    crate::proxy::ensure_sidecar_running(app, &local, name).await?;
+    crate::proxy::sidecar::ensure_sidecar_running(proxy, &local, name).await?;
     store.start(name).await?;
-    crate::proxy::remove_remote_state(app, name);
+    proxy.remove_remote_state(name);
     Ok(())
 }
 
@@ -535,6 +545,7 @@ pub async fn destroy(
     engine: &Arc<dyn SyncEngine>,
     network: &Arc<dyn NetworkManager>,
     registry: &Arc<ProviderRegistry>,
+    proxy: &ProxyStore,
     app: &tauri::AppHandle,
 ) -> Result<(), AppError> {
     let session = engine
@@ -546,11 +557,11 @@ pub async fn destroy(
     let Some(session) = session else {
         close_panes_and_forwards(name, network, app).await;
         store.destroy(name).await?;
-        crate::net_policy::remove_applied(app, name);
+        crate::net_policy::applied::remove_applied(app, name);
         cleanup_host_state(name, app);
         // Best-effort, so the leftovers of a half-created sandbox are cleaned up too.
-        let (id, provider) = crate::proxy::sidecar_provider(app, registry, name);
-        crate::proxy::remove_proxy(app, &provider, id, name).await;
+        let (id, provider) = crate::proxy::sidecar::sidecar_provider(proxy, registry, name);
+        crate::proxy::sidecar::remove_proxy(proxy, &provider, id, name).await;
         return Ok(());
     };
     let _ = engine.flush(name).await;
@@ -566,12 +577,12 @@ pub async fn destroy(
     // Decision 2) — do not unify them.
     engine.terminate(name).await?;
     store.remove_remote(name, &session.host).await?;
-    crate::proxy::remove_remote_proxy(&remote_site(registry, &session.host), name).await;
+    crate::proxy::sidecar::remove_remote_proxy(&remote_site(registry, &session.host), name).await;
     store.destroy(name).await?;
-    crate::net_policy::remove_applied(app, name);
+    crate::net_policy::applied::remove_applied(app, name);
     cleanup_host_state(name, app);
     // Removes the local sidecar, its network and the whole state directory, `remote/` included.
-    let (id, provider) = crate::proxy::sidecar_provider(app, registry, name);
-    crate::proxy::remove_proxy(app, &provider, id, name).await;
+    let (id, provider) = crate::proxy::sidecar::sidecar_provider(proxy, registry, name);
+    crate::proxy::sidecar::remove_proxy(proxy, &provider, id, name).await;
     Ok(())
 }

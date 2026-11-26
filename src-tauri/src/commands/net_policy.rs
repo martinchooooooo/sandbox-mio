@@ -8,9 +8,13 @@ use tauri::State;
 use crate::backends::types::SandboxBackend;
 use crate::domain::types::BackendError;
 use crate::error::AppError;
-use crate::net_policy::{self, NetPolicy, PolicyChange, UnstampedBinding};
 use crate::domain::types::ProviderId;
+use crate::net_policy::applied::{read_accepted, unstamped_bindings, UnstampedBinding};
+use crate::net_policy::diff::{diff, PolicyChange};
+use crate::net_policy::schema::{load_if_present, save, NetPolicy};
+use crate::net_policy::validate::validate;
 use crate::provider::ProviderRegistry;
+use crate::proxy::store::ProxyStore;
 
 /// A workspace policy file that differs from the accepted policy, with what changed.
 #[derive(serde::Serialize)]
@@ -61,15 +65,15 @@ pub async fn net_policy_state(
     app: tauri::AppHandle,
 ) -> Result<NetPolicyState, AppError> {
     let workspace = workspace_of(&store, &name).await?;
-    let accepted = net_policy::read_accepted(&app, &name).map_err(BackendError::from)?;
+    let accepted = read_accepted(&app, &name).map_err(BackendError::from)?;
     let (provider, _) = registry.provider_of(&name).await;
     let caps = registry.local(provider).capabilities();
-    let (proposal, proposal_error) = match net_policy::load_if_present(&workspace) {
-        Ok(Some(file)) if file != accepted.policy => match net_policy::validate(&file, caps) {
+    let (proposal, proposal_error) = match load_if_present(&workspace) {
+        Ok(Some(file)) if file != accepted.policy => match validate(&file, caps) {
             Ok(()) => (
                 Some(Proposal {
-                    changes: net_policy::diff(&accepted.policy, &file),
-                    unstamped: net_policy::unstamped_bindings(&file, &accepted),
+                    changes: diff(&accepted.policy, &file),
+                    unstamped: unstamped_bindings(&file, &accepted),
                     policy: file,
                 }),
                 None,
@@ -80,7 +84,7 @@ pub async fn net_policy_state(
         Err(e) => (None, Some(e.0)),
     };
     Ok(NetPolicyState {
-        unstamped: net_policy::unstamped_bindings(&accepted.policy, &accepted),
+        unstamped: unstamped_bindings(&accepted.policy, &accepted),
         revision: accepted.revision,
         accepted: accepted.policy,
         proposal,
@@ -91,7 +95,7 @@ pub async fn net_policy_state(
 /// Whether the workspace file holds a proposal other than `except`: a parsable file that differs
 /// from it. A broken file counts as pending too, so it is never silently overwritten.
 fn proposal_pending(workspace: &str, except: &NetPolicy) -> bool {
-    match net_policy::load_if_present(workspace) {
+    match load_if_present(workspace) {
         Ok(Some(file)) => file != *except,
         Ok(None) => false,
         Err(_) => true,
@@ -101,7 +105,7 @@ fn proposal_pending(workspace: &str, except: &NetPolicy) -> bool {
 /// Writes the accepted policy over the workspace file so the file shows what runs. A failure is
 /// logged, never returned: the apply already took effect.
 fn mirror(workspace: &str, name: &str, policy: &NetPolicy) {
-    if let Err(e) = net_policy::save(workspace, policy) {
+    if let Err(e) = save(workspace, policy) {
         tracing::warn!(target: "net-policy", %name, error = %e, "failed to mirror the accepted policy to the workspace file");
     }
 }
@@ -119,8 +123,9 @@ pub async fn apply_sandbox_policy(
     store: State<'_, Arc<dyn SandboxBackend>>,
     registry: State<'_, Arc<ProviderRegistry>>,
     router: State<'_, crate::services::routing::SandboxRouter>,
+    proxy: State<'_, ProxyStore>,
     app: tauri::AppHandle,
-) -> Result<crate::proxy::iron::ApplyReport, AppError> {
+) -> Result<crate::proxy::apply::ApplyReport, AppError> {
     let workspace = workspace_of(&store, &name).await?;
     let registry = registry.inner().clone();
     let (provider, _) = registry.provider_of(&name).await;
@@ -130,21 +135,28 @@ pub async fn apply_sandbox_policy(
         ))
         .into());
     }
-    net_policy::validate(&policy, registry.local(provider).capabilities())
+    validate(&policy, registry.local(provider).capabilities())
         .map_err(BackendError::from)?;
     let site = crate::services::proxy::locate_sidecar(&router, &name).await?;
     // Read before the apply, which can change what counts as pending: a proposal the user has not
     // decided on survives an apply that does not take it in.
-    let prev = net_policy::read_accepted(&app, &name).map_err(BackendError::from)?.policy;
+    let prev = read_accepted(&app, &name).map_err(BackendError::from)?.policy;
     let keep_file = proposal_pending(&workspace, &prev) && proposal_pending(&workspace, &policy);
-    let edit = crate::proxy::iron::ValueEdit {
+    let edit = crate::proxy::apply::ValueEdit {
         store: store_secret.map(|s| (s.secret_id, s.value)),
         drop: drop_secret_id,
     };
-    let report =
-        crate::proxy::iron::apply_policy(&app, &site, &name, policy.clone(), base_revision, edit)
-            .await
-            .map_err(BackendError::from)?;
+    let report = crate::proxy::apply::apply_policy(
+        &app,
+        &proxy,
+        &site,
+        &name,
+        policy.clone(),
+        base_revision,
+        edit,
+    )
+    .await
+    .map_err(BackendError::from)?;
     if !keep_file {
         mirror(&workspace, &name, &policy);
     }
@@ -159,6 +171,6 @@ pub async fn discard_net_policy_proposal(
     app: tauri::AppHandle,
 ) -> Result<(), AppError> {
     let workspace = workspace_of(&store, &name).await?;
-    let accepted = net_policy::read_accepted(&app, &name).map_err(BackendError::from)?;
-    Ok(net_policy::save(&workspace, &accepted.policy).map_err(BackendError::from)?)
+    let accepted = read_accepted(&app, &name).map_err(BackendError::from)?;
+    Ok(save(&workspace, &accepted.policy).map_err(BackendError::from)?)
 }

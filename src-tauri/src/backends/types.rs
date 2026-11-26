@@ -76,7 +76,7 @@ pub trait SandboxBackend: Send + Sync {
         name: &str,
         existing_path: Option<&str>,
         provider: ProviderId,
-        proxy: Option<&crate::proxy::types::ProxyAttachment>,
+        proxy: Option<&crate::provider::types::ProxyAttachment>,
         egress: Option<&EgressRequest>,
     ) -> Result<Sandbox, BackendError>;
     /// Replace `name`'s instance under the same name around its preserved workspace, with the
@@ -86,7 +86,7 @@ pub trait SandboxBackend: Send + Sync {
     async fn recreate(
         &self,
         name: &str,
-        proxy: Option<&crate::proxy::types::ProxyAttachment>,
+        proxy: Option<&crate::provider::types::ProxyAttachment>,
         egress: Option<&EgressRequest>,
     ) -> Result<Sandbox, BackendError>;
     /// Return every provider's instances (running and stopped), each tagged with its provider.
@@ -108,7 +108,7 @@ pub trait SandboxBackend: Send + Sync {
         &self,
         name: &str,
         plan: &DeployPlan,
-        proxy: &crate::proxy::types::ProxyAttachment,
+        proxy: &crate::provider::types::ProxyAttachment,
         extra_env: &[(String, String)],
     ) -> Result<RemoteDeployment, BackendError>;
     /// Remove remote container (workspace directory left intact).
@@ -164,6 +164,6 @@ pub(super) struct CliBackend {
 /// new allowlist.
 #[derive(Debug, Clone, Default)]
 pub struct EgressRequest {
-    pub mode: Option<crate::net_policy::EgressMode>,
+    pub mode: Option<crate::provider::types::EgressMode>,
     pub starter_hosts: Vec<String>,
 }

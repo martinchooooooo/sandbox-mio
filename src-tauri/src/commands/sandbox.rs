@@ -10,6 +10,10 @@ use crate::error::AppError;
 use crate::network::types::NetworkManager;
 use crate::domain::types::ProviderId;
 use crate::provider::ProviderRegistry;
+use crate::proxy::store::ProxyStore;
+use crate::resources;
+use crate::resources::history::{HistoryWindow, ResourceHistory};
+use crate::resources::monitor::{ResourceMonitor, ResourceSnapshot};
 use crate::runtime::types::RuntimeManager;
 use crate::services;
 use crate::sync::types::SyncEngine;
@@ -22,11 +26,12 @@ pub async fn create_sandbox(
     name: String,
     existing_path: Option<String>,
     provider: Option<ProviderId>,
-    egress: Option<crate::net_policy::EgressMode>,
+    egress: Option<crate::provider::types::EgressMode>,
     starter_hosts: Option<Vec<String>>,
     store: State<'_, Arc<dyn SandboxBackend>>,
     runtime: State<'_, Arc<dyn RuntimeManager>>,
     registry: State<'_, Arc<ProviderRegistry>>,
+    proxy: State<'_, ProxyStore>,
     app: tauri::AppHandle,
 ) -> Result<Sandbox, AppError> {
     let provider = provider.unwrap_or(ProviderId::Podman);
@@ -42,6 +47,7 @@ pub async fn create_sandbox(
         &store,
         &runtime,
         &registry,
+        &proxy,
         &app,
     )
     .await
@@ -57,9 +63,10 @@ pub async fn start_sandbox(
     name: String,
     store: State<'_, Arc<dyn SandboxBackend>>,
     router: State<'_, services::routing::SandboxRouter>,
+    proxy: State<'_, ProxyStore>,
     app: tauri::AppHandle,
 ) -> Result<(), AppError> {
-    services::sandbox::start(&name, &store, &router, &app).await?;
+    services::sandbox::start(&name, &store, &router, &proxy).await?;
     services::inference_reach::spawn_ensure_for_sandbox(&app, &name);
     services::github_access::spawn_reconcile(&app, &name);
     services::panes::spawn_prewarm_agent_web(&app, &name);
@@ -88,9 +95,10 @@ pub async fn destroy_sandbox(
     engine: State<'_, Arc<dyn SyncEngine>>,
     network: State<'_, Arc<dyn NetworkManager>>,
     registry: State<'_, Arc<ProviderRegistry>>,
+    proxy: State<'_, ProxyStore>,
     app: tauri::AppHandle,
 ) -> Result<(), AppError> {
-    services::sandbox::destroy(&name, force, &store, &engine, &network, &registry, &app).await
+    services::sandbox::destroy(&name, force, &store, &engine, &network, &registry, &proxy, &app).await
 }
 
 #[tauri::command]
@@ -102,8 +110,8 @@ pub async fn listen_events(on_event: Channel<serde_json::Value>, store: State<'_
 /// (`docs/features/sandbox-resource-monitor/02_dev.md`).
 #[tauri::command]
 pub fn get_resource_snapshot(
-    monitor: State<'_, Arc<services::resources::ResourceMonitor>>,
-) -> Result<services::resources::ResourceSnapshot, AppError> {
+    monitor: State<'_, Arc<ResourceMonitor>>,
+) -> Result<ResourceSnapshot, AppError> {
     Ok(monitor.snapshot())
 }
 
@@ -112,10 +120,10 @@ pub fn get_resource_snapshot(
 #[tauri::command]
 pub fn get_resource_history(
     name: Option<String>,
-    window: services::resources::HistoryWindow,
+    window: HistoryWindow,
     app: tauri::AppHandle,
-) -> Result<services::resources::ResourceHistory, AppError> {
-    services::resources::history(&app, name.as_deref(), window)
+) -> Result<ResourceHistory, AppError> {
+    Ok(resources::history::history(&app, name.as_deref(), window)?)
 }
 
 /// Opens the sandbox's workspace folder in the OS file manager. The path is resolved from the

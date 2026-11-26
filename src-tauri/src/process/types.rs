@@ -2,7 +2,7 @@ use std::process::Output;
 
 /// Runs one external-tool invocation and returns its raw output. `args` excludes the binary name;
 /// `args[0]` is the CLI subcommand (`"create"`, `"machine"`, `"sync"`, ...). Implemented once per
-/// real tool ([`SystemPodmanRunner`]) and once per scripted tool (`ScriptedPodmanRunner` in
+/// real tool ([`super::podman::SystemPodmanRunner`]) and once per scripted tool (`ScriptedPodmanRunner` in
 /// `src-tauri/src/mockctl/`), so the owning subsystem struct (`CliBackend`,
 /// `PodmanMachineManager`) is identical in both production and the e2e `light` tier.
 #[async_trait::async_trait]
@@ -40,17 +40,3 @@ pub trait ProcessRunner: Send + Sync {
         ))
     }
 }
-
-/// Real `podman` invocations: wraps `podman_command_std()` (`src-tauri/src/process/podman.rs`),
-/// preserving its resource-dir/env resolution. Also the podman seam's single health verdict — see
-/// [`super::breaker`] and `docs/features/podman-process-isolation/02_dev.md`, Phase D.
-pub struct SystemPodmanRunner;
-
-/// Real Mutagen sidecar invocations: wraps `mutagen::command()` (`src-tauri/src/process/mutagen.rs`),
-/// preserving its `MUTAGEN_DATA_DIRECTORY` isolation. Holds the [`tauri::AppHandle`] because the
-/// sidecar is resolved through it, which is why this is a separate runner from
-/// [`SystemPodmanRunner`].
-pub struct SystemMutagenRunner {
-    pub(super) app: tauri::AppHandle,
-}
-

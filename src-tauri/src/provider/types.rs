@@ -157,6 +157,16 @@ pub struct InstanceNetwork {
     pub dns: Option<String>,
 }
 
+/// What `SandboxBackend::create` needs to route a sandbox through its proxy sidecar. Declared here,
+/// beside [`InstanceNetwork`], so `backends` need not depend on `proxy`.
+pub enum ProxyAttachment {
+    /// Podman: the internal network to join *instead of* `pasta`, the environment (proxy vars, CA
+    /// trust vars) to stamp on the sandbox container at create time, and the sidecar address the
+    /// sandbox resolves every name through
+    /// (`docs/features/podman-egress-boundary/02_dev.md`, Concrete Model).
+    PodmanBridge { network: String, env: Vec<(String, String)>, dns: String },
+}
+
 /// A bind mount for [`SidecarSpec`]: `host_path` mounted at `dest` inside the container.
 pub struct SidecarMount {
     pub host_path: String,

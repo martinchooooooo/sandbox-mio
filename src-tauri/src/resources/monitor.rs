@@ -1,17 +1,19 @@
-//! The resource monitor (`docs/features/sandbox-resource-monitor/02_dev.md`): one background task
-//! samples every running local sandbox's CPU and memory each tick, pushes the live snapshot to the
-//! frontend as `resources://snapshot`, and appends one-minute rollups to a JSON-lines history file
-//! per sandbox under `paths::resource_history_dir`.
+//! The sampling task and the latest snapshot: one tick lists the local sandboxes, reads each running
+//! engine's stats, derives CPU fractions, and emits the snapshot.
 
 use std::collections::{HashMap, VecDeque};
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter};
 
-use crate::domain::types::ProviderId;
+use super::history::{
+    append_line, pool_file, prune_dir, prune_file, sandbox_file, PRUNE_GROWTH_BYTES,
+};
+use super::rollup::{mib, MinuteAcc, PoolRollup, ResourceSample, Rollup};
+use super::unix_now;
+use crate::domain::types::{ProviderId, Sandbox};
 use crate::provider::types::{EnginePool, InstanceStats};
 use crate::provider::ProviderRegistry;
 
@@ -31,30 +33,9 @@ const RING_LEN: usize = 6;
 /// A sandbox whose engine call keeps failing keeps its last samples for this many ticks.
 const MAX_MISSED_TICKS: u32 = 3;
 
-/// The share of the limit a sample counts as under memory pressure in the rollups. Equal to
-/// `STRAINED_MEMORY` in `src/lib/sandbox/health.ts`.
-const PRESSURE_FRACTION: f64 = 0.9;
-
-const RETENTION_SECS: u64 = 14 * 24 * 3600;
-
-/// A history file is pruned at monitor start and whenever it has grown this much since.
-const PRUNE_GROWTH_BYTES: u64 = 512 * 1024;
-
-/// The Podman machine's history file stem. A leading underscore cannot collide with a sandbox,
-/// whose name starts with an ASCII alphanumeric (`validate_name` in `src-tauri/src/domain/mod.rs`).
-const POOL_FILE_STEM: &str = "_podman-machine";
-
-/// One live reading of one sandbox.
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ResourceSample {
-    pub at_ms: u64,
-    /// Fraction (0 to 1) of the allotted CPUs used since the previous sample; `None` for the first
-    /// sample after start, or while the allotted CPU count is unknown.
-    pub cpu: Option<f64>,
-    pub memory_used: u64,
-    pub memory_limit: u64,
-}
+/// Whether an engine instance is a sandbox the user manages. The caller decides, because telling a
+/// sandbox from the app's own sidecars and auth containers takes subsystems this one may not name.
+pub type SandboxFilter = fn(&Sandbox) -> bool;
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -74,129 +55,6 @@ pub struct ResourceSnapshot {
     pub at_ms: u64,
     pub sandboxes: Vec<SandboxResources>,
     pub podman_pool: Option<EnginePool>,
-}
-
-/// One minute of one sandbox, as written to its history file. Memory is in MiB and CPU is rounded
-/// to [`CPU_DECIMALS`] places, which keeps a line near 110 bytes.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Rollup {
-    /// Unix seconds at the end of the minute.
-    pub ts: u64,
-    pub provider: ProviderId,
-    /// Mean CPU fraction; absent when no sample in the minute had a CPU reading.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cpu: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cpu_max: Option<f64>,
-    /// Mean memory in use.
-    pub mem: u64,
-    pub mem_max: u64,
-    pub limit: u64,
-    /// Samples at or above [`PRESSURE_FRACTION`] of the limit.
-    pub high: u32,
-    /// Which memory definition the provider reported (Resolved Decision 5); written only when true.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub includes_cache: bool,
-}
-
-/// One minute of the Podman machine, as written to `_podman-machine.jsonl`, memory in MiB.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PoolRollup {
-    pub ts: u64,
-    pub cpus: u32,
-    pub total: u64,
-    /// The kernel's free memory, which counts page cache as used.
-    pub free: u64,
-}
-
-const CPU_DECIMALS: i32 = 4;
-
-fn round_cpu(fraction: f64) -> f64 {
-    let scale = 10f64.powi(CPU_DECIMALS);
-    (fraction * scale).round() / scale
-}
-
-fn mib(bytes: u64) -> u64 {
-    (bytes + (1 << 19)) >> 20
-}
-
-#[derive(Debug, Clone, Copy, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum HistoryWindow {
-    Day,
-    Week,
-}
-
-impl HistoryWindow {
-    fn secs(self) -> u64 {
-        match self {
-            HistoryWindow::Day => 24 * 3600,
-            HistoryWindow::Week => 7 * 24 * 3600,
-        }
-    }
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SandboxHistory {
-    pub name: String,
-    pub rollups: Vec<Rollup>,
-}
-
-#[derive(Debug, Clone, Default, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ResourceHistory {
-    pub sandboxes: Vec<SandboxHistory>,
-    pub podman_pool: Vec<PoolRollup>,
-}
-
-#[derive(Default)]
-struct MinuteAcc {
-    cpu_sum: f64,
-    cpu_n: u32,
-    cpu_max: f64,
-    mem_sum: u64,
-    mem_max: u64,
-    mem_limit: u64,
-    n: u32,
-    high: u32,
-}
-
-impl MinuteAcc {
-    fn add(&mut self, sample: &ResourceSample) {
-        if let Some(cpu) = sample.cpu {
-            self.cpu_sum += cpu;
-            self.cpu_n += 1;
-            self.cpu_max = self.cpu_max.max(cpu);
-        }
-        self.mem_sum += sample.memory_used;
-        self.mem_max = self.mem_max.max(sample.memory_used);
-        self.mem_limit = sample.memory_limit;
-        self.n += 1;
-        if sample.memory_limit > 0
-            && sample.memory_used as f64 >= PRESSURE_FRACTION * sample.memory_limit as f64
-        {
-            self.high += 1;
-        }
-    }
-
-    /// The minute's rollup, resetting the accumulator; `None` for a minute without samples.
-    fn take(&mut self, ts: u64, provider: ProviderId, includes_cache: bool) -> Option<Rollup> {
-        let acc = std::mem::take(self);
-        (acc.n > 0).then(|| Rollup {
-            ts,
-            provider,
-            cpu: (acc.cpu_n > 0).then(|| round_cpu(acc.cpu_sum / acc.cpu_n as f64)),
-            cpu_max: (acc.cpu_n > 0).then(|| round_cpu(acc.cpu_max)),
-            mem: mib(acc.mem_sum / acc.n as u64),
-            mem_max: mib(acc.mem_max),
-            limit: mib(acc.mem_limit),
-            high: acc.high,
-            includes_cache,
-        })
-    }
 }
 
 struct Tracked {
@@ -241,13 +99,15 @@ fn cpu_fraction(prev: (u64, u64), now: (u64, u64), allotted: u32) -> Option<f64>
     Some(((cpu1 - cpu0) as f64 / (at1 - at0) as f64 / allotted as f64).clamp(0.0, 1.0))
 }
 
-fn unix_now() -> Duration {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default()
-}
-
 impl ResourceMonitor {
-    /// Starts the sampling task. Idempotent.
-    pub fn start(self: &Arc<Self>, app: AppHandle, registry: Arc<ProviderRegistry>) {
+    /// Starts the sampling task. Idempotent. `is_user_sandbox` keeps sidecars and auth containers
+    /// out of the monitored set.
+    pub fn start(
+        self: &Arc<Self>,
+        app: AppHandle,
+        registry: Arc<ProviderRegistry>,
+        is_user_sandbox: SandboxFilter,
+    ) {
         let mut task = self.task.lock().unwrap();
         if task.is_some() {
             return;
@@ -261,7 +121,7 @@ impl ResourceMonitor {
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 interval.tick().await;
-                monitor.tick(&app, &registry).await;
+                monitor.tick(&app, &registry, is_user_sandbox).await;
             }
         }));
     }
@@ -289,7 +149,7 @@ impl ResourceMonitor {
             return;
         }
         if let Ok(dir) = crate::paths::resource_history_dir(app) {
-            let path = dir.join(format!("{name}.jsonl"));
+            let path = sandbox_file(&dir, name);
             if let Err(e) = std::fs::remove_file(&path) {
                 if e.kind() != std::io::ErrorKind::NotFound {
                     tracing::warn!(target: "resources", %name, error = %e, "could not remove the resource history");
@@ -299,13 +159,18 @@ impl ResourceMonitor {
         }
     }
 
-    async fn tick(&self, app: &AppHandle, registry: &Arc<ProviderRegistry>) {
+    async fn tick(
+        &self,
+        app: &AppHandle,
+        registry: &Arc<ProviderRegistry>,
+        is_user_sandbox: SandboxFilter,
+    ) {
         let refresh = {
             let state = self.state.lock().unwrap();
             state.known_at.is_none_or(|at| at.elapsed() >= NAME_REFRESH)
         };
         if refresh {
-            let known = known_sandboxes(registry).await;
+            let known = known_sandboxes(registry, is_user_sandbox).await;
             let mut state = self.state.lock().unwrap();
             state.known = known;
             state.known_at = Some(Instant::now());
@@ -324,7 +189,7 @@ impl ResourceMonitor {
         for (id, is_running) in running {
             // Skipping while the breaker is open keeps a struggling engine from being polled at
             // all (docs/features/sandbox-resource-monitor/02_dev.md, Resolved Decision 8).
-            if !is_running || (id == ProviderId::Podman && crate::process::podman_breaker_open()) {
+            if !is_running || (id == ProviderId::Podman && crate::process::podman::podman_breaker_open()) {
                 continue;
             }
             let provider = registry.local(id);
@@ -479,12 +344,12 @@ impl ResourceMonitor {
                 continue;
             }
             if let Ok(line) = serde_json::to_string(&rollup) {
-                lines.push((dir.join(format!("{name}.jsonl")), line));
+                lines.push((sandbox_file(&dir, &name), line));
             }
         }
         if let Some(pool) = pool {
             if let Ok(line) = serde_json::to_string(&pool) {
-                lines.push((dir.join(format!("{POOL_FILE_STEM}.jsonl")), line));
+                lines.push((pool_file(&dir), line));
             }
         }
         for (path, line) in lines {
@@ -506,15 +371,16 @@ impl ResourceMonitor {
 
 /// Every local sandbox by name with its provider and running state, asking each provider on its
 /// own, so one provider's stopped machine does not hide another's sandboxes.
-async fn known_sandboxes(registry: &Arc<ProviderRegistry>) -> HashMap<String, (ProviderId, bool)> {
+async fn known_sandboxes(
+    registry: &Arc<ProviderRegistry>,
+    is_user_sandbox: SandboxFilter,
+) -> HashMap<String, (ProviderId, bool)> {
     let mut known = HashMap::new();
     for (id, provider) in registry.all() {
         match provider.list_instances().await {
             Ok(instances) => {
                 for s in instances {
-                    if s.name.starts_with(crate::credentials::types::AUTH_CONTAINER_PREFIX)
-                        || crate::proxy::is_sidecar(&s)
-                    {
+                    if !is_user_sandbox(&s) {
                         continue;
                     }
                     let running = s.status == "running";
@@ -529,101 +395,6 @@ async fn known_sandboxes(registry: &Arc<ProviderRegistry>) -> HashMap<String, (P
     known
 }
 
-fn append_line(path: &Path, line: &str) -> std::io::Result<()> {
-    let mut file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
-    writeln!(file, "{line}")
-}
-
-#[derive(serde::Deserialize)]
-struct Stamped {
-    ts: u64,
-}
-
-/// The lines of `text` stamped at or after `cutoff`; unreadable lines are dropped.
-fn lines_since(text: &str, cutoff: u64) -> Vec<&str> {
-    text.lines()
-        .filter(|l| serde_json::from_str::<Stamped>(l).is_ok_and(|s| s.ts >= cutoff))
-        .collect()
-}
-
-fn prune_file(path: &Path) {
-    let Ok(text) = std::fs::read_to_string(path) else { return };
-    let cutoff = unix_now().as_secs().saturating_sub(RETENTION_SECS);
-    let kept = lines_since(&text, cutoff);
-    let mut body = kept.join("\n");
-    if !body.is_empty() {
-        body.push('\n');
-    }
-    let tmp = path.with_extension("jsonl.tmp");
-    let written = std::fs::write(&tmp, body).and_then(|()| std::fs::rename(&tmp, path));
-    if let Err(e) = written {
-        let _ = std::fs::remove_file(&tmp);
-        tracing::warn!(target: "resources", path = %path.display(), error = %e, "could not prune the resource history");
-    }
-}
-
-fn prune_dir(dir: &Path) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().is_some_and(|e| e == "jsonl") {
-            prune_file(&path);
-        }
-    }
-}
-
-fn read_rollups<T: serde::de::DeserializeOwned>(path: &Path, cutoff: u64) -> std::io::Result<Vec<T>> {
-    let text = match std::fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(e),
-    };
-    Ok(lines_since(&text, cutoff).into_iter().filter_map(|l| serde_json::from_str(l).ok()).collect())
-}
-
-/// The rollups of `name` over `window`, or of every sandbox and the Podman machine when `name` is
-/// `None`.
-pub fn history(
-    app: &AppHandle,
-    name: Option<&str>,
-    window: HistoryWindow,
-) -> Result<ResourceHistory, crate::error::AppError> {
-    let dir = crate::paths::resource_history_dir(app)
-        .map_err(|e| crate::domain::types::BackendError::CommandFailed(e.to_string()))?;
-    let io = |e: std::io::Error| crate::domain::types::BackendError::CommandFailed(e.to_string());
-    let cutoff = unix_now().as_secs().saturating_sub(window.secs());
-    let mut history = ResourceHistory::default();
-    match name {
-        Some(name) => {
-            crate::domain::validate_name(name)?;
-            let rollups = read_rollups(&dir.join(format!("{name}.jsonl")), cutoff).map_err(io)?;
-            history.sandboxes.push(SandboxHistory { name: name.to_string(), rollups });
-        }
-        None => {
-            let entries = match std::fs::read_dir(&dir) {
-                Ok(entries) => entries,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(history),
-                Err(e) => return Err(io(e).into()),
-            };
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if !path.extension().is_some_and(|e| e == "jsonl") {
-                    continue;
-                }
-                let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue };
-                if stem == POOL_FILE_STEM {
-                    history.podman_pool = read_rollups(&path, cutoff).map_err(io)?;
-                } else {
-                    let rollups = read_rollups(&path, cutoff).map_err(io)?;
-                    history.sandboxes.push(SandboxHistory { name: stem.to_string(), rollups });
-                }
-            }
-            history.sandboxes.sort_by(|a, b| a.name.cmp(&b.name));
-        }
-    }
-    Ok(history)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -636,51 +407,5 @@ mod tests {
         assert_eq!(cpu_fraction((5, 0), (4, 10), 1), None, "a restart resets the counter");
         assert_eq!(cpu_fraction((0, 10), (5, 10), 1), None, "the clock did not advance");
         assert_eq!(cpu_fraction((0, 0), (20, 10), 1), Some(1.0), "clamped to the allotment");
-    }
-
-    const MIB: u64 = 1 << 20;
-
-    fn sample(cpu: Option<f64>, used_mib: u64) -> ResourceSample {
-        ResourceSample { at_ms: 0, cpu, memory_used: used_mib * MIB, memory_limit: 100 * MIB }
-    }
-
-    #[test]
-    fn a_minute_rolls_up_means_peaks_and_pressure() {
-        let mut acc = MinuteAcc::default();
-        acc.add(&sample(None, 50));
-        acc.add(&sample(Some(0.2), 90));
-        acc.add(&sample(Some(0.4), 95));
-        let r = acc.take(60, ProviderId::Podman, false).unwrap();
-        assert_eq!(r.high, 2);
-        assert_eq!(r.mem, 78);
-        assert_eq!(r.mem_max, 95);
-        assert_eq!(r.limit, 100);
-        assert_eq!(r.cpu, Some(0.3));
-        assert_eq!(r.cpu_max, Some(0.4));
-        assert!(acc.take(120, ProviderId::Podman, false).is_none(), "the accumulator resets");
-    }
-
-    #[test]
-    fn old_and_unreadable_lines_are_dropped() {
-        let text = "{\"ts\":5}\nnot json\n{\"ts\":20,\"x\":1}\n";
-        assert_eq!(lines_since(text, 10), ["{\"ts\":20,\"x\":1}"]);
-    }
-
-    #[test]
-    fn rollups_round_trip_through_a_history_line() {
-        let r = Rollup {
-            ts: 1,
-            provider: ProviderId::Podman,
-            cpu: None,
-            cpu_max: None,
-            mem: 2,
-            mem_max: 3,
-            limit: 4,
-            high: 0,
-            includes_cache: false,
-        };
-        let line = serde_json::to_string(&r).unwrap();
-        assert_eq!(line, r#"{"ts":1,"provider":"podman","mem":2,"memMax":3,"limit":4,"high":0}"#);
-        assert_eq!(serde_json::from_str::<Rollup>(&line).unwrap(), r);
     }
 }

@@ -10,21 +10,23 @@
 use tauri::AppHandle;
 
 use crate::credentials::github::GITHUB_PLACEHOLDER;
+use crate::proxy::store::ProxyStore;
 use crate::runtime::types::ToolchainSecrets;
 
 pub struct AppToolchainSecrets {
     app: AppHandle,
+    proxy: ProxyStore,
 }
 
 impl AppToolchainSecrets {
-    pub fn new(app: AppHandle) -> Self {
-        AppToolchainSecrets { app }
+    pub fn new(app: AppHandle, proxy: ProxyStore) -> Self {
+        AppToolchainSecrets { app, proxy }
     }
 }
 
 impl ToolchainSecrets for AppToolchainSecrets {
     fn env(&self, sandbox: &str) -> Vec<(String, String)> {
-        sidecar_env(sandbox, crate::proxy::iron::github_binding_live(&self.app, sandbox))
+        sidecar_env(sandbox, crate::proxy::github::github_binding_live(&self.app, &self.proxy, sandbox))
     }
 }
 

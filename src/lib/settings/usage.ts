@@ -4,7 +4,7 @@ import { STRAINED_MEMORY } from "$lib/sandbox/health";
 // The sizing report's arithmetic over `get_resource_history` rollups
 // (docs/features/sandbox-resource-monitor/02_dev.md, Usage history and the sizing report).
 
-/** Mirrors Rust `services::resources::Rollup`; memory in MiB, absent CPU fields omitted. */
+/** Mirrors Rust `resources::rollup::Rollup`; memory in MiB, absent CPU fields omitted. */
 export interface Rollup {
     ts: number;
     provider: ProviderId;
@@ -17,7 +17,7 @@ export interface Rollup {
     includesCache?: boolean;
 }
 
-/** Mirrors Rust `services::resources::PoolRollup`; memory in MiB. */
+/** Mirrors Rust `resources::rollup::PoolRollup`; memory in MiB. */
 export interface PoolRollup {
     ts: number;
     cpus: number;
@@ -27,7 +27,7 @@ export interface PoolRollup {
 
 const MIB = 1024 * 1024;
 
-/** Mirrors Rust `services::resources::ResourceHistory`. */
+/** Mirrors Rust `resources::history::ResourceHistory`. */
 export interface ResourceHistory {
     sandboxes: { name: string; rollups: Rollup[] }[];
     podmanPool: PoolRollup[];

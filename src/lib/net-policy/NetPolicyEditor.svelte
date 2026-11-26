@@ -147,7 +147,7 @@
         formHosts = binding.hosts.join(", ");
     }
 
-    /** Mirrors `allowed_by_rule` in `src-tauri/src/net_policy.rs`, which rejects an unreachable secret host. */
+    /** Mirrors `allowed_by_rule` in `src-tauri/src/net_policy/validate.rs`, which rejects an unreachable secret host. */
     function allowedByRule(p: NetPolicy, host: string): boolean {
         return p.rules.some((r) => {
             if (r.action !== "allow" || !r.host) return false;
@@ -156,7 +156,7 @@
         });
     }
 
-    /** Mirrors `NetRule::starter_allow` in `src-tauri/src/net_policy.rs`. */
+    /** Mirrors `NetRule::starter_allow` in `src-tauri/src/net_policy/schema.rs`. */
     function allowRule(host: string): NetRule {
         return { action: "allow", host };
     }

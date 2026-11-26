@@ -213,7 +213,7 @@ impl CliBackend {
             },
             Err(e) => tracing::warn!(target: "backends", %name, error = %e, "rollback: could not resolve the ssh identity directory"),
         }
-        crate::net_policy::remove_applied(&self.app, name);
+        crate::net_policy::applied::remove_applied(&self.app, name);
     }
 
     /// Settles the accepted policy from the create dialog alone; an existing workspace file stays a
@@ -226,29 +226,31 @@ impl CliBackend {
         request: Option<&types::EgressRequest>,
         caps: crate::provider::types::ProviderCapabilities,
     ) -> Result<(crate::provider::types::EgressPolicy, Vec<String>), BackendError> {
-        use crate::net_policy;
-        let mut policy = net_policy::NetPolicy::default();
+        use crate::net_policy::applied::{write_applied, AppliedPolicy};
+        use crate::net_policy::schema::{load_if_present, save, starter, to_egress, NetPolicy};
+        use crate::net_policy::validate::{stampable_vars, validate};
+        let mut policy = NetPolicy::default();
         if let Some(mode) = request.and_then(|r| r.mode) {
-            if mode == net_policy::EgressMode::Allowlist {
+            if mode == crate::provider::types::EgressMode::Allowlist {
                 let hosts = request.map(|r| r.starter_hosts.clone()).unwrap_or_default();
-                policy.rules = net_policy::starter(caps, &hosts).rules;
+                policy.rules = starter(caps, &hosts).rules;
             }
             policy.egress = mode;
         }
-        net_policy::validate(&policy, caps)?;
+        validate(&policy, caps)?;
         // An unparsable file is left alone; the network section reports it after create.
-        let (guest_vars, write_file) = match net_policy::load_if_present(workspace) {
-            Ok(Some(file)) => (net_policy::stampable_vars(&file), false),
+        let (guest_vars, write_file) = match load_if_present(workspace) {
+            Ok(Some(file)) => (stampable_vars(&file), false),
             Ok(None) => (Vec::new(), true),
             Err(_) => (Vec::new(), false),
         };
         if write_file {
-            net_policy::save(workspace, &policy)?;
+            save(workspace, &policy)?;
         }
         let guest_env = caps.sidecar_egress.then(|| guest_vars.clone());
-        let applied = net_policy::AppliedPolicy { policy, revision: 0, guest_env };
-        net_policy::write_applied(&self.app, name, &applied)?;
-        Ok((net_policy::to_egress(&applied.policy)?, guest_vars))
+        let applied = AppliedPolicy { policy, revision: 0, guest_env };
+        write_applied(&self.app, name, &applied)?;
+        Ok((to_egress(&applied.policy)?, guest_vars))
     }
 
     /// Resolve where a freshly created sandbox's workspace lives. `None` derives and creates a
@@ -327,8 +329,8 @@ type Bridge = (String, Vec<(String, String)>, String);
 
 /// Reduces a proxy attachment to the Podman bridge. A provider with its own attachment shape
 /// adds a variant to `ProxyAttachment` and an arm here.
-fn split_attachment(proxy: Option<&crate::proxy::types::ProxyAttachment>) -> Option<Bridge> {
-    use crate::proxy::types::ProxyAttachment;
+fn split_attachment(proxy: Option<&crate::provider::types::ProxyAttachment>) -> Option<Bridge> {
+    use crate::provider::types::ProxyAttachment;
     match proxy {
         None => None,
         Some(ProxyAttachment::PodmanBridge { network, env, dns }) => {
@@ -352,7 +354,7 @@ impl SandboxBackend for CliBackend {
         name: &str,
         existing_path: Option<&str>,
         provider_id: ProviderId,
-        proxy: Option<&crate::proxy::types::ProxyAttachment>,
+        proxy: Option<&crate::provider::types::ProxyAttachment>,
         egress: Option<&types::EgressRequest>,
     ) -> Result<Sandbox, BackendError> {
         crate::domain::validate_new_name(name)?;
@@ -379,7 +381,7 @@ impl SandboxBackend for CliBackend {
             // Runs even with no request, so `applied.json` always exists; the sidecar, not the
             // engine, enforces the result. Placeholders exist only from create (Resolved Decision 7).
             let (_, guest_vars) = self.prepare_egress(name, &workspace, egress, caps)?;
-            env.extend(guest_vars.iter().map(|v| (v.clone(), crate::net_policy::placeholder(v))));
+            env.extend(guest_vars.iter().map(|v| (v.clone(), crate::net_policy::schema::placeholder(v))));
             None
         } else {
             None
@@ -400,7 +402,7 @@ impl SandboxBackend for CliBackend {
         let id = match provider.create_instance(&spec).await {
             Ok(id) => id,
             Err(e) => {
-                crate::net_policy::remove_applied(&self.app, name);
+                crate::net_policy::applied::remove_applied(&self.app, name);
                 return Err(e.into());
             }
         };
@@ -422,7 +424,7 @@ impl SandboxBackend for CliBackend {
     async fn recreate(
         &self,
         name: &str,
-        _proxy: Option<&crate::proxy::types::ProxyAttachment>,
+        _proxy: Option<&crate::provider::types::ProxyAttachment>,
         _egress: Option<&types::EgressRequest>,
     ) -> Result<Sandbox, BackendError> {
         // Podman recreate belongs to `docs/features/proxy-toggle-management/02_dev.md`.
@@ -496,7 +498,7 @@ impl SandboxBackend for CliBackend {
         &self,
         name: &str,
         deploy_plan: &DeployPlan,
-        proxy: &crate::proxy::types::ProxyAttachment,
+        proxy: &crate::provider::types::ProxyAttachment,
         extra_env: &[(String, String)],
     ) -> Result<RemoteDeployment, BackendError> {
         let target_connection = deploy_plan.target.as_str();
@@ -533,7 +535,7 @@ impl SandboxBackend for CliBackend {
 
         // Create and start the remote container on the target connection, not self.connection.
         // No workspace label on remote containers, matching prior behaviour.
-        let crate::proxy::types::ProxyAttachment::PodmanBridge { network, env: bridge_env, dns } = proxy;
+        let crate::provider::types::ProxyAttachment::PodmanBridge { network, env: bridge_env, dns } = proxy;
         let mut env = bridge_env.clone();
         env.extend(extra_env.iter().cloned());
         let spec = InstanceSpec {
