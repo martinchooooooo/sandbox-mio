@@ -3,7 +3,7 @@ import type { ModelDescriptor } from "./types";
 export const GB = 1024 * 1024 * 1024;
 
 // Every GGUF below declares an architecture (`qwen35`, `qwen35moe`, `gemma4`, `mistral3`,
-// `gpt-oss`) the bundled llama.cpp (`LLAMA_VERSION` in build.rs) can load. Check the GGUF's
+// `gpt-oss`) the bundled llama.cpp (`LLAMA_VERSION` in xtask/src/binaries.rs) can load. Check the GGUF's
 // `general.architecture` against that build before adding a model; bump llama.cpp if it is missing.
 // A new entry also needs its summary in `copy.ts` (MODEL_SUMMARIES).
 // Foundry aliases were checked against `foundry model list` on 2026-11-09.

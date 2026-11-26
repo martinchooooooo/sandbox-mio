@@ -1,0 +1,12 @@
+[package]
+name = "xtask"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Repository build tool: `cargo xtask <dev|e2e|ci|package|docs>`"
+
+# Deliberately not a member of any workspace: it is a standalone package with its own lockfile and
+# target directory, so it never shares a build with `src-tauri/`.
+[workspace]
+
+[dependencies]

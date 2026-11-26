@@ -11,10 +11,10 @@ This document is an interim task list, compiled on 2026-11-23 at commit `2e0e665
 
 - Take one task per agent, in its own git worktree. Read the task's source document and the root `AGENTS.md` before editing.
 - A task marked **Decision needed** has an open product or design choice: present the options to the user and stop before building. A task marked **Feature** is large enough for the `feature-ideas` → `feature-dev` → `feature-implement` pipeline under `docs/features/<name>/`. Every other task is a direct fix.
-- Verify with the commands in the root `AGENTS.md` (Verification Commands) that match the files touched: `pnpm check`, `cargo check` and `cargo test` in `src-tauri/`, `./build docs`, `./build e2e light`.
+- Verify with the commands in the root `AGENTS.md` (Verification Commands) that match the files touched: `pnpm check`, `cargo check` and `cargo test` in `src-tauri/`, `cargo xtask docs`, `cargo xtask e2e light`.
 - On completion, tick the task's checkbox here and update the task's source document: delete the resolved entry from the `04_improvements.md`, or record the resolution against the review finding.
 - Tasks sharing files are listed under "Overlapping tasks"; do not run overlapping tasks in parallel.
-- When every task is ticked or moved into a feature directory, delete this file and its line in `docs/index.md`, then run `./build docs`.
+- When every task is ticked or moved into a feature directory, delete this file and its line in `docs/index.md`, then run `cargo xtask docs`.
 
 ## Tasks
 
@@ -67,14 +67,14 @@ This document is an interim task list, compiled on 2026-11-23 at commit `2e0e665
 
 - [ ] Resolved
 - **Status:** `.github/workflows/ci.yml` is in place and runs only on a pushed tag or a manual dispatch, a deliberate narrowing of "on push and pull request" below to save runner minutes. The `checks` job has passed on a hosted runner, and the `e2e-light` job has passed a single spec there; tick this task after the first full light run reports its outcome.
-- **Problem:** `.github/workflows/` holds only `release.yml`; nothing runs `pnpm check`, `cargo test`, `./build docs` or the `light` e2e tier on push.
+- **Problem:** `.github/workflows/` holds only `release.yml`; nothing runs `pnpm check`, `cargo test`, `cargo xtask docs` or the `light` e2e tier on push.
 - **Source:** "CI pipeline for the tier cadence" in `docs/features/scriptable-mock-backend/04_improvements.md`; the interim `windows-latest` option in "Headless light tier for CI" in `docs/features/parallel-worktree-e2e/04_improvements.md`.
-- **Done when:** a workflow on `windows-latest` runs `pnpm check`, `pnpm --filter paseo-plugins typecheck`, `cargo check`, `cargo test` and `./build docs` on push and pull request; a second job runs `./build e2e light`. If the light job cannot pass on a hosted runner, record why in the parallel-worktree-e2e document and keep the first job. Update "Tier cadence" in the root `AGENTS.md`, which states no CI exists.
+- **Done when:** a workflow on `windows-latest` runs `pnpm check`, `pnpm --filter paseo-plugins typecheck`, `cargo check`, `cargo test` and `cargo xtask docs` on push and pull request; a second job runs `cargo xtask e2e light`. If the light job cannot pass on a hosted runner, record why in the parallel-worktree-e2e document and keep the first job. Update "Tier cadence" in the root `AGENTS.md`, which states no CI exists.
 
 ### T7. Light e2e app instances sometimes never load the UI
 
 - [ ] Resolved
-- **Problem:** in a full `./build e2e light` run, some app instances stay on `about:blank` for the 30-second `before` hook in `e2e/wdio.conf.ts`; `mio.log` stops at "cleared inheritable handles at startup". Which spec fails depends on its predecessor, and each failing spec passes when run without that predecessor. The unconfirmed suspect is the WebView2 user-data folder that every instance shares beside `src-tauri/target/debug/sandbox-mio.exe`.
+- **Problem:** in a full `cargo xtask e2e light` run, some app instances stay on `about:blank` for the 30-second `before` hook in `e2e/wdio.conf.ts`; `mio.log` stops at "cleared inheritable handles at startup". Which spec fails depends on its predecessor, and each failing spec passes when run without that predecessor. The unconfirmed suspect is the WebView2 user-data folder that every instance shares beside `src-tauri/target/debug/sandbox-mio.exe`.
 - **Source:** "Some e2e app launches never load the UI" in `docs/features/techdebt-sweep/04_improvements.md`; "Light spec `activity-center-ui` fails on a clean checkout" in `docs/features/manage-dashboard-redesign/04_improvements.md`.
 - **CI:** the `e2e-light` job in `.github/workflows/ci.yml` carries `continue-on-error: true` until this task is fixed; remove that line (and its `TODO(T7)` comment) once three consecutive runs pass.
 - **Fix shape:** give each app session its own WebView2 user-data folder (for example through `WEBVIEW2_USER_DATA_FOLDER` set per session in `beforeSession`, `e2e/wdio.conf.ts`), then confirm with several consecutive full light runs.
@@ -123,6 +123,6 @@ Each sub-task is a direct fix unless marked.
 
 | Gotcha | Cause | Fix |
 |---|---|---|
-| `./build docs` fails with an unlinked-document error after deleting `docs/improvement-backlog.md` or reports a broken link | The root `docs/index.md` is hand-written and links `docs/improvement-backlog.md` | Delete the `Improvement Backlog` line from `docs/index.md` in the same change as the file |
+| `cargo xtask docs` fails with an unlinked-document error after deleting `docs/improvement-backlog.md` or reports a broken link | The root `docs/index.md` is hand-written and links `docs/improvement-backlog.md` | Delete the `Improvement Backlog` line from `docs/index.md` in the same change as the file |
 | A task's line number points at unrelated code | Line numbers were recorded at commit `2e0e665` | Search for the named function or file instead of trusting the line number |
-| A fix passes `./build e2e light` but breaks against real Podman | The light tier runs on in-memory mocks (`MIO_MOCK_BACKEND=1`) | Run `./build e2e` (`standard`) once for any task touching `src-tauri/src/backends/`, `src-tauri/src/proxy/` or `src-tauri/src/process/` |
+| A fix passes `cargo xtask e2e light` but breaks against real Podman | The light tier runs on in-memory mocks (`MIO_MOCK_BACKEND=1`) | Run `cargo xtask e2e` (`standard`) once for any task touching `src-tauri/src/backends/`, `src-tauri/src/proxy/` or `src-tauri/src/process/` |

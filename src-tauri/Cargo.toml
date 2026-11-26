@@ -66,5 +66,5 @@ russh = { version = "0.65.1", default-features = false, features = ["ring", "fla
 [features]
 default = []
 # Pulls in tauri-plugin-devtools. Off by default: it enables tauri's `tracing` feature, which can
-# deadlock the app on concurrent emits. `./build dev` adds it when `MIO_DEVTOOLS=1`.
+# deadlock the app on concurrent emits. `cargo xtask dev` adds it when `MIO_DEVTOOLS=1`.
 devtools = ["dep:tauri-plugin-devtools"]

@@ -31,11 +31,9 @@ jobs:
           workspaces: src-tauri
 
       # Stages the bundled Mutagen sidecar + llama.cpp engine + Podman binaries into
-      # src-tauri/binaries before the bundler runs (see build.rs, `dev --setup` arm).
+      # src-tauri/binaries before the bundler runs (see xtask/src/main.rs, `dev --setup` arm).
       - name: Stage bundled binaries
-        run: |
-          rustc build.rs -o build.exe
-          ./build.exe dev --setup
+        run: cargo xtask dev --setup
 
       - name: Build and publish
         uses: tauri-apps/tauri-action@v0

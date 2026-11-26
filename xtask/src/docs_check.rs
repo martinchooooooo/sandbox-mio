@@ -1,5 +1,5 @@
-//! `./build docs`: checks `docs/` against the project's documentation rules and exits non-zero on
-//! any error; `./build docs --fix` first regenerates every `index.md` except the hand-written
+//! `cargo xtask docs`: checks `docs/` against the project's documentation rules and exits non-zero on
+//! any error; `cargo xtask docs --fix` first regenerates every `index.md` except the hand-written
 //! root `docs/index.md`. This file is the executable form of the rules described in prose in
 //! `docs/features/README.md` (frontmatter keys, statuses, log format) and the `write-docs` skill
 //! (architecture documents); change the rules here and there together.
@@ -9,9 +9,9 @@
 //! (the root `docs/index.md` may declare `okf_version`), and `log.md` holds dated sections. The
 //! project rules on top are listed on [`check`].
 //!
-//! Compiled into the std-only build tool (`rustc build.rs`), so frontmatter is read by
-//! [`parse_frontmatter`], a parser for the restricted YAML subset the docs use rather than a crate.
-//! Unit tests: `rustc --test build.rs -o build-test` then run `build-test`.
+//! Part of the std-only `xtask` package, so frontmatter is read by [`parse_frontmatter`], a parser
+//! for the restricted YAML subset the docs use rather than a crate. Unit tests: `cargo test` in
+//! `xtask/`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -43,8 +43,11 @@ pub const ARCHITECTURE_WORD_BUDGET: usize = 750;
 /// Repository-relative directories and files scanned for `docs/...` citations outside `docs/`.
 const CITATION_ROOTS: &[&str] = &[
     "src", "src-tauri/src", "src-tauri/resources", "e2e", ".claude/skills",
-    "AGENTS.md", "CLAUDE.md", "README.md", "src-tauri/AGENTS.md", "build.rs",
+    "AGENTS.md", "CLAUDE.md", "README.md", "src-tauri/AGENTS.md", "xtask/src",
 ];
+
+/// File names the citation scan skips: this file's tests quote `docs/...` paths that do not exist.
+const CITATION_SKIP_FILES: &[&str] = &["docs_check.rs"];
 
 /// File extensions the citation scan reads.
 const CITATION_EXTENSIONS: &[&str] = &["rs", "ts", "js", "svelte", "py", "md", "sh", "ps1"];
@@ -73,7 +76,7 @@ impl Report {
     }
 }
 
-/// Entry point for `./build docs`; with `fix`, regenerates the `index.md` files first. Returns the
+/// Entry point for `cargo xtask docs`; with `fix`, regenerates the `index.md` files first. Returns the
 /// process exit code.
 pub fn run(root: &Path, fix: bool) -> i32 {
     if fix {
@@ -622,7 +625,7 @@ fn is_history(rel: &str, feats: &BTreeMap<String, FeatureInfo>) -> bool {
 ///   directory name, a `description`, a `status` from [`STATUSES`], existing
 ///   `depends_on`/`superseded_by` features, `superseded_by` when superseded, and existing
 ///   `architecture` paths. Other documents in the directory carry `feature: <f>`.
-/// - Every generated `index.md` matches what `./build docs --fix` would write.
+/// - Every generated `index.md` matches what `cargo xtask docs --fix` would write.
 ///
 /// Warnings: an architecture document past its `stale_after` or over
 /// [`ARCHITECTURE_WORD_BUDGET`] words, and a cited `docs/...` path that does not exist, whether
@@ -1059,8 +1062,8 @@ fn check_indexes(report: &mut Report, root: &Path, docs: &[Doc]) {
     for (rel, expected) in expected_indexes(root, docs) {
         match read_normalised(&root.join(&rel)) {
             Some(current) if current == expected => {}
-            Some(_) => report.error(&rel, "out of date with the documents it lists; run `./build docs --fix`".to_string()),
-            None => report.error(&rel, "missing; run `./build docs --fix`".to_string()),
+            Some(_) => report.error(&rel, "out of date with the documents it lists; run `cargo xtask docs --fix`".to_string()),
+            None => report.error(&rel, "missing; run `cargo xtask docs --fix`".to_string()),
         }
     }
 }
@@ -1086,7 +1089,7 @@ pub fn write_indexes(root: &Path) -> Result<Vec<String>, String> {
 fn collect_citing_files(path: &Path, out: &mut Vec<PathBuf>) {
     if path.is_file() {
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        if CITATION_EXTENSIONS.contains(&ext) {
+        if CITATION_EXTENSIONS.contains(&ext) && !CITATION_SKIP_FILES.contains(&file_name(path)) {
             out.push(path.to_path_buf());
         }
         return;

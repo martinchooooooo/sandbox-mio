@@ -16,4 +16,4 @@
 
 ## Development Loop
 
-A debug build (`./build dev`) reads `paseo-plugins/` from its own worktree each time the Agents tab opens; a release build embeds the archive at compile time. To pick up an edit, close the sandbox's Agents tab and open it again: changed contents are applied with `paseo plugin reload` without restarting the daemon, while adding or removing a plugin restarts it. Inside the sandbox, `paseo plugin ls` and `paseo plugin logs <id>` show status and server output.
+A debug build (`cargo xtask dev`) reads `paseo-plugins/` from its own worktree each time the Agents tab opens; a release build embeds the archive at compile time. To pick up an edit, close the sandbox's Agents tab and open it again: changed contents are applied with `paseo plugin reload` without restarting the daemon, while adding or removing a plugin restarts it. Inside the sandbox, `paseo plugin ls` and `paseo plugin logs <id>` show status and server output.

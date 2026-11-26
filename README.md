@@ -9,28 +9,18 @@ An app to help non-technical users learn how to use AI agents inside of a sandbo
 
 ## Development
 
-First, compile the build tool:
+The build tool is the `xtask` Cargo package, run as `cargo xtask <subcommand>` from the repository
+root; the alias lives in `.cargo/config.toml` and the first run compiles the tool (a few seconds).
+Run `cargo xtask` with no arguments for the usage text.
 
 ```sh
-rustc build.rs
-```
-
-On Windows:
-
-```powershell
-rustc build.rs
-```
-
-Then use `./build` (or `.\build.exe` on Windows) with the commands below.
-
-```sh
-./build dev --setup
+cargo xtask dev --setup
 ```
 
 ### Run the app
 
 ```sh
-./build dev
+cargo xtask dev
 ```
 
 Launches the app with hot reloading.
@@ -38,7 +28,7 @@ Launches the app with hot reloading.
 ## E2E Tests
 
 ```sh
-./build e2e --setup
+cargo xtask e2e --setup
 ```
 
 Tests use [WebdriverIO](https://webdriver.io/) driving `msedgedriver` directly. For more info, read [here](https://v2.tauri.app/develop/tests/webdriver/example/webdriverio/)
@@ -46,13 +36,13 @@ Tests use [WebdriverIO](https://webdriver.io/) driving `msedgedriver` directly. 
 ### Running
 
 ```sh
-./build e2e
+cargo xtask e2e
 ```
 
 This will run the `standard` tests by default. To select a different suite, pass it in as another arg
 
 ```sh
-./build e2e light
+cargo xtask e2e light
 ```
 
 The test suite builds the debug binary automatically before launching the app.
@@ -60,7 +50,7 @@ The test suite builds the debug binary automatically before launching the app.
 ### CI
 
 ```sh
-./build ci [checks|e2e-light|diagnostics]
+cargo xtask ci [checks|e2e-light|diagnostics]
 ```
 
 Runs locally what `.github/workflows/ci.yml` runs; with no argument it runs `checks`, then `e2e-light`.
@@ -68,20 +58,19 @@ Runs locally what `.github/workflows/ci.yml` runs; with no argument it runs `che
 ## Documentation checks
 
 ```sh
-./build docs        # check
-./build docs --fix  # regenerate every index.md from frontmatter, then check
+cargo xtask docs        # check
+cargo xtask docs --fix  # regenerate every index.md from frontmatter, then check
 ```
 
 Checks `docs/` against the documentation rules (OKF frontmatter, feature statuses, generated
 indexes, the feature log, links, architecture-document size, and `docs/...` citations from code).
 Every `index.md` except the root `docs/index.md` is generated; never edit one by hand. The rules
-are code in `docs_check.rs`; its unit tests run with `rustc --test build.rs -o build-test` and then
-`./build-test`.
+are code in `xtask/src/docs_check.rs`; its unit tests run with `cargo test` in `xtask/`.
 
 ## Packaging
 
 ```sh
-./build package
+cargo xtask package
 ```
 
 Stages the bundled Mutagen/llama.cpp/Podman binaries (if not already present) and

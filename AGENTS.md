@@ -7,6 +7,7 @@ Sandbox-mio is a Tauri 2 desktop app (Windows-first) that manages per-project "s
 | `src/` | SvelteKit + Svelte 5 frontend (static adapter, runs in the Tauri webview) | `src/AGENTS.md` |
 | `src-tauri/src/` | Rust backend: Tauri commands + trait-injected subsystems, each with an in-memory mock | `src-tauri/AGENTS.md` |
 | `e2e/` | WebdriverIO tests in three tiers (`light`/`standard`/`heavy`) | `e2e/AGENTS.md` |
+| `xtask/` | Std-only Cargo package: the repository build tool, run as `cargo xtask <subcommand>` (`dev`, `e2e`, `ci`, `package`, `docs`: app launch, bundled-binary staging, the CI sequence, the docs check) | `README.md` |
 | `paseo-plugins/` | App-owned Paseo plugins (TypeScript) shipped in the binary and loaded by every sandbox's Paseo daemon | `paseo-plugins/AGENTS.md` |
 | `docs/architecture/` | A brief, high-level picture of how the system works today, one document per subsystem; read before planning or changing a subsystem | `docs/architecture/overview.md` |
 | `docs/features/<name>/` | Feature plans and their history: `feature.md` (status), core `01_ideas.md` → `02_dev.md` → `03_e2e.md`, optional `04_improvements.md` and `05_dev_review.md` | `docs/features/README.md` |
@@ -16,7 +17,7 @@ Read the orientation doc for an area before editing files in that area. `AGENTS.
 
 # Documentation
 
-`docs/` is an [Open Knowledge Format](https://okf.md/) bundle: every `.md` file except `index.md` and `log.md` starts with YAML frontmatter carrying a `type`, every `index.md` except the root one is generated from that frontmatter by `./build docs --fix` (never edit one by hand), and `docs/features/log.md` records feature status changes. `docs/features/README.md` defines the frontmatter keys and statuses. Write documents with the `write-docs` skill.
+`docs/` is an [Open Knowledge Format](https://okf.md/) bundle: every `.md` file except `index.md` and `log.md` starts with YAML frontmatter carrying a `type`, every `index.md` except the root one is generated from that frontmatter by `cargo xtask docs --fix` (never edit one by hand), and `docs/features/log.md` records feature status changes. `docs/features/README.md` defines the frontmatter keys and statuses. Write documents with the `write-docs` skill.
 
 - **Current behaviour** lives in `docs/architecture/`, kept brief and high-level: concepts and invariants, not code symbols. Start with `docs/architecture/overview.md`. Each architecture document's `code` frontmatter lists where to read next in the code, and `sources` names the plans holding the detail and rationale. `docs/architecture/index.md` also lists in-flight plans per subsystem.
 - **Plans** live in `docs/features/`. A feature's `feature.md` `status` (`idea`, `planned`, `in-progress`, `implemented`, `superseded`, `abandoned`) is authoritative over the phase headings inside its `02_dev.md`. Once `implemented`, a plan is history: read it for design rationale, not for current behaviour.
@@ -24,7 +25,7 @@ Read the orientation doc for an area before editing files in that area. `AGENTS.
 
 # Feature Workflow
 
-Features flow through the project skills, each writing one document under `docs/features/<feature>/`: `feature-ideas` (01_ideas.md, scoping) → `feature-dev` (02_dev.md, build plan) → `feature-implement` (code, phase by phase, keeps 02_dev.md status current, and updates `docs/architecture/` only when the feature changes the overall picture) → `feature-e2e` (03_e2e.md, regression plan). Each skill also keeps the feature's `feature.md` current, regenerates the indexes with `./build docs --fix`, and logs status changes in `docs/features/log.md`, per `docs/features/README.md`. When asked to build a feature, check for an existing `docs/features/<feature>/` directory first, read its `feature.md`, and resume from the most advanced document present. `02_dev.md` files record resolved design decisions — consult the feature's `02_dev.md` before changing behaviour that document specifies.
+Features flow through the project skills, each writing one document under `docs/features/<feature>/`: `feature-ideas` (01_ideas.md, scoping) → `feature-dev` (02_dev.md, build plan) → `feature-implement` (code, phase by phase, keeps 02_dev.md status current, and updates `docs/architecture/` only when the feature changes the overall picture) → `feature-e2e` (03_e2e.md, regression plan). Each skill also keeps the feature's `feature.md` current, regenerates the indexes with `cargo xtask docs --fix`, and logs status changes in `docs/features/log.md`, per `docs/features/README.md`. When asked to build a feature, check for an existing `docs/features/<feature>/` directory first, read its `feature.md`, and resume from the most advanced document present. `02_dev.md` files record resolved design decisions — consult the feature's `02_dev.md` before changing behaviour that document specifies.
 
 Those three documents are the core pipeline. A feature may also carry two optional follow-ons, written only when there is something to record: `04_improvements.md` holds work deferred out of scope and known seam limitations discovered during implementation, and `05_dev_review.md` holds post-implementation code review findings together with their resolutions. Neither is a prerequisite for any pipeline step, and neither replaces `02_dev.md` as the record of settled design.
 
@@ -35,10 +36,11 @@ How these layers and the e2e harness fit together: `docs/architecture/testing.md
 - `pnpm check` (repo root) — svelte-check over the frontend. Required after any `src/` change.
 - `pnpm --filter paseo-plugins typecheck` (repo root) — required after any `paseo-plugins/` change.
 - `cargo check` (in `src-tauri/`) — required after any Rust change. `cargo test` runs the unit tests, which cover pure logic only (argv rendering, policy validation, parsers, the pane registry). The mock control plane deliberately has none: its correctness is proven by light specs instead (`docs/features/scriptable-mock-backend/02_dev.md`, Resolved Decision 9).
-- `./build docs` (repo root) — required after any change under `docs/`. Checks frontmatter, feature statuses, generated indexes, the feature log, links, architecture-document size, and `docs/...` citations from code; the rules are code in `docs_check.rs` (repo root), the single source of truth for them. `./build docs --fix` regenerates the indexes first.
-- `./build e2e light` (repo root; `build.exe` on Windows) — seconds, no Podman needed (`MIO_MOCK_BACKEND=1`); the cheapest end-to-end signal.
-- `./build e2e` (repo root) — the `standard` tier against a real Podman machine; minutes. See `e2e/AGENTS.md` for tier selection.
-- `./build ci` (repo root) — runs the CI sequence locally: `ci checks` (docs check, frontend build and check, paseo-plugins typecheck, `cargo check`/`cargo test`), then `ci e2e-light`. The jobs in `.github/workflows/ci.yml` run the same commands, so a green `./build ci` predicts a green CI run. `ci diagnostics` bundles a failed light run's logs into `e2e-diagnostics/`.
+- `cargo test` (in `xtask/`) — required after any change to the build tool; its tests cover the docs-check rules and the pure helpers. `cargo xtask` is the tool's entry point (alias in `.cargo/config.toml`), run from the repository root; with no arguments it prints every subcommand.
+- `cargo xtask docs` (repo root) — required after any change under `docs/`. Checks frontmatter, feature statuses, generated indexes, the feature log, links, architecture-document size, and `docs/...` citations from code; the rules are code in `xtask/src/docs_check.rs`, the single source of truth for them. `cargo xtask docs --fix` regenerates the indexes first.
+- `cargo xtask e2e light` (repo root) — seconds, no Podman needed (`MIO_MOCK_BACKEND=1`); the cheapest end-to-end signal.
+- `cargo xtask e2e` (repo root) — the `standard` tier against a real Podman machine; minutes. See `e2e/AGENTS.md` for tier selection.
+- `cargo xtask ci` (repo root) — runs the CI sequence locally: `ci checks` (docs check, frontend build and check, paseo-plugins typecheck, `cargo check`/`cargo test`), then `ci e2e-light`. The jobs in `.github/workflows/ci.yml` run the same commands, so a green `cargo xtask ci` predicts a green CI run. `ci diagnostics` bundles a failed light run's logs into `e2e-diagnostics/`.
 
 ## Tier cadence
 
@@ -46,19 +48,19 @@ Lean on `light` for day-to-day feedback and reserve `standard`/`heavy` for a per
 not per change — `standard` proves real behaviour and remains the source of regression truth;
 `light` just gets there faster while iterating:
 
-- `./build e2e light` — every change that touches `src/` or a mocked `src-tauri/` subsystem.
-- `./build e2e` (`standard`) — at merge, or daily if merges are infrequent.
-- `./build e2e heavy` — weekly, or before a release.
+- `cargo xtask e2e light` — every change that touches `src/` or a mocked `src-tauri/` subsystem.
+- `cargo xtask e2e` (`standard`) — at merge, or daily if merges are infrequent.
+- `cargo xtask e2e heavy` — weekly, or before a release.
 
-`.github/workflows/ci.yml` runs `./build ci checks` (docs check, `pnpm check`, the paseo-plugins typecheck,
-`cargo check` and `cargo test`) when a tag is pushed or the workflow is dispatched by hand (never on branch pushes or pull requests, to save runner minutes), and `./build ci e2e-light`
+`.github/workflows/ci.yml` runs `cargo xtask ci checks` (docs check, `pnpm check`, the paseo-plugins typecheck,
+`cargo check` and `cargo test`) when a tag is pushed or the workflow is dispatched by hand (never on branch pushes or pull requests, to save runner minutes), and `cargo xtask ci e2e-light`
 (the `light` tier) in a second job (advisory until backlog T7's launch flake is fixed). `standard`/`heavy`
 stay agent/developer habit, codified here and in `e2e/AGENTS.md`'s decision rules: hosted runners have no Podman machine.
 
 A feature is typically developed in its own git worktree, driven almost entirely by
-`./build e2e light` — many worktrees can run the `light` tier concurrently, each isolated by a
+`cargo xtask e2e light` — many worktrees can run the `light` tier concurrently, each isolated by a
 per-worktree run slug (`e2e/lib/run-identity.ts`; see `e2e/AGENTS.md`). When a feature's light
-specs are green, run `./build e2e` (`standard`) once at the end — `standard`/`heavy` runs are safe
+specs are green, run `cargo xtask e2e` (`standard`) once at the end — `standard`/`heavy` runs are safe
 alongside other worktrees' `light` runs, but only one `standard`/`heavy` run is allowed host-wide at
 a time (`docs/features/parallel-worktree-e2e/02_dev.md`).
 
@@ -168,7 +170,7 @@ The frontend reaches commands only through the typed wrappers in `src/lib/api/` 
 - Never write comments about your current work or process ("added X", "updated as requested", "new helper") — the git history is the record. The same applies at document scale: no work-log or change-summary files, apart from the one dated feature history in `docs/features/log.md`.
 - TODO's for future are the exception and definitely allowed
 - When two values in different files must stay equal, comment both ends with the other's path (pattern: `DEFAULT_LLAMA_CTX_SIZE` in `src-tauri/src/inference/llama.rs` ↔ `src/lib/agents/pi.ts`)
-- Reference resolved design decisions by doc path (`docs/features/<x>/02_dev.md, Resolved Decision N`) instead of restating the rationale inline. Cite plans, never `docs/architecture/` sections: plans are never moved or renumbered, while architecture documents are rewritten freely. `./build docs` warns about a cited `docs/...` path that no longer exists
+- Reference resolved design decisions by doc path (`docs/features/<x>/02_dev.md, Resolved Decision N`) instead of restating the rationale inline. Cite plans, never `docs/architecture/` sections: plans are never moved or renumbered, while architecture documents are rewritten freely. `cargo xtask docs` warns about a cited `docs/...` path that no longer exists
 - Exception: trait, interface, and public type declarations may carry fuller doc comments — they are the discovery surface for agents reading `types.rs`/module heads instead of whole files
 - Use doc-comment form (`///`, `/** */`) on public items so tooling and outlines surface them; plain `//` belongs inside function bodies
 
@@ -200,7 +202,7 @@ Good — states the constraint the code can't show:
 | New `AppError` variant does not compile | `kind()` in `src-tauri/src/error.rs` has an exhaustive match over variants | Add a `kind()` arm in `src-tauri/src/error.rs` and mirror the string in `AppErrorKind` in `src/lib/errors.ts` |
 | A status badge shows a raw English string like `up-to-date` in non-English locales | Backend emitted a status value with no `status_<value>` key | Add `status_<value>` to every file in `messages/` and an entry to the `map` in `translateStatus()` (`src/lib/sandbox.ts`) |
 | Containerfile change has no effect on new sandboxes | `ensure_base_image` short-circuits on `podman image exists`, so an unchanged image tag keeps the stale image | Bump `BASE_IMAGE_VERSION` in `src-tauri/src/provider/image.rs` whenever `src-tauri/resources/Containerfile` changes |
-| Feature works with `./build e2e light` but fails against real Podman | The `light` tier runs entirely against in-memory mocks (`MIO_MOCK_BACKEND=1`) and proves UI/store logic only | Write or run the feature's `standard` tier spec (`e2e/test/specs/standard/`); `e2e/AGENTS.md` defines `standard` as the default tier |
+| Feature works with `cargo xtask e2e light` but fails against real Podman | The `light` tier runs entirely against in-memory mocks (`MIO_MOCK_BACKEND=1`) and proves UI/store logic only | Write or run the feature's `standard` tier spec (`e2e/test/specs/standard/`); `e2e/AGENTS.md` defines `standard` as the default tier |
 | A `$state` store resets on route change | Component-local state is destroyed by the router | Put shared state in a module-scoped `.svelte.ts` store under `src/lib/` (pattern: `src/lib/activity/activity.svelte.ts`); see `src/AGENTS.md` |
 | A component added via `pnpm dlx shadcn-svelte@latest add <name>` (no URL) looks visually inconsistent with the rest of the app | The plain command pulls from the default shadcn-svelte registry, not retro-ui-svelte | Always use `pnpm dlx shadcn-svelte@latest add https://retroui-svelte.netlify.app/r/<name>.json` |
 | `bg-destructive-hover`/`hover:bg-destructive-hover` has no visible hover effect on a retro-pulled `Button` | retro-ui-svelte's `button.svelte` references this class but never defines a `--destructive-hover` token in any of its 16 theme files (upstream gap) | `src/app.css` already defines `--destructive-hover`/`--color-destructive-hover`; if a future theme swap drops it, re-add a manually chosen darker/lighter destructive shade |

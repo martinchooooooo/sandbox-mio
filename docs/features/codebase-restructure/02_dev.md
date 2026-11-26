@@ -5,13 +5,13 @@ feature: codebase-restructure
 ---
 # Codebase Restructure — Build Plan
 
-Build plan for a structural refactor of Sandbox-mio with no behaviour change: the Rust backend's module dependency graph (`src-tauri/src/`), the frontend component layout (`src/lib/`, `src/routes/`), a typed IPC layer, the oversized backend files, and the root build tool (`build.rs`, `docs_check.rs`). Status: Phases 1 to 4 are implemented; Phase 5 remains; Phase 6 waits on a user decision. Resume at Phase 5.
+Build plan for a structural refactor of Sandbox-mio with no behaviour change: the Rust backend's module dependency graph (`src-tauri/src/`), the frontend component layout (`src/lib/`, `src/routes/`), a typed IPC layer, the oversized backend files, and the root build tool (`build.rs`, `docs_check.rs`). Status: Phases 1 to 5 are implemented; Phase 6 waits on a user decision.
 
 ## How Each Phase Is Run
 
 - One phase per agent pair, run sequentially in one worktree: an implementer agent makes the change, then a separate reviewer agent reviews the uncommitted diff, fixes every real problem, re-runs verification and proposes a commit message. The phase is committed only after the review passes.
 - Every phase is a pure refactor: no change to behaviour, IPC shapes, error `kind` discriminants, error Display text, `settings.json` shape or visuals.
-- Verification per phase, from the repository root unless noted: `cargo check --all-targets` and `cargo test` in `src-tauri/` (any Rust change); `pnpm check` (any `src/` or `e2e/` TypeScript change); `build.exe docs`; `build.exe e2e light`. On Windows `./build` resolves to the gitignored `build/` directory, so call `build.exe`.
+- Verification per phase, from the repository root unless noted: `cargo check --all-targets` and `cargo test` in `src-tauri/` (any Rust change); `pnpm check` (any `src/` or `e2e/` TypeScript change); `cargo test` in `xtask/` (any build-tool change); `cargo xtask docs`; `cargo xtask e2e light`.
 - Follow the Code Comments rules in the root `AGENTS.md`; moved comments travel with their code, and a comment a move makes false is updated in the same phase.
 - `docs/features/**` plans of other features are history and are not rewritten for moved paths; `docs/improvement-backlog.md`, `docs/architecture/*.md` and the `AGENTS.md` files are live and are updated.
 
@@ -22,6 +22,7 @@ Build plan for a structural refactor of Sandbox-mio with no behaviour change: th
 3. **Base image belongs to the provider.** `BASE_IMAGE`, `BASE_IMAGE_VERSION` and `base_image()` live in `src-tauri/src/provider/image.rs`, beside the embedded Containerfile build, so `provider` does not depend on `backends`.
 4. **Subsystem dependency rule.** Subsystems depend only on `domain`, `process`, `paths`, `env_ext`, `mio_files`, and on `provider` where they drive the engine; the remaining documented exceptions are listed in `src-tauri/AGENTS.md`. A conversion only a service needs is a `map_err` in that service, not a `From` impl in a subsystem.
 5. **Frontend placement rule.** A component lives in the `src/lib/` folder of what it manages, not beside whoever mounts it; a component mounted only by one route stays beside that route's `+page.svelte`. Nothing under `src/lib/` imports from `src/routes/`.
+6. **The build tool is `cargo xtask <subcommand>`.** The user chose a Cargo alias over a copied `build.exe`: there is no root executable, and CI and developers compile the tool on first use. The alias lives in a repository-root `.cargo/config.toml`. `xtask/` is a standalone package with its own `[workspace]`, lockfile and `xtask/target/`, so it stays independent of Phase 6's workspace decision and never contends with `src-tauri/target/` for a build lock.
 
 ## Implemented: Phase 1 — Break Backend Import Cycles
 
@@ -73,13 +74,22 @@ Splits the oversized backend files along the seams they already had. No file und
 - The dependency-graph check shows no new subsystem edge; `resources` depends on `domain`, `paths`, `process` and `provider` only.
 - Touched outside Rust: the Rust paths cited by comments in `src/lib/` (`net-policy.ts`, `NetPolicyEditor.svelte`, `health.ts`, `resources.svelte.ts`, `usage.ts`), `src-tauri/AGENTS.md`, `docs/architecture/network.md` and `docs/improvement-backlog.md`.
 
-## Remaining: Phase 5 — Build Tool as an `xtask` Crate
+## Implemented: Phase 5 — Build Tool as an `xtask` Crate
 
-- **Problem:** the repository-root build tool is two files compiled with plain `rustc` (`build.rs`, 1,312 lines; `docs_check.rs`, 1,257 lines), so it gets no `cargo test`, clippy or rust-analyzer support, and the root `build.rs` reads as a Cargo build script beside the gitignored `/build` Vite output directory.
-- **Scope:** a std-only Cargo package (for example `xtask/`) with modules for bundled binaries (fetch and stage), `dev`, `e2e`, `ci`, worktree setup, `win_job` and the docs check. Keep the CLI surface of `build.exe` identical: every subcommand in the usage text printed by `main()` in `build.rs` (`dev`, `e2e`, `ci`, `package`, `docs` and their flags).
-- **Bootstrap references to update:** `README.md` (the `rustc build.rs` lines), `.github/workflows/ci.yml` and `.github/workflows/release.yml` (`rustc build.rs -o build.exe`), the root `AGENTS.md`, the header comment of `docs_check.rs` (`rustc --test build.rs`), and `CITATION_ROOTS` in `docs_check.rs`, which lists `build.rs`.
-- **Decision needed before starting:** how `build.exe` is produced after the move (a `cargo build` step that copies the binary to the root, or a Cargo alias such as `cargo xtask`). Ask the user.
-- **Done when:** `build.exe ci` passes, the docs-check unit tests run under `cargo test`, and the CI workflow builds the tool the new way.
+`build.rs` (1,312 lines) and `docs_check.rs` (1,257 lines) are deleted; the tool is the std-only package `xtask/`, run as `cargo xtask <subcommand>` (Resolved Decision 6). It gets `cargo test`, clippy and rust-analyzer support, and the root `build.rs` no longer reads as a Cargo build script beside the Vite `build/` output directory.
+
+- `xtask/src/main.rs` holds the dispatch and the usage text; the CLI surface is unchanged (`dev`, `dev --setup`, `dev --setup-worktree [<path>]`, `e2e [tier]`, `e2e --setup`, `ci [checks|e2e-light|diagnostics]`, `package`, `docs [--fix]`), and every self-reference (usage text, error hints, CI step names) now says `cargo xtask`. Code moved verbatim along the seams the file already had: `binaries.rs` (pinned versions, the three `fetch_*` functions, the staged-versions manifest), `worktree.rs` (`setup_worktree` and its asset groups), `dev.rs`, `e2e.rs`, `ci.rs`, `package.rs`, `exec.rs` (`run`, `run_env`, `try_run`, `spawn_background`), `paths.rs`, `win_job.rs` and `docs_check.rs`. About 2,700 lines in all, 1,260 of them the docs check.
+- `.cargo/config.toml` at the repository root holds only the alias `xtask = "run --manifest-path xtask/Cargo.toml --quiet --"`. Cargo merges it into every build below the root, so `src-tauri/` sees the alias and nothing else; `cargo check --all-targets` in `src-tauri/` is unaffected. The alias works only from the repository root, because the manifest path is relative to the invoking directory; from a subdirectory cargo reports that `xtask/Cargo.toml` does not exist.
+- Repository-root resolution is unchanged: every path derives from the current directory, which `cargo run` leaves at the invocation directory (`xtask/src/paths.rs`). `CARGO_MANIFEST_DIR` is not used, since it would pin the checkout the binary was compiled in rather than the worktree the tool is run for.
+- `xtask/` has its own `[workspace]`, `Cargo.lock` (committed, no dependencies) and `xtask/target/` (gitignored). A shared target directory with `src-tauri/` was rejected: it would put the tool and the app on one build lock for no saving, since the tool compiles in about four seconds. The package uses edition 2021; the old files were compiled by bare `rustc`, which defaults to edition 2015.
+- Windows job object: `win_job::setup()` still runs first in `main()` and every child is still assigned to the kill-on-close job. With `cargo` as parent, killing only `xtask.exe` during `cargo xtask e2e light` ended all 12 descendant processes (`cmd`, `pnpm`, `node`) and `cargo` itself exited, so the cleanup works. The difference is that `cargo.exe` (a rustup proxy and the real cargo) sits above the tool and outside the job; it waits for the tool and exits with it. Ctrl+C was not exercised interactively: it reaches `cargo`, the tool and the children alike, and the tool's exit closes the job.
+- The panic path is unchanged: a panic prints its message and the process exits with status 101, which `cargo xtask` passes through; `cargo xtask` with an unknown subcommand prints the usage and exits with 1.
+- CI: `.github/workflows/ci.yml` and `release.yml` drop the `rustc build.rs -o build.exe` steps and run `cargo xtask ci checks`, `cargo xtask ci e2e-light`, `cargo xtask ci diagnostics` and `cargo xtask dev --setup`; triggers and every other step are unchanged. The `rust-cache` step still caches only `src-tauri`.
+- Docs check: `CITATION_ROOTS` lists `xtask/src` instead of `build.rs`, and a new `CITATION_SKIP_FILES` excludes `docs_check.rs`, whose tests quote nonexistent `docs/...` paths. `cargo xtask docs` prints the same output as the old `build.exe docs` (0 errors, the tailscale warning).
+- Tests: the 11 docs-check tests, which could only run through `rustc --test build.rs`, now run under `cargo test` in `xtask/`; three tests were added for the pure helpers (`slug_segment`, `first_version_token`, the staged-versions manifest), 14 in all. `cargo clippy --all-targets` reports 12 warnings, all in moved code (ten `map_or` simplifications in `docs_check.rs`, one redundant closure, one pointer cast in `win_job.rs`); they were left alone to keep the move verbatim.
+- One comment fix rode along: the doc comment of `kill_stale_dev_processes` had been left above the `LOCKED_ASIDE_MARKER` constant and now sits on its function.
+- References updated: `README.md`, the root, `src-tauri/` and `e2e/` `AGENTS.md` files (the root one gained an `xtask/` row and a `cargo test` in `xtask/` verification bullet), `docs/features/README.md`, `docs/improvement-backlog.md`, the `code` list of `docs/architecture/testing.md`, the five `.claude/skills/*/SKILL.md` files that name the tool, `.gitattributes`, `.gitignore` (the `build.exe` and `build.pdb` entries became `/xtask/target`), `e2e/wdio.conf.ts`, `e2e/lib/run-identity.ts` and the comments in `src-tauri/Cargo.toml` and `src/lib/models/catalogue.ts`.
+- Verification run: `cargo test` in `xtask/`, `cargo xtask docs`, `cargo xtask ci` (docs check, frontend build and check, paseo-plugins typecheck, `cargo check` and `cargo test`, then the light tier with 25 of 25 spec files passing) and a second standalone `cargo xtask e2e light` (25 of 25), and `cargo check --all-targets` in `src-tauri/`.
 
 ## Decision Needed: Phase 6 — Cargo Workspace for the Backend
 
@@ -89,16 +99,18 @@ Splits the oversized backend files along the seams they already had. No file und
 ## Known Leftovers
 
 - `src-tauri/src/runtime/paseo_plugins.rs` carries an unused `use super::*` warning predating this feature.
-- `build.exe docs` warns that `docs/features/tailscale-access/02_dev.md` cites a missing `03_e2e.md`; the warning predates this feature.
+- `cargo xtask docs` warns that `docs/features/tailscale-access/02_dev.md` cites a missing `03_e2e.md`; the warning predates this feature.
+- `cargo xtask ci checks` does not run `cargo test` in `xtask/`, as the old CI never ran the docs-check tests; adding it is a one-step change to `ci_checks()` in `xtask/src/ci.rs` if wanted.
 
 ## Common Gotchas
 
 | Gotcha | Cause | Fix |
 |---|---|---|
 | A backslash literal such as `'\\'` in a Rust file becomes `'\'` and fails to compile after an edit | Bash heredocs and Python-in-heredoc in this Windows environment collapse doubled backslashes | Edit Rust files with the Edit tool, not with heredocs |
-| `./build docs` or `./build e2e light` fails with a "Is a directory" error | `./build` resolves to the gitignored Vite output directory `build/` on Windows Git Bash | Call `build.exe docs` or `build.exe e2e light` from the repository root |
-| `build.exe e2e light --spec <file>` is rejected | `run_e2e_suite()` in `build.rs` takes only a tier | Rerun one spec from `e2e/` with `pnpm exec wdio run wdio.conf.ts --spec ./test/specs/light/<name>.spec.ts`, setting the environment `run_e2e_suite()` sets |
+| `cargo xtask e2e light --spec <file>` is rejected | `run_e2e_suite()` in `xtask/src/e2e.rs` takes only a tier | Rerun one spec from `e2e/` with `pnpm exec wdio run wdio.conf.ts --spec ./test/specs/light/<name>.spec.ts`, setting the environment `run_e2e_suite()` sets |
 | `models-page-caching.spec.ts` fails one test on a 1-second warm-cache budget during a full light run | Twenty-five light specs run in parallel and slow the warm `/models` visit | Rerun `models-page-caching.spec.ts` alone; treat a failure only in the parallel run as a timing flake |
 | Some light-run app instances stay on `about:blank` | Backlog task T7 in `docs/improvement-backlog.md`, unrelated to this feature | Rerun the failing spec alone before calling the failure a regression |
 | A moved function's old path is still cited in a comment, an `AGENTS.md` or `e2e/lib/podman-machine.ts` | Comments and regex parsers cite file paths, which a move does not update | Grep the repository (excluding `node_modules` and history plans under `docs/features/`) for the old path after every move |
 | A new dependency edge between subsystems appears after a split | A helper was placed in the subsystem that called it first | Re-run the dependency-graph check documented in `src-tauri/AGENTS.md` and compare it with the exception list there |
+| `cargo xtask <subcommand>` fails with `manifest path xtask/Cargo.toml does not exist`, or the docs check reports no documents | The alias path and every path the tool uses are relative to the invoking directory | Run `cargo xtask` from the repository root |
+| `cargo xtask` fails to link with `Access is denied` after an edit under `xtask/` | Windows will not replace an executable that is running, and a long `cargo xtask dev` or `e2e` session keeps `xtask/target/debug/xtask.exe` running | End the running session first, then rerun `cargo xtask` |

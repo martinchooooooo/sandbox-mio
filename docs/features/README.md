@@ -19,10 +19,10 @@ Plans describe intent at the time they were written. Current behaviour lives in 
 
 ## Document format (OKF)
 
-`docs/` is an [Open Knowledge Format](https://okf.md/) v0.2 bundle. `./build docs` enforces every rule in this section; the rules are code in `docs_check.rs` at the repository root, which wins wherever this prose and the code disagree.
+`docs/` is an [Open Knowledge Format](https://okf.md/) v0.2 bundle. `cargo xtask docs` enforces every rule in this section; the rules are code in `xtask/src/docs_check.rs`, which wins wherever this prose and the code disagree.
 
 - Every `.md` file except `index.md` and `log.md` starts with a YAML frontmatter block holding a `type` and a `title`.
-- Every `index.md` except the root `docs/index.md` is generated from frontmatter by `./build docs --fix`; never edit one by hand. `./build docs` fails when an index is out of date. Generated indexes carry no frontmatter; the hand-written root `docs/index.md` declares only `okf_version`.
+- Every `index.md` except the root `docs/index.md` is generated from frontmatter by `cargo xtask docs --fix`; never edit one by hand. `cargo xtask docs` fails when an index is out of date. Generated indexes carry no frontmatter; the hand-written root `docs/index.md` declares only `okf_version`.
 - `log.md` holds `## YYYY-MM-DD` sections, newest first, with entries that start with a bold verb: `**Create**`, `**Implement**`, `**Supersede**` or `**Abandon**`. The log records feature status changes only; git is the record of everything else. `.gitattributes` merges the log with `merge=union`, so parallel branches adding entries do not conflict.
 - Every relative markdown link resolves, and every document is linked from some `index.md`.
 - Citations of missing `docs/...` paths are warnings, except inside `log.md` and the documents of `implemented`, `superseded` or `abandoned` features, which are history and may cite files that have since moved. The same warning covers citations from code, skills and `AGENTS.md` files.
@@ -43,7 +43,7 @@ Links between documents are relative markdown links so they also resolve on GitH
 | `architecture` | `feature.md`, optional | `docs/architecture/` documents for the subsystems the feature changes. Set it from the ideation stage on: in-flight features with this key are listed under their architecture documents in `docs/architecture/index.md` |
 | `generated` | architecture documents | `by` (an OKF actor: `<producer>/<version>`, e.g. `claude-code/opus-5-5`, or `human:<id>`) and `at` (timestamp of the last meaningful change) |
 | `verified` | architecture documents, optional | A `{by, at}` mapping or a list of them, added when someone confirms the document against the code; a `human:<id>` actor marks it human-reviewed |
-| `stale_after` | architecture documents | Timestamp after which `./build docs` warns that the document needs re-verifying |
+| `stale_after` | architecture documents | Timestamp after which `cargo xtask docs` warns that the document needs re-verifying |
 | `sources` | architecture documents | `resource:` items naming the plans the document consolidates |
 | `code` | architecture documents | The directories and files the document describes; the jumping-off points into the code |
 
@@ -62,7 +62,7 @@ Each feature directory has a `feature.md` that is the single source of truth for
 | `superseded` | Replaced by another feature (set `superseded_by`) |
 | `abandoned` | Dropped without replacement |
 
-When a feature's status changes: update `status` and the status note in `feature.md`, run `./build docs --fix` to regenerate the indexes, and, for a change to `idea` (creation), `implemented`, `superseded` or `abandoned`, add an entry to the top of `features/log.md`. A `feature.md` status note may record where `02_dev.md` phase headings are stale; `feature.md` wins over the phase headings.
+When a feature's status changes: update `status` and the status note in `feature.md`, run `cargo xtask docs --fix` to regenerate the indexes, and, for a change to `idea` (creation), `implemented`, `superseded` or `abandoned`, add an entry to the top of `features/log.md`. A `feature.md` status note may record where `02_dev.md` phase headings are stale; `feature.md` wins over the phase headings.
 
 When a feature reaches `implemented`, the plan becomes history. Update a `docs/architecture/` document only when the feature changes the overall picture (a new subsystem, seam, capability or invariant), following the `write-docs` skill; either way, set `architecture` in `feature.md` to the documents that describe the subsystems it changed.
 
@@ -70,8 +70,8 @@ When a feature reaches `implemented`, the plan becomes history. Update a `docs/a
 
 | Gotcha | Cause | Fix |
 |---|---|---|
-| `./build docs` reports an `index.md` as out of date | A document's `title`, `description` or `type`, or a feature's `status`, changed, or a document was added or removed | Run `./build docs --fix`; never edit a generated index by hand |
+| `cargo xtask docs` reports an `index.md` as out of date | A document's `title`, `description` or `type`, or a feature's `status`, changed, or a document was added or removed | Run `cargo xtask docs --fix`; never edit a generated index by hand |
 | An agent follows a stale `02_dev.md` and rebuilds removed behaviour | Plans are history once `status: implemented`; their phase text is not updated afterwards | Read `docs/architecture/` for current behaviour; open a plan only for in-flight work or design rationale |
 | An OKF validator reports a missing `type` | A new `.md` file was written without frontmatter | Add the frontmatter block before the H1 |
-| `./build docs` rejects a new `type`, status or log verb | The vocabularies are the `TYPES`, `STATUSES` and `LOG_VERBS` constants in `docs_check.rs` | Add the value to the constant and to the tables in this file in the same change |
-| `./build docs` rejects a log entry starting with `**Update**` | The log records status changes only | Drop the entry; git records the change |
+| `cargo xtask docs` rejects a new `type`, status or log verb | The vocabularies are the `TYPES`, `STATUSES` and `LOG_VERBS` constants in `xtask/src/docs_check.rs` | Add the value to the constant and to the tables in this file in the same change |
+| `cargo xtask docs` rejects a log entry starting with `**Update**` | The log records status changes only | Drop the entry; git records the change |

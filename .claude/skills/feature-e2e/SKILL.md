@@ -13,8 +13,8 @@ future AI agents; follow the `write-docs` skill conventions.
 ## Bookkeeping
 
 Start `03_e2e.md` with frontmatter (`type: e2e-plan`, `title`, `feature: <slug>`). A markdown
-spike record under `spike/` gets the same keys with `type: spike`; scripts need no frontmatter. Run `./build docs --fix` to regenerate the indexes,
-then `./build docs` must pass. Formats: `docs/features/README.md`.
+spike record under `spike/` gets the same keys with `type: spike`; scripts need no frontmatter. Run `cargo xtask docs --fix` to regenerate the indexes,
+then `cargo xtask docs` must pass. Formats: `docs/features/README.md`.
 
 ## Purpose
 

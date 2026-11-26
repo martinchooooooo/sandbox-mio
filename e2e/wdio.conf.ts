@@ -194,7 +194,7 @@ const LIGHT_SPECS = MIO_SPEC
 
 // CI-only msedgedriver logging; a local run is unchanged.
 const ON_GITHUB_ACTIONS = process.env.GITHUB_ACTIONS === "true";
-// `./build ci diagnostics` uploads this directory with a failed run.
+// `cargo xtask ci diagnostics` uploads this directory with a failed run.
 const DIAG_DIR = path.join(__dirname, ".diag");
 
 // Starting value only. A freshly forked worker inherits the port the launcher allocated (process.env
@@ -365,8 +365,8 @@ export const config: WebdriverIO.Config = {
       process.exit(1);
     }
     // Mutagen needs its agent bundle adjacent to the sidecar binary to install agents on new SSH
-    // endpoints. Sourced from src-tauri/binaries/, which `build dev --setup-worktree` and
-    // `build dev --setup` both stage — not tools/, which carries a second, unused copy
+    // endpoints. Sourced from src-tauri/binaries/, which `cargo xtask dev --setup-worktree` and
+    // `cargo xtask dev --setup` both stage — not tools/, which carries a second, unused copy
     // (docs/features/parallel-worktree-e2e/04_improvements.md).
     const mutagenAgentsSrc = path.resolve(__dirname, "../src-tauri/binaries/mutagen-agents.tar.gz");
     const mutagenAgentsDst = path.resolve(__dirname, "../src-tauri/target/debug/mutagen-agents.tar.gz");
@@ -374,7 +374,7 @@ export const config: WebdriverIO.Config = {
       stageIfMissing(mutagenAgentsSrc, mutagenAgentsDst);
     } else {
       console.warn(
-        `[e2e] ${mutagenAgentsSrc} not staged; run \`build dev --setup-worktree\` (or \`build dev --setup\`` +
+        `[e2e] ${mutagenAgentsSrc} not staged; run \`cargo xtask dev --setup-worktree\` (or \`cargo xtask dev --setup\`` +
           " in an already-staged worktree) to fetch it.",
       );
     }

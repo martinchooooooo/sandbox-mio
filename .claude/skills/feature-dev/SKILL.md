@@ -21,7 +21,7 @@ first; the build plan continues and supersedes it. The step after this is
   its `**Create**` log entry as the `feature-ideas` skill's Bookkeeping section describes.
 - In `feature.md`, set `status: planned` (unless a phase is already implemented) and make
   `architecture` list the `docs/architecture/` documents for every subsystem the plan changes.
-- Run `./build docs --fix` to regenerate the indexes, then `./build docs` must pass. No log entry:
+- Run `cargo xtask docs --fix` to regenerate the indexes, then `cargo xtask docs` must pass. No log entry:
   the log records only creation, implementation, supersession and abandonment.
 
 Cite seams against the code as it is now: `docs/architecture/` describes current behaviour, and
@@ -68,7 +68,7 @@ State each of the following explicitly — in Resolved Decisions, or in the phas
   named Mutagen session, a Windows service. These cannot be slug-keyed cheaply, so a feature needing
   one confines its specs to the host-locked tier and serialises against every other real-infra run on
   the machine. Say so in the plan: it is a schedule cost, not an implementation detail.
-- **A new bundled binary under `src-tauri/binaries/`.** Give it its own asset group in `build.rs`: a
+- **A new bundled binary under `src-tauri/binaries/`.** Give it its own asset group in `xtask/src/worktree.rs`: a
   pinned version constant, a sentinel file, and a `fetch_*` that records the version into the
   staged-versions manifest. Without the group, a fresh worktree cannot be staged, and a hard link
   from a sibling worktree can hand over a version this checkout does not pin.

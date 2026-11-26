@@ -34,7 +34,7 @@ out to be wrong during implementation, stop and say so — do not silently devia
    `02_dev.md` was written, the code describes reality; stop and say so before
    building on a stale plan.
 4. In the feature's `feature.md`, set `status: in-progress`, then run
-   `./build docs --fix` to regenerate the indexes (formats:
+   `cargo xtask docs --fix` to regenerate the indexes (formats:
    `docs/features/README.md`).
 
 ## Phase discipline
@@ -105,7 +105,7 @@ feature, so they change only when the picture does:
 3. In `feature.md`, set `status: implemented`, make `architecture` list the
    documents for the subsystems the feature changed, and record any deferred
    phases in the status note. Add an `**Implement**` entry to the top of
-   `docs/features/log.md`, then run `./build docs --fix`.
+   `docs/features/log.md`, then run `cargo xtask docs --fix`.
 
 ## Done means
 
@@ -113,5 +113,5 @@ Every phase section in `02_dev.md` says Implemented (or explicitly says what
 remains and why), the app compiles and relevant tests pass, secrets/credential
 content never appears in logs or IPC payloads if the feature handles any,
 `feature.md` is set to `implemented` with any architecture change made per the
-section above, `./build docs` passes, and — only after user approval — the i18n
+section above, `cargo xtask docs` passes, and — only after user approval — the i18n
 pass has run to zero `TODO(i18n)` markers.

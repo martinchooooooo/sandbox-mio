@@ -34,7 +34,7 @@ first.
 
 ## Running tiers from multiple worktrees
 
-Many worktrees can run `./build e2e light` concurrently; `standard`/`heavy` are safe alongside those
+Many worktrees can run `cargo xtask e2e light` concurrently; `standard`/`heavy` are safe alongside those
 `light` runs but limited to one at a time host-wide. Every per-run path and port derives from one
 run slug in `e2e/lib/run-identity.ts` (`RUN_SLUG`, hashed from the worktree's absolute root plus its
 directory basename) — `onPrepare` logs it, along with the port pair, workspace root, and app-data
@@ -50,12 +50,12 @@ Either lock names the holding process id (and, for the host lock, the holding wo
 failure message; a lock whose holder has actually exited is reclaimed automatically.
 
 A fresh worktree cannot run any tier until staged: `tools/msedgedriver.exe` and all of
-`src-tauri/binaries/` are `.gitignore`d. `build dev --setup-worktree [<path>]` is the first command
+`src-tauri/binaries/` are `.gitignore`d. `cargo xtask dev --setup-worktree [<path>]` is the first command
 to run in a new worktree, before `dev` or any e2e tier — it hard-links the assets from a sibling
 worktree when one has them already, `pnpm install`s, and only re-downloads when no sibling does.
-Invoke it as `./build dev --setup-worktree <path>` from an already-staged worktree, since the target
-worktree has no `build.exe` of its own yet, or as `cargo run --bin build -- dev --setup-worktree`
-once inside it.
+Run it from the repository root of the new worktree, or from another worktree as
+`cargo xtask dev --setup-worktree <path>`; the tool compiles from the checkout itself, so a fresh
+worktree needs nothing staged first.
 
 Two concurrent debug builds will print `Blocking waiting for file lock on package cache` — that is
 cargo's global registry-access lock serializing, not a hang; each worktree's own `src-tauri/target`
@@ -192,7 +192,7 @@ standard failure-dump `afterEach`, same as any other spec.
 | A light spec's scripted `podman.ps` fixture reports an unexpected sandbox image version, or `readBaseImage()` throws "Could not parse BASE_IMAGE / BASE_IMAGE_VERSION" | The fixtures take their image tag from `MISE_BASE_IMAGE` (`e2e/lib/podman-machine.ts`), which regex-parses `BASE_IMAGE` and `BASE_IMAGE_VERSION` out of `src-tauri/src/provider/image.rs` (and `DEFAULT_MACHINE_NAME` out of `src-tauri/src/process/podman.rs`) — a renamed or retyped declaration defeats the parse | Keep each declaration in its current `const NAME: <type> = …` form (the comment above each says so), and never reintroduce a literal image reference into a spec — import `MISE_BASE_IMAGE` |
 | A new launcher-side flag read through `argValues` (`e2e/wdio.conf.ts`) sees no value, so `IS_LIGHT_RUN` is false and `onPrepare` provisions a real Podman machine for a light run | `argValues` matches an exact flag argument or a `<flag>=` prefix only — a flag spelled any other way (a short alias, a differently punctuated form) falls through both branches | Pass `--suite`/`--spec` in either the space-separated or the `--flag=value` form, both of which `argValues` handles; a genuinely new spelling needs a new branch in `argValues` |
 | A light spec in a subdirectory of `test/specs/light/` never runs under `MIO_SPEC` | The filtered `LIGHT_SPECS` glob dropped the `**/` recursion the unfiltered glob has | Every tier glob in `e2e/wdio.conf.ts` and every `test:*` script in `e2e/package.json` is recursive (`./test/specs/light/**/*<MIO_SPEC>*.ts`, `./test/specs/standard/**/*.ts`, `./test/specs/heavy/**/*.ts`) — keep the `**/` when editing one, and keep the filtered and unfiltered light globs at the same depth |
-| `Error: unable to find connection named mio-tests` | The `mio-tests` Podman machine was never initialised on this host | Run a `standard` tier once (`./build e2e`); its `onPrepare` provisions the machine. List connections with `podman system connection list` |
+| `Error: unable to find connection named mio-tests` | The `mio-tests` Podman machine was never initialised on this host | Run a `standard` tier once (`cargo xtask e2e`); its `onPrepare` provisions the machine. List connections with `podman system connection list` |
 | `podman --connection mio-tests-remote …` hangs right after the machine starts | The rootless Podman API socket does not start automatically in the machine's WSL image | Call `provisionMachine` (`e2e/lib/podman-machine.ts`) before any connection-qualified command; it starts the socket with `startPodmanSocket` and waits for the connection |
 | A spec cannot find the app sidebar, or lands on the welcome flow | `onboardingCompleted` is false in the run's `settings.json`, which hides the app chrome (`src/routes/+layout.svelte`) | `onPrepare` (`e2e/wdio.conf.ts`) seeds `onboardingCompleted: true`; a welcome-flow spec resets the flag itself to reach the first-run path |
 | A Home card (`li[data-sandbox]`) or the create card is missing, or `waitForGone` passes although the sandbox still exists | Home and every other routed page are unmounted while a sandbox is in view, and the URL keeps the last page's path (`docs/features/unified-sidebar-nav/02_dev.md`, Resolved Decision 9) | Go through the page objects: `showHome()`/`showPage()` in `test/pageobjects/app.page.ts` decide from the sidebar entry's `data-active`, never the URL, and every `ProjectRow` action shows Home first |
@@ -201,7 +201,7 @@ standard failure-dump `afterEach`, same as any other spec.
 | A compound selector such as a row plus a button-text matcher finds nothing | WebdriverIO does not combine selector strategies in one `$()` string | Resolve the parent element first, then query children with `parent.$()`, as the page objects in `e2e/test/pageobjects/` do |
 | `[ERROR] Error during pnpmfile execution ... Cannot find module '.pnpmfile.mjs'` from the `pnpm tauri build` that `onPrepare` spawns, on Node versions where tsx runs its loader off-thread (such as Node 22) | `@wdio/cli` appends its tsx `--import` loader to `NODE_OPTIONS`; tsx registers off-thread hooks on those Node versions, so the missing-file `import()` error is non-native and pnpm 11's `.pnpmfile.mjs` probe treats it as fatal | Spawn pnpm children with `envWithoutWdioTsx()` as `env` (`e2e/wdio.conf.ts`); CI runs Node 24 (`.github/workflows/ci.yml`) |
 | Every session fails after 60 seconds with `session not created: DevToolsActivePort file doesn't exist`, though `mio.log` shows a normal startup (seen on the GitHub runner's WebView2 157) | Some WebView2 runtimes let the app's own browser arguments (wry always passes `--disable-features=…`) replace `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`, so msedgedriver's `--remote-debugging-port` never reaches the browser | Build every child webview through `child_webview` in `src-tauri/src/workspace/mod.rs`, which passes the variable's arguments explicitly; on CI, the verbose msedgedriver log in `e2e/.diag` shows the launch |
-| Light or standard creates fail with `failed to run ssh-keygen` | No `ssh-keygen` on PATH; the app runs it by name when a sandbox is created (backlog T8) | `./build e2e` appends `System32\OpenSSH` or Git's `usr\bin` to its own PATH when one holds `ssh-keygen.exe` (`ensure_ssh_keygen_on_path` in `build.rs`); otherwise install the Windows OpenSSH client |
+| Light or standard creates fail with `failed to run ssh-keygen` | No `ssh-keygen` on PATH; the app runs it by name when a sandbox is created (backlog T8) | `cargo xtask e2e` appends `System32\OpenSSH` or Git's `usr\bin` to its own PATH when one holds `ssh-keygen.exe` (`ensure_ssh_keygen_on_path` in `xtask/src/e2e.rs`); otherwise install the Windows OpenSSH client |
 
 ## Wait budgets: use the named constants from `lib/timeouts.ts`
 

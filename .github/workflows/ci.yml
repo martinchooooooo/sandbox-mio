@@ -1,6 +1,6 @@
 name: ci
 
-# The root AGENTS.md Verification Commands that need no Podman machine, each job one `./build ci` step a
+# The root AGENTS.md Verification Commands that need no Podman machine, each job one `cargo xtask ci` step a
 # developer can run locally. `standard`/`heavy` stay a developer cadence (AGENTS.md, Tier cadence).
 # Runs only on a pushed tag (any name, so a `v*` release tag runs it alongside release.yml) or a
 # manual dispatch, to keep Windows runner minutes down; branch pushes and pull requests do not run it.
@@ -50,12 +50,9 @@ jobs:
           workspaces: src-tauri
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      # `./build` is the root build.rs compiled with plain rustc; `build/` is Vite's output directory.
-      - name: Compile the build tool
-        run: rustc build.rs -o build.exe
-
-      - name: ./build ci checks
-        run: ./build.exe ci checks
+      # `cargo xtask` compiles the std-only xtask package on first use (alias in .cargo/config.toml).
+      - name: cargo xtask ci checks
+        run: cargo xtask ci checks
 
   e2e-light:
     name: e2e light tier
@@ -82,15 +79,12 @@ jobs:
           workspaces: src-tauri
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Compile the build tool
-        run: rustc build.rs -o build.exe
+      - name: cargo xtask ci e2e-light
+        run: cargo xtask ci e2e-light
 
-      - name: ./build ci e2e-light
-        run: ./build.exe ci e2e-light
-
-      - name: ./build ci diagnostics
+      - name: cargo xtask ci diagnostics
         if: failure() || cancelled()
-        run: ./build.exe ci diagnostics
+        run: cargo xtask ci diagnostics
 
       - uses: actions/upload-artifact@v4
         if: failure() || cancelled()

@@ -8,12 +8,11 @@ generated:
 stale_after: 2027-02-21T00:00:00+11:00
 code:
   - .github/workflows/ci.yml
-  - build.rs
+  - xtask/src/
   - e2e/wdio.conf.ts
   - e2e/lib/
   - src-tauri/src/mockctl/
   - src-tauri/src/process/
-  - docs_check.rs
 sources:
   - resource: docs/features/e2e-tiering/02_dev.md
   - resource: docs/features/scriptable-mock-backend/02_dev.md

@@ -23,8 +23,8 @@ feature directory:
   `status: idea`, `depends_on` if the feature builds on another, and `architecture` listing the
   `docs/architecture/` documents for the subsystems the feature will change.
 - Add a `**Create**` entry under today's date at the top of `docs/features/log.md`.
-- Run `./build docs --fix` to generate the feature's `index.md` and update the feature indexes,
-  then `./build docs` must pass. Never write an `index.md` by hand.
+- Run `cargo xtask docs --fix` to generate the feature's `index.md` and update the feature indexes,
+  then `cargo xtask docs` must pass. Never write an `index.md` by hand.
 
 Before designing, read `docs/architecture/overview.md` and the documents for the affected
 subsystems; `docs/architecture/index.md` also lists other in-flight plans touching the same
@@ -58,7 +58,7 @@ tradeoffs. Record a spike as evidence: the date, each risk that cleared, and any
 blocker with its verbatim error. Spike artefacts (throwaway scripts, probe code,
 captured output) live in `docs/features/<feature>/spike/` — keep them after the
 spike concludes. A markdown spike record there starts with frontmatter (`type: spike`, `title`,
-`feature: <slug>`); run `./build docs --fix` afterwards so `spike/index.md` lists it.
+`feature: <slug>`); run `cargo xtask docs --fix` afterwards so `spike/index.md` lists it.
 
 ## Out-of-scope improvements
 

@@ -32,10 +32,10 @@ and files the document describes). Add `verified` (`by`, `at`) when someone conf
 architecture document against the code. Frontmatter paths are relative to the repository root.
 `docs/features/README.md` lists every key.
 
-Never edit an `index.md` other than the root `docs/index.md`: run `./build docs --fix`, which
+Never edit an `index.md` other than the root `docs/index.md`: run `cargo xtask docs --fix`, which
 generates every other index from frontmatter. Link between documents with relative markdown links;
-keep code paths in backticks. Run `./build docs` after writing; it enforces these rules (source:
-`docs_check.rs` at the repository root).
+keep code paths in backticks. Run `cargo xtask docs` after writing; it enforces these rules (source:
+`xtask/src/docs_check.rs`).
 
 ## Architecture documents
 
@@ -53,13 +53,13 @@ the code; the `code` frontmatter is the jumping-off point into the code.
   handful of rules stated in domain terms ("No secret value is ever written into the workspace").
   No Common Gotchas table: an implementation-level gotcha belongs as a comment at the code site,
   or in the Common Gotchas table of the area's `AGENTS.md`.
-- **Budget:** about 500 words; `./build docs` warns above 750. Tables, short bullets and one
+- **Budget:** about 500 words; `cargo xtask docs` warns above 750. Tables, short bullets and one
   mermaid diagram (in a fenced block, which the budget does not count) are welcome.
 - **One home per fact.** Each fact lives in exactly one architecture document; others link to it.
 - **Change only when the picture changes:** a new subsystem, seam, capability or invariant.
   Set `generated` (`by`, `at`) to yourself and now whenever the content changes. Leave existing
   `verified` entries alone: an entry's `at` shows which version was confirmed.
-- **Re-verifying:** when `./build docs` warns a document is stale, check every statement against
+- **Re-verifying:** when `cargo xtask docs` warns a document is stale, check every statement against
   the code under `code`, fix what has drifted, then add a `verified` entry with your actor and move
   `stale_after` about three months forward.
 - **Rationale** is cited, not restated: link the plan's Resolved Decision.

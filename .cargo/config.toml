@@ -1,0 +1,4 @@
+# `cargo xtask <subcommand>` runs the repository build tool (xtask/). Run it from the repository
+# root: the manifest path is relative to the invoking directory, and so is every path the tool uses.
+[alias]
+xtask = "run --manifest-path xtask/Cargo.toml --quiet --"
