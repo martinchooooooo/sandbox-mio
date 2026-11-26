@@ -4,8 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use super::NetPolicyError;
-use crate::mio_files;
-use crate::provider::types::{
+use mio_provider::types::{
     EgressMode, EgressPolicy, EgressRule, EgressTarget, NetGroup, NetProtocol, ProviderCapabilities,
     RuleAction, SecretBindingSpec, ViolationAction,
 };

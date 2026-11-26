@@ -8,8 +8,8 @@
 use serde_json::{json, Value};
 
 use crate::credentials::github::GITHUB_PLACEHOLDER;
-use crate::net_policy::schema::{placeholder, NetPolicy};
-use crate::provider::types::{EgressMode, RuleAction};
+use mio_net_policy::schema::{placeholder, NetPolicy};
+use mio_provider::types::{EgressMode, RuleAction};
 
 /// Replaces iron-proxy's default deny list in every config, so an allowed host resolving to a
 /// private address cannot reach the machine, host or LAN (Resolved Decision 17). The last entry is
@@ -85,7 +85,7 @@ pub fn bootstrap(proxy_ip: &str) -> Value {
     )
 }
 
-/// The config enforcing `policy`, which [`crate::net_policy::validate::validate`] has accepted in the sidecar
+/// The config enforcing `policy`, which [`mio_net_policy::validate::validate`] has accepted in the sidecar
 /// dialect. `with_value` names the bindings whose secret has a stored value; any other binding is
 /// left out, so its placeholder passes through unswapped (Resolved Decision 15). `app_bindings` are
 /// appended after the workspace bindings.
@@ -211,7 +211,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::*;
-    use crate::net_policy::schema::{NetRule, SecretBinding};
+    use mio_net_policy::schema::{NetRule, SecretBinding};
 
     /// The config iron-proxy 0.56.0 ran in Phase A, copied from
     /// `docs/features/podman-egress-boundary/spike/fixtures/config.yaml`.

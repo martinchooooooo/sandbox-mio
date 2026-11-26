@@ -1,5 +1,5 @@
-use crate::domain::types::BackendError;
-use crate::provider::types::ProviderError;
+use mio_domain::types::BackendError;
+use mio_provider::types::ProviderError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CredentialError {

@@ -5,7 +5,7 @@
 
 pub mod types;
 
-use crate::env_ext::env_dir;
+use mio_env::env_dir;
 use types::BackendError;
 
 /// The container-name suffix that marks a Podman container as a proxy sidecar rather than a
@@ -16,12 +16,12 @@ pub const PROXY_CONTAINER_SUFFIX: &str = "-proxy";
 
 /// Whether `MIO_MOCK_BACKEND=1` selects the scripted/in-memory subsystem paths (the e2e `light`
 /// tier).
-pub(crate) fn mock_backend_enabled() -> bool {
+pub fn mock_backend_enabled() -> bool {
     std::env::var("MIO_MOCK_BACKEND").ok().as_deref() == Some("1")
 }
 
 /// Directory under which name-derived workspaces are created.
-pub(crate) fn workspace_root() -> Result<std::path::PathBuf, BackendError> {
+pub fn workspace_root() -> Result<std::path::PathBuf, BackendError> {
     if let Some(root) = env_dir("SANDBOX_WORKSPACE_ROOT") {
         return Ok(root);
     }
@@ -31,7 +31,7 @@ pub(crate) fn workspace_root() -> Result<std::path::PathBuf, BackendError> {
 
 /// Rejects names Podman would refuse. Also the path-safety gate for `workspace_path`: the name
 /// becomes a path segment, so barring `/` and `..` keeps auto-created workspaces inside the root.
-pub(crate) fn validate_name(name: &str) -> Result<(), BackendError> {
+pub fn validate_name(name: &str) -> Result<(), BackendError> {
     let valid = name
         .chars()
         .enumerate()
@@ -44,7 +44,7 @@ pub(crate) fn validate_name(name: &str) -> Result<(), BackendError> {
 
 /// [`validate_name`] plus the checks that apply only to a name being newly claimed: the proxy
 /// sidecar suffix is reserved. Existing sandboxes that predate the reservation stay addressable.
-pub(crate) fn validate_new_name(name: &str) -> Result<(), BackendError> {
+pub fn validate_new_name(name: &str) -> Result<(), BackendError> {
     validate_name(name)?;
     if name.ends_with(PROXY_CONTAINER_SUFFIX) {
         return Err(BackendError::ReservedName { name: name.to_string() });
@@ -52,9 +52,9 @@ pub(crate) fn validate_new_name(name: &str) -> Result<(), BackendError> {
     Ok(())
 }
 
-/// Name-derived workspace path under `workspace_root()`. `pub(crate)` because
-/// `PodmanProvider::list_instances` falls back to it for containers lacking the workspace label.
-pub(crate) fn workspace_path(name: &str) -> Result<String, BackendError> {
+/// Name-derived workspace path under `workspace_root()`; also the fallback for containers lacking
+/// the workspace label (`PodmanProvider::list_instances`).
+pub fn workspace_path(name: &str) -> Result<String, BackendError> {
     let path = workspace_root()?.join(name);
     Ok(path.to_string_lossy().replace('\\', "/"))
 }

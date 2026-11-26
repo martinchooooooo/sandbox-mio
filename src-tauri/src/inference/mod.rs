@@ -11,7 +11,7 @@ use tauri::ipc::Channel;
 use tauri::AppHandle;
 use tokio::io::AsyncWriteExt;
 
-use crate::process::{detached_command, detached_command_std};
+use mio_process::{detached_command, detached_command_std};
 use crate::settings::types::EngineKind;
 use types::{
     InferenceEngine, InferenceError, MachineSpecs, MachineSpecsCache, ModelDownloadEvent,

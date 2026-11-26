@@ -17,8 +17,8 @@ pub enum AgentError {
     ConfigWriteFailed(String),
 }
 
-impl From<crate::mio_files::FileError> for AgentError {
-    fn from(e: crate::mio_files::FileError) -> Self {
+impl From<mio_files::FileError> for AgentError {
+    fn from(e: mio_files::FileError) -> Self {
         AgentError::ConfigWriteFailed(e.to_string())
     }
 }

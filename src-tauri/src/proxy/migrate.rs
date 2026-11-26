@@ -44,7 +44,7 @@ pub fn migrate_legacy_secrets(app: &AppHandle, store: &ProxyStore, live: &[Strin
 
 fn migrate_legacy_secrets_inner(app: &AppHandle, store: &ProxyStore, live: &[String]) -> Result<(), ProxyError> {
     let legacy_path = store.legacy_secrets_path()?;
-    let Some(value) = crate::mio_files::read_value(&legacy_path) else {
+    let Some(value) = mio_files::read_value(&legacy_path) else {
         return Ok(());
     };
     let legacy: HashMap<String, String> = serde_json::from_value(value)
@@ -54,7 +54,7 @@ fn migrate_legacy_secrets_inner(app: &AppHandle, store: &ProxyStore, live: &[Str
     let users: Vec<(String, Vec<String>)> = live
         .iter()
         .map(|name| {
-            let ids = match crate::net_policy::applied::read_applied(app, name) {
+            let ids = match crate::applied_policy::read_applied(app, name) {
                 Ok(Some(applied)) => applied.policy.secrets.into_iter().map(|b| b.secret_id).collect(),
                 _ => Vec::new(),
             };

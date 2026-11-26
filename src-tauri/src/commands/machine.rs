@@ -13,7 +13,7 @@ use crate::machine::types::{
     STEP_MACHINE_INIT, STEP_MACHINE_START, STEP_SOCKET_ACTIVATE, STEP_WSL_INSTALL,
 };
 use crate::machine::MachineRunners;
-use crate::domain::types::ProviderId;
+use mio_domain::types::ProviderId;
 
 /// Probe whether default Podman machine is running and responding.
 #[tauri::command]

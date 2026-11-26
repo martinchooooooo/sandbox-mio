@@ -5,11 +5,11 @@ use std::sync::Arc;
 use tauri::{ipc::Channel, State};
 
 use crate::backends::types::SandboxBackend;
-use crate::domain::types::Sandbox;
+use mio_domain::types::Sandbox;
 use crate::error::AppError;
 use crate::network::types::NetworkManager;
-use crate::domain::types::ProviderId;
-use crate::provider::ProviderRegistry;
+use mio_domain::types::ProviderId;
+use mio_provider::ProviderRegistry;
 use crate::proxy::store::ProxyStore;
 use crate::resources;
 use crate::resources::history::{HistoryWindow, ResourceHistory};
@@ -26,7 +26,7 @@ pub async fn create_sandbox(
     name: String,
     existing_path: Option<String>,
     provider: Option<ProviderId>,
-    egress: Option<crate::provider::types::EgressMode>,
+    egress: Option<mio_provider::types::EgressMode>,
     starter_hosts: Option<Vec<String>>,
     store: State<'_, Arc<dyn SandboxBackend>>,
     runtime: State<'_, Arc<dyn RuntimeManager>>,
@@ -134,7 +134,7 @@ pub async fn open_sandbox_folder(
     store: State<'_, Arc<dyn SandboxBackend>>,
     app: tauri::AppHandle,
 ) -> Result<(), AppError> {
-    use crate::domain::types::BackendError;
+    use mio_domain::types::BackendError;
     use tauri_plugin_opener::OpenerExt;
 
     let sandboxes = store.list().await?;
@@ -149,7 +149,7 @@ pub async fn open_sandbox_folder(
     if !path.is_dir() {
         return Err(BackendError::PathNotADirectory { path: sandbox.workspace_path.clone() }.into());
     }
-    if crate::domain::mock_backend_enabled() {
+    if mio_domain::mock_backend_enabled() {
         return Ok(());
     }
     app.opener()

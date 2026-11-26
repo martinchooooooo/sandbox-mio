@@ -1,23 +1,18 @@
 mod activity;
 mod agent_host;
 mod agents;
+mod applied_policy;
 mod backends;
 mod bootstrap;
 mod commands;
 mod credentials;
-mod domain;
-mod env_ext;
 mod error;
 mod inference;
 mod logging;
 mod machine;
-mod mio_files;
-mod net_policy;
-mod mockctl;
+mod mutagen;
 mod network;
 mod paths;
-mod process;
-mod provider;
 mod proxy;
 mod resources;
 mod runtime;
@@ -33,7 +28,7 @@ pub fn run() {
     // First statement by requirement: any process spawned before this inherits the launching
     // terminal's console handles, and both `listen_events` and the Mutagen daemon spawn early
     // (`docs/features/podman-process-isolation/02_dev.md`, Phase A).
-    let cleared = process::windows::clear_inheritable_handles();
+    let cleared = mio_process::windows::clear_inheritable_handles();
 
     // Opt-in and mutually exclusive with this app's own file logging (see `logging.rs`): the
     // plugin's `init()` claims the global tracing subscriber, so enabling it silently zeroes every

@@ -3,7 +3,7 @@ use std::process::Output;
 /// Runs one external-tool invocation and returns its raw output. `args` excludes the binary name;
 /// `args[0]` is the CLI subcommand (`"create"`, `"machine"`, `"sync"`, ...). Implemented once per
 /// real tool ([`super::podman::SystemPodmanRunner`]) and once per scripted tool (`ScriptedPodmanRunner` in
-/// `src-tauri/src/mockctl/`), so the owning subsystem struct (`CliBackend`,
+/// `src-tauri/crates/mockctl/`), so the owning subsystem struct (`CliBackend`,
 /// `PodmanMachineManager`) is identical in both production and the e2e `light` tier.
 #[async_trait::async_trait]
 pub trait ProcessRunner: Send + Sync {

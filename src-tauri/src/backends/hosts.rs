@@ -8,9 +8,9 @@ use tauri::ipc::Channel;
 
 use super::types::ConnectionInfo;
 use super::{check, podman_on, run_podman};
-use crate::domain::types::BackendError;
-use crate::process::detached_command;
-use crate::process::types::ProcessRunner;
+use mio_domain::types::BackendError;
+use mio_process::detached_command;
+use mio_process::types::ProcessRunner;
 use crate::ssh::identity::ensure_key;
 
 /// Names of all registered Podman system connections.

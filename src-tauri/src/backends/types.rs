@@ -1,6 +1,6 @@
 use tauri::ipc::Channel;
 
-use crate::domain::types::{BackendError, ProviderId, Sandbox};
+use mio_domain::types::{BackendError, ProviderId, Sandbox};
 
 /// Mutagen endpoints for a freshly deployed sandbox (returned by `deploy`).
 pub struct RemoteDeployment {
@@ -76,7 +76,7 @@ pub trait SandboxBackend: Send + Sync {
         name: &str,
         existing_path: Option<&str>,
         provider: ProviderId,
-        proxy: Option<&crate::provider::types::ProxyAttachment>,
+        proxy: Option<&mio_provider::types::ProxyAttachment>,
         egress: Option<&EgressRequest>,
     ) -> Result<Sandbox, BackendError>;
     /// Replace `name`'s instance under the same name around its preserved workspace, with the
@@ -86,7 +86,7 @@ pub trait SandboxBackend: Send + Sync {
     async fn recreate(
         &self,
         name: &str,
-        proxy: Option<&crate::provider::types::ProxyAttachment>,
+        proxy: Option<&mio_provider::types::ProxyAttachment>,
         egress: Option<&EgressRequest>,
     ) -> Result<Sandbox, BackendError>;
     /// Return every provider's instances (running and stopped), each tagged with its provider.
@@ -108,7 +108,7 @@ pub trait SandboxBackend: Send + Sync {
         &self,
         name: &str,
         plan: &DeployPlan,
-        proxy: &crate::provider::types::ProxyAttachment,
+        proxy: &mio_provider::types::ProxyAttachment,
         extra_env: &[(String, String)],
     ) -> Result<RemoteDeployment, BackendError>;
     /// Remove remote container (workspace directory left intact).
@@ -145,11 +145,11 @@ pub trait SandboxBackend: Send + Sync {
 pub(super) struct CliBackend {
     pub connection: String,
     /// Resolves each operation to the provider that owns the sandbox.
-    pub(super) registry: std::sync::Arc<crate::provider::ProviderRegistry>,
+    pub(super) registry: std::sync::Arc<mio_provider::ProviderRegistry>,
     /// The process seam the still-Podman-only `&self` calls route through (host registry, event
     /// stream, connection lookup) — real in production, scripted under `MIO_MOCK_BACKEND=1`.
     /// See `docs/features/scriptable-mock-backend/02_dev.md`.
-    pub(super) runner: std::sync::Arc<dyn crate::process::types::ProcessRunner>,
+    pub(super) runner: std::sync::Arc<dyn mio_process::types::ProcessRunner>,
     /// Resolves `crate::paths::app_data_root` for per-sandbox exec-transport SSH identities
     /// (`ssh::identity::ensure_sandbox_identity`). Not used by any pre-existing method.
     pub(super) app: tauri::AppHandle,
@@ -164,6 +164,6 @@ pub(super) struct CliBackend {
 /// new allowlist.
 #[derive(Debug, Clone, Default)]
 pub struct EgressRequest {
-    pub mode: Option<crate::provider::types::EgressMode>,
+    pub mode: Option<mio_provider::types::EgressMode>,
     pub starter_hosts: Vec<String>,
 }

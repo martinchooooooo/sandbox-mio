@@ -20,9 +20,9 @@ pub enum SyncError {
     SessionNotFound { name: String },
 }
 
-impl From<crate::process::mutagen::SidecarError> for SyncError {
-    fn from(e: crate::process::mutagen::SidecarError) -> Self {
-        use crate::process::mutagen::SidecarError;
+impl From<crate::mutagen::SidecarError> for SyncError {
+    fn from(e: crate::mutagen::SidecarError) -> Self {
+        use crate::mutagen::SidecarError;
         match e {
             SidecarError::DataDir(m) => SyncError::DataDir(m),
             SidecarError::Sidecar(m) => SyncError::Sidecar(m),
@@ -78,5 +78,5 @@ pub struct MutagenCli {
     /// Every `sync` subcommand this struct issues goes through here — real sidecar in production,
     /// scripted in the `light` tier (`docs/features/scriptable-mock-backend/02_dev.md`, Phase C).
     /// The runner owns the [`tauri::AppHandle`] the sidecar is resolved through.
-    pub runner: std::sync::Arc<dyn crate::process::types::ProcessRunner>,
+    pub runner: std::sync::Arc<dyn mio_process::types::ProcessRunner>,
 }

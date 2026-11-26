@@ -16,7 +16,7 @@
 /// Governs only handles present at call time; one created later by a dependency is out of reach
 /// (`docs/features/podman-process-isolation/04_improvements.md`).
 #[cfg(windows)]
-pub(crate) fn clear_inheritable_handles() -> usize {
+pub fn clear_inheritable_handles() -> usize {
     let pid = unsafe { GetCurrentProcessId() };
     let Some(buf) = system_handle_snapshot() else {
         return 0;
@@ -42,7 +42,7 @@ pub(crate) fn clear_inheritable_handles() -> usize {
 }
 
 #[cfg(not(windows))]
-pub(crate) fn clear_inheritable_handles() -> usize {
+pub fn clear_inheritable_handles() -> usize {
     0
 }
 

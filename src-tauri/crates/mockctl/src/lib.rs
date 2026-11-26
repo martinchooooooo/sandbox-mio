@@ -6,7 +6,7 @@
 //! See `docs/features/scriptable-mock-backend/02_dev.md`.
 //!
 //! Scripted halves only. The real [`ProcessRunner`] implementations and the spawn machinery they
-//! drive live in `src-tauri/src/process/`, which this module depends on rather than the reverse.
+//! drive live in `src-tauri/crates/process/`, which this crate depends on rather than the reverse.
 
 pub mod types;
 
@@ -15,10 +15,11 @@ use std::process::Output;
 use std::time::Duration;
 use std::sync::{Arc, LazyLock};
 
-use crate::process::{exit_status, strip_connection};
+use mio_process::types::ProcessRunner;
+use mio_process::{exit_status, strip_connection};
 
 use types::{
-    Behaviour, MockDirector, ProcessRunner, RecordedCall, ScriptedMutagenRunner, ScriptedOutput,
+    Behaviour, MockDirector, RecordedCall, ScriptedMutagenRunner, ScriptedOutput,
     ScriptedPodmanRunner, TrackedContainer,
 };
 
@@ -118,7 +119,7 @@ impl MockDirector {
         self.calls.lock().unwrap().iter().filter(|c| c.key == key).cloned().collect()
     }
 
-    pub(crate) fn record(&self, key: &str, args: &[&str], env: &[(String, String)]) {
+    pub fn record(&self, key: &str, args: &[&str], env: &[(String, String)]) {
         self.calls.lock().unwrap().push(RecordedCall {
             key: key.to_string(),
             argv: args.iter().map(|a| a.to_string()).collect(),
@@ -128,7 +129,7 @@ impl MockDirector {
 
     /// Serves a scripted call: holds it for an installed `Delay`, then returns the scripted result
     /// of any other override. Every runner goes through here, so a delay applies to every key.
-    pub(crate) async fn script(&self, key: &str) -> Option<ScriptedOutput> {
+    pub async fn script(&self, key: &str) -> Option<ScriptedOutput> {
         if let Some(hold) = self.take_delay(key) {
             tokio::time::sleep(hold).await;
         }

@@ -7,9 +7,9 @@ generated:
   at: 2026-11-21T20:00:00+11:00
 stale_after: 2027-02-21T00:00:00+11:00
 code:
-  - src-tauri/src/provider/
+  - src-tauri/crates/provider/
   - src-tauri/src/machine/
-  - src-tauri/src/process/
+  - src-tauri/crates/process/
   - src-tauri/src/backends/
   - src-tauri/resources/Containerfile
 sources:

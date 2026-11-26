@@ -25,7 +25,7 @@ export interface SandboxResources {
     samples: ResourceSample[];
 }
 
-/** Mirrors Rust `provider::types::EnginePool`. */
+/** Mirrors Rust `mio_provider::types::EnginePool`. */
 export interface EnginePool {
     cpus: number;
     memoryTotal: number;

@@ -82,7 +82,7 @@ across `it` blocks (see Mock control plane below).
 ## Mock control plane: scripting the process layer (`e2e/lib/mock.ts`)
 
 The real `CliBackend`/`PodmanMachineManager`/`MutagenCli` structs run unmodified against a
-scripted `ProcessRunner` — a shared `MockDirector` (`src-tauri/src/mockctl/mod.rs`) intercepts the
+scripted `ProcessRunner` — a shared `MockDirector` (`src-tauri/crates/mockctl/src/lib.rs`) intercepts the
 external `podman` or `mutagen` call each subsystem method shells out to, so a running spec can
 provoke a failure or a rare gating condition without a hand-written subsystem-level mock to keep in
 sync — exactly the paths
@@ -96,7 +96,7 @@ every scriptable scenario is proven by a light spec instead of a `#[test]` fn.
   built-in defaults, so a spec must install its overrides inside the `it` block that needs them; an
   override installed in the spec's own `before` hook is wiped before the first test runs.
 - `key` is `<binary>.<subcommand>` (`podman.start`, `podman.ps`, `podman.machine-list`, ...) — see
-  `KNOWN_CALLS` in `src-tauri/src/mockctl/mod.rs` for the full scriptable list. An unknown key
+  `KNOWN_CALLS` in `src-tauri/crates/mockctl/src/lib.rs` for the full scriptable list. An unknown key
   rejects the `configureMock()` call immediately.
 - `behaviour` payloads are the process's raw text output, not a typed value: `fail-once`/
   `fail-always` take `exit_code` (non-zero) and `stderr`, so the real subsystem's own `check()`
@@ -189,7 +189,7 @@ standard failure-dump `afterEach`, same as any other spec.
 |---|---|---|
 | A light spec's `it` block sees the built-in mock defaults instead of the override the spec installed | `useMockControl()` (`e2e/lib/mock.ts`) resets the director at `beforeEach` as well as `before`/`after`, so an override installed in the spec's own `before` hook is cleared before the first test runs | Install every override inside the `it` block that consumes it, as all four light specs do (`test/specs/light/sandbox-start-failure-ui.spec.ts` is the reference shape); the same reset is what stops an override leaking into later tests |
 | `mock_configure` rejects a `mutagen.forward-*` key | `forward_create`, `forward_terminate` and `sweep_stale_forwards` in `src-tauri/src/sync/mod.rs` call the sidecar through `run()` with an `AppHandle`, so no `ProcessRunner` key exists for Mutagen forward subcommands | Script the flow through `MockNetworkManager` (`src-tauri/src/network/mock.rs`) instead; extending the seam is deferred in `docs/features/scriptable-mock-backend/04_improvements.md` |
-| A light spec's scripted `podman.ps` fixture reports an unexpected sandbox image version, or `readBaseImage()` throws "Could not parse BASE_IMAGE / BASE_IMAGE_VERSION" | The fixtures take their image tag from `MISE_BASE_IMAGE` (`e2e/lib/podman-machine.ts`), which regex-parses `BASE_IMAGE` and `BASE_IMAGE_VERSION` out of `src-tauri/src/provider/image.rs` (and `DEFAULT_MACHINE_NAME` out of `src-tauri/src/process/podman.rs`) — a renamed or retyped declaration defeats the parse | Keep each declaration in its current `const NAME: <type> = …` form (the comment above each says so), and never reintroduce a literal image reference into a spec — import `MISE_BASE_IMAGE` |
+| A light spec's scripted `podman.ps` fixture reports an unexpected sandbox image version, or `readBaseImage()` throws "Could not parse BASE_IMAGE / BASE_IMAGE_VERSION" | The fixtures take their image tag from `MISE_BASE_IMAGE` (`e2e/lib/podman-machine.ts`), which regex-parses `BASE_IMAGE` and `BASE_IMAGE_VERSION` out of `src-tauri/crates/provider/src/image.rs` (and `DEFAULT_MACHINE_NAME` out of `src-tauri/crates/process/src/podman.rs`) — a renamed or retyped declaration defeats the parse | Keep each declaration in its current `const NAME: <type> = …` form (the comment above each says so), and never reintroduce a literal image reference into a spec — import `MISE_BASE_IMAGE` |
 | A new launcher-side flag read through `argValues` (`e2e/wdio.conf.ts`) sees no value, so `IS_LIGHT_RUN` is false and `onPrepare` provisions a real Podman machine for a light run | `argValues` matches an exact flag argument or a `<flag>=` prefix only — a flag spelled any other way (a short alias, a differently punctuated form) falls through both branches | Pass `--suite`/`--spec` in either the space-separated or the `--flag=value` form, both of which `argValues` handles; a genuinely new spelling needs a new branch in `argValues` |
 | A light spec in a subdirectory of `test/specs/light/` never runs under `MIO_SPEC` | The filtered `LIGHT_SPECS` glob dropped the `**/` recursion the unfiltered glob has | Every tier glob in `e2e/wdio.conf.ts` and every `test:*` script in `e2e/package.json` is recursive (`./test/specs/light/**/*<MIO_SPEC>*.ts`, `./test/specs/standard/**/*.ts`, `./test/specs/heavy/**/*.ts`) — keep the `**/` when editing one, and keep the filtered and unfiltered light globs at the same depth |
 | `Error: unable to find connection named mio-tests` | The `mio-tests` Podman machine was never initialised on this host | Run a `standard` tier once (`cargo xtask e2e`); its `onPrepare` provisions the machine. List connections with `podman system connection list` |

@@ -1,7 +1,5 @@
 use std::sync::{Arc, Mutex};
 
-pub(crate) use crate::process::types::ProcessRunner;
-
 /// One scripted behaviour installed against a `<binary>.<subcommand>` override key. The payload is
 /// the process's raw text output, not a typed value — the real subsystem code parses it exactly
 /// as it would parse genuine `podman`/`mutagen` output.
@@ -38,10 +36,10 @@ pub struct ReturnPayload {
 }
 
 /// A scripted call's raw result, converted to a real [`Output`] by each runner.
-pub(crate) struct ScriptedOutput {
-    pub(crate) exit_code: i32,
-    pub(crate) stdout: String,
-    pub(crate) stderr: String,
+pub struct ScriptedOutput {
+    pub exit_code: i32,
+    pub stdout: String,
+    pub stderr: String,
 }
 
 /// Mutex-guarded override registry, shared as `Arc<MockDirector>` Tauri state and handed into

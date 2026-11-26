@@ -9,7 +9,7 @@ use tauri::ipc::Channel;
 use tokio::sync::Mutex;
 
 use super::types::{AgentHost, AgentHostError, AttachEvent, AttachInfo, Cursor, HostStatus};
-use crate::provider::types::MachineRef;
+use mio_provider::types::MachineRef;
 
 const ROUNDTRIP: &str = include_str!("fixtures/01-roundtrip.jsonl");
 const DIALOG: &str = include_str!("fixtures/04b-dialog.jsonl");

@@ -9,7 +9,6 @@ use tauri::{AppHandle, Manager, Runtime};
 
 use crate::agent_host::types::AgentHost;
 use crate::error::AppError;
-use crate::mio_files;
 use crate::network::types::{NetworkManager, ServiceKind};
 use crate::runtime::types::{RuntimeError, RuntimeManager};
 use crate::runtime::PASEO_WEB_PORT;
@@ -87,7 +86,7 @@ pub async fn attach_terminal_session(
     app: &tauri::AppHandle,
 ) -> Result<(), AppError> {
     // Before any key is created: the name reaches a remote shell and names files on the host.
-    crate::domain::validate_name(name)?;
+    mio_domain::validate_name(name)?;
     let route = router.locate(name).await?;
     let identity_path = crate::ssh::identity::ensure_sandbox_identity(app, name)?;
     let known_hosts_path = crate::ssh::identity::sandbox_known_hosts_path(&identity_path);

@@ -8,7 +8,7 @@ use tauri::AppHandle;
 
 use super::rollup::{PoolRollup, Rollup};
 use super::unix_now;
-use crate::domain::types::BackendError;
+use mio_domain::types::BackendError;
 
 const RETENTION_SECS: u64 = 14 * 24 * 3600;
 
@@ -16,7 +16,7 @@ const RETENTION_SECS: u64 = 14 * 24 * 3600;
 pub(super) const PRUNE_GROWTH_BYTES: u64 = 512 * 1024;
 
 /// The Podman machine's history file stem. A leading underscore cannot collide with a sandbox,
-/// whose name starts with an ASCII alphanumeric (`validate_name` in `src-tauri/src/domain/mod.rs`).
+/// whose name starts with an ASCII alphanumeric (`validate_name` in `src-tauri/crates/domain/src/lib.rs`).
 const POOL_FILE_STEM: &str = "_podman-machine";
 
 #[derive(Debug, Clone, Copy, serde::Deserialize)]
@@ -125,7 +125,7 @@ pub fn history(
     let mut history = ResourceHistory::default();
     match name {
         Some(name) => {
-            crate::domain::validate_name(name)?;
+            mio_domain::validate_name(name)?;
             let rollups = read_rollups(&sandbox_file(&dir, name), cutoff).map_err(io)?;
             history.sandboxes.push(SandboxHistory { name: name.to_string(), rollups });
         }

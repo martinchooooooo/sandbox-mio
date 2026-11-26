@@ -1,4 +1,4 @@
-// Mirrors Rust `net_policy::NetPolicy` (camelCase, `.mio/net-policy.json` on disk).
+// Mirrors Rust `mio_net_policy::schema::NetPolicy` (camelCase, `.mio/net-policy.json` on disk).
 export interface NetRule {
     action: "allow" | "deny";
     host?: string;
@@ -23,13 +23,13 @@ export interface NetPolicy {
     interactive?: boolean;
 }
 
-// Mirrors Rust `net_policy::UnstampedBinding`.
+// Mirrors Rust `applied_policy::UnstampedBinding`.
 export interface UnstampedBinding {
     envVar: string;
     placeholder: string;
 }
 
-// Mirrors Rust `net_policy::PolicyChange`: `kind` is the `ChangeDetail` tag, `text` the summary.
+// Mirrors Rust `mio_net_policy::diff::PolicyChange`: `kind` is the `ChangeDetail` tag, `text` the summary.
 export interface PolicyChange {
     kind: string;
     text: string;

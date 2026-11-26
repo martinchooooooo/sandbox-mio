@@ -31,16 +31,16 @@ impl RuntimeError {
     }
 }
 
-impl From<crate::provider::types::ProviderError> for RuntimeError {
-    fn from(e: crate::provider::types::ProviderError) -> Self {
+impl From<mio_provider::types::ProviderError> for RuntimeError {
+    fn from(e: mio_provider::types::ProviderError) -> Self {
         match e {
-            crate::provider::types::ProviderError::CommandFailed(m) => RuntimeError::CommandFailed(m),
-            crate::provider::types::ProviderError::ParseError(m) => RuntimeError::CommandFailed(m),
+            mio_provider::types::ProviderError::CommandFailed(m) => RuntimeError::CommandFailed(m),
+            mio_provider::types::ProviderError::ParseError(m) => RuntimeError::CommandFailed(m),
             // No distinct `RuntimeError` variant: nothing on the runtime path branches on the
             // condition, and the message already names it. The kind survives where it is acted on
             // (`BackendError::PodmanUnresponsive`).
-            crate::provider::types::ProviderError::Unresponsive(m) => RuntimeError::CommandFailed(m),
-            e @ crate::provider::types::ProviderError::PortInUse(_) => {
+            mio_provider::types::ProviderError::Unresponsive(m) => RuntimeError::CommandFailed(m),
+            e @ mio_provider::types::ProviderError::PortInUse(_) => {
                 RuntimeError::CommandFailed(e.to_string())
             }
         }
@@ -68,7 +68,7 @@ pub trait RuntimeManager: Send + Sync {
     async fn reproduce_remote(
         &self,
         name: &str,
-        target: &crate::provider::types::MachineRef,
+        target: &mio_provider::types::MachineRef,
         workspace_host_path: &str,
     ) -> Result<(), RuntimeError>;
 
@@ -77,7 +77,7 @@ pub trait RuntimeManager: Send + Sync {
     async fn ensure_running(
         &self,
         name: &str,
-        machine: &crate::provider::types::MachineRef,
+        machine: &mio_provider::types::MachineRef,
     ) -> Result<(), RuntimeError>;
 
     /// Ensure the sandbox's paseo agent-web daemon runs on `crate::runtime::PASEO_WEB_PORT` with the
@@ -89,7 +89,7 @@ pub trait RuntimeManager: Send + Sync {
     async fn prepare_agent_web(
         &self,
         name: &str,
-        machine: &crate::provider::types::MachineRef,
+        machine: &mio_provider::types::MachineRef,
         password: &str,
         opening: bool,
     ) -> Result<(), RuntimeError>;
@@ -115,13 +115,13 @@ pub trait ToolchainSecrets: Send + Sync {
     fn env(&self, sandbox: &str) -> Vec<(String, String)>;
 }
 
-/// Drives `mise` through whichever [`crate::provider::types::MachineProvider`] owns the sandbox.
-/// The methods that take a [`crate::provider::types::MachineRef`] (`reproduce_remote`,
+/// Drives `mise` through whichever [`mio_provider::types::MachineProvider`] owns the sandbox.
+/// The methods that take a [`mio_provider::types::MachineRef`] (`reproduce_remote`,
 /// `prepare_agent_web`) resolve it directly; the name-only methods resolve the
 /// sandbox's owner through `ProviderRegistry::provider_of`.
 pub struct MiseRuntime {
     /// Resolves each call to the provider running the sandbox.
-    pub providers: std::sync::Arc<crate::provider::ProviderRegistry>,
+    pub providers: std::sync::Arc<mio_provider::ProviderRegistry>,
     pub registry_cache: tokio::sync::OnceCell<Vec<RegistryEntry>>,
     /// Carried by every call that resolves or downloads tools.
     pub secrets: std::sync::Arc<dyn ToolchainSecrets>,

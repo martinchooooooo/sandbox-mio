@@ -8,7 +8,8 @@ generated:
 stale_after: 2027-02-21T00:00:00+11:00
 code:
   - src-tauri/src/proxy/
-  - src-tauri/src/net_policy/
+  - src-tauri/crates/net-policy/
+  - src-tauri/src/applied_policy.rs
   - src-tauri/src/services/sandbox.rs
   - src/lib/proxy/
   - src/lib/net-policy/

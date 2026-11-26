@@ -95,7 +95,7 @@ pub async fn open_agent_web(
 /// tell. Fire and forget: failures are logged, never surfaced.
 #[tauri::command]
 pub fn prewarm_agent_web(name: String, app: tauri::AppHandle) -> Result<(), AppError> {
-    crate::domain::validate_name(&name)?;
+    mio_domain::validate_name(&name)?;
     crate::services::panes::spawn_prewarm_installed(&app, &name);
     Ok(())
 }

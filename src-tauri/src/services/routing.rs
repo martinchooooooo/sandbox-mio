@@ -5,9 +5,9 @@ use std::sync::Arc;
 
 use crate::backends::types::SandboxBackend;
 use crate::error::AppError;
-use crate::domain::types::ProviderId;
-use crate::provider::types::MachineRef;
-use crate::provider::ProviderRegistry;
+use mio_domain::types::ProviderId;
+use mio_provider::types::MachineRef;
+use mio_provider::ProviderRegistry;
 use crate::sync::types::SyncEngine;
 
 /// Where a sandbox lives and how it is reached, resolved in one pass. The provider running the
@@ -58,7 +58,7 @@ impl SandboxRouter {
     }
 
     /// The provider driving `machine`, for a caller that execs in the sandbox itself.
-    pub fn provider_for(&self, machine: &MachineRef) -> Arc<dyn crate::provider::types::MachineProvider> {
+    pub fn provider_for(&self, machine: &MachineRef) -> Arc<dyn mio_provider::types::MachineProvider> {
         self.registry.provider_for(machine)
     }
 

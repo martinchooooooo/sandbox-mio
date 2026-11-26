@@ -6,11 +6,11 @@ use std::sync::Arc;
 use crate::activity::types::TaskKind;
 use crate::activity::{self, TaskFailure, TaskScope};
 use crate::backends::types::{EgressRequest, SandboxBackend};
-use crate::domain::types::{BackendError, ProviderId, Sandbox};
+use mio_domain::types::{BackendError, ProviderId, Sandbox};
 use crate::error::AppError;
 use crate::network::types::NetworkManager;
-use crate::provider::types::MachineRef;
-use crate::provider::ProviderRegistry;
+use mio_provider::types::MachineRef;
+use mio_provider::ProviderRegistry;
 use crate::proxy::flowlog::FlowWatchRegistry;
 use crate::proxy::store::ProxyStore;
 use crate::proxy::types::SidecarSite;
@@ -25,7 +25,7 @@ use crate::sync::types::{SyncEngine, SyncStatus};
 /// `name`'s own block from the host-global config, which is what keeps concurrent worktrees safe.
 fn cleanup_host_state(name: &str, app: &tauri::AppHandle) {
     // The name becomes a path component below; destroy takes it from IPC unvalidated.
-    if crate::domain::validate_name(name).is_err() {
+    if mio_domain::validate_name(name).is_err() {
         tracing::warn!(target: "destroy", %name, "skipping host state cleanup for an invalid sandbox name");
         return;
     }
@@ -96,9 +96,9 @@ pub async fn create(
     // Checked before the sidecar is created, not only in `store.create`: a sidecar create on a taken
     // name fails, and its rollback removes `<name>-proxy` by name, which is then the existing
     // sandbox's live sidecar.
-    crate::domain::validate_new_name(name)?;
+    mio_domain::validate_new_name(name)?;
     if let Some(existing) = store.list().await?.into_iter().find(|s| s.name == name) {
-        return Err(crate::domain::types::BackendError::NameTaken {
+        return Err(mio_domain::types::BackendError::NameTaken {
             name: name.to_string(),
             provider: existing.provider,
         }
@@ -173,7 +173,7 @@ async fn create_steps(
                 "create_sandbox: rollback after proxy setup failure also failed"
             ),
         }
-        crate::net_policy::applied::remove_applied(app, name);
+        crate::applied_policy::remove_applied(app, name);
         crate::proxy::sidecar::remove_proxy(proxy, &sidecar, provider, name).await;
         return Err(e);
     }
@@ -378,12 +378,12 @@ async fn deploy_to_target(
     undo.remote_proxy = true;
     // The remote sandbox carries the placeholders of the applied snapshot, so one snapshot stays
     // valid for both containers (Resolved Decision 10).
-    let guest_env = crate::net_policy::applied::read_applied(app, name)
+    let guest_env = crate::applied_policy::read_applied(app, name)
         .map_err(BackendError::from)?
         .and_then(|a| a.guest_env)
         .unwrap_or_default();
     let extra_env: Vec<(String, String)> =
-        guest_env.iter().map(|v| (v.clone(), crate::net_policy::schema::placeholder(v))).collect();
+        guest_env.iter().map(|v| (v.clone(), mio_net_policy::schema::placeholder(v))).collect();
 
     task.progress(None, "Creating the sandbox on the host");
     undo.remote_sandbox = true;
@@ -557,7 +557,7 @@ pub async fn destroy(
     let Some(session) = session else {
         close_panes_and_forwards(name, network, app).await;
         store.destroy(name).await?;
-        crate::net_policy::applied::remove_applied(app, name);
+        crate::applied_policy::remove_applied(app, name);
         cleanup_host_state(name, app);
         // Best-effort, so the leftovers of a half-created sandbox are cleaned up too.
         let (id, provider) = crate::proxy::sidecar::sidecar_provider(proxy, registry, name);
@@ -579,7 +579,7 @@ pub async fn destroy(
     store.remove_remote(name, &session.host).await?;
     crate::proxy::sidecar::remove_remote_proxy(&remote_site(registry, &session.host), name).await;
     store.destroy(name).await?;
-    crate::net_policy::applied::remove_applied(app, name);
+    crate::applied_policy::remove_applied(app, name);
     cleanup_host_state(name, app);
     // Removes the local sidecar, its network and the whole state directory, `remote/` included.
     let (id, provider) = crate::proxy::sidecar::sidecar_provider(proxy, registry, name);

@@ -25,8 +25,8 @@ pub enum NetworkError {
     CommandFailed(String),
 }
 
-impl From<crate::provider::types::ProviderError> for NetworkError {
-    fn from(e: crate::provider::types::ProviderError) -> Self {
+impl From<mio_provider::types::ProviderError> for NetworkError {
+    fn from(e: mio_provider::types::ProviderError) -> Self {
         NetworkError::CommandFailed(e.to_string())
     }
 }
@@ -101,7 +101,7 @@ pub trait NetworkManager: Send + Sync {
     async fn expose_port(
         &self,
         sandbox: &str,
-        machine: &crate::provider::types::MachineRef,
+        machine: &mio_provider::types::MachineRef,
         workspace_path: &str,
         target_port: u16,
         label: Option<String>,
@@ -117,6 +117,6 @@ pub trait NetworkManager: Send + Sync {
         self: std::sync::Arc<Self>,
         sandbox: &str,
         workspace_path: &str,
-        machine: &crate::provider::types::MachineRef,
+        machine: &mio_provider::types::MachineRef,
     );
 }

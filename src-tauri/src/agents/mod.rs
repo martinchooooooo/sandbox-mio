@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tauri::{ipc::Channel, Emitter};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::provider::types::{ExecOpts, MachineProvider};
+use mio_provider::types::{ExecOpts, MachineProvider};
 use crate::runtime::types::RuntimeManager;
 use types::{AgentAuthEvent, AgentAuthStatus, AgentError, AgentInstallEvent, AuthSession, AuthSessionMap};
 
@@ -228,7 +228,7 @@ pub async fn get_auth_status(
     let cred: serde_json::Value = serde_json::from_str(cred_json.trim())
         .map_err(|e| AgentError::CredentialReadFailed(e.to_string()))?;
 
-    let expires_at_ms = crate::mio_files::json_path_get(&cred, expires_at_json_key).and_then(|v| v.as_u64());
+    let expires_at_ms = mio_files::json_path_get(&cred, expires_at_json_key).and_then(|v| v.as_u64());
 
     let account_email =
         if let (Some(src_path), Some(email_key)) = (account_source_path, account_email_json_key) {
@@ -238,7 +238,7 @@ pub async fn get_auth_status(
                 .ok()
                 .and_then(|s| serde_json::from_str::<serde_json::Value>(s.trim()).ok())
                 .and_then(|v| {
-                    crate::mio_files::json_path_get(&v, email_key)
+                    mio_files::json_path_get(&v, email_key)
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string())
                 })

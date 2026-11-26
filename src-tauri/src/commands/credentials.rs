@@ -7,8 +7,8 @@ use tauri::State;
 use crate::backends::types::SandboxBackend;
 use crate::credentials;
 use crate::error::AppError;
-use crate::provider::types::ExecOpts;
-use crate::provider::ProviderRegistry;
+use mio_provider::types::ExecOpts;
+use mio_provider::ProviderRegistry;
 use crate::runtime::types::RuntimeManager;
 
 /// Create ephemeral auth container if absent. Idempotent.

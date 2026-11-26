@@ -1,6 +1,6 @@
 use crate::agent_host::types::AgentHostError;
 use crate::agents::types::AgentError;
-use crate::domain::types::BackendError;
+use mio_domain::types::BackendError;
 use crate::credentials::types::CredentialError;
 use crate::inference::types::InferenceError;
 use crate::network::types::NetworkError;

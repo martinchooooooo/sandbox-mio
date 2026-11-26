@@ -3090,6 +3090,77 @@ dependencies = [
 ]
 
 [[package]]
+name = "mio-domain"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "mio-env",
+ "mio-files",
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "mio-env"
+version = "0.1.0"
+
+[[package]]
+name = "mio-files"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "mio-mockctl"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "mio-process",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "mio-net-policy"
+version = "0.1.0"
+dependencies = [
+ "mio-domain",
+ "mio-files",
+ "mio-provider",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "mio-process"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "mio-provider"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "mio-domain",
+ "mio-mockctl",
+ "mio-process",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "ml-kem"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4806,6 +4877,13 @@ dependencies = [
  "dirs",
  "dunce",
  "futures-util",
+ "mio-domain",
+ "mio-env",
+ "mio-files",
+ "mio-mockctl",
+ "mio-net-policy",
+ "mio-process",
+ "mio-provider",
  "rcgen",
  "reqwest 0.12.28",
  "russh",

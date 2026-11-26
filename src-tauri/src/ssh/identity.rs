@@ -2,9 +2,9 @@
 //! engine's exec transport, and the pinned host keys. Takes no provider: whatever must run inside a
 //! sandbox (reading its host keys) is done by the caller and passed in.
 
-use crate::domain::types::{BackendError, ProviderId};
-use crate::process::detached_command_std;
-use crate::process::podman::podman_literal_path;
+use mio_domain::types::{BackendError, ProviderId};
+use mio_process::detached_command_std;
+use mio_process::podman::podman_literal_path;
 
 /// The account the exec-transport SSH session authenticates as. Must match the base image, which
 /// runs everything as root (`/root/work` lives under `/root`).

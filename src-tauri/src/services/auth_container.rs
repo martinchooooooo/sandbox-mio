@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::backends::types::SandboxBackend;
 use crate::credentials::types::CredentialError;
-use crate::domain::types::ProviderId;
+use mio_domain::types::ProviderId;
 use crate::runtime::types::RuntimeManager;
 
 /// Create ephemeral auth container if absent (idempotent; destroyed after capture).

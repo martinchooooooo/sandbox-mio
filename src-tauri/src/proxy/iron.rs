@@ -9,7 +9,7 @@ use super::secret_files::planned_files;
 use super::store::config_dir;
 use super::types::ProxyError;
 use super::{io_err, iron_config, write_atomic};
-use crate::net_policy::schema::NetPolicy;
+use mio_net_policy::schema::NetPolicy;
 
 /// Pinned to the version Phase A ran, never `latest` or an `-rc.N` tag. The tag must not parse as
 /// an integer, or `is_sidecar` mistakes the sidecar for a sandbox. An upgrade re-runs the Phase A

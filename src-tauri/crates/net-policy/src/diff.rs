@@ -1,7 +1,7 @@
 //! The reviewable difference between the accepted policy and a changed workspace file.
 
 use super::schema::{NetPolicy, NetRule, SecretBinding};
-use crate::provider::types::{EgressMode, RuleAction};
+use mio_provider::types::{EgressMode, RuleAction};
 
 /// What changed between two policies, as the review dialog lists it. `widens` marks a change that
 /// can enlarge what the sandbox reaches or which hosts see a real secret value.

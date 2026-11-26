@@ -9,13 +9,13 @@ use crate::activity::types::TaskKind;
 use crate::backends;
 use crate::backends::types::SandboxBackend;
 use crate::error::AppError;
-use crate::domain::types::ProviderId;
-use crate::provider::types::ProviderCapabilities;
-use crate::provider::ProviderRegistry;
+use mio_domain::types::ProviderId;
+use mio_provider::types::ProviderCapabilities;
+use mio_provider::ProviderRegistry;
 
 #[tauri::command]
 pub fn base_image_version() -> u32 {
-    crate::provider::image::BASE_IMAGE_VERSION
+    mio_provider::image::BASE_IMAGE_VERSION
 }
 
 /// Stages the base image on its own, without creating a sandbox: the onboarding flow's "download

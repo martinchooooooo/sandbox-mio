@@ -63,7 +63,7 @@ impl RuntimeManager for MockRuntime {
     async fn reproduce_remote(
         &self,
         _name: &str,
-        _target: &crate::provider::types::MachineRef,
+        _target: &mio_provider::types::MachineRef,
         _workspace_host_path: &str,
     ) -> Result<(), RuntimeError> {
         Ok(())
@@ -72,7 +72,7 @@ impl RuntimeManager for MockRuntime {
     async fn ensure_running(
         &self,
         _name: &str,
-        _machine: &crate::provider::types::MachineRef,
+        _machine: &mio_provider::types::MachineRef,
     ) -> Result<(), RuntimeError> {
         Ok(())
     }
@@ -80,7 +80,7 @@ impl RuntimeManager for MockRuntime {
     async fn prepare_agent_web(
         &self,
         _name: &str,
-        _machine: &crate::provider::types::MachineRef,
+        _machine: &mio_provider::types::MachineRef,
         _password: &str,
         _opening: bool,
     ) -> Result<(), RuntimeError> {

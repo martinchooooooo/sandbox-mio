@@ -6,7 +6,7 @@ import { configureMock, configureMockExpectingError, useMockControl } from "../.
 // (docs/features/scriptable-mock-backend/02_dev.md, Resolved Decision 1 and 9). This feature has no
 // Rust #[test] fns; mockctl's correctness is proven here via the real mock_configure IPC round-trip.
 
-// Must stay equal to KNOWN_CALLS in src-tauri/src/mockctl/mod.rs. A key added there but missed here
+// Must stay equal to KNOWN_CALLS in src-tauri/crates/mockctl/src/lib.rs. A key added there but missed here
 // is a scriptable call with no coverage; a key here but not there fails this spec loudly.
 const KNOWN_CALLS = [
   "podman.create",

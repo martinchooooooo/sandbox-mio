@@ -30,7 +30,7 @@ const LLAMA_SHA256: &str = "3aaa9403ade87bc12519642139b7fcad9549f3fe045f6e0424c7
 
 /// Podman release whose Windows remote-client archive is staged as the bundled container engine
 /// (`src-tauri/binaries/podman`). Pinned so every checkout stages the same `podman`/`gvproxy`/
-/// `win-sshproxy` that `process::podman::podman_command()` resolves at runtime.
+/// `win-sshproxy` that `mio_process::podman::podman_command()` resolves at runtime.
 pub(crate) const PODMAN_VERSION: &str = "v5.6.2";
 /// SHA-256 of `podman-remote-release-windows_amd64.zip`, from the release's published `shasums`.
 const PODMAN_SHA256: &str = "9c86b2686dabc287af1de1b4fadc506310718bf84fccbd12f0831fc7726a7cd5";
@@ -302,8 +302,8 @@ const PODMAN_FILES: [&str; 3] = ["podman.exe", "gvproxy.exe", "win-sshproxy.exe"
 
 /// Download the official Podman Windows remote-client archive and stage `podman.exe`,
 /// `gvproxy.exe`, and `win-sshproxy.exe` flat into `src-tauri/binaries/podman` (see
-/// `src-tauri/binaries/podman/README.md`). `process::podman::podman_command()` resolves these from the
-/// bundled resource dir at runtime instead of PATH.
+/// `src-tauri/binaries/podman/README.md`). `mio_process::podman::podman_command()` resolves these
+/// from the bundled resource dir at runtime instead of PATH.
 pub(crate) fn fetch_podman() {
     if !cfg!(windows) {
         todo!("Podman fetch is implemented for Windows only");

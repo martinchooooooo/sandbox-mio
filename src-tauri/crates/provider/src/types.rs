@@ -1,6 +1,6 @@
 use std::process::Output;
 
-use crate::domain::types::{BackendError, ProviderId, Sandbox};
+use mio_domain::types::{BackendError, ProviderId, Sandbox};
 
 /// Errors from machine-provider operations. Mirrors [`BackendError`]'s process/parse variants so it
 /// converts into the caller's error type at the subsystem boundary with no new IPC values.
@@ -134,7 +134,7 @@ pub struct SecretBindingSpec {
 }
 
 /// Provider-neutral outbound policy for [`InstanceSpec::egress`], built from
-/// `.mio/net-policy.json` by `net_policy`. Holds no secret value.
+/// `.mio/net-policy.json` by `mio-net-policy`. Holds no secret value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EgressPolicy {
     pub mode: EgressMode,
@@ -250,7 +250,7 @@ pub struct ProviderCapabilities {
 /// A provider-tagged machine handle, replacing the untyped `connection: &str` threaded through
 /// `RuntimeManager`/`NetworkManager`/`sync` today. Serializes as a prefixed string (`podman:
 /// mio-tests`) so IPC payloads and persisted `.mio/` JSON stay plain strings. Resolved to a provider by
-/// `ProviderRegistry::provider_for` (`src-tauri/src/provider/mod.rs`).
+/// `ProviderRegistry::provider_for` (`src-tauri/crates/provider/src/lib.rs`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MachineRef {
     pub provider: ProviderId,
@@ -428,7 +428,7 @@ pub trait MachineProvider: Send + Sync {
         since: Option<&str>,
     ) -> Result<Vec<String>, ProviderError>;
     /// CPU and memory of every running instance, sidecars included, from one engine call. The
-    /// call is a quiet, breaker-exempt monitor shape in `src-tauri/src/process/mod.rs`.
+    /// call is a quiet, breaker-exempt monitor shape in `src-tauri/crates/process/src/lib.rs`.
     async fn instance_stats(&self) -> Result<Vec<InstanceStats>, ProviderError>;
     /// The shared machine's size and free memory, or `None` for an engine without one.
     async fn engine_pool(&self) -> Result<Option<EnginePool>, ProviderError>;

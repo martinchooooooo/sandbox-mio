@@ -8,14 +8,14 @@ use std::sync::Arc;
 use tauri::ipc::Channel;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
-use crate::domain::mock_backend_enabled;
-use crate::domain::types::{BackendError, ProviderId, Sandbox};
-use crate::process::detached_command;
-use crate::process::podman::{connection_name, podman_command};
-use crate::process::types::ProcessRunner;
-use crate::provider::image::{base_image, BASE_IMAGE_VERSION};
-use crate::provider::types::InstanceSpec;
-use crate::provider::ProviderRegistry;
+use mio_domain::mock_backend_enabled;
+use mio_domain::types::{BackendError, ProviderId, Sandbox};
+use mio_process::detached_command;
+use mio_process::podman::{connection_name, podman_command};
+use mio_process::types::ProcessRunner;
+use mio_provider::image::{base_image, BASE_IMAGE_VERSION};
+use mio_provider::types::InstanceSpec;
+use mio_provider::ProviderRegistry;
 use crate::ssh;
 use types::{
     CliBackend, ConnectionInfo, DeployPlan, RemoteDeployment, SandboxBackend, SyncStrategy,
@@ -72,7 +72,7 @@ async fn podman_on(
 /// Reads the running container's host keys for `ssh::identity::pin_host_keys`, which takes no
 /// provider. Best effort: a failure is warn-logged and never fails a create, deploy or panel fetch.
 pub(crate) async fn seed_sandbox_host_keys(
-    provider: &Arc<dyn crate::provider::types::MachineProvider>,
+    provider: &Arc<dyn mio_provider::types::MachineProvider>,
     name: &str,
     identity_path: &str,
 ) {
@@ -80,7 +80,7 @@ pub(crate) async fn seed_sandbox_host_keys(
         .exec(
             name,
             &["sh", "-c", "cat /etc/ssh/ssh_host_*_key.pub"],
-            crate::provider::types::ExecOpts::default(),
+            mio_provider::types::ExecOpts::default(),
         )
         .await;
     let out = match out {
@@ -121,7 +121,7 @@ impl CliBackend {
     /// (`podman cp` works against a created-but-stopped container).
     async fn install_sandbox_key(
         &self,
-        provider: &Arc<dyn crate::provider::types::MachineProvider>,
+        provider: &Arc<dyn mio_provider::types::MachineProvider>,
         name: &str,
         identity_path: &str,
     ) -> Result<(), BackendError> {
@@ -163,7 +163,7 @@ impl CliBackend {
     /// recreated instance has a fresh host key, which `forget_sandbox_host_key` clears.
     async fn provision_exec_transport(
         &self,
-        provider: &Arc<dyn crate::provider::types::MachineProvider>,
+        provider: &Arc<dyn mio_provider::types::MachineProvider>,
         name: &str,
         provider_id: ProviderId,
     ) -> Result<(), BackendError> {
@@ -194,7 +194,7 @@ impl CliBackend {
     /// Every step is best-effort and warn-logged; the caller's error is what surfaces.
     async fn rollback_create(
         &self,
-        provider: &Arc<dyn crate::provider::types::MachineProvider>,
+        provider: &Arc<dyn mio_provider::types::MachineProvider>,
         name: &str,
     ) {
         // The instance goes first: it is what blocks a same-name retry. The alias goes before the
@@ -213,7 +213,7 @@ impl CliBackend {
             },
             Err(e) => tracing::warn!(target: "backends", %name, error = %e, "rollback: could not resolve the ssh identity directory"),
         }
-        crate::net_policy::applied::remove_applied(&self.app, name);
+        crate::applied_policy::remove_applied(&self.app, name);
     }
 
     /// Settles the accepted policy from the create dialog alone; an existing workspace file stays a
@@ -224,14 +224,14 @@ impl CliBackend {
         name: &str,
         workspace: &str,
         request: Option<&types::EgressRequest>,
-        caps: crate::provider::types::ProviderCapabilities,
-    ) -> Result<(crate::provider::types::EgressPolicy, Vec<String>), BackendError> {
-        use crate::net_policy::applied::{write_applied, AppliedPolicy};
-        use crate::net_policy::schema::{load_if_present, save, starter, to_egress, NetPolicy};
-        use crate::net_policy::validate::{stampable_vars, validate};
+        caps: mio_provider::types::ProviderCapabilities,
+    ) -> Result<(mio_provider::types::EgressPolicy, Vec<String>), BackendError> {
+        use crate::applied_policy::{write_applied, AppliedPolicy};
+        use mio_net_policy::schema::{load_if_present, save, starter, to_egress, NetPolicy};
+        use mio_net_policy::validate::{stampable_vars, validate};
         let mut policy = NetPolicy::default();
         if let Some(mode) = request.and_then(|r| r.mode) {
-            if mode == crate::provider::types::EgressMode::Allowlist {
+            if mode == mio_provider::types::EgressMode::Allowlist {
                 let hosts = request.map(|r| r.starter_hosts.clone()).unwrap_or_default();
                 policy.rules = starter(caps, &hosts).rules;
             }
@@ -268,7 +268,7 @@ impl CliBackend {
         let Some(p) = existing_path else {
             // Pre-created so an unwritable path fails here, not silently via podman's
             // auto-creation of the mount source.
-            let workspace = crate::domain::workspace_path(name)?;
+            let workspace = mio_domain::workspace_path(name)?;
             std::fs::create_dir_all(&workspace).map_err(|e| BackendError::WorkspaceCreate {
                 path: workspace.clone(),
                 error: e.to_string(),
@@ -280,7 +280,7 @@ impl CliBackend {
         if !canonical.is_dir() {
             return Err(BackendError::PathNotADirectory { path: p.to_string() });
         }
-        let root = crate::domain::workspace_root()?;
+        let root = mio_domain::workspace_root()?;
         let canonical_root = dunce::canonicalize(&root).unwrap_or(root);
         if canonical.starts_with(&canonical_root) {
             return Err(BackendError::PathAlreadyTracked { path: p.to_string() });
@@ -301,7 +301,7 @@ impl CliBackend {
         name: &str,
         connection: &str,
     ) -> Result<WorkspacePlan, BackendError> {
-        let laptop_dir = crate::domain::workspace_path(name)?;
+        let laptop_dir = mio_domain::workspace_path(name)?;
         let Some(info) = hosts::connection_info(&self.runner, connection).await? else {
             // Local machine: bind-mount source and laptop directory are the same, no sync.
             return Ok(WorkspacePlan {
@@ -329,8 +329,8 @@ type Bridge = (String, Vec<(String, String)>, String);
 
 /// Reduces a proxy attachment to the Podman bridge. A provider with its own attachment shape
 /// adds a variant to `ProxyAttachment` and an arm here.
-fn split_attachment(proxy: Option<&crate::provider::types::ProxyAttachment>) -> Option<Bridge> {
-    use crate::provider::types::ProxyAttachment;
+fn split_attachment(proxy: Option<&mio_provider::types::ProxyAttachment>) -> Option<Bridge> {
+    use mio_provider::types::ProxyAttachment;
     match proxy {
         None => None,
         Some(ProxyAttachment::PodmanBridge { network, env, dns }) => {
@@ -354,10 +354,10 @@ impl SandboxBackend for CliBackend {
         name: &str,
         existing_path: Option<&str>,
         provider_id: ProviderId,
-        proxy: Option<&crate::provider::types::ProxyAttachment>,
+        proxy: Option<&mio_provider::types::ProxyAttachment>,
         egress: Option<&types::EgressRequest>,
     ) -> Result<Sandbox, BackendError> {
-        crate::domain::validate_new_name(name)?;
+        mio_domain::validate_new_name(name)?;
         let caps = self.registry.local(provider_id).capabilities();
         let bridge = split_attachment(proxy);
         // A Podman sidecar enforces the policy only for a sandbox behind it
@@ -381,7 +381,7 @@ impl SandboxBackend for CliBackend {
             // Runs even with no request, so `applied.json` always exists; the sidecar, not the
             // engine, enforces the result. Placeholders exist only from create (Resolved Decision 7).
             let (_, guest_vars) = self.prepare_egress(name, &workspace, egress, caps)?;
-            env.extend(guest_vars.iter().map(|v| (v.clone(), crate::net_policy::schema::placeholder(v))));
+            env.extend(guest_vars.iter().map(|v| (v.clone(), mio_net_policy::schema::placeholder(v))));
             None
         } else {
             None
@@ -390,9 +390,9 @@ impl SandboxBackend for CliBackend {
             name: name.to_string(),
             image,
             workspace_source: workspace.clone(),
-            labels: vec![(crate::provider::WORKSPACE_LABEL.to_string(), workspace.clone())],
+            labels: vec![(mio_provider::WORKSPACE_LABEL.to_string(), workspace.clone())],
             env,
-            network: bridge.map(|(network, _, dns)| crate::provider::types::InstanceNetwork {
+            network: bridge.map(|(network, _, dns)| mio_provider::types::InstanceNetwork {
                 name: network,
                 ip: None,
                 dns: Some(dns),
@@ -402,7 +402,7 @@ impl SandboxBackend for CliBackend {
         let id = match provider.create_instance(&spec).await {
             Ok(id) => id,
             Err(e) => {
-                crate::net_policy::applied::remove_applied(&self.app, name);
+                crate::applied_policy::remove_applied(&self.app, name);
                 return Err(e.into());
             }
         };
@@ -424,7 +424,7 @@ impl SandboxBackend for CliBackend {
     async fn recreate(
         &self,
         name: &str,
-        _proxy: Option<&crate::provider::types::ProxyAttachment>,
+        _proxy: Option<&mio_provider::types::ProxyAttachment>,
         _egress: Option<&types::EgressRequest>,
     ) -> Result<Sandbox, BackendError> {
         // Podman recreate belongs to `docs/features/proxy-toggle-management/02_dev.md`.
@@ -466,7 +466,7 @@ impl SandboxBackend for CliBackend {
         name: &str,
         target_connection: &str,
     ) -> Result<DeployPlan, BackendError> {
-        crate::domain::validate_name(name)?;
+        mio_domain::validate_name(name)?;
         // The deploy picker is already hidden for a provider without remote targets
         // (`ProviderCapabilities.remote_targets`); this is the backend half of that gate, so an
         // invoke that gets through anyway fails with a reason rather than nonsense podman argv.
@@ -498,7 +498,7 @@ impl SandboxBackend for CliBackend {
         &self,
         name: &str,
         deploy_plan: &DeployPlan,
-        proxy: &crate::provider::types::ProxyAttachment,
+        proxy: &mio_provider::types::ProxyAttachment,
         extra_env: &[(String, String)],
     ) -> Result<RemoteDeployment, BackendError> {
         let target_connection = deploy_plan.target.as_str();
@@ -511,7 +511,7 @@ impl SandboxBackend for CliBackend {
         // A second provider pinned to the target: `self.provider` targets the local connection,
         // but every remote-container operation below runs against `target_connection`.
         let target_provider =
-            crate::provider::default_provider(self.runner.clone(), target_connection.to_string());
+            mio_provider::default_provider(self.runner.clone(), target_connection.to_string());
 
         // Stop the workload onto the remote; kept stopped (not removed) so undeploy can restart it.
         owner.stop(name).await?;
@@ -535,7 +535,7 @@ impl SandboxBackend for CliBackend {
 
         // Create and start the remote container on the target connection, not self.connection.
         // No workspace label on remote containers, matching prior behaviour.
-        let crate::provider::types::ProxyAttachment::PodmanBridge { network, env: bridge_env, dns } = proxy;
+        let mio_provider::types::ProxyAttachment::PodmanBridge { network, env: bridge_env, dns } = proxy;
         let mut env = bridge_env.clone();
         env.extend(extra_env.iter().cloned());
         let spec = InstanceSpec {
@@ -544,7 +544,7 @@ impl SandboxBackend for CliBackend {
             workspace_source: plan.bind_mount_source.clone(),
             labels: Vec::new(),
             env,
-            network: Some(crate::provider::types::InstanceNetwork {
+            network: Some(mio_provider::types::InstanceNetwork {
                 name: network.clone(),
                 ip: None,
                 dns: Some(dns.clone()),
@@ -567,12 +567,12 @@ impl SandboxBackend for CliBackend {
 
     async fn remove_remote(&self, name: &str, connection: &str) -> Result<(), BackendError> {
         let target_provider =
-            crate::provider::default_provider(self.runner.clone(), connection.to_string());
+            mio_provider::default_provider(self.runner.clone(), connection.to_string());
         Ok(target_provider.remove(name).await?)
     }
 
     async fn listen_events(&self, on_event: Channel<serde_json::Value>) -> Result<(), BackendError> {
-        // `ProcessRunner` (`src/mockctl/mod.rs`) models one-shot calls only, so the scripted-runner
+        // `ProcessRunner` (`src-tauri/crates/mockctl/src/lib.rs`) models one-shot calls only, so the scripted-runner
         // seam cannot stand in for a streamed child: this gate is what keeps the light tier off podman.
         if mock_backend_enabled() {
             return Ok(());

@@ -8,7 +8,7 @@ use tauri::AppHandle;
 
 use super::types::{CredentialError, CredentialManifest};
 use super::{GITHUB_SERVICE, save_manifest, save_secret};
-use crate::provider::types::{ExecOpts, MachineProvider};
+use mio_provider::types::{ExecOpts, MachineProvider};
 
 /// What a sandbox behind an iron-proxy sidecar holds in place of the token; the sidecar swaps it
 /// for the real token on GitHub's hosts (`docs/features/proxy-credential-secrets/02_dev.md`,
@@ -50,7 +50,7 @@ pub fn missing_gh_scopes(header: Option<&str>) -> Vec<String> {
 /// yields an unverified check so a save never depends on the network.
 pub async fn verify_token(token: &str) -> Result<TokenCheck, CredentialError> {
     // The light tier must not call GitHub, and its specs save a sentinel token.
-    if crate::domain::mock_backend_enabled() {
+    if mio_domain::mock_backend_enabled() {
         return Ok(TokenCheck::default());
     }
     let client = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(10)).build() {

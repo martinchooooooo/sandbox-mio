@@ -1,5 +1,5 @@
 //! `MIO_APP_DATA_DIR` override layer over `AppHandle::path()`'s Roaming-AppData resolution.
-//! Read at call time and never cached, matching [`crate::env_ext::env_dir`]'s contract. Subsystems
+//! Read at call time and never cached, matching [`mio_env::env_dir`]'s contract. Subsystems
 //! that already carry their own more specific override (`MIO_SETTINGS_DIR`, `MIO_CREDENTIALS_DIR`)
 //! check that variable first and fall back to this module, not the other way round.
 
@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use tauri::{AppHandle, Manager, Runtime};
 
-use crate::env_ext::env_dir;
+use mio_env::env_dir;
 
 /// `MIO_APP_DATA_DIR` when set, otherwise the compiled-in `app_data_dir()` (Roaming AppData).
 pub fn app_data_root<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, tauri::Error> {

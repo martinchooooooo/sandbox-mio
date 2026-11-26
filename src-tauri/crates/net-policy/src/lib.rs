@@ -1,18 +1,16 @@
-//! `.mio/net-policy.json`: the shared, provider-neutral outbound policy of one workspace, plus the
-//! per-sandbox applied snapshot under the app data root. A plain file module like
-//! [`crate::mio_files`], so `backends`, `proxy` and `services` may all use it. Schema:
-//! `docs/features/microsandbox-network-policy/02_dev.md`, Resolved Decision 12.
+//! `.mio/net-policy.json`: the shared, provider-neutral outbound policy of one workspace. A plain
+//! file crate like `mio-files`, so `backends`, `proxy` and `services` may all use it; it names no
+//! Tauri API. Schema: `docs/features/microsandbox-network-policy/02_dev.md`, Resolved Decision 12.
 //!
-//! `schema` holds the document types and file access, `validate` the provider-dialect checks,
-//! `diff` the reviewable change list and `applied` the accepted-policy store.
+//! `schema` holds the document types and file access, `validate` the provider-dialect checks and
+//! `diff` the reviewable change list. The per-sandbox accepted policy lives under the app data root
+//! and is read through Tauri, so it stays in the app crate (`src-tauri/src/applied_policy.rs`).
 
-pub mod applied;
 pub mod diff;
 pub mod schema;
 pub mod validate;
 
-use crate::domain::types::BackendError;
-use crate::mio_files;
+use mio_domain::types::BackendError;
 
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
@@ -34,7 +32,7 @@ impl From<mio_files::FileError> for NetPolicyError {
 #[cfg(test)]
 mod test_support {
     use super::schema::{default_headers, NetRule, SecretBinding};
-    use crate::provider::types::{ProviderCapabilities, RuleAction};
+    use mio_provider::types::{ProviderCapabilities, RuleAction};
 
     /// A provider that enforces the policy with its own network stack; none ships today.
     pub const ENGINE: ProviderCapabilities = ProviderCapabilities {

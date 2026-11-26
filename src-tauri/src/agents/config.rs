@@ -4,7 +4,6 @@
 use std::path::Path;
 
 use crate::agents::types::AgentError;
-use crate::mio_files;
 
 /// Write/merge OpenCode provider config, preserving existing user config.
 pub fn provision_opencode(

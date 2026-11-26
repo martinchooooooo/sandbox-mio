@@ -9,7 +9,7 @@ use tauri::{AppHandle, Runtime};
 
 use super::io_err;
 use super::types::{ProxyEngine, ProxyError};
-use crate::domain::types::ProviderId;
+use mio_domain::types::ProviderId;
 
 /// Owns `<app_data_root>/proxy/`, which holds one directory per sandbox. `MIO_APP_DATA_DIR`
 /// relocates the whole tree per worktree via `crate::paths::app_data_root`, mandatory here because
@@ -98,11 +98,11 @@ impl ProxyStore {
 
     pub(super) fn write_meta(&self, sandbox: &str, body: &serde_json::Value) -> Result<(), ProxyError> {
         let path = self.meta_path(sandbox)?;
-        crate::mio_files::write_compact(&path, body).map_err(|e| ProxyError::CommandFailed(e.to_string()))
+        mio_files::write_compact(&path, body).map_err(|e| ProxyError::CommandFailed(e.to_string()))
     }
 
     pub(super) fn read_meta(&self, sandbox: &str) -> Option<serde_json::Value> {
-        crate::mio_files::read_value(&self.meta_path_if_exists(sandbox)?)
+        mio_files::read_value(&self.meta_path_if_exists(sandbox)?)
     }
 
     pub fn sidecar_engine(&self, sandbox: &str) -> ProxyEngine {
@@ -119,7 +119,7 @@ impl ProxyStore {
     /// `sandbox`'s stored values; a sandbox with none stored resolves nothing. A read creates no directory.
     pub fn load_secrets(&self, sandbox: &str) -> Result<HashMap<String, String>, ProxyError> {
         let path = self.sandbox_root(sandbox)?.join("values.json");
-        match crate::mio_files::read_value(&path) {
+        match mio_files::read_value(&path) {
             Some(v) => serde_json::from_value(v).map_err(|e| {
                 ProxyError::CommandFailed(format!("failed to parse {}: {e}", path.to_string_lossy()))
             }),
@@ -134,7 +134,7 @@ impl ProxyStore {
         secrets: &HashMap<String, String>,
     ) -> Result<(), ProxyError> {
         let path = self.values_path(sandbox)?;
-        crate::mio_files::write_pretty(&path, secrets).map_err(|e| ProxyError::CommandFailed(e.to_string()))
+        mio_files::write_pretty(&path, secrets).map_err(|e| ProxyError::CommandFailed(e.to_string()))
     }
 
     /// Set (or overwrite) the value stored for `secret_id` in `sandbox`. Never logged or returned.
@@ -172,7 +172,7 @@ impl ProxyStore {
     /// The remote sidecar's connection, network and address, a cache like `meta.json`: whether a sandbox
     /// is deployed stays decided by its Mutagen session alone.
     pub fn read_remote_meta(&self, sandbox: &str) -> Option<serde_json::Value> {
-        crate::mio_files::read_value(&self.remote_dir_if_exists(sandbox)?.join("remote.json"))
+        mio_files::read_value(&self.remote_dir_if_exists(sandbox)?.join("remote.json"))
     }
 
     pub(super) fn write_remote_meta(
@@ -184,7 +184,7 @@ impl ProxyStore {
     ) -> Result<(), ProxyError> {
         let path = self.remote_dir(sandbox)?.join("remote.json");
         let body = serde_json::json!({ "connection": connection, "network": network, "proxyIp": proxy_ip });
-        crate::mio_files::write_compact(&path, &body).map_err(|e| ProxyError::CommandFailed(e.to_string()))
+        mio_files::write_compact(&path, &body).map_err(|e| ProxyError::CommandFailed(e.to_string()))
     }
 
     /// The remote sidecar's CA, which the remote sandbox must trust instead of the local one

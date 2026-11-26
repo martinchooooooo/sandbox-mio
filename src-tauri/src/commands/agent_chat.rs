@@ -9,7 +9,7 @@ use tauri::State;
 use crate::agent_host::sessions::{list_sessions, ChatSession};
 use crate::agent_host::types::{AgentHost, AgentHostError, AttachEvent, AttachInfo, Cursor, HostStatus};
 use crate::error::AppError;
-use crate::provider::types::MachineRef;
+use mio_provider::types::MachineRef;
 use crate::services::routing::SandboxRouter;
 
 /// What `agent_chat_attach` returns: the stream's header and the supervisor's status.

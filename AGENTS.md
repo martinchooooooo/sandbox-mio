@@ -5,7 +5,7 @@ Sandbox-mio is a Tauri 2 desktop app (Windows-first) that manages per-project "s
 | Area | Contents | Orientation doc |
 |---|---|---|
 | `src/` | SvelteKit + Svelte 5 frontend (static adapter, runs in the Tauri webview) | `src/AGENTS.md` |
-| `src-tauri/src/` | Rust backend: Tauri commands + trait-injected subsystems, each with an in-memory mock | `src-tauri/AGENTS.md` |
+| `src-tauri/src/`, `src-tauri/crates/` | Rust backend, a Cargo workspace: the Tauri app crate (commands, services, trait-injected subsystems) plus Tauri-free crates (`domain`, `process`, `provider`, `mockctl`, `net-policy`, `env`, `files`) whose dependency edges the compiler enforces | `src-tauri/AGENTS.md` |
 | `e2e/` | WebdriverIO tests in three tiers (`light`/`standard`/`heavy`) | `e2e/AGENTS.md` |
 | `xtask/` | Cargo package (three small dependencies, no unit tests): the repository build tool, run as `cargo xtask <subcommand>` (`dev`, `e2e`, `ci`, `package`, `docs`: app launch, bundled-binary staging, the CI sequence, the docs check) | `README.md` |
 | `paseo-plugins/` | App-owned Paseo plugins (TypeScript) shipped in the binary and loaded by every sandbox's Paseo daemon | `paseo-plugins/AGENTS.md` |
@@ -35,7 +35,7 @@ How these layers and the e2e harness fit together: `docs/architecture/testing.md
 
 - `pnpm check` (repo root) — svelte-check over the frontend. Required after any `src/` change.
 - `pnpm --filter paseo-plugins typecheck` (repo root) — required after any `paseo-plugins/` change.
-- `cargo check` (in `src-tauri/`) — required after any Rust change. `cargo test` runs the unit tests, which cover pure logic only (argv rendering, policy validation, parsers, the pane registry). The mock control plane deliberately has none: its correctness is proven by light specs instead (`docs/features/scriptable-mock-backend/02_dev.md`, Resolved Decision 9).
+- `cargo check` (in `src-tauri/`) — required after any Rust change; the workspace's `default-members` make a bare `cargo check` or `cargo test` cover every crate. `cargo test` runs the unit tests, which cover pure logic only (argv rendering, policy validation, parsers, the pane registry). The mock control plane deliberately has none: its correctness is proven by light specs instead (`docs/features/scriptable-mock-backend/02_dev.md`, Resolved Decision 9).
 - `cargo clippy --all-targets` (in `xtask/`) — after any change to the build tool; the package has no unit tests, so also run the subcommand you changed. `cargo xtask` is the tool's entry point (alias in `.cargo/config.toml`), run from the repository root; with no arguments it prints every subcommand, and an unknown or extra argument prints the usage and exits non-zero.
 - `cargo xtask docs` (repo root) — required after any change under `docs/`. Checks frontmatter, feature statuses, generated indexes, the feature log, links, architecture-document size, and `docs/...` citations from code; the rules are code in `xtask/src/docs_check.rs`, the single source of truth for them. `cargo xtask docs --fix` regenerates the indexes first.
 - `cargo xtask e2e light` (repo root) — seconds, no Podman needed (`MIO_MOCK_BACKEND=1`); the cheapest end-to-end signal.
@@ -68,10 +68,10 @@ a time (`docs/features/parallel-worktree-e2e/02_dev.md`).
 
 All read via `std::env::var` at call time, never cached:
 
-- `PODMAN_CONNECTION` — Podman system connection name; default `podman-machine-default` (`connection_name()` in `src-tauri/src/process/podman.rs`). Steers container/runtime operations only; machine lifecycle (`src-tauri/src/machine/mod.rs`) always targets the default machine, since a connection may name a remote SSH endpoint no `podman machine` subcommand can act on.
+- `PODMAN_CONNECTION` — Podman system connection name; default `podman-machine-default` (`connection_name()` in `src-tauri/crates/process/src/podman.rs`). Steers container/runtime operations only; machine lifecycle (`src-tauri/src/machine/mod.rs`) always targets the default machine, since a connection may name a remote SSH endpoint no `podman machine` subcommand can act on.
 - `MIO_PODMAN_MACHINE` — test-only override for the machine `src-tauri/src/machine/mod.rs` targets; default `podman-machine-default`. Set only by the E2E harness.
-- `SANDBOX_WORKSPACE_ROOT` — root for sandbox workspace directories; default `<Documents>/sandbox-mio` (`workspace_root()` in `src-tauri/src/domain/mod.rs`).
-- `MIO_MOCK_BACKEND=1` — swaps every subsystem trait to its in-memory mock; used by the e2e `light` tier (`mock_backend_enabled()` in `src-tauri/src/domain/mod.rs`).
+- `SANDBOX_WORKSPACE_ROOT` — root for sandbox workspace directories; default `<Documents>/sandbox-mio` (`workspace_root()` in `src-tauri/crates/domain/src/lib.rs`).
+- `MIO_MOCK_BACKEND=1` — swaps every subsystem trait to its in-memory mock; used by the e2e `light` tier (`mock_backend_enabled()` in `src-tauri/crates/domain/src/lib.rs`).
 - `MIO_TEST_MODEL` — overrides the model used by inference e2e specs.
 - `MIO_APP_DATA_DIR` — app-data and log root; default the compiled-in `app_data_dir()`, and for logs `app_log_dir()` (`src-tauri/src/paths.rs`, `init_logging()` in `src-tauri/src/logging.rs`). Set by the e2e harness to a per-worktree directory, never by a shipped install.
 - `MIO_SETTINGS_DIR` — relocates `settings.json`; takes precedence over `MIO_APP_DATA_DIR` (`settings_path()` in `src-tauri/src/settings/mod.rs`).
@@ -202,7 +202,7 @@ Good — states the constraint the code can't show:
 | New `AppError` variant does not compile | `kind()` in `src-tauri/src/error.rs` has an exhaustive match over variants | Add a `kind()` arm in `src-tauri/src/error.rs` and mirror the string in `AppErrorKind` in `src/lib/errors.ts` |
 | A status badge shows a raw English string like `up-to-date` in non-English locales | Backend emitted a status value with no `status_<value>` key | Add `status_<value>` to every file in `messages/` and an entry to the `map` in `translateStatus()` (`src/lib/sandbox.ts`) |
 | `cargo xtask dev --setup` panics with `SHA-256 mismatch` after a bundled-binary version bump | `MUTAGEN_VERSION`, `LLAMA_VERSION` and `PODMAN_VERSION` in `xtask/src/binaries.rs` each have a `*_SHA256` constant that every download is verified against | Bump the digest in the same change, from the release's published checksum (`docs/features/xtask-hardening/02_dev.md`, Resolved Decision 5) |
-| Containerfile change has no effect on new sandboxes | `ensure_base_image` short-circuits on `podman image exists`, so an unchanged image tag keeps the stale image | Bump `BASE_IMAGE_VERSION` in `src-tauri/src/provider/image.rs` whenever `src-tauri/resources/Containerfile` changes |
+| Containerfile change has no effect on new sandboxes | `ensure_base_image` short-circuits on `podman image exists`, so an unchanged image tag keeps the stale image | Bump `BASE_IMAGE_VERSION` in `src-tauri/crates/provider/src/image.rs` whenever `src-tauri/resources/Containerfile` changes |
 | Feature works with `cargo xtask e2e light` but fails against real Podman | The `light` tier runs entirely against in-memory mocks (`MIO_MOCK_BACKEND=1`) and proves UI/store logic only | Write or run the feature's `standard` tier spec (`e2e/test/specs/standard/`); `e2e/AGENTS.md` defines `standard` as the default tier |
 | A `$state` store resets on route change | Component-local state is destroyed by the router | Put shared state in a module-scoped `.svelte.ts` store under `src/lib/` (pattern: `src/lib/activity/activity.svelte.ts`); see `src/AGENTS.md` |
 | A component added via `pnpm dlx shadcn-svelte@latest add <name>` (no URL) looks visually inconsistent with the rest of the app | The plain command pulls from the default shadcn-svelte registry, not retro-ui-svelte | Always use `pnpm dlx shadcn-svelte@latest add https://retroui-svelte.netlify.app/r/<name>.json` |

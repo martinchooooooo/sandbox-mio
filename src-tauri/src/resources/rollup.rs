@@ -1,6 +1,6 @@
 //! The one-minute rollup of a sandbox's live samples, as written to its history file. Pure.
 
-use crate::domain::types::ProviderId;
+use mio_domain::types::ProviderId;
 
 /// The share of the limit a sample counts as under memory pressure in the rollups. Equal to
 /// `STRAINED_MEMORY` in `src/lib/sandbox/health.ts`.

@@ -1,13 +1,13 @@
 import { providerCapabilities } from "$lib/api/image";
 import { m } from "$lib/paraglide/messages.js";
 
-/** Which engine runs a sandbox (mirrors Rust `domain::types::ProviderId`). */
+/** Which engine runs a sandbox (mirrors Rust `mio_domain::types::ProviderId`). */
 export type ProviderId = "podman";
 
 /** Every provider the app knows; a future provider is one more entry. */
 export const PROVIDERS: ProviderId[] = ["podman"];
 
-/** Feature differences between engines (mirrors Rust `provider::types::ProviderCapabilities`). */
+/** Feature differences between engines (mirrors Rust `mio_provider::types::ProviderCapabilities`). */
 export interface ProviderCapabilities {
     remoteTargets: boolean;
     eventStream: boolean;

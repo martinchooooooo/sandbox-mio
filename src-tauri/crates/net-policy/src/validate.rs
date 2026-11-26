@@ -3,7 +3,7 @@
 
 use super::schema::NetPolicy;
 use super::NetPolicyError;
-use crate::provider::types::{
+use mio_provider::types::{
     EgressMode, EgressTarget, NetProtocol, ProviderCapabilities, RuleAction, ViolationAction,
 };
 
@@ -204,7 +204,7 @@ mod tests {
     use super::super::schema::{starter, NetRule, PortSpec, SecretBinding};
     use super::super::test_support::{binding, rule, ENGINE, PODMAN};
     use super::*;
-    use crate::provider::types::NetGroup;
+    use mio_provider::types::NetGroup;
 
     #[test]
     fn rejects_bad_targets_and_ports() {

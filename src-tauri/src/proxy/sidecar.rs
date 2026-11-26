@@ -15,11 +15,11 @@ use super::{
 };
 use crate::activity::types::TaskKind;
 use crate::activity::TaskFailure;
-use crate::domain::types::ProviderId;
-use crate::provider::types::{
+use mio_domain::types::ProviderId;
+use mio_provider::types::{
     ExecOpts, InstanceNetwork, MachineProvider, ProxyAttachment, SidecarMount, SidecarSpec,
 };
-use crate::provider::ProviderRegistry;
+use mio_provider::ProviderRegistry;
 
 /// The sidecar's secrets tmpfs. RAM only, so a stopped or rebooted remote sidecar holds no credential
 /// (`docs/features/proxy-remote-deploy/02_dev.md`, Resolved Decision 1).
@@ -420,7 +420,7 @@ pub async fn sweep(store: &ProxyStore, registry: &Arc<ProviderRegistry>, live: &
             continue;
         };
         for instance in instances.iter().filter(|s| is_sidecar(s)) {
-            let Some(base) = instance.name.strip_suffix(crate::domain::PROXY_CONTAINER_SUFFIX) else {
+            let Some(base) = instance.name.strip_suffix(mio_domain::PROXY_CONTAINER_SUFFIX) else {
                 continue;
             };
             if live.iter().any(|n| n == base) {

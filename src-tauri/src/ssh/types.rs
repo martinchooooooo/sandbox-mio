@@ -11,9 +11,9 @@ pub enum SshError {
     WriteError(String),
 }
 
-impl From<SshError> for crate::domain::types::BackendError {
+impl From<SshError> for mio_domain::types::BackendError {
     fn from(e: SshError) -> Self {
-        crate::domain::types::BackendError::Ssh(e.to_string())
+        mio_domain::types::BackendError::Ssh(e.to_string())
     }
 }
 

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use super::types::ProxyError;
 use super::{io_err, iron_config, write_atomic};
-use crate::net_policy::schema::{NetPolicy, SecretBinding};
+use mio_net_policy::schema::{NetPolicy, SecretBinding};
 
 /// Writes one file per binding whose secret has a stored value into `dir`, holding the value's
 /// exact bytes: a `file` source sends the content verbatim, so a trailing newline would reach the

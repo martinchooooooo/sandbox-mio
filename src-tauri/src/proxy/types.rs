@@ -3,9 +3,9 @@
 
 use std::sync::Arc;
 
-use crate::domain::types::{BackendError, ProviderId};
-use crate::provider::types::{MachineProvider, MachineRef};
-use crate::provider::ProviderRegistry;
+use mio_domain::types::{BackendError, ProviderId};
+use mio_provider::types::{MachineProvider, MachineRef};
+use mio_provider::ProviderRegistry;
 
 /// Errors from the `proxy` subsystem. Converts into [`BackendError`] at the caller boundary — the
 /// subsystem has no `AppError` variant of its own, matching `credentials::types::CredentialError`'s
@@ -17,7 +17,7 @@ pub enum ProxyError {
     #[error("failed to read {path}: {error}")]
     Io { path: String, error: String },
     #[error(transparent)]
-    Provider(#[from] crate::provider::types::ProviderError),
+    Provider(#[from] mio_provider::types::ProviderError),
 }
 
 impl From<ProxyError> for BackendError {

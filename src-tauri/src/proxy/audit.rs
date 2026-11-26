@@ -15,7 +15,7 @@ use serde_json::Value;
 
 use super::flowlog::{FlowEntry, FLOW_LOG_MAX_LINES};
 use super::types::ProxyError;
-use crate::provider::types::MachineProvider;
+use mio_provider::types::MachineProvider;
 
 /// The cursor file of the local site; the remote site keeps its own under `remote/`.
 pub const CURSOR_FILE: &str = "audit.cursor";
@@ -124,7 +124,7 @@ pub async fn ingest(
 ) -> bool {
     let flows = state_dir.join("flows.ndjson");
     let cursor: Option<AuditCursor> =
-        crate::mio_files::read_value(cursor_path).and_then(|v| serde_json::from_value(v).ok());
+        mio_files::read_value(cursor_path).and_then(|v| serde_json::from_value(v).ok());
     let Ok(lines) = provider.sidecar_logs(sidecar, cursor.as_ref().map(|c| c.since.as_str())).await
     else {
         return false;
@@ -154,7 +154,7 @@ pub async fn ingest(
         }
     };
     if let Some(next) = next {
-        if let Err(e) = crate::mio_files::write_compact(cursor_path, &serde_json::json!(next)) {
+        if let Err(e) = mio_files::write_compact(cursor_path, &serde_json::json!(next)) {
             tracing::warn!(target: "proxy", %sidecar, error = %e, "audit cursor not saved");
         }
     }

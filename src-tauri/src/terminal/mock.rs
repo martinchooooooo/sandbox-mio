@@ -8,10 +8,10 @@ use tokio::sync::mpsc;
 
 use super::host::{Ended, Link, SessionCommand, Transport};
 use super::types::{AttachRequest, TerminalError};
-use crate::mockctl::types::MockDirector;
+use mio_mockctl::types::MockDirector;
 
 /// The call key of an open, scripted and journalled through the mock director. Must equal the
-/// `terminal.open` entry in `KNOWN_CALLS` in `src-tauri/src/mockctl/mod.rs`.
+/// `terminal.open` entry in `KNOWN_CALLS` in `src-tauri/crates/mockctl/src/lib.rs`.
 const OPEN_KEY: &str = "terminal.open";
 
 pub(super) struct MockTransport {

@@ -8,7 +8,7 @@ use crate::agents;
 use crate::agents::types::AuthSessionMap;
 use crate::credentials;
 use crate::error::AppError;
-use crate::provider::ProviderRegistry;
+use mio_provider::ProviderRegistry;
 use crate::runtime::types::RuntimeManager;
 
 /// Install agent packages and run postinstall steps. Auto-injects credentials if available.

@@ -1,15 +1,16 @@
 //! The production process layer: how this app spawns every external binary (`podman`, the
 //! Mutagen sidecar, `wsl`, `ssh`, ...) and the real [`types::ProcessRunner`] implementations the
-//! subsystem structs drive in a shipped build.
+//! subsystem structs drive in a shipped build. A crate of its own that depends on no other
+//! workspace crate and on no Tauri API, so nothing above it can be reached from here.
 //!
-//! This file holds the detached-command constructors and the blocking-thread runner; `podman` and
-//! `mutagen` hold each binary's resolution and real runner, `windows` the Win32 handle FFI.
+//! This file holds the detached-command constructors and the blocking-thread runner; `podman` holds
+//! that binary's resolution and real runner, `windows` the Win32 handle FFI. The Mutagen sidecar
+//! resolves through Tauri, so its runner lives in `src-tauri/src/mutagen.rs`.
 //!
-//! Scripted counterparts live in `src-tauri/src/mockctl/`, which depends on this module rather than
-//! the other way round: the trait describes a production seam that the e2e `light` tier stands in
-//! for, not a mock facility production borrows.
+//! Scripted counterparts live in `src-tauri/crates/mockctl/`, which depends on this crate rather
+//! than the other way round: the trait describes a production seam that the e2e `light` tier stands
+//! in for, not a mock facility production borrows.
 
-pub mod mutagen;
 pub mod podman;
 pub mod types;
 pub mod windows;
@@ -47,7 +48,7 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// enforces, and a call site that omits it silently reintroduces the hang this module exists to
 /// prevent. Never call `Command::new` for an external binary outside this function and its
 /// [`detached_command_std`] twin.
-pub(crate) fn detached_command(program: impl AsRef<std::ffi::OsStr>) -> tokio::process::Command {
+pub fn detached_command(program: impl AsRef<std::ffi::OsStr>) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new(program);
     cmd.creation_flags(CREATE_NO_WINDOW).stdin(std::process::Stdio::null());
     cmd
@@ -55,7 +56,7 @@ pub(crate) fn detached_command(program: impl AsRef<std::ffi::OsStr>) -> tokio::p
 
 /// [`detached_command`]'s `std::process` twin, for callers that need a blocking `Child` rather than
 /// `tokio::process`'s async one ([`run_via_blocking_process`]).
-pub(crate) fn detached_command_std(
+pub fn detached_command_std(
     program: impl AsRef<std::ffi::OsStr>,
 ) -> std::process::Command {
     let mut cmd = std::process::Command::new(program);
@@ -71,30 +72,30 @@ pub(crate) fn detached_command_std(
 /// convert back to a `std::process::Command`. The flag is re-applied rather than relied upon, so the
 /// contract holds if the plugin ever changes it. Every command this app builds itself must go through
 /// [`detached_command`] instead.
-pub(crate) fn detach(mut cmd: std::process::Command) -> tokio::process::Command {
+pub fn detach(mut cmd: std::process::Command) -> tokio::process::Command {
     std::os::windows::process::CommandExt::creation_flags(&mut cmd, CREATE_NO_WINDOW);
     cmd.stdin(std::process::Stdio::null());
     tokio::process::Command::from(cmd)
 }
 
-/// The resource monitor's `podman stats` call (`src-tauri/src/provider/mod.rs`).
-pub(crate) const PODMAN_STATS_ARGV: [&str; 4] = ["stats", "--no-stream", "--format", "{{json .}}"];
+/// The resource monitor's `podman stats` call (`src-tauri/crates/provider/src/lib.rs`).
+pub const PODMAN_STATS_ARGV: [&str; 4] = ["stats", "--no-stream", "--format", "{{json .}}"];
 
 /// The resource monitor's machine-size call. A template distinct from the `info --format json`
 /// other callers use, so only the monitor's call takes the quiet, breaker-exempt path.
-pub(crate) const PODMAN_POOL_ARGV: [&str; 3] = ["info", "--format", "{{json .Host}}"];
+pub const PODMAN_POOL_ARGV: [&str; 3] = ["info", "--format", "{{json .Host}}"];
 
 /// Whether `args` is one of the resource monitor's call shapes, which log a success at `debug` and
 /// never trip or close the podman breaker
 /// (`docs/features/sandbox-resource-monitor/02_dev.md`, Resolved Decisions 7 and 8).
-pub(crate) fn is_monitor_call(args: &[&str]) -> bool {
+pub fn is_monitor_call(args: &[&str]) -> bool {
     let stripped = strip_connection(args);
     stripped == PODMAN_STATS_ARGV || stripped == PODMAN_POOL_ARGV
 }
 
 /// Strips a leading `--connection <name>` pair (present on most `backends`/`runtime` calls,
 /// absent on `machine`'s calls).
-pub(crate) fn strip_connection<'a>(args: &'a [&'a str]) -> &'a [&'a str] {
+pub fn strip_connection<'a>(args: &'a [&'a str]) -> &'a [&'a str] {
     match args {
         ["--connection", _, rest @ ..] => rest,
         _ => args,
@@ -214,13 +215,13 @@ async fn run_via_blocking_process(
 }
 
 #[cfg(windows)]
-pub(crate) fn exit_status(code: i32) -> std::process::ExitStatus {
+pub fn exit_status(code: i32) -> std::process::ExitStatus {
     use std::os::windows::process::ExitStatusExt;
     std::process::ExitStatus::from_raw(code as u32)
 }
 
 #[cfg(unix)]
-pub(crate) fn exit_status(code: i32) -> std::process::ExitStatus {
+pub fn exit_status(code: i32) -> std::process::ExitStatus {
     use std::os::unix::process::ExitStatusExt;
     std::process::ExitStatus::from_raw(code)
 }

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 
-use crate::provider::types::MachineRef;
+use mio_provider::types::MachineRef;
 
 /// A position in one supervisor generation's journal. A cursor from an older generation is served
 /// from offset 0, because pi restarted and the old offsets mean nothing in the new journal.
@@ -70,8 +70,8 @@ pub enum AgentHostError {
     Provider(String),
 }
 
-impl From<crate::provider::types::ProviderError> for AgentHostError {
-    fn from(e: crate::provider::types::ProviderError) -> Self {
+impl From<mio_provider::types::ProviderError> for AgentHostError {
+    fn from(e: mio_provider::types::ProviderError) -> Self {
         AgentHostError::Provider(e.to_string())
     }
 }

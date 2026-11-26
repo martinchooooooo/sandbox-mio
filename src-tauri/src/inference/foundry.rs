@@ -12,7 +12,7 @@ use tauri::ipc::Channel;
 use tauri::AppHandle;
 
 use super::types::{InferenceEngine, InferenceError, RuntimeSetupEvent, ServerHandle, SetupStep};
-use crate::process::detached_command;
+use mio_process::detached_command;
 use crate::settings::types::EngineKind;
 
 pub struct FoundryLocalEngine {

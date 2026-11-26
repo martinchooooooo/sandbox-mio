@@ -9,6 +9,7 @@ stale_after: 2027-02-21T00:00:00+11:00
 code:
   - src/
   - src-tauri/src/
+  - src-tauri/crates/
   - src-tauri/resources/Containerfile
 sources:
   - resource: docs/features/lib-decomposition/02_dev.md
@@ -53,6 +54,7 @@ flowchart LR
 
 - **One host process, one window.** The Rust backend owns all state and every external call. The frontend reaches it only through Tauri commands and receives pushed state as Tauri events; there is no HTTP API.
 - **Three backend layers.** Commands are thin; services sequence work across subsystems (create, teardown, routing); each subsystem wraps one concern behind a trait.
+- **Compiler-enforced foundations.** The shared vocabulary, the process layer, the provider seam, the scripted test runners and the policy document are separate Cargo crates that cannot depend on the app, so a dependency cycle between them fails to compile.
 - **One process layer.** Every external binary (podman, mutagen, ssh, wsl) is spawned through it. It keeps children off the app's console on Windows and is the seam the fast test tier replaces ([Testing](testing.md)).
 - **No published ports.** The app reaches every in-sandbox service over SSH tunnelled through the engine's own `exec`, with Mutagen carrying workspace sync and port forwards ([Transport](transport.md)).
 - **One activity center.** Long-running work (image pulls, downloads, installs, recreates) reports progress through a single task registry.

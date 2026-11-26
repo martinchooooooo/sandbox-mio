@@ -76,13 +76,13 @@ impl From<std::io::Error> for BackendError {
     }
 }
 
-impl From<crate::mio_files::FileError> for BackendError {
-    fn from(e: crate::mio_files::FileError) -> Self {
+impl From<mio_files::FileError> for BackendError {
+    fn from(e: mio_files::FileError) -> Self {
         BackendError::CommandFailed(e.to_string())
     }
 }
 
-/// Which engine a sandbox runs on, and which a `MachineRef` (`provider/types.rs`) names. Also
+/// Which engine a sandbox runs on, and which a `MachineRef` (`mio_provider::types`) names. Also
 /// crosses IPC directly as a command parameter (`machine_setup_steps`/`machine_readiness`/
 /// `prepare_machine` in `src-tauri/src/commands/machine.rs`), which is why it derives
 /// `Serialize`/`Deserialize` on top of the `MachineRef` prefix-string form; both use the lowercase

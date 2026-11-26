@@ -31,8 +31,8 @@ pub mod types;
 
 use std::sync::Arc;
 
-use crate::domain::types::ProviderId;
-use crate::provider::types::MachineProvider;
+use mio_domain::types::ProviderId;
+use mio_provider::types::MachineProvider;
 use types::ProxyError;
 
 pub const PROXY_PORT: u16 = 8080;
@@ -50,7 +50,7 @@ pub fn proxy_image(provider_id: ProviderId) -> String {
 }
 
 pub fn proxy_container_name(sandbox: &str) -> String {
-    format!("{sandbox}{}", crate::domain::PROXY_CONTAINER_SUFFIX)
+    format!("{sandbox}{}", mio_domain::PROXY_CONTAINER_SUFFIX)
 }
 
 pub fn proxy_network_name(sandbox: &str) -> String {
@@ -127,16 +127,16 @@ pub async fn inject_ca(
 /// versioned `sandbox-mio/base:<n>` image and so carry an `image_version`; the sidecar image tags
 /// (iron-proxy `0.56.0`) must never parse as one
 /// (`docs/features/podman-egress-boundary/02_dev.md`, Resolved Decision 10).
-pub fn is_sidecar(instance: &crate::domain::types::Sandbox) -> bool {
-    instance.name.ends_with(crate::domain::PROXY_CONTAINER_SUFFIX) && instance.image_version.is_none()
+pub fn is_sidecar(instance: &mio_domain::types::Sandbox) -> bool {
+    instance.name.ends_with(mio_domain::PROXY_CONTAINER_SUFFIX) && instance.image_version.is_none()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn instance(name: &str, image_version: Option<u32>) -> crate::domain::types::Sandbox {
-        crate::domain::types::Sandbox {
+    fn instance(name: &str, image_version: Option<u32>) -> mio_domain::types::Sandbox {
+        mio_domain::types::Sandbox {
             id: name.to_string(),
             name: name.to_string(),
             status: "running".to_string(),
@@ -158,10 +158,10 @@ mod tests {
     #[test]
     fn new_names_may_not_end_in_the_sidecar_suffix() {
         assert!(matches!(
-            crate::domain::validate_new_name("micro-proxy"),
-            Err(crate::domain::types::BackendError::ReservedName { .. })
+            mio_domain::validate_new_name("micro-proxy"),
+            Err(mio_domain::types::BackendError::ReservedName { .. })
         ));
-        assert!(crate::domain::validate_new_name("proxy-micro").is_ok());
-        assert!(crate::domain::validate_new_name("micro").is_ok());
+        assert!(mio_domain::validate_new_name("proxy-micro").is_ok());
+        assert!(mio_domain::validate_new_name("micro").is_ok());
     }
 }

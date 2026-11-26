@@ -11,29 +11,29 @@ import { fileURLToPath } from "url";
 // Rootless (UID 1000); both the local test machine and the remote stand-in run rootless.
 export const PODMAN_SOCKET = "/run/user/1000/podman/podman.sock";
 
-// Read out of provider/image.rs rather than duplicated, so a BASE_IMAGE_VERSION bump needs no edit here.
+// Read out of crates/provider/src/image.rs rather than duplicated, so a BASE_IMAGE_VERSION bump needs no edit here.
 const IMAGE_SRC = readFileSync(
-  fileURLToPath(new URL("../../src-tauri/src/provider/image.rs", import.meta.url)),
+  fileURLToPath(new URL("../../src-tauri/crates/provider/src/image.rs", import.meta.url)),
   "utf8"
 );
 const PODMAN_SRC = readFileSync(
-  fileURLToPath(new URL("../../src-tauri/src/process/podman.rs", import.meta.url)),
+  fileURLToPath(new URL("../../src-tauri/crates/process/src/podman.rs", import.meta.url)),
   "utf8"
 );
 function readBaseImage(): string {
   const name = IMAGE_SRC.match(/const BASE_IMAGE:\s*&str\s*=\s*"([^"]+)"/)?.[1];
   const version = IMAGE_SRC.match(/const BASE_IMAGE_VERSION:\s*u32\s*=\s*(\d+)/)?.[1];
-  if (!name || !version) throw new Error("Could not parse BASE_IMAGE / BASE_IMAGE_VERSION from provider/image.rs");
+  if (!name || !version) throw new Error("Could not parse BASE_IMAGE / BASE_IMAGE_VERSION from crates/provider/src/image.rs");
   return `${name}:${version}`;
 }
 export const MISE_BASE_IMAGE = readBaseImage();
 
 // The machine the app's own startup probe hardcodes — not the connection the suite points the app
 // at (LOCAL_CONNECTION via PODMAN_CONNECTION), so both must be provisioned. Parsed from
-// `DEFAULT_MACHINE_NAME` in src-tauri/src/process/podman.rs so a change there cannot desync silently.
+// `DEFAULT_MACHINE_NAME` in src-tauri/crates/process/src/podman.rs so a change there cannot desync silently.
 function readDefaultMachine(): string {
   const name = PODMAN_SRC.match(/const DEFAULT_MACHINE_NAME:\s*&str\s*=\s*"([^"]+)"/)?.[1];
-  if (!name) throw new Error("Could not parse DEFAULT_MACHINE_NAME from process/podman.rs");
+  if (!name) throw new Error("Could not parse DEFAULT_MACHINE_NAME from crates/process/src/podman.rs");
   return name;
 }
 export const DEFAULT_MACHINE = readDefaultMachine();

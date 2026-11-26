@@ -1,6 +1,6 @@
 use tauri::ipc::Channel;
 
-use crate::domain::types::BackendError;
+use mio_domain::types::BackendError;
 
 /// Global Podman machine lifecycle (distinct from per-connection backends).
 /// Methods operate on the default machine's CLI, WSL kernel, and rootless API socket.
@@ -35,7 +35,7 @@ pub(super) struct PodmanMachineManager {
     /// The process seam every `podman` call routes through — real in production, scripted under
     /// `MIO_MOCK_BACKEND=1`. Shares one instance with `CliBackend` (see
     /// `docs/features/scriptable-mock-backend/02_dev.md`, "shared runner").
-    pub(super) runner: std::sync::Arc<dyn crate::process::types::ProcessRunner>,
+    pub(super) runner: std::sync::Arc<dyn mio_process::types::ProcessRunner>,
 }
 
 /// One stage of bringing a machine online, provider-neutral. Rust owns only the stable step `id`;

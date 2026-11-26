@@ -31,13 +31,13 @@ This document is an interim task list, compiled on 2026-11-23 at commit `2e0e665
 - **Problem:** `apply_sandbox_policy` (`src-tauri/src/commands/net_policy.rs:66-86`) loads `.mio/net-policy.json` from the workspace, which code inside the sandbox can write. `commitSecretChange()` and `save()` in `src/lib/net-policy/NetPolicyEditor.svelte` (lines 106-119, 178-195) trigger that apply. An agent can add an attacker host to a secret binding's `hosts` plus an allow rule; the next time the user stores any secret, the sidecar swaps the real value into requests to the attacker host. A deployed sandbox has the same exposure: Mutagen syncs the remote workspace's policy file back to the laptop, and every apply is pushed live to the remote sidecar (`docs/features/proxy-remote-deploy/02_dev.md`).
 - **Source:** finding 1 of `docs/features/podman-egress-boundary/05_dev_review.md` (deferred by the user to a separate feature).
 - **Feature:** implemented in `docs/features/net-policy-review/` ([02_dev.md](features/net-policy-review/02_dev.md)): applies render only the accepted policy, the workspace file is a proposal reviewed as a diff, and secret values are per sandbox, which also closes a binding naming another sandbox's `secretId`.
-- **Options:** (a) apply only from the app-side snapshot (`net_policy::applied::read_applied`, `src-tauri/src/net_policy/applied.rs`) and treat the workspace file as a proposal; (b) require the user to confirm a diff whenever `net_policy_drift` reports a change made on disk before any apply. Either option must also stop `apply_sandbox_policy` from re-reading the workspace file after the user reviewed it.
+- **Options:** (a) apply only from the app-side snapshot (`applied_policy::read_applied`, `src-tauri/src/applied_policy.rs`) and treat the workspace file as a proposal; (b) require the user to confirm a diff whenever `net_policy_drift` reports a change made on disk before any apply. Either option must also stop `apply_sandbox_policy` from re-reading the workspace file after the user reviewed it.
 - **Done when:** no apply path can enforce a policy or binding host list the user has not seen; a light spec covers a drifted file with a widened binding.
 
 ### T3. Sandbox SSH aliases can shadow the user's own SSH hosts
 
 - [ ] Resolved
-- **Problem:** the managed SSH `Host` entry is the bare sandbox name, inside an `Include sandbox-mio/config` line prepended to `~/.ssh/config` (`src-tauri/src/ssh/mod.rs`). OpenSSH takes the first match, so a sandbox named `github.com` hijacks `git@github.com` for every SSH client on the machine. `validate_name()` and `validate_new_name()` (`src-tauri/src/domain/mod.rs`) allow dots and check no collisions.
+- **Problem:** the managed SSH `Host` entry is the bare sandbox name, inside an `Include sandbox-mio/config` line prepended to `~/.ssh/config` (`src-tauri/src/ssh/mod.rs`). OpenSSH takes the first match, so a sandbox named `github.com` hijacks `git@github.com` for every SSH client on the machine. `validate_name()` and `validate_new_name()` (`src-tauri/crates/domain/src/lib.rs`) allow dots and check no collisions.
 - **Source:** "Namespaced per-sandbox alias" in `docs/features/host-tool-ssh-access/04_improvements.md`.
 - **Fix shape:** the cheap fix is in `validate_new_name()`: refuse new names containing a dot, and refuse names matching a `Host` pattern already in the user's `~/.ssh/config` outside the managed blocks. A prefixed alias (`sandbox-mio-<name>`) is the complete fix but touches every Mutagen path keyed on the alias (see the gotchas table in the source document); treat the prefix as Decision needed.
 - **Done when:** creating a sandbox whose name would shadow an existing or dotted host is refused with a clear error; existing sandboxes stay addressable.
@@ -52,7 +52,7 @@ This document is an interim task list, compiled on 2026-11-23 at commit `2e0e665
 ### T5a. Secret stdin is written to a plaintext temp file
 
 - [x] Resolved
-- **Problem:** `run_with_stdin_file()` (`src-tauri/src/process/mod.rs:663-676`) writes a call's stdin to `%TEMP%`, so the GitHub token and Claude credential injection briefly land on host disk. Since proxy-remote-deploy, every remote policy apply and every remote sidecar start also pushes all staged secret values through this path (`push_secret_files`, `src-tauri/src/proxy/remote_push.rs`).
+- **Problem:** `run_with_stdin_file()` (`src-tauri/crates/process/src/lib.rs:663-676`) writes a call's stdin to `%TEMP%`, so the GitHub token and Claude credential injection briefly land on host disk. Since proxy-remote-deploy, every remote policy apply and every remote sidecar start also pushes all staged secret values through this path (`push_secret_files`, `src-tauri/src/proxy/remote_push.rs`).
 - **Source:** "Feed secret stdin without a temp file" in `docs/features/github-cli-auth/04_improvements.md` (the entry is now titled "Capture secret stdout without a temp file" and keeps the stdout half).
 - **Done when:** stdin reaches the child through a pipe or in-memory handle while keeping the guard, breaker, timeout and logging of the Podman runner; the comment explaining why the temp file existed is updated or removed.
 
@@ -114,9 +114,9 @@ Each sub-task is a direct fix unless marked.
 
 | Tasks | Shared files |
 |---|---|
-| T3, T4, T8 | `src-tauri/src/backends/mod.rs`, `src-tauri/src/domain/mod.rs`, `src-tauri/src/ssh/mod.rs`, `src-tauri/src/ssh/identity.rs` |
+| T3, T4, T8 | `src-tauri/src/backends/mod.rs`, `src-tauri/crates/domain/src/lib.rs`, `src-tauri/src/ssh/mod.rs`, `src-tauri/src/ssh/identity.rs` |
 | T7, T8 | `e2e/wdio.conf.ts` |
-| T1, T2 | `src-tauri/src/proxy/`, `src-tauri/src/net_policy/` |
+| T1, T2 | `src-tauri/src/proxy/`, `src-tauri/crates/net-policy/`, `src-tauri/src/applied_policy.rs` |
 | T5a, T6 | none in code; T6 should land first so T5a's change is checked by CI |
 
 ## Common Gotchas
@@ -125,4 +125,4 @@ Each sub-task is a direct fix unless marked.
 |---|---|---|
 | `cargo xtask docs` fails with an unlinked-document error after deleting `docs/improvement-backlog.md` or reports a broken link | The root `docs/index.md` is hand-written and links `docs/improvement-backlog.md` | Delete the `Improvement Backlog` line from `docs/index.md` in the same change as the file |
 | A task's line number points at unrelated code | Line numbers were recorded at commit `2e0e665` | Search for the named function or file instead of trusting the line number |
-| A fix passes `cargo xtask e2e light` but breaks against real Podman | The light tier runs on in-memory mocks (`MIO_MOCK_BACKEND=1`) | Run `cargo xtask e2e` (`standard`) once for any task touching `src-tauri/src/backends/`, `src-tauri/src/proxy/` or `src-tauri/src/process/` |
+| A fix passes `cargo xtask e2e light` but breaks against real Podman | The light tier runs on in-memory mocks (`MIO_MOCK_BACKEND=1`) | Run `cargo xtask e2e` (`standard`) once for any task touching `src-tauri/src/backends/`, `src-tauri/src/proxy/` or `src-tauri/crates/process/` |

@@ -1,0 +1,12 @@
+[package]
+name = "mio-domain"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+mio-env = { path = "../env" }
+mio-files = { path = "../files" }
+dirs.workspace = true
+serde.workspace = true
+thiserror.workspace = true

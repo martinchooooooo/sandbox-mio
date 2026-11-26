@@ -11,8 +11,8 @@ code:
   - xtask/src/
   - e2e/wdio.conf.ts
   - e2e/lib/
-  - src-tauri/src/mockctl/
-  - src-tauri/src/process/
+  - src-tauri/crates/mockctl/
+  - src-tauri/crates/process/
 sources:
   - resource: docs/features/e2e-tiering/02_dev.md
   - resource: docs/features/scriptable-mock-backend/02_dev.md

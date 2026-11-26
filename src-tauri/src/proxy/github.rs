@@ -15,7 +15,7 @@ use super::{iron_config, proxy_container_name};
 use crate::credentials::github;
 use crate::credentials::types::CredentialError;
 use crate::credentials::{self, GITHUB_SERVICE};
-use crate::net_policy::applied::read_applied;
+use crate::applied_policy::read_applied;
 
 /// The GitHub token the sidecar should swap the placeholder for, or `None` when no credential is
 /// saved or the sandbox is opted out (`docs/features/proxy-credential-secrets/02_dev.md`, "When the
@@ -155,7 +155,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
-    use crate::net_policy::schema::NetPolicy;
+    use mio_net_policy::schema::NetPolicy;
 
     /// A GitHub lookup error must drop the binding, never fail the apply or keep a token.
     #[test]

@@ -6,9 +6,9 @@ use std::sync::Arc;
 
 use tokio::process::Command;
 
-use crate::domain::types::{ProviderId, Sandbox};
-use crate::process::podman::{connection_name, podman_command};
-use crate::process::types::ProcessRunner;
+use mio_domain::types::{ProviderId, Sandbox};
+use mio_process::podman::{connection_name, podman_command};
+use mio_process::types::ProcessRunner;
 use image::base_image;
 use types::{
     EnginePool, ExecOpts, InstanceSpec, InstanceStats, MachineProvider, MachineRef,
@@ -19,11 +19,11 @@ use types::{
 /// by `WORKDIR` in `src-tauri/src/terminal/mod.rs`.
 const WORKSPACE_MOUNT: &str = "/root/work";
 
-const CONTAINERFILE: &str = include_str!("../../resources/Containerfile");
+const CONTAINERFILE: &str = include_str!("../../../resources/Containerfile");
 
 /// The label key `create_instance` stamps and `list_instances` reads back to recover an
 /// `existing_path` sandbox's workspace, which is not reconstructible from the name alone.
-pub(crate) const WORKSPACE_LABEL: &str = "sandbox-mio.workspace";
+pub const WORKSPACE_LABEL: &str = "sandbox-mio.workspace";
 
 /// Resolves a [`MachineRef`] to the provider driving it. Adding a provider means a field here and
 /// one arm in each method below.
@@ -148,7 +148,7 @@ fn parse_image_version(image: &str) -> Option<u32> {
 
 impl PodmanProvider {
     /// Runs `podman --connection <connection> <argv>` through the mockable runner seam. Call/result
-    /// logging lives one layer down, in `SystemPodmanRunner::run` (`mockctl/mod.rs`) — the one seam
+    /// logging lives one layer down, in `SystemPodmanRunner::run` (`src-tauri/crates/process/src/podman.rs`) — the one seam
     /// every real Podman invocation passes through, `verify_host`'s included — rather than here,
     /// so it can't end up covering some callers and not others.
     async fn run(&self, argv: &[&str]) -> Result<Output, ProviderError> {
@@ -466,7 +466,7 @@ impl MachineProvider for PodmanProvider {
                     .get(WORKSPACE_LABEL)
                     .and_then(|v| v.as_str())
                     .map(str::to_string)
-                    .unwrap_or_else(|| crate::domain::workspace_path(&name).unwrap_or_default());
+                    .unwrap_or_else(|| mio_domain::workspace_path(&name).unwrap_or_default());
                 let image_version = parse_image_version(c["Image"].as_str().unwrap_or_default());
                 Sandbox {
                     id: c["Id"].as_str().unwrap_or_default().to_string(),
@@ -589,18 +589,18 @@ impl MachineProvider for PodmanProvider {
     }
 
     async fn instance_stats(&self) -> Result<Vec<InstanceStats>, ProviderError> {
-        parse_podman_stats(&check(self.run(&crate::process::PODMAN_STATS_ARGV).await?)?)
+        parse_podman_stats(&check(self.run(&mio_process::PODMAN_STATS_ARGV).await?)?)
     }
 
     async fn engine_pool(&self) -> Result<Option<EnginePool>, ProviderError> {
-        parse_podman_pool(&check(self.run(&crate::process::PODMAN_POOL_ARGV).await?)?).map(Some)
+        parse_podman_pool(&check(self.run(&mio_process::PODMAN_POOL_ARGV).await?)?).map(Some)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mockctl::types::{MockDirector, ScriptedPodmanRunner};
+    use mio_mockctl::types::{MockDirector, ScriptedPodmanRunner};
 
     fn secret_opts() -> ExecOpts {
         ExecOpts {
@@ -758,9 +758,9 @@ mod tests {
     async fn monitor_calls_render_the_quiet_shapes() {
         let (director, provider) = scripted();
         assert!(provider.instance_stats().await.unwrap().is_empty(), "unscripted stats is empty");
-        assert_eq!(director.calls("podman.stats")[0].argv, crate::process::PODMAN_STATS_ARGV);
+        assert_eq!(director.calls("podman.stats")[0].argv, mio_process::PODMAN_STATS_ARGV);
         let _ = provider.engine_pool().await;
-        assert_eq!(director.calls("podman.info")[0].argv, crate::process::PODMAN_POOL_ARGV);
+        assert_eq!(director.calls("podman.info")[0].argv, mio_process::PODMAN_POOL_ARGV);
     }
 
     #[tokio::test]

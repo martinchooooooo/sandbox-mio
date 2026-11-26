@@ -13,9 +13,9 @@ use super::history::{
 };
 use super::rollup::{mib, MinuteAcc, PoolRollup, ResourceSample, Rollup};
 use super::unix_now;
-use crate::domain::types::{ProviderId, Sandbox};
-use crate::provider::types::{EnginePool, InstanceStats};
-use crate::provider::ProviderRegistry;
+use mio_domain::types::{ProviderId, Sandbox};
+use mio_provider::types::{EnginePool, InstanceStats};
+use mio_provider::ProviderRegistry;
 
 pub const SNAPSHOT_EVENT: &str = "resources://snapshot";
 
@@ -145,7 +145,7 @@ impl ResourceMonitor {
             state.known.remove(name);
             state.snapshot.sandboxes.retain(|s| s.name != name);
         }
-        if crate::domain::validate_name(name).is_err() {
+        if mio_domain::validate_name(name).is_err() {
             return;
         }
         if let Ok(dir) = crate::paths::resource_history_dir(app) {
@@ -189,7 +189,7 @@ impl ResourceMonitor {
         for (id, is_running) in running {
             // Skipping while the breaker is open keeps a struggling engine from being polled at
             // all (docs/features/sandbox-resource-monitor/02_dev.md, Resolved Decision 8).
-            if !is_running || (id == ProviderId::Podman && crate::process::podman::podman_breaker_open()) {
+            if !is_running || (id == ProviderId::Podman && mio_process::podman::podman_breaker_open()) {
                 continue;
             }
             let provider = registry.local(id);
@@ -340,7 +340,7 @@ impl ResourceMonitor {
         }
         let mut lines: Vec<(PathBuf, String)> = Vec::new();
         for (name, rollup) in rollups {
-            if crate::domain::validate_name(&name).is_err() {
+            if mio_domain::validate_name(&name).is_err() {
                 continue;
             }
             if let Ok(line) = serde_json::to_string(&rollup) {

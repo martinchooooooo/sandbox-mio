@@ -17,7 +17,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 use mock::MockRuntime;
 use types::{MiseRuntime, RuntimeError, RuntimeManager};
 
-use crate::provider::types::{ExecOpts, MachineProvider, MachineRef};
+use mio_provider::types::{ExecOpts, MachineProvider, MachineRef};
 
 const WORKSPACE_MOUNT: &str = "/root/work";
 
@@ -62,10 +62,10 @@ const PASEO_PLUGINS_DELIVER_SCRIPT: &str = include_str!("../../resources/agent-w
 const PASEO_PLUGIN_DIR: &str = "/usr/local/lib/mio/paseo-plugins";
 
 pub fn default_runtime(
-    providers: Arc<crate::provider::ProviderRegistry>,
+    providers: Arc<mio_provider::ProviderRegistry>,
     secrets: Arc<dyn types::ToolchainSecrets>,
 ) -> Arc<dyn RuntimeManager> {
-    if crate::domain::mock_backend_enabled() {
+    if mio_domain::mock_backend_enabled() {
         return Arc::new(MockRuntime::new());
     }
     Arc::new(MiseRuntime {

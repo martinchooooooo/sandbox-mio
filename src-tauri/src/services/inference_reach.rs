@@ -7,11 +7,11 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
 use crate::backends::types::SandboxBackend;
-use crate::domain::types::Sandbox;
+use mio_domain::types::Sandbox;
 use crate::inference::types::ActiveServer;
 use crate::inference::INFERENCE_GUEST_PORT;
 use crate::network::types::{NetworkManager, ServiceKind};
-use crate::provider::ProviderRegistry;
+use mio_provider::ProviderRegistry;
 use crate::services::routing::SandboxRouter;
 
 /// The running server's host port, read under the `ActiveServer` lock and released before any

@@ -18,21 +18,21 @@ use tauri::ipc::{Channel, InvokeResponseBody};
 use tokio::process::Child;
 use tokio::sync::mpsc;
 
-use crate::mockctl::types::MockDirector;
-use crate::provider::types::{ExecOpts, MachineProvider};
-use crate::provider::ProviderRegistry;
+use mio_mockctl::types::MockDirector;
+use mio_provider::types::{ExecOpts, MachineProvider};
+use mio_provider::ProviderRegistry;
 use host::{Ended, LifecycleHost, Link, SessionCommand, Transport};
 use types::{AttachRequest, TerminalError, TerminalHost};
 
 /// The working directory of every pane a new Herdr session opens. Must equal `WORKSPACE_MOUNT`
-/// in `src-tauri/src/provider/mod.rs`, which is private there.
+/// in `src-tauri/crates/provider/src/lib.rs`, which is private there.
 const WORKDIR: &str = "/root/work";
 
 /// Constructs the terminal host: the scriptable echo transport under `MIO_MOCK_BACKEND=1`, because
 /// the session's exec child bypasses the scripted `ProcessRunner` and would reach a real engine.
 /// Both transports run the same session lifecycle.
 pub fn default_terminal_host(registry: Arc<ProviderRegistry>, director: Arc<MockDirector>) -> Arc<dyn TerminalHost> {
-    if crate::domain::mock_backend_enabled() {
+    if mio_domain::mock_backend_enabled() {
         return Arc::new(LifecycleHost::new(mock::MockTransport::new(director)));
     }
     Arc::new(LifecycleHost::new(SshTransport { registry }))

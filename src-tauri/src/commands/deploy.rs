@@ -7,7 +7,7 @@ use tauri::State;
 use crate::backends::types::SandboxBackend;
 use crate::error::AppError;
 use crate::network::types::NetworkManager;
-use crate::provider::ProviderRegistry;
+use mio_provider::ProviderRegistry;
 use crate::proxy::flowlog::FlowWatchRegistry;
 use crate::proxy::store::ProxyStore;
 use crate::runtime::types::RuntimeManager;

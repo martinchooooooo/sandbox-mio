@@ -19,12 +19,12 @@ use super::sidecar::{ensure_sidecar_running, is_running, reload, start_and_confi
 use super::store::{config_dir, meta_engine, secrets_dir, ProxyStore};
 use super::types::{ProxyEngine, ProxyError, SidecarSite};
 use super::{io_err, iron_config, proxy_container_name};
-use crate::net_policy::applied::{
+use crate::applied_policy::{
     empty_accepted_policy, read_accepted, read_applied, write_applied, AppliedPolicy,
 };
-use crate::net_policy::schema::NetPolicy;
-use crate::net_policy::validate::validate;
-use crate::net_policy::NetPolicyError;
+use mio_net_policy::schema::NetPolicy;
+use mio_net_policy::validate::validate;
+use mio_net_policy::NetPolicyError;
 
 /// What an apply could not do without failing it: bindings left out because their secret has no
 /// stored value, so their placeholder passes through unswapped (Resolved Decision 15).

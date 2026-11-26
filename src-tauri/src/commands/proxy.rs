@@ -29,7 +29,7 @@ pub fn deploy_secret_count(
     store: State<'_, ProxyStore>,
     app: tauri::AppHandle,
 ) -> Result<usize, AppError> {
-    crate::domain::validate_name(&name)?;
+    mio_domain::validate_name(&name)?;
     Ok(proxy::github::deploy_secret_count(&app, &store, &name)?)
 }
 

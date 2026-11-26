@@ -44,7 +44,7 @@ pub const ARCHITECTURE_WORD_BUDGET: usize = 750;
 
 /// Repository-relative directories and files scanned for `docs/...` citations outside `docs/`.
 const CITATION_ROOTS: &[&str] = &[
-    "src", "src-tauri/src", "src-tauri/resources", "e2e", ".claude/skills",
+    "src", "src-tauri/src", "src-tauri/crates", "src-tauri/resources", "e2e", ".claude/skills",
     "AGENTS.md", "CLAUDE.md", "README.md", "src-tauri/AGENTS.md", "xtask/src",
 ];
 

@@ -13,8 +13,8 @@ use tauri::{AppHandle, Emitter};
 use mock::MockNetworkManager;
 use types::{ForwardInfo, NetworkError, NetworkManager, ServiceKind};
 
-use crate::provider::types::{ExecOpts, MachineProvider, MachineRef};
-use crate::provider::ProviderRegistry;
+use mio_provider::types::{ExecOpts, MachineProvider, MachineRef};
+use mio_provider::ProviderRegistry;
 
 pub use types::EVENT_NAME;
 
@@ -422,7 +422,7 @@ pub fn default_network_manager(
     app: AppHandle,
     providers: Arc<ProviderRegistry>,
 ) -> std::sync::Arc<dyn NetworkManager> {
-    if crate::domain::mock_backend_enabled() {
+    if mio_domain::mock_backend_enabled() {
         return std::sync::Arc::new(MockNetworkManager::new(app));
     }
     std::sync::Arc::new(MutagenNetworkManager {

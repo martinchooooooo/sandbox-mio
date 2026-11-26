@@ -19,8 +19,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin};
 use tokio::sync::Mutex;
 
-use crate::provider::types::{ExecOpts, MachineProvider, MachineRef};
-use crate::provider::ProviderRegistry;
+use mio_provider::types::{ExecOpts, MachineProvider, MachineRef};
+use mio_provider::ProviderRegistry;
 use types::{AgentHost, AgentHostError, AttachEvent, AttachInfo, Cursor, HostStatus};
 
 const PI_HOST_SCRIPT: &str = include_str!("../../resources/agent-host/pi-host.sh");
@@ -38,7 +38,7 @@ const HEADER_TIMEOUT: Duration = Duration::from_secs(30);
 /// Constructs the agent host: the replay mock under `MIO_MOCK_BACKEND=1`, because a streamed exec
 /// child bypasses the scripted `ProcessRunner` and would reach a real engine.
 pub fn default_agent_host(registry: Arc<ProviderRegistry>) -> Arc<dyn AgentHost> {
-    if crate::domain::mock_backend_enabled() {
+    if mio_domain::mock_backend_enabled() {
         return Arc::new(mock::MockAgentHost::default());
     }
     Arc::new(ExecAgentHost { registry, attaches: Arc::default(), next_id: AtomicU64::new(1) })

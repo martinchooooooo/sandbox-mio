@@ -4,7 +4,7 @@
  */
 
 /**
- * Mirrors `Behaviour` in src-tauri/src/mockctl/mod.rs (internally tagged on `kind`, kebab-case).
+ * Mirrors `Behaviour` in src-tauri/crates/mockctl/src/lib.rs (internally tagged on `kind`, kebab-case).
  * Field names are snake_case, matching the Rust struct fields verbatim — this payload crosses the
  * IPC boundary as plain serde JSON, not Tauri's camelCase command-argument convention.
  */
@@ -35,7 +35,7 @@ export async function invokeCmd<T = unknown>(cmd: string, args?: Record<string, 
 /**
  * Installs one scripted override. `key` follows the `<binary>.<subcommand>` convention
  * (`podman.ps`, `podman.start`, `podman.machine-list`) — see `KNOWN_CALLS` in
- * src-tauri/src/mockctl/mod.rs for the full list.
+ * src-tauri/crates/mockctl/src/lib.rs for the full list.
  */
 export async function configureMock(key: string, behaviour: Behaviour): Promise<void> {
   await invokeCmd("mock_configure", { key, behaviour });
@@ -88,7 +88,7 @@ export async function invokeCmdExpectingError(
   );
 }
 
-/** One journalled scripted call (mirrors `RecordedCall` in src-tauri/src/mockctl/types.rs). */
+/** One journalled scripted call (mirrors `RecordedCall` in src-tauri/crates/mockctl/src/types.rs). */
 export interface RecordedCall {
   key: string;
   argv: string[];

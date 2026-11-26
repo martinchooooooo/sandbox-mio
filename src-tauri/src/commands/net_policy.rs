@@ -6,14 +6,14 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::backends::types::SandboxBackend;
-use crate::domain::types::BackendError;
+use mio_domain::types::BackendError;
 use crate::error::AppError;
-use crate::domain::types::ProviderId;
-use crate::net_policy::applied::{read_accepted, unstamped_bindings, UnstampedBinding};
-use crate::net_policy::diff::{diff, PolicyChange};
-use crate::net_policy::schema::{load_if_present, save, NetPolicy};
-use crate::net_policy::validate::validate;
-use crate::provider::ProviderRegistry;
+use mio_domain::types::ProviderId;
+use crate::applied_policy::{read_accepted, unstamped_bindings, UnstampedBinding};
+use mio_net_policy::diff::{diff, PolicyChange};
+use mio_net_policy::schema::{load_if_present, save, NetPolicy};
+use mio_net_policy::validate::validate;
+use mio_provider::ProviderRegistry;
 use crate::proxy::store::ProxyStore;
 
 /// A workspace policy file that differs from the accepted policy, with what changed.
@@ -48,7 +48,7 @@ pub struct StoreSecret {
 
 /// The sandbox's workspace path from its record, never from the frontend.
 async fn workspace_of(store: &Arc<dyn SandboxBackend>, name: &str) -> Result<String, AppError> {
-    crate::domain::validate_name(name)?;
+    mio_domain::validate_name(name)?;
     crate::services::sandbox::list_user(store)
         .await?
         .into_iter()

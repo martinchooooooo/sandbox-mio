@@ -4,7 +4,6 @@
 use tauri::Manager;
 use tracing_subscriber::prelude::*;
 
-use crate::env_ext;
 
 /// Returns the `WorkerGuard` for the caller to `app.manage()`. Its `Drop` is the only code path
 /// that signals the non-blocking writer's worker thread to shut down and blocks briefly for it to
@@ -14,7 +13,7 @@ pub fn init_logging(app: &tauri::AppHandle) -> tracing_appender::non_blocking::W
     // Unset must resolve exactly as before: app_log_dir() is Local AppData, not a subdirectory of
     // app_data_dir() (Roaming), so folding the unset case into the override would relocate every
     // user's log (docs/features/parallel-worktree-e2e/02_dev.md, Resolved Decision 9).
-    let log_dir = match env_ext::env_dir("MIO_APP_DATA_DIR") {
+    let log_dir = match mio_env::env_dir("MIO_APP_DATA_DIR") {
         Some(root) => root.join("logs"),
         None => app.path().app_log_dir().unwrap_or_else(|_| std::env::temp_dir()),
     };

@@ -12,7 +12,7 @@ pub async fn access(
     app: &tauri::AppHandle,
 ) -> Result<SshAccess, AppError> {
     // Before any key is created: the name names files on the host and a block in `~/.ssh`.
-    crate::domain::validate_name(name)?;
+    mio_domain::validate_name(name)?;
     let route = router.resolve(name, app).await?;
     let identity_path = crate::ssh::identity::ensure_sandbox_identity(app, name)?;
     if route.running {

@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Runtime};
 
-use crate::process::types::ProcessRunner;
+use mio_process::types::ProcessRunner;
 use types::{MutagenCli, SessionInfo, SyncEngine, SyncError, SyncStatus};
 
 /// Run a Mutagen subcommand and return trimmed stdout, or the captured stderr as `Err`. Used by the
@@ -15,7 +15,7 @@ use types::{MutagenCli, SessionInfo, SyncEngine, SyncError, SyncStatus};
 /// e2e `light` tier can script them (`docs/features/scriptable-mock-backend/02_dev.md`, Phase C).
 async fn run<R: Runtime>(app: &AppHandle<R>, args: &[&str]) -> Result<String, SyncError> {
     let started = std::time::Instant::now();
-    let output = crate::process::mutagen::command(app)?
+    let output = crate::mutagen::command(app)?
         .args(args)
         .output()
         .await

@@ -7,7 +7,7 @@ use super::iron::CONTAINER_CONFIG_DIR;
 use super::sidecar::reload;
 use super::types::{ProxyError, SidecarSite};
 use super::{io_err, iron_config};
-use crate::provider::types::ExecOpts;
+use mio_provider::types::ExecOpts;
 
 /// Whether `name` is safe to splice into the `sh -c` scripts below: secret file names come from a
 /// validated environment variable name or the app's own constant, never from the sandbox.

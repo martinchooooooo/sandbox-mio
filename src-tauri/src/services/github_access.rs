@@ -11,7 +11,7 @@ use crate::credentials::github::{self, ApplyOutcome, GithubSandboxState};
 use crate::credentials::types::CredentialError;
 use crate::credentials::{self, GITHUB_SERVICE};
 use crate::error::AppError;
-use crate::provider::ProviderRegistry;
+use mio_provider::ProviderRegistry;
 use crate::proxy::github::BindingState;
 use crate::proxy::store::ProxyStore;
 use crate::sync::types::SyncEngine;
@@ -101,7 +101,7 @@ fn credential_stamp(app: &AppHandle) -> Result<Option<u64>, CredentialError> {
 }
 
 fn state_path(app: &AppHandle, name: &str) -> Result<std::path::PathBuf, AppError> {
-    crate::domain::validate_name(name)?;
+    mio_domain::validate_name(name)?;
     crate::paths::sandbox_github_state_path(app, name).map_err(|e| CredentialError::Io(e.to_string()).into())
 }
 

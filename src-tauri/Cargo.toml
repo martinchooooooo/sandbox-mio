@@ -1,3 +1,22 @@
+# The app crate is the workspace root; the subsystems that need no Tauri live in `crates/` so the
+# compiler rejects a dependency cycle between them (docs/features/codebase-restructure/02_dev.md,
+# Phase 6). `xtask/` at the repository root is deliberately not a member: it has its own workspace.
+[workspace]
+members = ["crates/*"]
+# A bare `cargo check` or `cargo test` in this directory covers every crate, not just the app.
+default-members = [".", "crates/*"]
+resolver = "2"
+
+# Versions shared by the app and the crates, so each external crate resolves to one specification.
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+async-trait = "0.1"
+tokio = { version = "1", features = ["full"] }
+dirs = "6"
+thiserror = "2"
+tracing = "0.1"
+
 [package]
 name = "sandbox-mio"
 version = "0.1.0"
@@ -19,6 +38,13 @@ tauri-build = { version = "2", features = [] }
 tar = "0.4"
 
 [dependencies]
+mio-domain = { path = "crates/domain" }
+mio-env = { path = "crates/env" }
+mio-files = { path = "crates/files" }
+mio-mockctl = { path = "crates/mockctl" }
+mio-net-policy = { path = "crates/net-policy" }
+mio-process = { path = "crates/process" }
+mio-provider = { path = "crates/provider" }
 # `unstable` gates the multi-webview API (bare `Window` + `add_child` + `Webview` geometry)
 # used by the embedded workspace. Outside Tauri's semver guarantee: re-verify after any bump
 # (docs/features/embedded-windows/02_dev.md).
@@ -34,14 +60,14 @@ tauri-plugin-clipboard-manager = "~2.3"
 # Optional so a release build can drop it with `--no-default-features` (see the `devtools`
 # feature below); `lib.rs` only wires it up under `#[cfg(debug_assertions)]` regardless.
 tauri-plugin-devtools = { version = "2.0.0", optional = true }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-async-trait = "0.1"
-tokio = { version = "1", features = ["full"] }
-dirs = "6"
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+dirs.workspace = true
 # Canonicalizes without Windows' `\\?\` UNC prefix, which `podman -v` does not understand.
 dunce = "1"
-thiserror = "2"
+thiserror.workspace = true
 toml = "0.8"
 sysinfo = "0.33"
 reqwest = { version = "0.12", default-features = false, features = ["stream", "json", "native-tls"] }
@@ -50,7 +76,7 @@ tar = "0.4"
 futures-util = "0.3"
 # Structured backend logging. Events are captured by tauri-plugin-devtools (debug builds) and
 # surface in its console; in release builds with no subscriber installed they are cheap no-ops.
-tracing = "0.1"
+tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tracing-appender = "0.2"
 # Per-sandbox PASEO_PASSWORD minting for the agents web UI (docs/features/agent-web-ui/02_dev.md).

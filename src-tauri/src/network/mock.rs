@@ -109,7 +109,7 @@ impl NetworkManager for MockNetworkManager {
     async fn expose_port(
         &self,
         sandbox: &str,
-        _machine: &crate::provider::types::MachineRef,
+        _machine: &mio_provider::types::MachineRef,
         workspace_path: &str,
         target_port: u16,
         label: Option<String>,
@@ -147,7 +147,7 @@ impl NetworkManager for MockNetworkManager {
         self: std::sync::Arc<Self>,
         sandbox: &str,
         workspace_path: &str,
-        machine: &crate::provider::types::MachineRef,
+        machine: &mio_provider::types::MachineRef,
     ) {
         let mut watches = self.ports_watch.lock().unwrap();
         if watches.contains_key(sandbox) {

@@ -4,10 +4,9 @@ use std::path::PathBuf;
 
 use tauri::{AppHandle, Runtime};
 
-use super::schema::{placeholder, NetPolicy};
-use super::NetPolicyError;
-use crate::mio_files;
-use crate::provider::types::EgressMode;
+use mio_net_policy::schema::{placeholder, NetPolicy};
+use mio_net_policy::NetPolicyError;
+use mio_provider::types::EgressMode;
 
 /// The accepted policy of one sandbox: the only policy any sidecar render enforces, kept in the app
 /// data root where code inside the sandbox cannot write it

@@ -1,7 +1,7 @@
 use serde::Serialize;
 use tauri::ipc::{Channel, InvokeResponseBody};
 
-use crate::provider::types::MachineRef;
+use mio_provider::types::MachineRef;
 
 /// Everything one attach needs, resolved by the caller so the subsystem reads no app state.
 #[derive(Debug, Clone)]
@@ -63,8 +63,8 @@ pub enum TerminalError {
     Provider(String),
 }
 
-impl From<crate::provider::types::ProviderError> for TerminalError {
-    fn from(e: crate::provider::types::ProviderError) -> Self {
+impl From<mio_provider::types::ProviderError> for TerminalError {
+    fn from(e: mio_provider::types::ProviderError) -> Self {
         TerminalError::Provider(e.to_string())
     }
 }

@@ -8,8 +8,8 @@ use tauri::{AppHandle, Runtime};
 use tauri_plugin_shell::process::Command;
 use tauri_plugin_shell::ShellExt;
 
-use super::is_monitor_call;
-use super::types::ProcessRunner;
+use mio_process::is_monitor_call;
+use mio_process::types::ProcessRunner;
 
 /// Why the sidecar command could not be built.
 #[derive(Debug, thiserror::Error)]
@@ -40,16 +40,16 @@ fn data_dir<R: Runtime>(app: &AppHandle<R>) -> Result<std::path::PathBuf, Sideca
 ///
 /// The plugin's own `Command` hard-codes `CREATE_NO_WINDOW` and piped stdio with no hook to override
 /// either, so the resolved sidecar is converted back to a `std::process::Command` and put through
-/// [`super::detach`] — otherwise this one binary would keep the inherited stdin every other
+/// [`mio_process::detach`] — otherwise this one binary would keep the inherited stdin every other
 /// spawn site drops, and would state its console contract somewhere other than
-/// `src-tauri/src/process/mod.rs` (`docs/features/podman-process-isolation/02_dev.md`, Phase B).
+/// `src-tauri/crates/process/src/lib.rs` (`docs/features/podman-process-isolation/02_dev.md`, Phase B).
 pub fn command<R: Runtime>(app: &AppHandle<R>) -> Result<tokio::process::Command, SidecarError> {
     let dir = data_dir(app)?;
     let sidecar: Command = app
         .shell()
         .sidecar(SIDECAR)
         .map_err(|e| SidecarError::Sidecar(e.to_string()))?;
-    let mut cmd = super::detach(sidecar.into());
+    let mut cmd = mio_process::detach(sidecar.into());
     cmd.env("MUTAGEN_DATA_DIRECTORY", dir.to_string_lossy().to_string())
         // Defense-in-depth against MSYS/Git-Bash path mangling in the `ssh` → `sh -c "exec …"`
         // transport Mutagen spawns for a `Proxied` alias. NOT load-bearing for the exec transport:
@@ -64,7 +64,7 @@ pub fn command<R: Runtime>(app: &AppHandle<R>) -> Result<tokio::process::Command
 
 /// Real Mutagen sidecar invocations: wraps [`command`], preserving its `MUTAGEN_DATA_DIRECTORY`
 /// isolation. Holds the [`tauri::AppHandle`] because the sidecar is resolved through it, which is why
-/// this is a separate runner from [`super::podman::SystemPodmanRunner`].
+/// this is a separate runner from [`mio_process::podman::SystemPodmanRunner`].
 pub struct SystemMutagenRunner {
     app: AppHandle,
 }

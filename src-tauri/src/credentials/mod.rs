@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use tauri::AppHandle;
 
-use crate::env_ext::env_dir;
-use crate::provider::types::{ExecOpts, MachineProvider};
+use mio_env::env_dir;
+use mio_provider::types::{ExecOpts, MachineProvider};
 use types::{CredentialError, CredentialManifest, OnboardingSeed};
 
 fn now_ms() -> u64 {
@@ -19,7 +19,7 @@ fn now_ms() -> u64 {
 }
 
 /// Root of the bundle store. `MIO_CREDENTIALS_DIR` relocates it wholesale (see
-/// [`crate::env_ext::env_dir`]), else `MIO_APP_DATA_DIR` (see [`crate::paths::app_data_root`]):
+/// [`mio_env::env_dir`]), else `MIO_APP_DATA_DIR` (see [`crate::paths::app_data_root`]):
 /// without an override the e2e suite would operate on the developer's real captured logins, and
 /// clearing one to reach a known-unauthenticated state costs a re-auth.
 pub fn store_dir(app: &AppHandle) -> Result<PathBuf, CredentialError> {
@@ -168,7 +168,7 @@ pub async fn capture(
     let cred_json = exec_read(provider, name, &["cat", credential_path]).await?;
     let cred: serde_json::Value =
         serde_json::from_str(cred_json.trim()).map_err(|e| CredentialError::Parse(e.to_string()))?;
-    let expires_at_ms = crate::mio_files::json_path_get(&cred, expires_at_json_key).and_then(|v| v.as_u64());
+    let expires_at_ms = mio_files::json_path_get(&cred, expires_at_json_key).and_then(|v| v.as_u64());
 
     let mut account_email = None;
     if let Some(src_path) = account_source_path {
@@ -176,7 +176,7 @@ pub async fn capture(
         let src: serde_json::Value =
             serde_json::from_str(src_json.trim()).map_err(|e| CredentialError::Parse(e.to_string()))?;
         if let Some(email_key) = account_email_json_key {
-            account_email = crate::mio_files::json_path_get(&src, email_key)
+            account_email = mio_files::json_path_get(&src, email_key)
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
         }

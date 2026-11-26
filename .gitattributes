@@ -13,5 +13,6 @@ paseo-plugins/** text eol=lf
 # Cargo/tauri tooling rewrites these with LF; with core.autocrlf=true a CRLF checkout shows them as
 # modified and blocks rebases. Pin LF so checkouts and tool writes agree.
 src-tauri/Cargo.toml text eol=lf
+src-tauri/crates/*/Cargo.toml text eol=lf
 src-tauri/Cargo.lock text eol=lf
 package.json text eol=lf

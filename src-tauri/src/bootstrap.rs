@@ -13,12 +13,9 @@ use crate::inference;
 use crate::inference::types::{ActiveServer, MachineSpecsCache};
 use crate::logging::init_logging;
 use crate::machine;
-use crate::mockctl;
 use crate::network;
 use crate::network::types::NetworkManager;
-use crate::process;
-use crate::process::types::ProcessRunner;
-use crate::provider;
+use mio_process::types::ProcessRunner;
 use crate::runtime;
 use crate::services::routing::SandboxRouter;
 use crate::sync;
@@ -28,18 +25,18 @@ use crate::workspace::types::WorkspaceRegistry;
 
 /// The process layer and the two subsystems built directly on it, constructed before the Tauri builder.
 pub struct Bootstrap {
-    mock_director: Arc<mockctl::types::MockDirector>,
+    mock_director: Arc<mio_mockctl::types::MockDirector>,
     podman_runner: Arc<dyn ProcessRunner>,
     machine: Arc<dyn machine::types::MachineManager>,
 }
 
 /// Builds the process layer.
 pub fn build() -> Bootstrap {
-    let mock_director = Arc::new(mockctl::types::MockDirector::new());
-    let podman_runner: Arc<dyn ProcessRunner> = if crate::domain::mock_backend_enabled() {
-        Arc::new(mockctl::types::ScriptedPodmanRunner::new(mock_director.clone()))
+    let mock_director = Arc::new(mio_mockctl::types::MockDirector::new());
+    let podman_runner: Arc<dyn ProcessRunner> = if mio_domain::mock_backend_enabled() {
+        Arc::new(mio_mockctl::types::ScriptedPodmanRunner::new(mock_director.clone()))
     } else {
-        Arc::new(process::podman::SystemPodmanRunner)
+        Arc::new(mio_process::podman::SystemPodmanRunner)
     };
     let machine = machine::default_machine_manager(podman_runner.clone());
     Bootstrap { mock_director, podman_runner, machine }
@@ -47,7 +44,7 @@ pub fn build() -> Bootstrap {
 
 impl Bootstrap {
     /// Registers every managed state entry and opens the main window. Called from the Tauri `setup`
-    /// closure; `cleared` is `process::windows::clear_inheritable_handles()`'s count, logged here because the
+    /// closure; `cleared` is `mio_process::windows::clear_inheritable_handles()`'s count, logged here because the
     /// sanitiser runs before there is a subscriber to write to.
     pub fn register_state(
         self,
@@ -63,7 +60,7 @@ impl Bootstrap {
         app.manage(self.mock_director.clone());
         // One registry shared by every subsystem, so a sandbox resolves to the same provider
         // instance (and the same base-image build lock) wherever it is addressed from.
-        let registry = provider::default_registry(self.podman_runner.clone());
+        let registry = mio_provider::default_registry(self.podman_runner.clone());
         app.manage(registry.clone());
         app.manage(runtime::default_runtime(
             registry.clone(),
@@ -80,15 +77,15 @@ impl Bootstrap {
             self.podman_runner.clone(),
             app.handle().clone(),
         ));
-        if !crate::domain::mock_backend_enabled() {
+        if !mio_domain::mock_backend_enabled() {
             if let Ok(resource_dir) = app.path().resource_dir() {
-                crate::process::podman::set_podman_resource_dir(resource_dir.join("podman"));
+                mio_process::podman::set_podman_resource_dir(resource_dir.join("podman"));
             }
         }
-        let mutagen_runner: Arc<dyn ProcessRunner> = if crate::domain::mock_backend_enabled() {
-            Arc::new(mockctl::types::ScriptedMutagenRunner::new(self.mock_director.clone()))
+        let mutagen_runner: Arc<dyn ProcessRunner> = if mio_domain::mock_backend_enabled() {
+            Arc::new(mio_mockctl::types::ScriptedMutagenRunner::new(self.mock_director.clone()))
         } else {
-            Arc::new(process::mutagen::SystemMutagenRunner::new(app.handle().clone()))
+            Arc::new(crate::mutagen::SystemMutagenRunner::new(app.handle().clone()))
         };
         app.manage(sync::default_sync_engine(mutagen_runner));
         app.manage(network::default_network_manager(
@@ -118,7 +115,7 @@ impl Bootstrap {
         );
         app.manage(monitor);
         workspace::create_main_window(app.handle(), crate::services::panes::close_all_apps_in_background)?;
-        if !crate::domain::mock_backend_enabled() {
+        if !mio_domain::mock_backend_enabled() {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let live = match handle.state::<Arc<dyn SandboxBackend>>().list().await {
@@ -130,7 +127,7 @@ impl Bootstrap {
                 handle.state::<Arc<dyn NetworkManager>>().sweep(&live).await;
                 crate::proxy::sidecar::sweep(
                     &proxy_store,
-                    handle.state::<Arc<provider::ProviderRegistry>>().inner(),
+                    handle.state::<Arc<mio_provider::ProviderRegistry>>().inner(),
                     &live,
                 )
                 .await;
