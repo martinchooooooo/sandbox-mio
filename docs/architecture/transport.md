@@ -4,8 +4,8 @@ title: "Transport: SSH Aliases, Mutagen and Ports"
 description: "How the app reaches services inside a sandbox: per-sandbox SSH aliases tunnelled through the engine's exec, Mutagen sync sessions and forwards, and port exposure."
 generated:
   by: claude-code/sonnet-5-5
-  at: 2026-11-21T20:00:00+11:00
-stale_after: 2027-02-21T00:00:00+11:00
+  at: 2026-11-26T15:56:00-08:00
+stale_after: 2027-02-26T00:00:00-08:00
 code:
   - src-tauri/src/ssh/
   - src-tauri/src/sync/
@@ -19,6 +19,7 @@ sources:
   - resource: docs/features/local-llm-reachability/02_dev.md
   - resource: docs/features/techdebt-sweep/02_dev.md
   - resource: docs/features/remove-microsandbox/02_dev.md
+  - resource: docs/features/namespaced-ssh-alias/02_dev.md
 ---
 # Transport: SSH Aliases, Mutagen and Ports
 
@@ -27,7 +28,7 @@ Sandboxes publish no ports. The app reaches every in-sandbox service (the web te
 ## The Exec Transport
 
 - Each sandbox runs a small SSH server from the base image and has its own keypair in the app-data root, installed into the sandbox at create.
-- The app writes one SSH alias per sandbox into an app-managed config file that the user's `~/.ssh/config` includes. The alias's `ProxyCommand` starts that SSH server over the engine's own `exec`, so the SSH session lands inside the sandbox and the sandbox's loopback ports are directly reachable.
+- The app writes one SSH alias per sandbox into an app-managed config file that the user's `~/.ssh/config` includes. The alias is `<name>.mio` (the sandbox name plus a namespace suffix), never the bare name, so the include (which OpenSSH reads before the user's own entries) cannot override an entry for a real host. The alias's `ProxyCommand` starts that SSH server over the engine's own `exec`, so the SSH session lands inside the sandbox and the sandbox's loopback ports are directly reachable.
 - Every engine tunnels to the same in-sandbox SSH server, so everything above the alias is engine-neutral.
 - The alias pins the user, the sandbox's key and a per-sandbox known-hosts file. The host key is baked into the base image and changes when the image is rebuilt, so it is kept out of the user's own known hosts.
 - A routing service resolves a sandbox to its provider, machine and alias for every caller, and rewrites the alias on every pane or port open, because the alias file may not survive between app runs the way the sandbox does.
@@ -49,7 +50,8 @@ Sandboxes publish no ports. The app reaches every in-sandbox service (the web te
 ## Invariants
 
 - The managed SSH config is written only under a cross-process lock, because two app instances can race.
-- A new sandbox name contains no dot and, when created, matches no non-catch-all `Host` pattern in the user's own SSH config, because the alias is the bare name and the managed include comes before the user's entries; sandboxes created before the rule are exempt.
+- A sandbox's SSH alias is <name>.mio, derived from its name with a namespace suffix, and never equals a real host name.
+- A new sandbox name contains no dot, because Mutagen session names reject dots; sandboxes created before the rule are exempt.
 - Every sandbox is reached through its own SSH alias; no port is published and no relay runs inside a sandbox.
 - Callers reach a sandbox only through the routing service, which refreshes the alias.
 - The in-sandbox SSH server is named in `ProxyCommand` by bare name, never by absolute path, so Git Bash path conversion cannot rewrite it.

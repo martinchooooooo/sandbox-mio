@@ -97,16 +97,6 @@ pub async fn create(
     // name fails, and its rollback removes `<name>-proxy` by name, which is then the existing
     // sandbox's live sidecar.
     mio_domain::validate_new_name(name)?;
-    // Only here, not in `validate_new_name`: app-chosen `mio-auth-*` names never reach this
-    // function, so a clash is never reported for a name the user cannot change.
-    if let Some(m) = crate::ssh::user_host_matching(name) {
-        return Err(BackendError::ShadowsSshHost {
-            name: name.to_string(),
-            pattern: m.pattern,
-            path: m.path.display().to_string(),
-        }
-        .into());
-    }
     if let Some(existing) = store.list().await?.into_iter().find(|s| s.name == name) {
         return Err(mio_domain::types::BackendError::NameTaken {
             name: name.to_string(),

@@ -43,13 +43,11 @@ pub fn validate_name(name: &str) -> Result<(), BackendError> {
 }
 
 /// [`validate_name`] plus the checks that apply only to a name being newly claimed: the proxy
-/// sidecar suffix is reserved and the name has no dot, because the name becomes the SSH alias
-/// (`docs/features/host-tool-ssh-access/04_improvements.md`, "Namespaced per-sandbox alias").
+/// sidecar suffix is reserved, and the name has no dot because Mutagen rejects `.` in the session
+/// names derived from it (`docs/features/namespaced-ssh-alias/02_dev.md`, Resolved Decision 5).
 /// Names that predate these rules stay addressable through `validate_name`, which must not gain
-/// them. Pure, no IO: the clash check against the user's SSH config lives in
-/// `services::sandbox::create`, so app-chosen `mio-auth-*` names never read that config. The
-/// folder-mode name suggestion in `src/routes/projects/CreateSandboxItem.svelte` replaces dots to
-/// stay valid.
+/// them. The folder-mode name suggestion in `src/routes/projects/CreateSandboxItem.svelte` replaces
+/// dots to stay valid.
 pub fn validate_new_name(name: &str) -> Result<(), BackendError> {
     validate_name(name)?;
     if name.contains('.') {

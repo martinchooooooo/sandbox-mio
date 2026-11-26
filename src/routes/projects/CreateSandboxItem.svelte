@@ -55,8 +55,8 @@
         const picked = await open({ directory: true });
         if (!picked) return;
         existingPath = picked;
-        // New names cannot contain '.', since the name becomes the SSH alias; the rule lives in
-        // `validate_new_name()` (src-tauri/src/backends/mod.rs), so keep the suggestion valid.
+        // New names cannot contain '.' (Mutagen session names are built from the name); the rule lives in
+        // `validate_new_name()` (src-tauri/crates/domain/src/lib.rs), so keep the suggestion valid.
         name = basename(picked).replaceAll(".", "-");
     }
 

@@ -6,7 +6,6 @@
 * [fastest-time-to-wow](fastest-time-to-wow/index.md) - Reshape first-run onboarding around one metric, the fastest time to a local-model wow: story-voiced setup, a local model downloaded with consent, a pre-built hello-world sandbox with pi, and one consistent word for models.
 * [github-cli-auth](github-cli-auth/index.md) - Log in to GitHub once through the GitHub CLI in the auth container, then apply that token to every sandbox's gh and git, at create and to existing sandboxes, with a per-sandbox opt-out.
 * [host-tool-ssh-access](host-tool-ssh-access/index.md) - Let host SSH clients (e.g. the Claude Code desktop app) attach to a sandbox over the existing exec transport.
-* [namespaced-ssh-alias](namespaced-ssh-alias/index.md) - Give every sandbox an SSH alias that cannot collide with a real host (<name>.mio), replacing the refuse-the-name guard on the ssh-alias-shadow branch.
 * [native-terminal](native-terminal/index.md) - Faster terminal startup: render the sandbox terminal in the main webview over a Rust-owned SSH session that attaches zellij, replacing the zellij web child webview.
 * [onboarding-story](onboarding-story/index.md) - Illustrated onboarding book inside the welcome flow, extensible by chapter, with first-run setup running in the background and reported through the activity center.
 * [retro-ui-migration](retro-ui-migration/index.md) - Re-skin the UI primitives with the retro-ui-svelte registry (Sunset Orange, rounded).
@@ -44,6 +43,7 @@
 * [manage-dashboard-redesign](manage-dashboard-redesign/index.md) - Make a sandbox's Manage dashboard open instantly and read simply: an Overview for launching and agents, advanced controls in a section sidebar that loads on demand.
 * [models-page-caching](models-page-caching/index.md) - Make the /models route instant on repeat visits by caching the host-spec probe.
 * [mutagen-transport](mutagen-transport/index.md) - Provider-neutral port forwarding and workspace transport over the Mutagen sidecar.
+* [namespaced-ssh-alias](namespaced-ssh-alias/index.md) - Give every sandbox an SSH alias that cannot collide with a real host (<name>.mio), replacing the refuse-the-name guard on the ssh-alias-shadow branch.
 * [native-agent-ui](native-agent-ui/index.md) - Built-in chat UI in the app's own frontend, driving pi inside the sandbox over its RPC mode, kept alive by an in-sandbox supervisor.
 * [nav-responsive](nav-responsive/index.md) - Responsive layout for the NavigationColumn's collapsed rail and expanded sidebar.
 * [net-policy-review](net-policy-review/index.md) - Stop a sandbox from rewriting its own egress policy and secret bindings: every sidecar apply enforces only the app-side accepted policy, and a changed workspace policy file is a proposal the user reviews as a diff before it applies.

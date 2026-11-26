@@ -20,15 +20,23 @@ export const E2E_SSH_DIR = path.join(APP_DATA_ROOT, "ssh");
 /** The app-owned OpenSSH config `crate::ssh::write_alias` writes (`src-tauri/src/ssh/mod.rs`). */
 export const MANAGED_SSH_CONFIG = path.join(os.homedir(), ".ssh", "sandbox-mio", "config");
 
+/** Mirrors `ALIAS_SUFFIX` in `src-tauri/src/ssh/identity.rs`; keep in step. */
+export const ALIAS_SUFFIX = ".mio";
+
+/** The SSH `Host` alias of sandbox `name`; mirrors `sandbox_alias` in `src-tauri/src/ssh/identity.rs`. */
+export function sandboxAlias(name: string): string {
+  return `${name}${ALIAS_SUFFIX}`;
+}
+
 /**
- * The managed `Host <alias>` block, marker-delimited exactly as `render_block` emits it, or
- * `undefined` when no block for `alias` exists. Host-global rather than per-worktree, so a spec
- * must key its assertion on a run-unique alias.
+ * The marker-delimited `Host <alias>` block of `file`, exactly as `render_block` emits it, or
+ * `undefined` when the file or the block is absent. Takes the literal alias, so a spec can also look
+ * for a bare-name block, which no code path should write any more.
  */
-export function sshAliasBlock(alias: string): string | undefined {
+export function readAliasBlock(alias: string, file: string = MANAGED_SSH_CONFIG): string | undefined {
   let contents: string;
   try {
-    contents = fs.readFileSync(MANAGED_SSH_CONFIG, "utf8");
+    contents = fs.readFileSync(file, "utf8");
   } catch {
     return undefined;
   }
@@ -38,4 +46,13 @@ export function sshAliasBlock(alias: string): string | undefined {
   const to = contents.indexOf(end, from + begin.length);
   if (from === -1 || to === -1) return undefined;
   return contents.slice(from + begin.length, to).trim();
+}
+
+/**
+ * The managed block of sandbox `name` in the host-global `MANAGED_SSH_CONFIG`, found under its
+ * derived alias. Host-global rather than per-worktree, so a spec must key its assertion on a
+ * run-unique sandbox name (or only assert absence).
+ */
+export function sshAliasBlock(name: string): string | undefined {
+  return readAliasBlock(sandboxAlias(name));
 }

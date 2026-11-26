@@ -8,7 +8,7 @@ import { captureDiagOnFailure } from "../../../lib/diag.js";
 import { useSandboxWorkspace } from "../../../lib/sandbox-suite.js";
 import { podman, podmanOk, LOCAL_CONNECTION } from "../../../lib/podman-connection.js";
 import { forwardList } from "../../../lib/mutagen.js";
-import { MANAGED_SSH_CONFIG, sshAliasBlock } from "../../../lib/ssh.js";
+import { MANAGED_SSH_CONFIG, readAliasBlock, sandboxAlias, sshAliasBlock } from "../../../lib/ssh.js";
 import { APP_DATA_ROOT } from "../../../lib/run-identity.js";
 import {
   workspaceState,
@@ -73,15 +73,20 @@ describe("Agent web UI (paseo)", function () {
     const block = sshAliasBlock(projectName);
     assert(
       block !== undefined,
-      `No "Host ${projectName}" block in ${MANAGED_SSH_CONFIG}. ` +
+      `No "Host ${sandboxAlias(projectName)}" block in ${MANAGED_SSH_CONFIG}. ` +
         "create must call ensure_sandbox_alias."
     );
     for (const keyword of ["ProxyCommand", "User root", "IdentityFile", "UserKnownHostsFile"]) {
       assert(
         block.includes(keyword),
-        `The "Host ${projectName}" alias has no ${keyword}. Block:\n${block}`
+        `The "Host ${sandboxAlias(projectName)}" alias has no ${keyword}. Block:\n${block}`
       );
     }
+    assert.strictEqual(
+      readAliasBlock(projectName),
+      undefined,
+      `A bare "Host ${projectName}" block was written to ${MANAGED_SSH_CONFIG}; only the derived alias may be.`
+    );
   });
 
   it("starts the sandbox with the per-sandbox public key installed in the image's sshd", async () => {
@@ -340,7 +345,7 @@ describe("Agent web UI (paseo)", function () {
     assert.strictEqual(
       sshAliasBlock(projectName),
       undefined,
-      `"Host ${projectName}" block still in ${MANAGED_SSH_CONFIG} after destroy. ` +
+      `"Host ${sandboxAlias(projectName)}" block still in ${MANAGED_SSH_CONFIG} after destroy. ` +
         "destroy must call cleanup_host_state (src-tauri/src/services/sandbox.rs)."
     );
     assert(!fs.existsSync(keyDir), `ssh identity dir ${keyDir} still exists after destroy.`);

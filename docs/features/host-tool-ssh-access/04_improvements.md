@@ -9,11 +9,7 @@ Work identified while planning `docs/features/host-tool-ssh-access/02_dev.md` an
 
 ## Namespaced per-sandbox alias
 
-The alias a user pastes into their SSH client is the bare sandbox name (`alias_name`, `src-tauri/src/services/routing.rs`), and `write_alias` prepends `Include sandbox-mio/config` to the top of `~/.ssh/config`. OpenSSH takes the first matching keyword, so a sandbox named after a host the user already has an entry for shadows that entry for every SSH client on the machine — not just for this app.
-
-A cheap guard now exists: `validate_new_name` (`src-tauri/src/domain/mod.rs`) refuses a new name that contains a dot, and `services::sandbox::create` (`src-tauri/src/services/sandbox.rs`) refuses one that matches a `Host` entry in the user's own SSH config (`user_host_matching`, `src-tauri/src/ssh/mod.rs`); the config scan stays out of `validate_new_name` so app-chosen `mio-auth-*` names never read it. What still shadows: a `Host` entry the user adds after the sandbox exists, existing dotted sandboxes, entries matched only by a catch-all pattern, `Match` blocks, the system-wide SSH config, and bare LAN hostnames that resolve through DNS search domains with no config entry at all.
-
-The complete fix is a prefixed alias (`sandbox-mio-<name>`, or a name the user cannot collide with), which makes shadowing structurally impossible and would let the dot ban and the config scan go; choosing it is Decision needed (T3 in `docs/improvement-backlog.md`). Deferred because the alias name is load-bearing for every shipped Mutagen path: sync beta URLs (`msb_sync_beta`), forward `remote_alias` arguments, `agent-web.spec.ts`'s assertions, and the `Proxied` block itself all key on it, and renaming it is a cross-cutting change with no user-visible gain until a collision actually bites. Documented as a gotcha in `01_ideas.md` and `02_dev.md` instead of renaming.
+Resolved by `docs/features/namespaced-ssh-alias/02_dev.md`: a sandbox's SSH alias is now `<name>.mio` (`sandbox_alias`, `src-tauri/src/ssh/identity.rs`), so it never equals a real host name and cannot shadow an entry in the user's own SSH config. The bare-name alias and the guard this section once described (a `Host`-clash scan in `services::sandbox::create`) no longer exist; new names still refuse dots, because Mutagen session names reject them. Sandboxes created before the change keep their bare-alias block, and the `Direct` alias stays unnamespaced; both are recorded in `docs/features/namespaced-ssh-alias/04_improvements.md`.
 
 ## Authorize the user's own public key
 
@@ -70,5 +66,5 @@ Four items recorded here in earlier revisions were deleted rather than deferred,
 | Gotcha | Cause | Fix |
 |---|---|---|
 | A picked-up deferral reintroduces a published port or a Mutagen forward for SSH | The withdrawn items above read as open work when read out of context | Read `02_dev.md`'s "Superseded plan" first; an exec-capable sandbox publishes nothing by construction (`PublishModel::ExecTunnelled`) |
-| Renaming the alias to a namespaced form breaks sync and forwards | The sandbox name doubles as the Mutagen `remote_alias` and appears in `msb_sync_beta`, forward creation, and `agent-web.spec.ts` | Change `alias_name` (`src-tauri/src/services/routing.rs`) and every consumer in one pass, and re-run the full `standard` tier |
+| A new code path passes the bare sandbox name where an SSH alias is wanted | The alias is `<name>.mio` since `docs/features/namespaced-ssh-alias/02_dev.md`; forward creation, the `Proxied` block and the pinned known-hosts file all key on the derived alias | Derive the alias with `sandbox_alias` (`src-tauri/src/ssh/identity.rs`) and re-run the `standard` tier |
 | Tightening `ClientAliveInterval` starts dropping idle desktop sessions | The server-side probe and the client's `ServerAlive*` (Phase C) are paired: both are 15 s × 3 today | Change `sshd_config.container`'s `ClientAlive*` and `render_block`'s `ServerAlive*` together |

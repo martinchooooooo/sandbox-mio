@@ -10,7 +10,8 @@ use mio_process::podman::podman_literal_path;
 /// runs everything as root (`/root/work` lives under `/root`).
 const CONTAINER_USER: &str = "root";
 
-/// The label appended to a sandbox name to form its SSH alias.
+/// The label appended to a sandbox name to form its SSH alias. Mirrored by `ALIAS_SUFFIX` in
+/// `e2e/lib/ssh.ts`.
 pub const ALIAS_SUFFIX: &str = ".mio";
 
 /// The SSH `Host` alias of sandbox `name`: the name plus [`ALIAS_SUFFIX`]. Never equals a bare

@@ -6,6 +6,7 @@ import workspaceDashboard from "../../pageobjects/workspace-dashboard.page.js";
 import { captureDiagOnFailure } from "../../../lib/diag.js";
 import { configureMock, useMockControl } from "../../../lib/mock.js";
 import { MISE_BASE_IMAGE } from "../../../lib/podman-machine.js";
+import { sandboxAlias } from "../../../lib/ssh.js";
 
 // Covers the panel's rendering only (docs/features/host-tool-ssh-access/03_e2e.md). A light `create`
 // writes a real alias and keypair, so assertions key on this run's name, never on global `~/.ssh`.
@@ -26,7 +27,7 @@ describe("SSH access panel renders the handoff (mock backend)", function () {
     await workspaceDashboard.waitForRendered(name);
     await workspaceDashboard.openSection("ports");
 
-    assert.strictEqual(await workspaceDashboard.sshAlias(), name);
+    assert.strictEqual(await workspaceDashboard.sshAlias(), sandboxAlias(name));
     await workspaceDashboard.waitForSshState("running");
   });
 
@@ -48,7 +49,7 @@ describe("SSH access panel renders the handoff (mock backend)", function () {
     await sandboxView.stop(name);
     await sandboxView.waitForStopped(name);
     await workspaceDashboard.waitForSshState("stopped");
-    assert.strictEqual(await workspaceDashboard.sshAlias(), name);
+    assert.strictEqual(await workspaceDashboard.sshAlias(), sandboxAlias(name));
   });
 
   it("never reports a deployed sandbox as stopped", async () => {
@@ -83,7 +84,7 @@ describe("SSH access panel renders the handoff (mock backend)", function () {
     await workspaceDashboard.openSection("ports");
 
     await workspaceDashboard.waitForSshState("deployed");
-    assert.strictEqual(await workspaceDashboard.sshAlias(), deployed);
+    assert.strictEqual(await workspaceDashboard.sshAlias(), sandboxAlias(deployed));
     const text = await workspaceDashboard.sshStateText();
     assert(text.includes(host), `the deployed state does not name the deploy host: ${text}`);
   });

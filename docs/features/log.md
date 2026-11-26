@@ -7,6 +7,7 @@ approximate. New entries go on top.
 
 ## 2026-11-26
 
+* **Implement** [namespaced-ssh-alias](namespaced-ssh-alias/index.md): every sandbox's SSH alias is `<name>.mio`, so it cannot shadow a real host; the `Host`-clash guard is removed, the dot ban stays because Mutagen session names reject dots, and sandboxes created before the change are not migrated
 * **Create** [namespaced-ssh-alias](namespaced-ssh-alias/index.md): planned; every sandbox gets an SSH alias of the form `<name>.mio` so it cannot shadow a real host, replacing the refuse-the-name guard on the `ssh-alias-shadow` branch; no migration of existing sandboxes
 * **Implement** [xtask-hardening](xtask-hardening/index.md): `cargo xtask` rejects unknown or extra arguments, re-fetches a bundled binary whose staged version differs from the pin, verifies every bundled-binary download against a pinned SHA-256, and reads docs frontmatter and Markdown with `yaml-rust2` and `pulldown-cmark`
 

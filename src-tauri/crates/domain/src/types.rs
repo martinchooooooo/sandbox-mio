@@ -16,14 +16,10 @@ pub enum BackendError {
     /// `x-proxy` would be taken for `x`'s sidecar ([`super::PROXY_CONTAINER_SUFFIX`]).
     #[error("invalid sandbox name {name:?}: names ending in \"-proxy\" are reserved for traffic-inspection sidecars")]
     ReservedName { name: String },
-    /// A new name contains `.`; the name is the SSH alias, so a dotted one could take over a real
-    /// host (`docs/features/host-tool-ssh-access/04_improvements.md`, "Namespaced per-sandbox alias").
-    #[error("invalid sandbox name {name:?}: new names cannot contain '.', because the name becomes an SSH host alias and a dotted name could take over a real host such as github.com")]
+    /// A new name contains `.`: Mutagen rejects `.` in the session names derived from the sandbox
+    /// name (`docs/features/namespaced-ssh-alias/02_dev.md`, Resolved Decision 5).
+    #[error("invalid sandbox name {name:?}: new names cannot contain '.', because Mutagen sync and forward session names are built from the sandbox name and Mutagen rejects dots")]
     NameHasDot { name: String },
-    /// A new name matches a `Host` entry in the user's own SSH config, which the sandbox's alias
-    /// would take over (same source as `NameHasDot`).
-    #[error("invalid sandbox name {name:?}: your SSH config {path} already has a \"Host\" entry matching \"{pattern}\", and this sandbox's SSH alias would take that entry over; choose a different name")]
-    ShadowsSshHost { name: String, pattern: String, path: String },
     /// Platform Documents directory not found (headless environment).
     #[error("could not resolve the Documents directory")]
     DocumentsDirNotFound,
