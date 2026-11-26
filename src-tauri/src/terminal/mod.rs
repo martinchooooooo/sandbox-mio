@@ -146,7 +146,7 @@ impl Transport for SshTransport {
         };
         let handshake = ssh::connect(
             pipe,
-            &req.name,
+            &req.alias,
             &req.identity_path,
             &req.known_hosts_path,
             req.cols,

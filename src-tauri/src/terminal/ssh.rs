@@ -67,8 +67,8 @@ impl From<ClientError> for TerminalError {
     }
 }
 
-/// Checks the server key against the per-sandbox known-hosts file under the sandbox's name, the
-/// entry OpenSSH writes for the alias, and learns an absent key, like `StrictHostKeyChecking
+/// Checks the server key against the per-sandbox known-hosts file under the sandbox's alias, the
+/// entry OpenSSH writes for it, and learns an absent key, like `StrictHostKeyChecking
 /// accept-new` (`docs/features/native-terminal/02_dev.md`, Resolved Decision 10).
 pub struct Client {
     host: String,

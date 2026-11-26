@@ -49,6 +49,7 @@ Sandboxes publish no ports. The app reaches every in-sandbox service (the web te
 ## Invariants
 
 - The managed SSH config is written only under a cross-process lock, because two app instances can race.
+- A new sandbox name contains no dot and, when created, matches no non-catch-all `Host` pattern in the user's own SSH config, because the alias is the bare name and the managed include comes before the user's entries; sandboxes created before the rule are exempt.
 - Every sandbox is reached through its own SSH alias; no port is published and no relay runs inside a sandbox.
 - Callers reach a sandbox only through the routing service, which refreshes the alias.
 - The in-sandbox SSH server is named in `ProxyCommand` by bare name, never by absolute path, so Git Bash path conversion cannot rewrite it.

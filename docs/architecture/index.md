@@ -10,10 +10,10 @@
 
 ## In-flight plans
 
-* [codebase-restructure](../features/codebase-restructure/index.md) - in-progress, changes overview.md: Behaviour-preserving restructure: break backend import cycles, move dashboard panels into src/lib, add a typed IPC layer, split oversized backend files, and turn the build tool into a Cargo crate.
 * [fastest-time-to-wow](../features/fastest-time-to-wow/index.md) - in-progress, changes workspace-ui.md, inference.md, agents.md: Reshape first-run onboarding around one metric, the fastest time to a local-model wow: story-voiced setup, a local model downloaded with consent, a pre-built hello-world sandbox with pi, and one consistent word for models.
 * [github-cli-auth](../features/github-cli-auth/index.md) - in-progress, changes agents.md, providers.md, network.md, workspace-ui.md: Log in to GitHub once through the GitHub CLI in the auth container, then apply that token to every sandbox's gh and git, at create and to existing sandboxes, with a per-sandbox opt-out.
 * [host-tool-ssh-access](../features/host-tool-ssh-access/index.md) - in-progress, changes transport.md: Let host SSH clients (e.g. the Claude Code desktop app) attach to a sandbox over the existing exec transport.
+* [namespaced-ssh-alias](../features/namespaced-ssh-alias/index.md) - in-progress, changes transport.md: Give every sandbox an SSH alias that cannot collide with a real host (<name>.mio), replacing the refuse-the-name guard on the ssh-alias-shadow branch.
 * [native-terminal](../features/native-terminal/index.md) - in-progress, changes workspace-ui.md, transport.md: Faster terminal startup: render the sandbox terminal in the main webview over a Rust-owned SSH session that attaches zellij, replacing the zellij web child webview.
 * [onboarding-story](../features/onboarding-story/index.md) - in-progress, changes workspace-ui.md: Illustrated onboarding book inside the welcome flow, extensible by chapter, with first-run setup running in the background and reported through the activity center.
 * [sandbox-resource-monitor](../features/sandbox-resource-monitor/index.md) - in-progress, changes providers.md, workspace-ui.md: Sample each local sandbox's CPU and memory, show a discrete health indicator with a restart hint, and keep a local usage history that tells the maintainer whether sandboxes need more default memory.

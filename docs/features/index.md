@@ -3,10 +3,10 @@
 
 ## in-progress
 
-* [codebase-restructure](codebase-restructure/index.md) - Behaviour-preserving restructure: break backend import cycles, move dashboard panels into src/lib, add a typed IPC layer, split oversized backend files, and turn the build tool into a Cargo crate.
 * [fastest-time-to-wow](fastest-time-to-wow/index.md) - Reshape first-run onboarding around one metric, the fastest time to a local-model wow: story-voiced setup, a local model downloaded with consent, a pre-built hello-world sandbox with pi, and one consistent word for models.
 * [github-cli-auth](github-cli-auth/index.md) - Log in to GitHub once through the GitHub CLI in the auth container, then apply that token to every sandbox's gh and git, at create and to existing sandboxes, with a per-sandbox opt-out.
 * [host-tool-ssh-access](host-tool-ssh-access/index.md) - Let host SSH clients (e.g. the Claude Code desktop app) attach to a sandbox over the existing exec transport.
+* [namespaced-ssh-alias](namespaced-ssh-alias/index.md) - Give every sandbox an SSH alias that cannot collide with a real host (<name>.mio), replacing the refuse-the-name guard on the ssh-alias-shadow branch.
 * [native-terminal](native-terminal/index.md) - Faster terminal startup: render the sandbox terminal in the main webview over a Rust-owned SSH session that attaches zellij, replacing the zellij web child webview.
 * [onboarding-story](onboarding-story/index.md) - Illustrated onboarding book inside the welcome flow, extensible by chapter, with first-run setup running in the background and reported through the activity center.
 * [retro-ui-migration](retro-ui-migration/index.md) - Re-skin the UI primitives with the retro-ui-svelte registry (Sunset Orange, rounded).
@@ -28,6 +28,7 @@
 * [agent-setup](agent-setup/index.md) - Curated catalogue of coding agents installed into a sandbox via mise, with a guided Claude Code auth flow.
 * [agent-web-ui](agent-web-ui/index.md) - Browser-based agent UI (Paseo) for OpenCode, Pi and Claude Code as an alternative to the terminal TUI.
 * [chat-agent-anatomy](chat-agent-anatomy/index.md) - A learning mode for the native chat that labels each part of a live agent run as Brain or Arms with a small animated avatar beside it, using the onboarding book's vocabulary.
+* [codebase-restructure](codebase-restructure/index.md) - Behaviour-preserving restructure: break backend import cycles, move dashboard panels into src/lib, add a typed IPC layer, split oversized backend files, and turn the build tool into a Cargo crate.
 * [consolidate-app-container](consolidate-app-container/index.md) - Collapse the AppContainer's chrome webviews into one NavigationPanel document.
 * [credentials-inline-auth](credentials-inline-auth/index.md) - Claude Code OAuth login as an inline expandable card on the Credentials page instead of a separate window.
 * [desktop-app-feel](desktop-app-feel/index.md) - Frontend-only UI/UX changes that make the app feel like a native desktop app.

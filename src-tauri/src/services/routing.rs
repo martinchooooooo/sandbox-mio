@@ -53,8 +53,8 @@ impl SandboxRouter {
         let (provider, listed_running) = sandbox_provider(&self.store, name).await?;
         let machine = resolve_machine(name, provider, &self.engine, &self.registry).await?;
         let running = listed_running && self.is_local(&machine);
-        // Every sandbox is reached through an alias named after itself.
-        Ok(SandboxRoute { machine, forward_alias: name.to_string(), running })
+        // Every sandbox is reached through its own derived alias, never its bare name.
+        Ok(SandboxRoute { machine, forward_alias: crate::ssh::identity::sandbox_alias(name), running })
     }
 
     /// The provider driving `machine`, for a caller that execs in the sandbox itself.

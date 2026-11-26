@@ -15,6 +15,7 @@ import {
   waitForConnection,
 } from "./lib/podman-machine.js";
 import { LOCAL_CONNECTION, REMOTE_CONNECTION } from "./lib/podman-connection.js";
+import { E2E_SSH_DIR, SSH_DIR_SPEC_MARKER } from "./lib/ssh.js";
 import {
   ensureMutagen,
   forwardCreate,
@@ -636,6 +637,9 @@ async function spawnDriver(
           // Left unset for the recovery spec so its probe falls back to DEFAULT_MACHINE_NAME.
           ...(isLightSession || isRecoverySession ? {} : { MIO_PODMAN_MACHINE: LOCAL_CONNECTION }),
           ...(isLightSession ? { MIO_MOCK_BACKEND: "1" } : {}),
+          // Gated to one spec so every other light session keeps using ~/.ssh (its fate is T8 in
+          // docs/improvement-backlog.md); the spec asserts its own path still carries the marker.
+          ...(isLightSession && specs.some((s) => s.includes(SSH_DIR_SPEC_MARKER)) ? { MIO_SSH_DIR: E2E_SSH_DIR } : {}),
         },
       },
     );

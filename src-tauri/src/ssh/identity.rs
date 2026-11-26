@@ -10,6 +10,17 @@ use mio_process::podman::podman_literal_path;
 /// runs everything as root (`/root/work` lives under `/root`).
 const CONTAINER_USER: &str = "root";
 
+/// The label appended to a sandbox name to form its SSH alias.
+pub const ALIAS_SUFFIX: &str = ".mio";
+
+/// The SSH `Host` alias of sandbox `name`: the name plus [`ALIAS_SUFFIX`]. Never equals a bare
+/// sandbox name, so a managed block cannot take over a host entry of the user's own SSH config
+/// (`docs/features/namespaced-ssh-alias/02_dev.md`, Resolved Decision 1). Every write, removal,
+/// quote or lookup of an alias goes through here; container-facing calls keep the bare name.
+pub fn sandbox_alias(name: &str) -> String {
+    format!("{name}{ALIAS_SUFFIX}")
+}
+
 /// Generates an ed25519 keypair at `identity_path` unless one exists.
 pub fn ensure_key(identity_path: &str) -> Result<(), BackendError> {
     if std::path::Path::new(identity_path).exists() {
@@ -56,7 +67,7 @@ pub async fn ensure_sandbox_alias(
 ) -> Result<(), BackendError> {
     let command = podman_proxy_command(name, connection);
     super::write_alias(&super::types::SshAlias::Proxied {
-        alias: name.to_string(),
+        alias: sandbox_alias(name),
         command,
         user: CONTAINER_USER.to_string(),
         identity: identity_path.to_string(),
@@ -123,7 +134,7 @@ fn render_known_hosts(alias: &str, pub_keys: &str) -> String {
 /// (`docs/features/host-tool-ssh-access/02_dev.md`, Resolved Decisions). Best effort: a failure is
 /// warn-logged and must never fail a create, deploy or panel fetch.
 pub fn pin_host_keys(name: &str, identity_path: &str, pub_keys: &str) {
-    let rendered = render_known_hosts(name, pub_keys);
+    let rendered = render_known_hosts(&sandbox_alias(name), pub_keys);
     if rendered.is_empty() {
         tracing::warn!(target: "ssh", %name, "container returned no host keys; not pinning");
         return;
@@ -173,6 +184,29 @@ mod known_hosts_tests {
     fn garbage_lines_are_dropped_among_real_keys() {
         let out = render_known_hosts("box", &format!("noise\r\n{ED}\r\n"));
         assert_eq!(out, "box,[box]:* ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIELO\n");
+    }
+}
+
+#[cfg(test)]
+mod alias_tests {
+    use super::*;
+
+    #[test]
+    fn alias_appends_the_suffix() {
+        assert_eq!(sandbox_alias("my-sandbox"), "my-sandbox.mio");
+    }
+
+    /// The point of the namespace: no sandbox name, whatever it holds, maps to itself.
+    #[test]
+    fn alias_never_equals_the_name() {
+        for name in ["github.com", "mio", "a", "Work-Laptop", "x.mio"] {
+            assert_ne!(sandbox_alias(name), name);
+        }
+    }
+
+    #[test]
+    fn alias_keeps_the_dots_of_the_name() {
+        assert_eq!(sandbox_alias("github.com"), "github.com.mio");
     }
 }
 

@@ -43,9 +43,18 @@ pub fn validate_name(name: &str) -> Result<(), BackendError> {
 }
 
 /// [`validate_name`] plus the checks that apply only to a name being newly claimed: the proxy
-/// sidecar suffix is reserved. Existing sandboxes that predate the reservation stay addressable.
+/// sidecar suffix is reserved and the name has no dot, because the name becomes the SSH alias
+/// (`docs/features/host-tool-ssh-access/04_improvements.md`, "Namespaced per-sandbox alias").
+/// Names that predate these rules stay addressable through `validate_name`, which must not gain
+/// them. Pure, no IO: the clash check against the user's SSH config lives in
+/// `services::sandbox::create`, so app-chosen `mio-auth-*` names never read that config. The
+/// folder-mode name suggestion in `src/routes/projects/CreateSandboxItem.svelte` replaces dots to
+/// stay valid.
 pub fn validate_new_name(name: &str) -> Result<(), BackendError> {
     validate_name(name)?;
+    if name.contains('.') {
+        return Err(BackendError::NameHasDot { name: name.to_string() });
+    }
     if name.ends_with(PROXY_CONTAINER_SUFFIX) {
         return Err(BackendError::ReservedName { name: name.to_string() });
     }
@@ -57,4 +66,16 @@ pub fn validate_new_name(name: &str) -> Result<(), BackendError> {
 pub fn workspace_path(name: &str) -> Result<String, BackendError> {
     let path = workspace_root()?.join(name);
     Ok(path.to_string_lossy().replace('\\', "/"))
+}
+
+#[cfg(test)]
+mod new_name_tests {
+    use super::*;
+
+    /// `validate_new_name` is pure, so this does no IO.
+    #[test]
+    fn dotted_new_name_is_refused_but_still_valid() {
+        assert!(matches!(validate_new_name("a.b"), Err(BackendError::NameHasDot { .. })));
+        assert!(validate_name("a.b").is_ok());
+    }
 }

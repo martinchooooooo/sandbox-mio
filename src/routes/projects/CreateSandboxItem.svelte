@@ -55,7 +55,9 @@
         const picked = await open({ directory: true });
         if (!picked) return;
         existingPath = picked;
-        name = basename(picked);
+        // New names cannot contain '.', since the name becomes the SSH alias; the rule lives in
+        // `validate_new_name()` (src-tauri/src/backends/mod.rs), so keep the suggestion valid.
+        name = basename(picked).replaceAll(".", "-");
     }
 
     function backToName() {

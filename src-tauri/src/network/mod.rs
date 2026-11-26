@@ -216,7 +216,8 @@ impl NetworkManager for MutagenNetworkManager {
         // The forward dials the container's own loopback through the sandbox's alias, which
         // only resolves once the sandbox is running.
         self.provider_on(machine).start(sandbox).await?;
-        crate::sync::forward_create(&self.app, &name, host_port, sandbox, target_port).await?;
+        let alias = crate::ssh::identity::sandbox_alias(sandbox);
+        crate::sync::forward_create(&self.app, &name, host_port, &alias, target_port).await?;
 
         self.forwards.lock().unwrap().insert(
             (sandbox.to_string(), kind),
@@ -224,7 +225,7 @@ impl NetworkManager for MutagenNetworkManager {
                 sandbox: sandbox.to_string(),
                 kind,
                 host_port,
-                connection: sandbox.to_string(),
+                connection: alias,
                 remote_port: target_port,
                 forward_name: name,
                 label: label.clone(),

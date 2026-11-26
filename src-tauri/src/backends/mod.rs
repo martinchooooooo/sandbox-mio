@@ -202,7 +202,7 @@ impl CliBackend {
         if let Err(e) = provider.remove(name).await {
             tracing::warn!(target: "backends", %name, error = %e, "rollback: could not remove the instance");
         }
-        if let Err(e) = ssh::remove_alias(name) {
+        if let Err(e) = ssh::remove_alias(&ssh::identity::sandbox_alias(name)) {
             tracing::warn!(target: "backends", %name, error = %e, "rollback: could not remove the ssh alias");
         }
         match crate::paths::sandbox_key_dir(&self.app, name) {

@@ -36,7 +36,7 @@ This document is an interim task list, compiled on 2026-11-23 at commit `2e0e665
 
 ### T3. Sandbox SSH aliases can shadow the user's own SSH hosts
 
-- [ ] Resolved
+- [x] Resolved
 - **Problem:** the managed SSH `Host` entry is the bare sandbox name, inside an `Include sandbox-mio/config` line prepended to `~/.ssh/config` (`src-tauri/src/ssh/mod.rs`). OpenSSH takes the first match, so a sandbox named `github.com` hijacks `git@github.com` for every SSH client on the machine. `validate_name()` and `validate_new_name()` (`src-tauri/crates/domain/src/lib.rs`) allow dots and check no collisions.
 - **Source:** "Namespaced per-sandbox alias" in `docs/features/host-tool-ssh-access/04_improvements.md`.
 - **Fix shape:** the cheap fix is in `validate_new_name()`: refuse new names containing a dot, and refuse names matching a `Host` pattern already in the user's `~/.ssh/config` outside the managed blocks. A prefixed alias (`sandbox-mio-<name>`) is the complete fix but touches every Mutagen path keyed on the alias (see the gotchas table in the source document); treat the prefix as Decision needed.
@@ -85,7 +85,7 @@ This document is an interim task list, compiled on 2026-11-23 at commit `2e0e665
 - [ ] Resolved
 - **Problem:** under `MIO_MOCK_BACKEND=1`, a light-spec create still runs `ensure_sandbox_identity()` and `ensure_sandbox_alias()` (`src-tauri/src/ssh/identity.rs`) against the developer's real `~/.ssh/sandbox-mio/config`. The `onComplete` comment in `e2e/wdio.conf.ts` wrongly claims a light run writes no SSH alias.
 - **Source:** "`e2e/wdio.conf.ts` claims a light run writes no SSH alias" in `docs/features/host-tool-ssh-access/04_improvements.md`; first section of `docs/features/techdebt-sweep/04_improvements.md`.
-- **Options:** gate the SSH writes with `mock_backend_enabled()` (the light tier then diverges from the real create path), or relocate the SSH config root per run as `MIO_APP_DATA_DIR` relocates app data. Correct the `onComplete` comment either way.
+- **Options:** gate the SSH writes with `mock_backend_enabled()` (the light tier then diverges from the real create path), or relocate the SSH config root per run as `MIO_APP_DATA_DIR` relocates app data (the `MIO_SSH_DIR` relocation seam now exists in `ssh_dir()`, `src-tauri/src/ssh/mod.rs`, and the harness sets it today only for `light/ssh-alias-shadow-ui.spec.ts`). Correct the `onComplete` comment either way.
 
 ### T9. Translation backlog and the unmeasured time-to-wow — Decision needed
 
@@ -110,11 +110,19 @@ Each sub-task is a direct fix unless marked.
 - Several `04_improvements.md` entries describe microsandbox or mitmproxy code removed by `docs/features/remove-microsandbox/` and `docs/features/podman-egress-boundary/` (for example the msb items in `docs/features/techdebt-sweep/04_improvements.md`, `docs/features/local-llm-reachability/04_improvements.md` and `docs/features/sandbox-resource-monitor/04_improvements.md`); mark each obsolete or delete it.
 - `docs/features/fastest-time-to-wow/04_review.md` breaks the `05_dev_review.md` naming convention in `docs/features/README.md`; rename it and fix links.
 
+### T12. Adding the SSH include can overwrite a non-UTF-8 user config
+
+- [ ] Resolved
+- **Problem:** `ensure_include_locked()` (`src-tauri/src/ssh/mod.rs`) reads `~/.ssh/config` with `read_to_string(...).unwrap_or_default()`. A file that is not valid UTF-8, for example UTF-16LE written by Windows PowerShell 5.1's `>`, or one that cannot be read for another reason, reads as empty, so the next `write_alias` replaces it with only the `Include sandbox-mio/config` line and the user's entries are lost.
+- **Source:** found while designing T3; no `04_improvements.md` entry yet. T3's clash check (`user_host_matching`) already reads the same file leniently with `String::from_utf8_lossy` and fails open.
+- **Fix shape:** read the bytes, refuse to rewrite (return an `SshError`, leaving the file untouched) when the content is not valid UTF-8 or the read failed for any reason other than not-found, and keep the lossy read for the T3 scan only. Overlaps T8 (the same files and the same `~/.ssh` handling), so do not run them in parallel.
+- **Done when:** a non-UTF-8 `~/.ssh/config` survives a sandbox create byte for byte and the create reports a clear error (or skips the include); a unit test over a temp directory covers it.
+
 ## Overlapping tasks
 
 | Tasks | Shared files |
 |---|---|
-| T3, T4, T8 | `src-tauri/src/backends/mod.rs`, `src-tauri/crates/domain/src/lib.rs`, `src-tauri/src/ssh/mod.rs`, `src-tauri/src/ssh/identity.rs` |
+| T3, T4, T8, T12 | `src-tauri/src/backends/mod.rs`, `src-tauri/crates/domain/src/lib.rs`, `src-tauri/src/ssh/mod.rs`, `src-tauri/src/ssh/identity.rs` |
 | T7, T8 | `e2e/wdio.conf.ts` |
 | T1, T2 | `src-tauri/src/proxy/`, `src-tauri/crates/net-policy/`, `src-tauri/src/applied_policy.rs` |
 | T5a, T6 | none in code; T6 should land first so T5a's change is checked by CI |

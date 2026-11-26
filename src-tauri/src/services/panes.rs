@@ -92,6 +92,7 @@ pub async fn attach_terminal_session(
     let known_hosts_path = crate::ssh::identity::sandbox_known_hosts_path(&identity_path);
     let req = AttachRequest {
         name: name.to_string(),
+        alias: route.forward_alias,
         machine: route.machine,
         start: !route.running,
         identity_path,

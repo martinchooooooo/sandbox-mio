@@ -72,7 +72,7 @@ Light specs drive the running webview directly via `browser.execute()` and
 `light/local-llm-ui.spec.ts`'s direct `get_settings`/`set_settings` calls for the pattern it
 replaces). They run against the real Tauri commands, but every command that would otherwise touch
 podman/mutagen instead resolves against the in-memory mock (see below), so results are
-deterministic and instant.
+deterministic and instant. A spec that must control the user's SSH config seeds `E2E_SSH_DIR` (`e2e/lib/ssh.ts`), which the app uses as `MIO_SSH_DIR` only when the spec's path contains `SSH_DIR_SPEC_MARKER` (`e2e/lib/ssh.ts`; the gate in `spawnDriver`, `e2e/wdio.conf.ts`, which the spec asserts in `before`); every other light spec still touches the real `~/.ssh`.
 
 Every scripting spec (one that calls `configureMock()`) must call `useMockControl()` once at
 `describe` scope — it registers `before`/`beforeEach`/`after` hooks that reset the director, which is
@@ -187,6 +187,7 @@ standard failure-dump `afterEach`, same as any other spec.
 
 | Gotcha | Cause | Fix |
 |---|---|---|
+| A light spec's seeded SSH config is ignored | `MIO_SSH_DIR` is set only for sessions whose spec path contains `SSH_DIR_SPEC_MARKER` (`e2e/lib/ssh.ts`, used by `spawnDriver` in `e2e/wdio.conf.ts`) | The spec asserts its own path carries the marker, so a rename fails loudly; keep the filename and the constant in step, or widen the gate (see T8 in `docs/improvement-backlog.md`) |
 | A light spec's `it` block sees the built-in mock defaults instead of the override the spec installed | `useMockControl()` (`e2e/lib/mock.ts`) resets the director at `beforeEach` as well as `before`/`after`, so an override installed in the spec's own `before` hook is cleared before the first test runs | Install every override inside the `it` block that consumes it, as all four light specs do (`test/specs/light/sandbox-start-failure-ui.spec.ts` is the reference shape); the same reset is what stops an override leaking into later tests |
 | `mock_configure` rejects a `mutagen.forward-*` key | `forward_create`, `forward_terminate` and `sweep_stale_forwards` in `src-tauri/src/sync/mod.rs` call the sidecar through `run()` with an `AppHandle`, so no `ProcessRunner` key exists for Mutagen forward subcommands | Script the flow through `MockNetworkManager` (`src-tauri/src/network/mock.rs`) instead; extending the seam is deferred in `docs/features/scriptable-mock-backend/04_improvements.md` |
 | A light spec's scripted `podman.ps` fixture reports an unexpected sandbox image version, or `readBaseImage()` throws "Could not parse BASE_IMAGE / BASE_IMAGE_VERSION" | The fixtures take their image tag from `MISE_BASE_IMAGE` (`e2e/lib/podman-machine.ts`), which regex-parses `BASE_IMAGE` and `BASE_IMAGE_VERSION` out of `src-tauri/crates/provider/src/image.rs` (and `DEFAULT_MACHINE_NAME` out of `src-tauri/crates/process/src/podman.rs`) — a renamed or retyped declaration defeats the parse | Keep each declaration in its current `const NAME: <type> = …` form (the comment above each says so), and never reintroduce a literal image reference into a spec — import `MISE_BASE_IMAGE` |

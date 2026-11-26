@@ -50,19 +50,7 @@ export async function configureMockExpectingError(
   key: string,
   behaviour: Behaviour,
 ): Promise<{ kind: string; message: string } | null> {
-  return browser.execute(
-    async (k, b) => {
-      try {
-        // @ts-expect-error __TAURI_INTERNALS__ is injected into the webview at runtime.
-        await window.__TAURI_INTERNALS__.invoke("mock_configure", { key: k, behaviour: b });
-        return null;
-      } catch (e) {
-        return e as { kind: string; message: string };
-      }
-    },
-    key,
-    behaviour,
-  );
+  return invokeCmdExpectingError("mock_configure", { key, behaviour });
 }
 
 /**

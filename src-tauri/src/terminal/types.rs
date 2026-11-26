@@ -8,6 +8,9 @@ use mio_provider::types::MachineRef;
 pub struct AttachRequest {
     /// The sandbox, which also names its Herdr session (see `session_name` in `terminal/mod.rs`).
     pub name: String,
+    /// The SSH alias the pinned known-hosts lines are keyed by, which the server key is looked up
+    /// under. Never the bare `name`.
+    pub alias: String,
     pub machine: MachineRef,
     /// Whether the sandbox must be started before the exec
     /// (`docs/features/native-terminal/02_dev.md`, Resolved Decision 11).
