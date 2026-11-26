@@ -1,6 +1,8 @@
 <script lang="ts">
     import Button from "$lib/components/ui/button/button.svelte";
-    import { invoke } from "@tauri-apps/api/core";
+    import { injectAgentCredentials, listCredentialBundles } from "$lib/api/credentials";
+    import { startAgentAuth } from "$lib/api/agents";
+    import { inferenceStatus } from "$lib/api/inference";
     import { onMount } from "svelte";
     import { m } from "$lib/paraglide/messages.js";
     import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -8,7 +10,6 @@
     import { installAgentInSandbox } from "$lib/agents/install";
     import type { AgentDescriptor, AgentInstallEvent } from "$lib/agents/types";
     import { agentAuthFor, refreshAgentAuth } from "$lib/agents/authStatus.svelte";
-    import type { InferenceStatus } from "$lib/models/types";
     import type { createActionRunner } from "$lib/actions.svelte";
     import { packagesFor, ensurePackages, refreshPackages } from "$lib/packages/packages.svelte";
 
@@ -48,7 +49,7 @@
 
     async function loadCredentialBundles() {
         try {
-            const entries = await invoke<[string, unknown][]>("list_credential_bundles");
+            const entries = await listCredentialBundles();
             credentialBundles = Object.fromEntries(entries.map(([serviceId]) => [serviceId, true]));
         } catch {
             credentialBundles = {};
@@ -82,10 +83,7 @@
                 await existing.setFocus();
                 return;
             }
-            const sessionId = await invoke<string>("start_agent_auth", {
-                name: sandboxName,
-                authCommand: auth.command,
-            });
+            const sessionId = await startAgentAuth(sandboxName, auth.command);
             new WebviewWindow(label, {
                 url: `/agent-auth?sandbox=${encodeURIComponent(sandboxName)}&agent=${encodeURIComponent(descriptor.id)}&session=${encodeURIComponent(sessionId)}`,
                 title: `${descriptor.label} — authenticate`, // TODO(i18n)
@@ -99,18 +97,14 @@
         if (!descriptor.auth || !descriptor.credentialService) return;
         const serviceId = descriptor.credentialService;
         await action.run("auth", async () => {
-            await invoke("inject_agent_credentials", {
-                name: sandboxName,
-                serviceId,
-                onboarding: onboardingSeed(descriptor),
-            });
+            await injectAgentCredentials(sandboxName, serviceId, onboardingSeed(descriptor));
         });
         await refreshAgentAuth(sandboxName, installedAgents);
     }
 
     async function loadInferenceStatus() {
         try {
-            const status = await invoke<InferenceStatus>("inference_status");
+            const status = await inferenceStatus();
             inferenceRunning = status.running;
         } catch {
             inferenceRunning = false;

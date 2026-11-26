@@ -8,7 +8,7 @@
     import AdvancedSection from "$lib/components/AdvancedSection.svelte";
     import { createActionRunner } from "$lib/actions.svelte";
     import { parseError } from "$lib/errors";
-    import { sandboxSshAccess, type SshAccess } from "$lib/ssh";
+    import { sandboxSshAccess, type SshAccess } from "$lib/api/ssh";
     import { deploymentFor, liveStatus, sandboxesList } from "$lib/sandbox/state.svelte";
 
     let {

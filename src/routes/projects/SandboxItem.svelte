@@ -1,7 +1,7 @@
 <script lang="ts">
     import Button from "$lib/components/ui/button/button.svelte";
     import * as Card from "$lib/components/ui/card";
-    import { invoke } from "@tauri-apps/api/core";
+    import { dismissImageUpdate, getDismissedImageVersion } from "$lib/api/image";
     import { onMount } from "svelte";
     import { m } from "$lib/paraglide/messages.js";
     import {
@@ -58,17 +58,12 @@
 
     async function dismissUpdate() {
         if (currentImageVersion === undefined) return;
-        await invoke("dismiss_image_update", {
-            workspacePath: project.workspace_path,
-            version: currentImageVersion,
-        });
+        await dismissImageUpdate(project.workspace_path, currentImageVersion);
         dismissedVersion = currentImageVersion;
     }
 
     onMount(async () => {
-        dismissedVersion = await invoke<number | undefined>("get_dismissed_image_version", {
-            workspacePath: project.workspace_path,
-        }) ?? undefined;
+        dismissedVersion = await getDismissedImageVersion(project.workspace_path) ?? undefined;
     });
 </script>
 

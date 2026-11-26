@@ -1,4 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
+import { listCredentialBundles } from "$lib/api/credentials";
+import { downloadedModels as fetchDownloadedModels } from "$lib/api/inference";
 import { AGENTS } from "./catalogue";
 import type { AgentDescriptor } from "./types";
 
@@ -24,8 +25,8 @@ export function planPreinstall(facts: PreinstallFacts): string[] {
 /** Reads the host facts; an unreadable source counts as empty so planning never fails a create. */
 export async function readPreinstallFacts(): Promise<PreinstallFacts> {
     const [downloadedModels, bundles] = await Promise.all([
-        invoke<string[]>("downloaded_models").catch(() => [] as string[]),
-        invoke<[string, unknown][]>("list_credential_bundles").catch(() => [] as [string, unknown][]),
+        fetchDownloadedModels().catch(() => [] as string[]),
+        listCredentialBundles().catch(() => []),
     ]);
     return { downloadedModels, credentialServices: bundles.map(([service]) => service) };
 }

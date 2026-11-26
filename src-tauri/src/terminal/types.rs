@@ -21,7 +21,7 @@ pub struct AttachRequest {
 }
 
 /// A session-level event on an attach's JSON channel. Terminal bytes never travel here. Mirrored
-/// by `TerminalEvent` in `src/lib/terminal/TerminalView.svelte`.
+/// by `TerminalEvent` in `src/lib/api/terminal.ts`.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum TerminalEvent {

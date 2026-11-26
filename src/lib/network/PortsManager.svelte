@@ -3,7 +3,8 @@
     import Button from "$lib/components/ui/button/button.svelte";
     import { parseError } from "$lib/errors";
     import { m } from "$lib/paraglide/messages.js";
-    import { openForwardsFor, exposePort, unexposePort, type ForwardInfo } from "$lib/network/state.svelte";
+    import { exposePort, unexposePort } from "$lib/api/network";
+    import { openForwardsFor, type ForwardInfo } from "$lib/network/state.svelte";
     import type { createActionRunner } from "$lib/actions.svelte";
 
     // `.mio/ports.json` watching is started backend-side by `watch_workspace_ports`

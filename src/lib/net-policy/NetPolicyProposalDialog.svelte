@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { invoke } from "@tauri-apps/api/core";
+    import { applySandboxPolicy, discardNetPolicyProposal } from "$lib/api/net-policy";
     import Button from "$lib/components/ui/button/button.svelte";
     import * as Dialog from "$lib/components/ui/dialog/index.js";
     import { parseError } from "$lib/errors";
@@ -45,7 +45,7 @@
     // Sends exactly the policy displayed, never a re-read of the workspace file.
     const apply = () =>
         run(() =>
-            invoke<ApplyReport>("apply_sandbox_policy", {
+            applySandboxPolicy({
                 name: sandboxName,
                 policy: $state.snapshot(proposal.policy),
                 baseRevision,
@@ -53,7 +53,7 @@
         );
     const discard = () =>
         run(async () => {
-            await invoke("discard_net_policy_proposal", { name: sandboxName });
+            await discardNetPolicyProposal(sandboxName);
             return null;
         });
 </script>

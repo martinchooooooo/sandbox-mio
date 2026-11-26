@@ -1,4 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
+import { baseImageReady, buildBaseImage } from "$lib/api/image";
+import { detectMachineSpecs, getTestModel } from "$lib/api/inference";
+import { listPackages } from "$lib/api/packages";
 import { parseError, type AppErrorKind } from "$lib/errors";
 import type { ActivityHeadline } from "$lib/activity/types";
 import { miseKey } from "$lib/agents/catalogue";
@@ -109,13 +111,13 @@ export function modelRun(): ModelRun { return model; }
 export async function probeMachineSpecs(): Promise<void> {
     if (specs) return;
     try {
-        specs = await invoke<MachineSpecs>("detect_machine_specs");
+        specs = await detectMachineSpecs();
     } catch {
         specsSettled = true;
         return;
     }
     try {
-        testModel = testModelFromEnv((await invoke<string | null>("test_model")) ?? undefined);
+        testModel = testModelFromEnv((await getTestModel()) ?? undefined);
     } catch {
         testModel = null;
     }
@@ -289,7 +291,7 @@ async function ensurePiInstalled(): Promise<void> {
     if (!workspacePath || !pi) return;
     sandbox.step = "Installing pi"; // TODO(i18n)
     try {
-        const packages = await invoke<string[]>("list_packages", { workspacePath });
+        const packages = await listPackages(workspacePath);
         if (!pi.misePackages.every((p) => packages.includes(miseKey(p)))) {
             await installAgentInSandbox(FIRST_SANDBOX, workspacePath, pi);
             recordMilestone("pi-installed");
@@ -363,7 +365,7 @@ export async function runMachineSetup(provider: ProviderId): Promise<void> {
 /** Whether the base image already exists, without building it. */
 export async function probeImage(): Promise<void> {
     try {
-        image.ready = await invoke<boolean>("base_image_ready");
+        image.ready = await baseImageReady();
         image.probeError = "";
         image.probeErrorKind = null;
     } catch (e) {
@@ -390,7 +392,7 @@ export async function runImageDownload(): Promise<void> {
             // The reboot case is rendered from the podman store, which keeps the structured kind.
             if (!started) throw { kind: "Backend", message: setupError() || startError() };
         }
-        await invoke("build_base_image");
+        await buildBaseImage();
         await probeImage();
     } catch (e) {
         image.error = parseError(e).message;

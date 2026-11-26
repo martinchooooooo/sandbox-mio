@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { proxyStatus } from "$lib/api/proxy";
 import { untrack } from "svelte";
 import { parseError } from "$lib/errors";
 
@@ -42,7 +42,7 @@ export function refreshProxyStatus(sandboxName: string): Promise<void> {
         entries[sandboxName] = { ...previous, loading: true };
         const promise = (async () => {
             try {
-                const value = await invoke<ProxyStatus>("proxy_status", { name: sandboxName });
+                const value = await proxyStatus(sandboxName);
                 entries[sandboxName] = { value, error: null, fetchedAt: Date.now(), loading: false };
             } catch (e) {
                 // A failed call keeps the last value; the error alone marks the answer unknown.

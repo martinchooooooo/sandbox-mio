@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { checkPodmanReady, machineNeedsInit, provisionPodman, startPodmanMachine } from "$lib/api/machine";
 import { parseError } from "$lib/errors";
 import { createActionRunner } from "$lib/actions.svelte";
 import { m } from "$lib/paraglide/messages.js";
@@ -34,13 +34,13 @@ export function startError(): string { return startAction.error; }
  * every mount rather than cached: Podman can be stopped or started outside the app between mounts. */
 export async function checkPodman(): Promise<void> {
     try {
-        await invoke("check_podman_ready");
+        await checkPodmanReady();
         podmanUnavailableState = false;
         podmanNeedsSetupState = false;
     } catch (e) {
         if (parseError(e).kind !== "PodmanUnavailable") throw e;
         try {
-            podmanNeedsSetupState = await invoke<boolean>("machine_needs_init");
+            podmanNeedsSetupState = await machineNeedsInit();
         } catch {
             podmanNeedsSetupState = false;
         }
@@ -53,7 +53,7 @@ export async function checkPodman(): Promise<void> {
 export async function startPodman(): Promise<boolean> {
     const ok = await startAction.run(
         "start",
-        () => invoke("start_podman_machine"),
+        () => startPodmanMachine(),
         { message: m.podman_starting() }
     );
     if (ok) podmanUnavailableState = false;
@@ -67,7 +67,7 @@ export async function setupPodman(): Promise<boolean> {
     setupErrorState = "";
     setupBusyState = true;
     try {
-        await invoke("provision_podman");
+        await provisionPodman();
         podmanNeedsSetupState = false;
         podmanUnavailableState = false;
         return true;

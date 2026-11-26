@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { getAgentAuthStatus } from "$lib/api/agents";
 import { untrack } from "svelte";
 import type { AgentAuthStatus, AgentDescriptor } from "$lib/agents/types";
 
@@ -19,7 +19,7 @@ async function checkAgent(sandboxName: string, agent: AgentDescriptor): Promise<
     if (!auth) return;
     let next: AgentAuthStatus;
     try {
-        const result = await invoke<AgentAuthStatus>("get_agent_auth_status", {
+        const result = await getAgentAuthStatus({
             name: sandboxName,
             credentialPath: auth.credentialFile,
             expiresAtJsonKey: auth.expiresAtJsonKey,

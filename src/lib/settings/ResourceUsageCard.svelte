@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { invoke } from "@tauri-apps/api/core";
+    import { getResourceHistory } from "$lib/api/sandbox";
     import { onMount } from "svelte";
     import { toast } from "svelte-sonner";
     import { HugeiconsIcon } from "@hugeicons/svelte";
@@ -9,7 +9,7 @@
     import { parseError } from "$lib/errors";
     import { providerLabel } from "$lib/providers";
     import { formatBytes, formatCpu } from "$lib/sandbox";
-    import { poolRow, sandboxRow, type ResourceHistory, type UsageRow } from "$lib/settings/usage";
+    import { poolRow, sandboxRow, type UsageRow } from "$lib/settings/usage";
 
     const POOL_NAME = "Podman machine"; // TODO(i18n)
 
@@ -19,7 +19,7 @@
 
     onMount(async () => {
         try {
-            const history = await invoke<ResourceHistory>("get_resource_history", { window: "week" });
+            const history = await getResourceHistory("week");
             const sandboxes = history.sandboxes.flatMap((s) => sandboxRow(s.name, s.rollups) ?? []);
             const pool = poolRow(POOL_NAME, history.podmanPool);
             rows = pool ? [...sandboxes, pool] : sandboxes;

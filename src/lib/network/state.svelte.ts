@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { listOpenForwards } from "$lib/api/network";
 import { listen } from "@tauri-apps/api/event";
 
 // Module-scoped store; owns the single `network://forwards-changed` subscription.
@@ -41,17 +41,8 @@ export async function ensureNetworkState(): Promise<void> {
         await listen<ForwardInfo[]>(EVENT_NAME, (e) => {
             forwards = e.payload;
         });
-        forwards = await invoke<ForwardInfo[]>("list_open_forwards");
+        forwards = await listOpenForwards();
     } catch {
         started = false;
     }
-}
-
-// Returns the Windows-host loopback port the container port is exposed to.
-export async function exposePort(name: string, workspacePath: string, targetPort: number): Promise<number> {
-    return invoke<number>("expose_port", { name, workspacePath, targetPort });
-}
-
-export async function unexposePort(name: string, targetPort: number): Promise<void> {
-    await invoke("unexpose_port", { name, targetPort });
 }

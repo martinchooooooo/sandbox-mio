@@ -3,7 +3,16 @@
     import { Text } from "$lib/components/ui/text";
     import { Input } from "$lib/components/ui/input";
     import * as Collapsible from "$lib/components/ui/collapsible";
-    import { invoke, Channel } from "@tauri-apps/api/core";
+    import { Channel } from "@tauri-apps/api/core";
+    import { cancelAgentAuth, installAgent, sendAgentAuthInput, startAgentAuth } from "$lib/api/agents";
+    import {
+        deleteCredentialBundle,
+        ensureAuthContainer,
+        listCredentialBundles,
+        setGithubToken,
+        type CredentialManifest,
+    } from "$lib/api/credentials";
+    import { destroySandbox } from "$lib/api/sandbox";
     import { onMount, untrack } from "svelte";
     import { createActionRunner } from "$lib/actions.svelte";
     import { AGENTS } from "$lib/agents/catalogue";
@@ -20,14 +29,6 @@
         start as startAuthSession,
         reset as resetAuthSession,
     } from "$lib/agents/authSession.svelte";
-
-    interface CredentialManifest {
-        capturedAtMs: number;
-        accountEmail: string | null;
-        expiresAtMs: number | null;
-        accountLogin: string | null;
-        missingScopes: string[];
-    }
 
     const action = createActionRunner();
 
@@ -46,7 +47,7 @@
     }, []);
 
     async function loadBundles() {
-        const entries = await invoke<[string, CredentialManifest][]>("list_credential_bundles");
+        const entries = await listCredentialBundles();
         bundles = Object.fromEntries(entries);
     }
 
@@ -65,11 +66,11 @@
         cardOpen[serviceId] = true;
 
         const ok = await action.run(`login-${serviceId}`, async () => {
-            await invoke("ensure_auth_container", { name: authContainer });
+            await ensureAuthContainer(authContainer);
 
             const npmStep = agent.postInstallSteps.find((s) => s.kind === "npm-postinstall");
             const installChannel = new Channel<AgentInstallEvent>();
-            await invoke("install_agent", {
+            await installAgent({
                 name: authContainer,
                 packages: agent.misePackages,
                 postinstallNpm: npmStep ? [npmStep.package, npmStep.nodeVersion] : null,
@@ -77,17 +78,14 @@
                 onProgress: installChannel,
             });
 
-            const sessionId = await invoke<string>("start_agent_auth", {
-                name: authContainer,
-                authCommand: auth.command,
-            });
+            const sessionId = await startAgentAuth(authContainer, auth.command);
 
             if (authActiveServiceId() !== serviceId) {
                 // Cancelled/dismissed while ensure_auth_container/install_agent were still
                 // running, before a sessionId existed to cancel against — clean up the session
                 // and container that just came into existence instead of silently reattaching.
-                await invoke("cancel_agent_auth", { sessionId }).catch(() => {});
-                await invoke("destroy_sandbox", { name: authContainer, force: true }).catch(() => {});
+                await cancelAgentAuth(sessionId).catch(() => {});
+                await destroySandbox(authContainer, true).catch(() => {});
                 return;
             }
 
@@ -104,16 +102,13 @@
     async function logInGithub() {
         beginSigningIn(GITHUB_SERVICE);
         const ok = await action.run("github-login", async () => {
-            await invoke("ensure_auth_container", { name: GITHUB_AUTH_CONTAINER });
-            const sessionId = await invoke<string>("start_agent_auth", {
-                name: GITHUB_AUTH_CONTAINER,
-                authCommand: GITHUB_LOGIN_COMMAND,
-            });
+            await ensureAuthContainer(GITHUB_AUTH_CONTAINER);
+            const sessionId = await startAgentAuth(GITHUB_AUTH_CONTAINER, GITHUB_LOGIN_COMMAND);
 
             if (authActiveServiceId() !== GITHUB_SERVICE) {
                 // Dismissed before a sessionId existed to cancel against.
-                await invoke("cancel_agent_auth", { sessionId }).catch(() => {});
-                await invoke("destroy_sandbox", { name: GITHUB_AUTH_CONTAINER, force: true }).catch(() => {});
+                await cancelAgentAuth(sessionId).catch(() => {});
+                await destroySandbox(GITHUB_AUTH_CONTAINER, true).catch(() => {});
                 return;
             }
 
@@ -124,7 +119,7 @@
 
     async function saveGithubToken() {
         const ok = await action.run("github-save", async () => {
-            await invoke("set_github_token", { token: githubToken });
+            await setGithubToken(githubToken);
             await loadBundles();
         });
         // The value stays in the backend; clearing the field leaves nothing readable in the webview.
@@ -133,14 +128,14 @@
 
     async function removeGithubToken() {
         await action.run("github-remove", async () => {
-            await invoke("delete_credential_bundle", { serviceId: GITHUB_SERVICE });
+            await deleteCredentialBundle(GITHUB_SERVICE);
             await loadBundles();
         });
     }
 
     async function logOut(serviceId: string) {
         await action.run(`logout-${serviceId}`, async () => {
-            await invoke("delete_credential_bundle", { serviceId });
+            await deleteCredentialBundle(serviceId);
             await loadBundles();
         });
     }
@@ -148,7 +143,7 @@
     async function submitCode(code: string) {
         const sessionId = authSessionId();
         if (!sessionId) return;
-        await invoke("send_agent_auth_input", { sessionId, input: code });
+        await sendAgentAuthInput(sessionId, code);
     }
 
     function cancelOrDismiss(serviceId: string) {
@@ -156,7 +151,7 @@
         if (authPhase() === "exited" || !sessionId) {
             dismiss(serviceId);
         } else {
-            invoke("cancel_agent_auth", { sessionId }).catch(() => {});
+            cancelAgentAuth(sessionId).catch(() => {});
         }
     }
 

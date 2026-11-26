@@ -1,4 +1,14 @@
-import { Channel, invoke } from "@tauri-apps/api/core";
+import { Channel } from "@tauri-apps/api/core";
+import {
+    agentChatAttach,
+    agentChatDetach,
+    agentChatSend,
+    agentChatSessions,
+    agentChatStop,
+    agentChatTakeover,
+} from "$lib/api/agent-chat";
+import { installAgent } from "$lib/api/agents";
+import { inferenceStatus } from "$lib/api/inference";
 import { toast } from "svelte-sonner";
 import { parseError } from "$lib/errors";
 import { AGENTS, onboardingSeed } from "$lib/agents/catalogue";
@@ -6,12 +16,10 @@ import { PI_PINNED_VERSION } from "$lib/agents/pi";
 import { LOCAL_LLM_PROVIDER_ID } from "$lib/agents/local-llm";
 import { m } from "$lib/paraglide/messages.js";
 import { provisionAgent } from "$lib/agents/provision";
-import type { InferenceStatus } from "$lib/models/types";
 import { ensureLearning, learningMode, setLearningMode } from "./learning.svelte";
 import { applyPiRecord, emptyChatState, messagesFromHistory, resolveDialog, toPendingDialog } from "./pi-events";
 import type {
     AttachEvent,
-    AttachResult,
     ChatSession,
     ChatState,
     Cursor,
@@ -131,11 +139,7 @@ export class ChatStore {
             if (this.#channel === channel) this.#receive(event);
         };
         try {
-            const result = await invoke<AttachResult>("agent_chat_attach", {
-                name: this.sandbox,
-                cursor: this.#cursor,
-                onEvent: channel,
-            });
+            const result = await agentChatAttach(this.sandbox, this.#cursor, channel);
             if (this.#channel !== channel) return;
             const fresh = this.#cursor?.generation !== result.attach.generation;
             this.#cursor = { generation: result.attach.generation, offset: result.attach.offset };
@@ -157,7 +161,7 @@ export class ChatStore {
         this.connection = "idle";
         this.#rejectAll(m.agent_chat_error_detached());
         try {
-            await invoke("agent_chat_detach", { name: this.sandbox });
+            await agentChatDetach(this.sandbox);
         } catch (e) {
             console.error(parseError(e).message);
         }
@@ -175,7 +179,7 @@ export class ChatStore {
             this.#pending.set(id, { resolve, reject, timer });
         });
         try {
-            await invoke("agent_chat_send", { name: this.sandbox, line });
+            await agentChatSend(this.sandbox, line);
         } catch (e) {
             const pending = this.#pending.get(id);
             if (pending) clearTimeout(pending.timer);
@@ -200,7 +204,7 @@ export class ChatStore {
     async answerDialog(id: string, answer: Record<string, unknown>): Promise<void> {
         // Not a request: pi sends no response to a dialog answer.
         const line = JSON.stringify({ type: "extension_ui_response", id, ...answer });
-        await invoke("agent_chat_send", { name: this.sandbox, line });
+        await agentChatSend(this.sandbox, line);
         resolveDialog(this.chat, id);
     }
 
@@ -223,7 +227,7 @@ export class ChatStore {
             console.error(e);
         }
         try {
-            const status = await invoke<InferenceStatus>("inference_status");
+            const status = await inferenceStatus();
             this.servedModelId = status.running ? status.modelId : null;
         } catch {
             this.servedModelId = null;
@@ -274,7 +278,7 @@ export class ChatStore {
 
     async loadSessions(): Promise<void> {
         try {
-            this.sessions = await invoke<ChatSession[]>("agent_chat_sessions", { workspacePath: this.workspacePath });
+            this.sessions = await agentChatSessions(this.workspacePath);
         } catch (e) {
             console.error(parseError(e).message);
         }
@@ -298,7 +302,7 @@ export class ChatStore {
     /** Ends the other client's writer stream, then reattaches from the cursor as the writer. */
     async takeControl(): Promise<void> {
         await this.#act("takeover", async () => {
-            await invoke("agent_chat_takeover", { name: this.sandbox });
+            await agentChatTakeover(this.sandbox);
             this.connection = "idle";
             await this.attach();
         });
@@ -307,7 +311,7 @@ export class ChatStore {
     async stopAgent(): Promise<void> {
         await this.#act("stop", async () => {
             this.#channel = null;
-            await invoke("agent_chat_stop", { name: this.sandbox });
+            await agentChatStop(this.sandbox);
             this.#rejectAll(m.agent_chat_error_stopped());
             this.chat.run = "idle";
             this.connection = "stopped";
@@ -319,7 +323,7 @@ export class ChatStore {
         const pi = AGENTS.find((a) => a.id === "pi");
         if (!pi) return;
         await this.#act("update", async () => {
-            await invoke("install_agent", {
+            await installAgent({
                 name: this.sandbox,
                 packages: pi.misePackages,
                 postinstallNpm: null,
@@ -327,10 +331,10 @@ export class ChatStore {
                 onboarding: onboardingSeed(pi),
                 onProgress: new Channel(),
             });
-            const status = await invoke<InferenceStatus>("inference_status").catch(() => null);
+            const status = await inferenceStatus().catch(() => null);
             await provisionAgent(pi, this.workspacePath, status?.running ? status.modelId : null);
             this.#channel = null;
-            await invoke("agent_chat_stop", { name: this.sandbox });
+            await agentChatStop(this.sandbox);
             this.#cursor = null;
             this.connection = "idle";
             await this.attach();
@@ -355,7 +359,7 @@ export class ChatStore {
             return;
         }
         try {
-            const status = await invoke<InferenceStatus>("inference_status");
+            const status = await inferenceStatus();
             this.inferenceDown = !status.running;
         } catch {
             this.inferenceDown = false;

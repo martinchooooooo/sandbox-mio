@@ -1,11 +1,15 @@
-import { invoke } from "@tauri-apps/api/core";
+import {
+    createSandbox as createSandboxCommand,
+    destroySandbox as destroySandboxCommand,
+    startSandbox as startSandboxCommand,
+    stopSandbox as stopSandboxCommand,
+} from "$lib/api/sandbox";
 import { toast } from "svelte-sonner";
 import { m } from "$lib/paraglide/messages.js";
 import { parseError } from "$lib/errors";
 import { refreshSandboxState, sandboxesList } from "$lib/sandbox/state.svelte";
 import { tasks } from "$lib/activity/activity.svelte";
 import { openSandbox } from "$lib/workspace/navigation.svelte";
-import type { Project } from "$lib/sandbox";
 import type { ProviderId } from "$lib/providers";
 import { installAgentInSandbox } from "$lib/agents/install";
 import { agentsById, planPreinstall, readPreinstallFacts } from "$lib/agents/preinstall";
@@ -66,11 +70,11 @@ async function runLifecycle(name: string, op: LifecycleOp, work: () => Promise<v
 }
 
 export function startSandbox(name: string): Promise<boolean> {
-    return runLifecycle(name, "start", () => invoke("start_sandbox", { name }));
+    return runLifecycle(name, "start", () => startSandboxCommand(name));
 }
 
 export function stopSandbox(name: string): Promise<boolean> {
-    return runLifecycle(name, "stop", () => invoke("stop_sandbox", { name }));
+    return runLifecycle(name, "stop", () => stopSandboxCommand(name));
 }
 
 // Stop then Start, never a backend restart, so a stop's pane teardown still runs
@@ -78,8 +82,8 @@ export function stopSandbox(name: string): Promise<boolean> {
 // through both steps.
 export function restartSandbox(name: string): Promise<boolean> {
     return runLifecycle(name, "restart", async () => {
-        await invoke("stop_sandbox", { name });
-        await invoke("start_sandbox", { name });
+        await stopSandboxCommand(name);
+        await startSandboxCommand(name);
     });
 }
 
@@ -97,7 +101,7 @@ export async function destroySandbox(
     let declined = false;
     const ok = await runLifecycle(name, "destroy", async () => {
         try {
-            await invoke("destroy_sandbox", { name, force: false });
+            await destroySandboxCommand(name, false);
         } catch (e) {
             const err = parseError(e);
             if (err.kind !== "UnsyncedChanges") throw e;
@@ -105,7 +109,7 @@ export async function destroySandbox(
                 declined = true;
                 return;
             }
-            await invoke("destroy_sandbox", { name, force: true });
+            await destroySandboxCommand(name, true);
         }
     });
     return ok && !declined;
@@ -212,7 +216,7 @@ async function runCreate(name: string): Promise<void> {
     const { args } = creates[name];
     pending[name] = "create";
     try {
-        const sandbox = await invoke<Project>("create_sandbox", {
+        const sandbox = await createSandboxCommand({
             name,
             existingPath: args.existingPath,
             provider: args.provider,

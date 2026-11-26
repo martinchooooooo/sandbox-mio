@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { listRegistry } from "$lib/api/packages";
 
 export interface RegistryEntry { short: string; description?: string; }
 
@@ -11,7 +11,7 @@ export async function ensureRegistry(sandboxName: string): Promise<void> {
     if (fetched) return;
     fetched = true;
     try {
-        entries = await invoke<RegistryEntry[]>("list_registry", { name: sandboxName });
+        entries = await listRegistry(sandboxName);
     } catch {
         fetched = false;
     }

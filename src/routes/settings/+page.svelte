@@ -3,7 +3,15 @@
     import * as Field from "$lib/components/ui/field";
     import { Text } from "$lib/components/ui/text";
     import { Input } from "$lib/components/ui/input";
-    import { invoke, Channel } from "@tauri-apps/api/core";
+    import { Channel } from "@tauri-apps/api/core";
+    import { getSettings, setSettings, type AppSettings } from "$lib/api/app";
+    import {
+        detectMachineSpecs,
+        installFoundryLocal,
+        inferenceSetupSteps,
+        type FoundryInstallEvent,
+    } from "$lib/api/inference";
+    import { resetStuckPodmanMachine } from "$lib/api/machine";
     import { onMount } from "svelte";
     import { m } from "$lib/paraglide/messages.js";
     import { parseError } from "$lib/errors";
@@ -35,15 +43,6 @@
         setLocale(locales[(idx + 1) % locales.length]);
     }
 
-    interface AppSettings {
-        inferenceEngine: EngineKind;
-        llamaGpuLayers: number | null;
-        llamaCtxSize: number | null;
-        // `set_settings` replaces the whole file, and any field this page omits comes back as its
-        // serde default — which would silently un-onboard the user (`onboardingCompleted`).
-        [key: string]: unknown;
-    }
-
     const action = createActionRunner();
 
     let engine = $state<EngineKind>("llama");
@@ -56,16 +55,20 @@
     let saved = $state(false);
 
     // The last full object read from `get_settings`, so `save()` can round-trip the fields this
-    // page does not edit instead of dropping them.
+    // page does not edit instead of dropping them: `set_settings` replaces the whole file, and an
+    // omitted field comes back as its serde default, which would silently un-onboard the user.
     let loaded: AppSettings = {
         inferenceEngine: "llama",
         llamaGpuLayers: null,
         llamaCtxSize: null,
+        onboardingCompleted: false,
+        firstOpenedAtMs: null,
+        chatLearningMode: {},
     };
 
     async function loadSteps(forEngine: EngineKind) {
         try {
-            steps = await invoke<SetupStep[]>("inference_setup_steps", { engine: forEngine });
+            steps = await inferenceSetupSteps(forEngine);
         } catch {
             steps = [];
         }
@@ -84,7 +87,7 @@
             llamaGpuLayers: gpuLayers.trim() === "" ? null : Number(gpuLayers),
             llamaCtxSize: ctxSize.trim() === "" ? null : Number(ctxSize),
         };
-        if (await action.run("save", () => invoke("set_settings", { settings }))) {
+        if (await action.run("save", () => setSettings(settings))) {
             saved = true;
         }
     }
@@ -93,16 +96,16 @@
         installing = true;
         installLog = [];
         await action.run("install-foundry", async () => {
-            const channel = new Channel<{ kind: string; line: string }>();
+            const channel = new Channel<FoundryInstallEvent>();
             channel.onmessage = (e) => {
                 if (e.kind === "Output") installLog = [...installLog, e.line];
             };
-            await invoke("install_foundry_local", { onProgress: channel });
+            await installFoundryLocal(channel);
         });
         installing = false;
         // Re-probe so the install button disappears once Foundry is present.
         try {
-            specs = await invoke<MachineSpecs>("detect_machine_specs");
+            specs = await detectMachineSpecs();
         } catch (e) {
             action.run("ignore", () => Promise.reject(e));
         }
@@ -110,7 +113,7 @@
 
     onMount(async () => {
         try {
-            const s = await invoke<AppSettings>("get_settings");
+            const s = await getSettings();
             loaded = s;
             engine = s.inferenceEngine;
             gpuLayers = s.llamaGpuLayers === null ? "" : String(s.llamaGpuLayers);
@@ -120,7 +123,7 @@
         }
         await loadSteps(engine);
         try {
-            specs = await invoke<MachineSpecs>("detect_machine_specs");
+            specs = await detectMachineSpecs();
         } catch {
             specs = null;
         }
@@ -134,7 +137,7 @@
 
     async function resetPodmanMachine() {
         machineReset = false;
-        if (await action.run("reset-podman-machine", () => invoke("reset_stuck_podman_machine"))) {
+        if (await action.run("reset-podman-machine", () => resetStuckPodmanMachine())) {
             machineReset = true;
         }
     }

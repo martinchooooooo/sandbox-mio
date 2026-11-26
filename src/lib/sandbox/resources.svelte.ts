@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { getResourceSnapshot } from "$lib/api/sandbox";
 import { listen } from "@tauri-apps/api/event";
 import type { ProviderId } from "$lib/providers";
 import { classify, type Health } from "$lib/sandbox/health";
@@ -53,7 +53,7 @@ export async function ensureResources(): Promise<void> {
     started = true;
     try {
         await listen<ResourceSnapshot>("resources://snapshot", (e) => apply(e.payload));
-        apply(await invoke<ResourceSnapshot>("get_resource_snapshot"));
+        apply(await getResourceSnapshot());
     } catch (e) {
         console.error(e);
     }

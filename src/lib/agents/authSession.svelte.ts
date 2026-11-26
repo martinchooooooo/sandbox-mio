@@ -1,4 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
+import { destroySandbox } from "$lib/api/sandbox";
+import { captureAgentCredentials, captureGithubLogin, seedAgentOnboarding } from "$lib/api/credentials";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { toast } from "svelte-sonner";
 import { parseError } from "$lib/errors";
@@ -106,16 +107,16 @@ async function handleExit(): Promise<void> {
     if (code === 0) {
         try {
             if (isGithub) {
-                await invoke("capture_github_login");
+                await captureGithubLogin();
             } else {
                 const auth = agent!.auth!;
                 const seed = onboardingSeed(agent!);
                 if (seed) {
-                    await invoke("seed_agent_onboarding", { name: authContainer, onboarding: seed }).catch(
+                    await seedAgentOnboarding(authContainer, seed).catch(
                         () => {},
                     );
                 }
-                await invoke("capture_agent_credentials", {
+                await captureAgentCredentials({
                     name: authContainer,
                     serviceId,
                     credentialPath: auth.credentialFile,
@@ -135,7 +136,7 @@ async function handleExit(): Promise<void> {
 
     // Destroyed after every attempt, whatever the outcome, so a failed capture never leaks a
     // container (docs/features/shared-agent-auth/02_dev.md, "Auth container cleanup on failure").
-    await invoke("destroy_sandbox", { name: authContainer, force: true }).catch(() => {});
+    await destroySandbox(authContainer, true).catch(() => {});
 
     if (code === 0) reset();
 }

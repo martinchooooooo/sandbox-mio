@@ -1,6 +1,6 @@
 <script lang="ts">
     import Button from "$lib/components/ui/button/button.svelte";
-    import { invoke } from "@tauri-apps/api/core";
+    import { installPackage as installPackageCommand, uninstallPackage as uninstallPackageCommand } from "$lib/api/packages";
     import { m } from "$lib/paraglide/messages.js";
     import { registryEntries, ensureRegistry } from "$lib/registry.svelte";
     import { portal } from "$lib/portal";
@@ -43,7 +43,7 @@
         if (!pkg) return;
         if (await action.run(
             "install",
-            () => invoke("install_package", { name: sandboxName, package: pkg }),
+            () => installPackageCommand(sandboxName, pkg),
             { message: m.projects_status_installing({ name: pkg }) }
         )) {
             packageInput = "";
@@ -55,7 +55,7 @@
     async function uninstallPackage(pkg: string) {
         if (await action.run(
             "uninstall",
-            () => invoke("uninstall_package", { name: sandboxName, package: pkg }),
+            () => uninstallPackageCommand(sandboxName, pkg),
             { message: m.projects_status_uninstalling({ name: pkg }) }
         )) {
             await refreshPackages(sandboxName, workspacePath);

@@ -1,21 +1,16 @@
-import { invoke } from "@tauri-apps/api/core";
+import { getSettings, setSettings } from "$lib/api/app";
 import { parseError } from "$lib/errors";
 import { FIRST_SANDBOX } from "$lib/onboarding/setup.svelte";
 
 /** Per-sandbox learning-mode overrides, persisted in `settings.json` as `chatLearningMode`
  * (`docs/features/chat-agent-anatomy/02_dev.md`, Resolved Decisions 1 and 2). */
 
-interface AppSettings {
-    chatLearningMode?: Record<string, boolean>;
-    [key: string]: unknown;
-}
-
 let overrides = $state<Record<string, boolean>>({});
 let loading: Promise<void> | null = null;
 
 /** Loads the override map once; a failed read is retried by the next call. */
 export function ensureLearning(): Promise<void> {
-    loading ??= invoke<AppSettings>("get_settings")
+    loading ??= getSettings()
         .then((settings) => {
             overrides = { ...settings.chatLearningMode, ...overrides };
         })
@@ -37,9 +32,9 @@ export async function setLearningMode(sandbox: string, on: boolean): Promise<voi
     const previous = overrides[sandbox];
     overrides = { ...overrides, [sandbox]: on };
     try {
-        const settings = await invoke<AppSettings>("get_settings");
+        const settings = await getSettings();
         const chatLearningMode = { ...settings.chatLearningMode, [sandbox]: on };
-        await invoke("set_settings", { settings: { ...settings, chatLearningMode } });
+        await setSettings({ ...settings, chatLearningMode });
     } catch (e) {
         const { [sandbox]: _, ...rest } = overrides;
         overrides = previous === undefined ? rest : { ...rest, [sandbox]: previous };

@@ -1,4 +1,16 @@
-import { invoke, Channel } from "@tauri-apps/api/core";
+import { Channel } from "@tauri-apps/api/core";
+import { getSettings } from "$lib/api/app";
+import {
+    detectMachineSpecs,
+    downloadedModels,
+    downloadModel as downloadModelCommand,
+    getTestModel,
+    inferenceSetupSteps,
+    inferenceStatus,
+    redetectMachineSpecs,
+    startInference,
+    stopInference,
+} from "$lib/api/inference";
 import { parseError } from "$lib/errors";
 import { reprovisionInstalledAgents } from "$lib/agents/reprovision";
 import { testModelFromEnv } from "./catalogue";
@@ -121,28 +133,28 @@ async function job(kind: Busy, modelId: string | null, run: () => Promise<void>)
 }
 
 async function refreshStatus() {
-    s.status = await invoke<InferenceStatus>("inference_status");
+    s.status = await inferenceStatus();
 }
 
 /** Reads every source of page state; safe to call on each mount. */
 export async function loadModels(): Promise<void> {
     try {
-        s.engine = (await invoke<{ inferenceEngine: EngineKind }>("get_settings")).inferenceEngine;
+        s.engine = (await getSettings()).inferenceEngine;
     } catch {
         /* default llama */
     }
     try {
-        s.specs = await invoke<MachineSpecs>("detect_machine_specs");
+        s.specs = await detectMachineSpecs();
     } catch (e) {
         s.error = parseError(e).message;
     }
     try {
-        s.testModel = testModelFromEnv((await invoke<string | null>("test_model")) ?? undefined);
+        s.testModel = testModelFromEnv((await getTestModel()) ?? undefined);
     } catch {
         s.testModel = null;
     }
     try {
-        s.downloaded = await invoke<string[]>("downloaded_models");
+        s.downloaded = await downloadedModels();
     } catch {
         s.downloaded = [];
     }
@@ -155,14 +167,14 @@ export async function loadModels(): Promise<void> {
 
 export function redetect(): Promise<boolean> {
     return job("redetect", null, async () => {
-        s.specs = await invoke<MachineSpecs>("redetect_machine_specs");
+        s.specs = await redetectMachineSpecs();
     });
 }
 
 async function fetchModel(d: ModelDescriptor, onProgress?: (pct: number) => void) {
     const src = d.llama;
     if (!src) throw { kind: "Backend", message: "This Model has no download for the built-in engine." };
-    s.downloaded = await invoke<string[]>("downloaded_models");
+    s.downloaded = await downloadedModels();
     if (isDownloaded(d)) return;
     s.downloadPct[d.id] = 0;
     onProgress?.(0);
@@ -174,7 +186,7 @@ async function fetchModel(d: ModelDescriptor, onProgress?: (pct: number) => void
             s.downloadPct[d.id] = pct;
             onProgress?.(pct);
         };
-        await invoke("download_model", {
+        await downloadModelCommand({
             modelId: d.id,
             repo: src.repo,
             file: src.file,
@@ -183,7 +195,7 @@ async function fetchModel(d: ModelDescriptor, onProgress?: (pct: number) => void
         });
     } finally {
         delete s.downloadPct[d.id];
-        s.downloaded = await invoke<string[]>("downloaded_models");
+        s.downloaded = await downloadedModels();
     }
 }
 
@@ -197,7 +209,7 @@ async function startServer(d: ModelDescriptor, engine: EngineKind) {
     const target = targetOf(d, engine);
     s.wake = { modelId: d.id, steps: [], events: [] };
     try {
-        s.wake.steps = await invoke<SetupStep[]>("inference_setup_steps", { engine });
+        s.wake.steps = await inferenceSetupSteps(engine);
     } catch {
         /* the checklist stays empty */
     }
@@ -206,7 +218,7 @@ async function startServer(d: ModelDescriptor, engine: EngineKind) {
     if (!(s.status.running && s.status.modelId === target)) {
         const channel = new Channel<RuntimeSetupEvent>();
         channel.onmessage = (e) => (s.wake.events = [...s.wake.events, e]);
-        await invoke<InferenceStatus>("start_inference", { engine, modelId: target, onProgress: channel });
+        await startInference(engine, target, channel);
         // Ready means the server answers as running now, not that the start's reply said so.
         await refreshStatus();
     }
@@ -232,7 +244,7 @@ export function downloadAndWake(d: ModelDescriptor): Promise<boolean> {
 
 export function sleep(): Promise<boolean> {
     return job("sleep", null, async () => {
-        await invoke("stop_inference");
+        await stopInference();
         s.wake = { ...s.wake, modelId: null, events: [] };
         await refreshStatus();
     });

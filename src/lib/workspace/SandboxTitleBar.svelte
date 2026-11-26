@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { invoke } from "@tauri-apps/api/core";
+    import { openSandboxFolder } from "$lib/api/sandbox";
     import { HugeiconsIcon } from "@hugeicons/svelte";
     import {
         Cancel01Icon,
@@ -66,7 +66,7 @@ Destroy anyway and discard them?`);
     }
 
     async function openFolder() {
-        await action.run("folder", () => invoke("open_sandbox_folder", { name: sandbox }));
+        await action.run("folder", () => openSandboxFolder(sandbox));
     }
 </script>
 

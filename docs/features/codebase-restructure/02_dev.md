@@ -5,7 +5,7 @@ feature: codebase-restructure
 ---
 # Codebase Restructure — Build Plan
 
-Build plan for a structural refactor of Sandbox-mio with no behaviour change: the Rust backend's module dependency graph (`src-tauri/src/`), the frontend component layout (`src/lib/`, `src/routes/`), a typed IPC layer, the oversized backend files, and the root build tool (`build.rs`, `docs_check.rs`). Status: Phases 1 and 2 are implemented; Phases 3 to 5 remain; Phase 6 waits on a user decision. Resume at Phase 3.
+Build plan for a structural refactor of Sandbox-mio with no behaviour change: the Rust backend's module dependency graph (`src-tauri/src/`), the frontend component layout (`src/lib/`, `src/routes/`), a typed IPC layer, the oversized backend files, and the root build tool (`build.rs`, `docs_check.rs`). Status: Phases 1 to 3 are implemented; Phases 4 and 5 remain; Phase 6 waits on a user decision. Resume at Phase 4.
 
 ## How Each Phase Is Run
 
@@ -44,13 +44,20 @@ Commit `60d6b0f`. `src/lib/workspace/` no longer imports the Manage dashboard's 
 - `src/lib/registry.svelte.ts` (the mise registry cache) stays at the `src/lib/` root because the `AGENTS.md` files cite it as the reference store pattern; moving it into `src/lib/packages/` is optional later work.
 - The root `AGENTS.md` lost its stale `onboarding-story/` row, and its mirrored-values comment example now cites `DEFAULT_LLAMA_CTX_SIZE` (`src-tauri/src/inference/llama.rs` ↔ `src/lib/agents/pi.ts`).
 
-## Remaining: Phase 3 — Typed IPC Layer `src/lib/api/`
+## Implemented: Phase 3 — Typed IPC Layer `src/lib/api/`
 
-- **Problem:** the frontend calls 104 registered commands (`tauri::generate_handler!` in `src-tauri/src/commands/mod.rs`) by string through `invoke()` from about 47 files, 18 of them `.svelte` components. The same command is invoked from several places (`get_settings` from 8 files, `inference_status` from 7, `set_settings` and `destroy_sandbox` from 5). About 139 exported TypeScript types under `src/lib/` mirror Rust types by hand.
-- **Scope:** add `src/lib/api/` with one module per command domain file in `src-tauri/src/commands/` (`sandbox`, `deploy`, `panes`, `agent_chat`, `inference`, `machine`, `agents`, `image`, `credentials`, `packages`, `hosts`, `ssh`, `app`, `network`, `proxy`, `net_policy`, `terminal`, `mockctl`). Each module exports typed async functions wrapping `invoke()`, with argument and result types next to them. Replace every `invoke()` call in `src/` with an import from `src/lib/api/`. Keep `parseError()` (`src/lib/errors.ts`) at the call sites that branch on `kind` or display `message`; the wrappers only rethrow.
-- **Out of scope:** generated bindings. tauri-specta (still a release candidate for Tauri 2) could later generate `src/lib/api/` types from the Rust side and end the hand-mirroring and the `AppErrorKind` drift; adopting tauri-specta is a user decision, not part of Phase 3.
-- **Update:** `src/AGENTS.md` (a new "IPC" section stating that components never call `invoke()` directly), the root `AGENTS.md` Error Handling section and the "Adding a Tauri Command" steps in `src-tauri/AGENTS.md` (add the wrapper to `src/lib/api/`).
-- **Done when:** `grep -rn "invoke(" src --include=*.ts --include=*.svelte` matches only `src/lib/api/` and `src/lib/errors.ts`; `pnpm check` and `build.exe e2e light` pass.
+Replaces every `invoke()` call in `src/` with a typed wrapper. 96 of the 104 registered commands are wrapped, in 17 modules, one per command domain file in `src-tauri/src/commands/`; 154 call sites in 47 files were migrated.
+
+- `src/lib/api/` holds `sandbox`, `deploy`, `panes`, `agent-chat`, `terminal`, `inference`, `machine`, `agents`, `image`, `credentials`, `packages`, `hosts`, `ssh`, `app`, `network`, `proxy` and `net-policy`. Each wrapper passes the command's argument names through unchanged and only rethrows; `parseError()` stays at the call sites that branch on `kind` or show `message`.
+- Not wrapped because the frontend never calls them: the three `mockctl` commands (the e2e harness reaches them through its own browser-side `invoke`), `add_sandbox_host`, `prepare_sandbox_host`, `provision_sandbox_host`, `switch_app` and `terminal_detach`. A new caller adds its wrapper then.
+- Result and argument types that already lived in a feature's `types.ts` or store are imported by the wrapper module, not copied. Types that were declared inside a component or page moved into the wrapper module: `CredentialManifest` and `GithubSandboxStatus` (with its outcome type) to `api/credentials.ts`, `TerminalEvent` to `api/terminal.ts`, `SshAccess` to `api/ssh.ts`. `WorkspaceState` is now exported from `src/lib/workspace/state.svelte.ts`.
+- `AppSettings` is one full type in `api/app.ts`, mirroring the Rust struct; the three partial local copies (settings page, onboarding store, learning store) and the untyped `get_settings` reads are gone.
+- Dynamic command names became functions: `AppDescriptor.command` (a command string) is now `open`, a wrapper from `api/panes.ts`; the terminal view's input and resize sends are queued as thunks; the sync toggle picks `enableSync` or `disableSync`.
+- `src/lib/ssh.ts` and the thin `exposePort`/`unexposePort` and `providerCapabilities` pass-throughs were deleted in favour of `api/ssh.ts`, `api/network.ts` and `api/image.ts`. Where a wrapper's name collides with an existing store function (`startSandbox`, `closePane`, `downloadModel`, `installPackage`), the call site imports the wrapper under a `...Command` alias.
+- Event listeners (`listen`) stay in their stores; only `listen_events` and the channel-carrying commands are wrapped, with `Channel<T>` parameters typed per command.
+- Verify the done-when with `grep -rnE "invoke(<|\()" src --include=*.ts --include=*.svelte`, which must match only `src/lib/api/` and the comment in `src/lib/errors.ts`. The earlier form of the grep missed the generic `invoke<T>(` calls.
+- Out of scope, still a user decision: generated bindings. tauri-specta (still a release candidate for Tauri 2) could later generate `src/lib/api/` from the Rust side and end the hand-mirroring and the `AppErrorKind` drift.
+- `src/AGENTS.md` gained an IPC section, and the Error Handling section of the root `AGENTS.md` and the "Adding a Tauri Command" steps in `src-tauri/AGENTS.md` name the wrapper step.
 
 ## Remaining: Phase 4 — Split Oversized Backend Files
 

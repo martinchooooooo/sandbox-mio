@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { openAgentChat } from "$lib/api/panes";
 import { toast } from "svelte-sonner";
 import { parseError } from "$lib/errors";
 import { completeOnboarding } from "$lib/settings/onboarding.svelte";
@@ -50,7 +50,7 @@ export async function startHandoff(): Promise<void> {
         }
         if (workspacePath && piReady) {
             // The sandbox is already open, so a chat that does not open is a toast, not a handoff failure.
-            await invoke("open_agent_chat", { name: FIRST_SANDBOX, workspacePath }).catch((e) => {
+            await openAgentChat(FIRST_SANDBOX, workspacePath).catch((e) => {
                 toast.error(`${FIRST_SANDBOX}: ${parseError(e).message}`); // TODO(i18n)
             });
         }

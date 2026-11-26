@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { listPackages } from "$lib/api/packages";
 import { untrack } from "svelte";
 
 // Module-scoped per-sandbox cache to avoid drifting independent copies across components.
@@ -12,7 +12,7 @@ export function packagesFor(sandboxName: string): string[] {
 
 /** Refetch `sandboxName`'s package list from Rust and update the shared cache. */
 export async function refreshPackages(sandboxName: string, workspacePath: string): Promise<void> {
-    packagesBySandbox[sandboxName] = await invoke<string[]>("list_packages", { workspacePath });
+    packagesBySandbox[sandboxName] = await listPackages(workspacePath);
 }
 
 /** Fetch `sandboxName`'s packages if not already cached or loading; de-dupes concurrent callers

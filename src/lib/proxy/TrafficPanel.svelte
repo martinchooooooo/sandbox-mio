@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { invoke } from "@tauri-apps/api/core";
+    import { restartProxy } from "$lib/api/proxy";
     import Button from "$lib/components/ui/button/button.svelte";
     import { parseError } from "$lib/errors";
     import { ensureTrafficState, flowsFor, unwatchFlows, watchFlows, type FlowEntry } from "$lib/proxy/traffic.svelte";
@@ -73,7 +73,7 @@
         restarting = true;
         panelError = null;
         try {
-            await invoke("restart_proxy", { name: sandboxName });
+            await restartProxy(sandboxName);
         } catch (e) {
             panelError = parseError(e).message;
         } finally {

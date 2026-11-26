@@ -1,12 +1,12 @@
 <script lang="ts">
-    import { invoke } from "@tauri-apps/api/core";
+    import { applySandboxPolicy, discardNetPolicyProposal, netPolicyState } from "$lib/api/net-policy";
     import Button from "$lib/components/ui/button/button.svelte";
     import { parseError } from "$lib/errors";
     import { Switch } from "$lib/components/ui/switch";
     import PencilIcon from "@lucide/svelte/icons/pencil";
     import { m } from "$lib/paraglide/messages.js";
     import NetPolicyProposalDialog from "./NetPolicyProposalDialog.svelte";
-    import type { ApplyReport, NetPolicyState, NetRule, NetPolicy, Proposal, SecretBinding, UnstampedBinding } from "./net-policy";
+    import type { ApplyReport, NetRule, NetPolicy, Proposal, SecretBinding, UnstampedBinding } from "./net-policy";
 
     let { sandboxName }: { sandboxName: string } = $props();
 
@@ -53,7 +53,7 @@
     async function refresh() {
         lastRefresh = Date.now();
         try {
-            const state = await invoke<NetPolicyState>("net_policy_state", { name: sandboxName });
+            const state = await netPolicyState(sandboxName);
             policy = state.accepted;
             baseRevision = state.revision;
             unstamped = state.unstamped;
@@ -77,7 +77,7 @@
         busy = true;
         editorError = null;
         try {
-            report = await invoke<ApplyReport>("apply_sandbox_policy", {
+            report = await applySandboxPolicy({
                 name: sandboxName,
                 policy: $state.snapshot(policy),
                 baseRevision,
@@ -94,7 +94,7 @@
         busy = true;
         editorError = null;
         try {
-            await invoke("discard_net_policy_proposal", { name: sandboxName });
+            await discardNetPolicyProposal(sandboxName);
             await refresh();
         } catch (e) {
             editorError = parseError(e).message;
@@ -177,7 +177,7 @@
             mutate(edit);
             // The sidecar reads values only at an apply
             // (docs/features/podman-egress-boundary/02_dev.md, Resolved Decision 15).
-            report = await invoke<ApplyReport>("apply_sandbox_policy", {
+            report = await applySandboxPolicy({
                 name: sandboxName,
                 policy: $state.snapshot(policy),
                 baseRevision,

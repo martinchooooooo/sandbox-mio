@@ -1,12 +1,11 @@
 <script lang="ts">
-    import { Channel, invoke } from "@tauri-apps/api/core";
+    import { Channel } from "@tauri-apps/api/core";
+    import { terminalAttach, terminalInput, terminalResize, type TerminalEvent } from "$lib/api/terminal";
     import { Button } from "$lib/components/ui/button/index.js";
     import { Spinner } from "$lib/components/ui/spinner/index.js";
     import { parseError } from "$lib/errors";
     import WtermRenderer from "./WtermRenderer.svelte";
 
-    /** Mirrors Rust `TerminalEvent` in `src-tauri/src/terminal/types.rs`. */
-    type TerminalEvent = { type: "exited"; reason: string; exitStatus: number | null };
     type Status = "loading" | "connecting" | "attached" | "ended" | "failed";
 
     let { sandbox, active }: { sandbox: string; active: boolean } = $props();
@@ -41,7 +40,7 @@
         };
         const { cols, rows } = size;
         try {
-            await invoke("terminal_attach", { name: sandbox, cols, rows, onOutput: output, onEvent: events });
+            await terminalAttach(sandbox, cols, rows, output, events);
             if (current !== output) return;
             sent = { cols, rows };
             status = "attached";
@@ -62,9 +61,9 @@
     let chain: Promise<unknown> = Promise.resolve();
     let queuedInput = "";
 
-    function enqueue(command: string, args: Record<string, unknown>) {
+    function enqueue(send: () => Promise<void>) {
         chain = chain
-            .then(() => invoke(command, { name: sandbox, ...args }))
+            .then(send)
             .catch((e) => console.error(parseError(e).message));
     }
 
@@ -79,7 +78,7 @@
             .then(() => {
                 const batch = queuedInput;
                 queuedInput = "";
-                return invoke("terminal_input", { name: sandbox, data: batch });
+                return terminalInput(sandbox, batch);
             })
             .catch((e) => console.error(parseError(e).message));
     }
@@ -93,7 +92,8 @@
             if (!active || status !== "attached") return;
             if (size.cols === sent.cols && size.rows === sent.rows) return;
             sent = { ...size };
-            enqueue("terminal_resize", { cols: size.cols, rows: size.rows });
+            const { cols, rows } = sent;
+            enqueue(() => terminalResize(sandbox, cols, rows));
         });
     }
 

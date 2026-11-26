@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { providerCapabilities } from "$lib/api/image";
 import { m } from "$lib/paraglide/messages.js";
 
 /** Which engine runs a sandbox (mirrors Rust `domain::types::ProviderId`). */
@@ -24,10 +24,6 @@ const LABELS: Record<ProviderId, () => string> = {
 
 export function providerLabel(provider: ProviderId): string {
     return LABELS[provider]();
-}
-
-export function providerCapabilities(provider: ProviderId): Promise<ProviderCapabilities> {
-    return invoke<ProviderCapabilities>("provider_capabilities", { provider });
 }
 
 /** Capabilities for every provider at once, for a view that renders sandboxes of both. */

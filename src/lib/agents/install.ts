@@ -1,8 +1,9 @@
-import { invoke, Channel } from "@tauri-apps/api/core";
+import { Channel } from "@tauri-apps/api/core";
+import { installAgent } from "$lib/api/agents";
+import { inferenceStatus } from "$lib/api/inference";
 import { onboardingSeed } from "./catalogue";
 import { provisionAgent } from "./provision";
 import type { AgentDescriptor, AgentInstallEvent } from "./types";
-import type { InferenceStatus } from "$lib/models/types";
 
 /** Progress notes of an install, in order: backend events plus a marker before provisioning. */
 export type InstallProgress =
@@ -24,7 +25,7 @@ export async function installAgentInSandbox(
     const npmStep = descriptor.postInstallSteps.find((s) => s.kind === "npm-postinstall");
     const channel = new Channel<AgentInstallEvent>();
     channel.onmessage = (event) => onProgress?.({ kind: "event", event });
-    await invoke("install_agent", {
+    await installAgent({
         name: sandboxName,
         packages: descriptor.misePackages,
         postinstallNpm: npmStep ? [npmStep.package, npmStep.nodeVersion] : null,
@@ -36,7 +37,7 @@ export async function installAgentInSandbox(
     onProgress?.({ kind: "provisioning" });
     let runningModelId: string | null = null;
     try {
-        const status = await invoke<InferenceStatus>("inference_status");
+        const status = await inferenceStatus();
         runningModelId = status.running ? status.modelId : null;
     } catch {
         runningModelId = null;

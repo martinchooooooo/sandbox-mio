@@ -1,7 +1,7 @@
 <script lang="ts">
     import Button from "$lib/components/ui/button/button.svelte";
     import { Text } from "$lib/components/ui/text";
-    import { invoke } from "@tauri-apps/api/core";
+    import { baseImageVersion } from "$lib/api/image";
     import { onMount } from "svelte";
     import { parseError } from "$lib/errors";
     import { m } from "$lib/paraglide/messages.js";
@@ -55,7 +55,7 @@
         }
         if (podmanUnavailable()) return;
         ensureSandboxRemoteState();
-        invoke<number>("base_image_version").then((v) => (currentImageVersion = v)).catch(() => {});
+        baseImageVersion().then((v) => (currentImageVersion = v)).catch(() => {});
     });
 
     async function startPodman() {

@@ -1,4 +1,10 @@
-import { invoke } from "@tauri-apps/api/core";
+import {
+    closePane as closePaneCommand,
+    closeWorkspace,
+    hideActivePane,
+    switchPane,
+    watchWorkspacePorts,
+} from "$lib/api/panes";
 import { goto } from "$app/navigation";
 import {
     clearActiveSandbox,
@@ -26,7 +32,7 @@ export async function showPage(href: string): Promise<void> {
     await goto(href);
     clearActiveSandbox();
     try {
-        await invoke("hide_active_pane");
+        await hideActivePane();
     } catch (e) {
         console.error(e);
     }
@@ -49,10 +55,10 @@ export async function openSandbox(
         markManageView(name);
     }
     await Promise.all([
-        invoke("watch_workspace_ports", { name, workspacePath }),
+        watchWorkspacePorts(name, workspacePath),
         target
-            ? invoke("switch_pane", { name, kind: target.kind })
-            : invoke("hide_active_pane"),
+            ? switchPane(name, target.kind)
+            : hideActivePane(),
     ]);
 }
 
@@ -61,7 +67,7 @@ export async function showManage(name: string): Promise<void> {
     setActiveSandbox(name);
     markManageView(name);
     try {
-        await invoke("hide_active_pane");
+        await hideActivePane();
     } catch (e) {
         console.error(e);
     }
@@ -70,7 +76,7 @@ export async function showManage(name: string): Promise<void> {
 export async function activatePane(pane: AppPane): Promise<void> {
     setActiveSandbox(pane.sandbox);
     try {
-        await invoke("switch_pane", { name: pane.sandbox, kind: pane.kind });
+        await switchPane(pane.sandbox, pane.kind);
     } catch (e) {
         console.error(e);
     }
@@ -83,12 +89,12 @@ export async function activatePane(pane: AppPane): Promise<void> {
 export async function launchApp(sandbox: string, workspacePath: string, app: AppDescriptor): Promise<void> {
     const pane = panesOf(sandbox).find((p) => p.kind === app.kind);
     if (pane) return activatePane(pane);
-    await invoke(app.command, { name: sandbox, workspacePath });
+    await app.open(sandbox, workspacePath);
 }
 
 export async function closePane(pane: AppPane): Promise<void> {
     try {
-        await invoke("close_pane", { name: pane.sandbox, kind: pane.kind });
+        await closePaneCommand(pane.sandbox, pane.kind);
     } catch (e) {
         console.error(e);
     }
@@ -100,7 +106,7 @@ export async function closePane(pane: AppPane): Promise<void> {
  */
 export async function closeSandbox(name: string): Promise<void> {
     try {
-        await invoke("close_workspace", { name });
+        await closeWorkspace(name);
     } catch (e) {
         console.error(e);
     }

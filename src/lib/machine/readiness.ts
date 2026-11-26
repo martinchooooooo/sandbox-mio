@@ -1,4 +1,9 @@
-import { invoke, Channel } from "@tauri-apps/api/core";
+import { Channel } from "@tauri-apps/api/core";
+import {
+    machineReadiness,
+    machineSetupSteps,
+    prepareMachine as prepareMachineCommand,
+} from "$lib/api/machine";
 import { parseError } from "$lib/errors";
 import type { MachineReadiness, MachineSetupEvent, ProviderId, SetupStep } from "./types";
 
@@ -7,14 +12,14 @@ import type { MachineReadiness, MachineSetupEvent, ProviderId, SetupStep } from 
  * job keep using unchanged. */
 export async function fetchMachineSetupSteps(provider: ProviderId): Promise<SetupStep[]> {
     try {
-        return await invoke<SetupStep[]>("machine_setup_steps", { provider });
+        return await machineSetupSteps(provider);
     } catch {
         return [];
     }
 }
 
 export async function fetchMachineReadiness(provider: ProviderId): Promise<MachineReadiness> {
-    return invoke<MachineReadiness>("machine_readiness", { provider });
+    return machineReadiness(provider);
 }
 
 export interface PrepareMachineResult {
@@ -35,7 +40,7 @@ export async function prepareMachine(
         onEvent(e);
     };
     try {
-        await invoke("prepare_machine", { provider, onProgress: channel });
+        await prepareMachineCommand(provider, channel);
         return { ok: true, message: "", rebootRequired };
     } catch (e) {
         return { ok: false, message: parseError(e).message, rebootRequired };

@@ -1,4 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
+import { listPackages } from "$lib/api/packages";
+import { listSandboxes } from "$lib/api/sandbox";
 import type { Project } from "$lib/sandbox";
 import { AGENTS, miseKey } from "./catalogue";
 import { provisionAgent } from "./provision";
@@ -11,7 +12,7 @@ export async function reprovisionInstalledAgents(runningModelId: string | null):
 
     let sandboxes: Project[];
     try {
-        sandboxes = await invoke<Project[]>("list_sandboxes");
+        sandboxes = await listSandboxes();
     } catch {
         return;
     }
@@ -20,7 +21,7 @@ export async function reprovisionInstalledAgents(runningModelId: string | null):
         sandboxes.map(async (sandbox) => {
             let packages: string[];
             try {
-                packages = await invoke<string[]>("list_packages", { workspacePath: sandbox.workspace_path });
+                packages = await listPackages(sandbox.workspace_path);
             } catch {
                 return;
             }

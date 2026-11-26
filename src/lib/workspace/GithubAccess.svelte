@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { invoke } from "@tauri-apps/api/core";
+    import { githubSandboxStatus, setGithubSandboxAccess, type GithubSandboxStatus } from "$lib/api/credentials";
     import { listen } from "@tauri-apps/api/event";
     import { untrack } from "svelte";
     import { Switch } from "$lib/components/ui/switch";
@@ -8,23 +8,9 @@
     import { m } from "$lib/paraglide/messages.js";
     import { showPage } from "$lib/workspace/navigation.svelte";
 
-    // Mirrors `ApplyOutcome` and `GithubSandboxStatus` in src-tauri/src/credentials/github.rs and
-    // src-tauri/src/services/github_access.rs.
-    type Outcome =
-        | { kind: "applied"; capturedAtMs: number }
-        | { kind: "needsImage" }
-        | { kind: "failed"; reason: string; capturedAtMs: number };
-    interface GithubStatus {
-        optedOut: boolean;
-        outcome: Outcome | null;
-        credentialCapturedAtMs: number | null;
-        accountLogin: string | null;
-        deployed: boolean;
-    }
-
     let { sandboxName }: { sandboxName: string } = $props();
 
-    let status = $state<GithubStatus | null>(null);
+    let status = $state<GithubSandboxStatus | null>(null);
     let busy = $state(false);
     // Remounts the switch after every call so its thumb always shows `status`, even when the call
     // failed or changed nothing and `status` kept the same value.
@@ -50,7 +36,7 @@
 
     async function refresh() {
         try {
-            status = await invoke<GithubStatus>("github_sandbox_status", { name: sandboxName });
+            status = await githubSandboxStatus(sandboxName);
             error = null;
         } catch (e) {
             error = parseError(e).message;
@@ -60,7 +46,7 @@
     async function setAccess(enabled: boolean) {
         busy = true;
         try {
-            status = await invoke<GithubStatus>("set_github_sandbox_access", { name: sandboxName, enabled });
+            status = await setGithubSandboxAccess(sandboxName, enabled);
             error = null;
         } catch (e) {
             error = parseError(e).message;

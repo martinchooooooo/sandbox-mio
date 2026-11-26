@@ -1,6 +1,7 @@
 <script lang="ts">
     import { onMount, onDestroy } from "svelte";
-    import { invoke } from "@tauri-apps/api/core";
+    import { cancelAgentAuth, sendAgentAuthInput } from "$lib/api/agents";
+    import { seedAgentOnboarding } from "$lib/api/credentials";
     import { getCurrentWindow } from "@tauri-apps/api/window";
     import { AGENTS, onboardingSeed } from "$lib/agents/catalogue";
     import { m } from "$lib/paraglide/messages.js";
@@ -41,7 +42,7 @@
         if (authExitCode() === 0) {
             const seed = agent ? onboardingSeed(agent) : null;
             if (seed && sandbox) {
-                invoke("seed_agent_onboarding", { name: sandbox, onboarding: seed }).catch(() => {});
+                seedAgentOnboarding(sandbox, seed).catch(() => {});
             }
             setTimeout(() => getCurrentWindow().close(), 2000);
         }
@@ -52,7 +53,7 @@
     onDestroy(() => {
         const sessionId = authSessionId();
         if (sessionId && authPhase() !== "exited") {
-            invoke("cancel_agent_auth", { sessionId }).catch(() => {});
+            cancelAgentAuth(sessionId).catch(() => {});
         }
     });
 
@@ -61,14 +62,14 @@
         if (authPhase() === "exited" || !sessionId) {
             getCurrentWindow().close();
         } else {
-            invoke("cancel_agent_auth", { sessionId }).catch(() => {});
+            cancelAgentAuth(sessionId).catch(() => {});
         }
     }
 
     function submitCode(code: string) {
         const sessionId = authSessionId();
         if (!sessionId) return;
-        invoke("send_agent_auth_input", { sessionId, input: code }).catch(() => {});
+        sendAgentAuthInput(sessionId, code).catch(() => {});
     }
 </script>
 

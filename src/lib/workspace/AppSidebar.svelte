@@ -1,6 +1,7 @@
 <script lang="ts">
     import { onMount } from "svelte";
-    import { invoke } from "@tauri-apps/api/core";
+    import { openSandboxFolder } from "$lib/api/sandbox";
+    import { setPanelCollapsed } from "$lib/api/panes";
     import { page } from "$app/state";
     import { toast } from "svelte-sonner";
     import { HugeiconsIcon } from "@hugeicons/svelte";
@@ -60,7 +61,7 @@
 
     async function openFolder(sandbox: string) {
         try {
-            await invoke("open_sandbox_folder", { name: sandbox });
+            await openSandboxFolder(sandbox);
         } catch (e) {
             toast.error(parseError(e).message);
         }
@@ -82,7 +83,7 @@
         try {
             // Rust re-bounds the pane webviews, then echoes workspace://state; the store keeps the
             // rail state authoritative.
-            await invoke("set_panel_collapsed", { collapsed: !collapsed });
+            await setPanelCollapsed(!collapsed);
         } catch (e) {
             console.error(e);
         }

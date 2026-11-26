@@ -6,7 +6,8 @@
     import { open } from "@tauri-apps/plugin-dialog";
     import { m } from "$lib/paraglide/messages.js";
     import { createSandbox } from "$lib/sandbox/lifecycle.svelte";
-    import { providerCapabilities, type ProviderCapabilities } from "$lib/providers";
+    import { providerCapabilities } from "$lib/api/image";
+    import type { ProviderCapabilities } from "$lib/providers";
     import { allAgentApiHosts } from "$lib/agents/catalogue";
     import { checkPodman, podmanUnavailable } from "$lib/podman/setup.svelte";
     import { createFocusRequested, takeCreateFocus } from "$lib/workspace/navigation.svelte";

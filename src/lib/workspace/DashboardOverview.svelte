@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { invoke } from "@tauri-apps/api/core";
+    import { prewarmAgentWeb } from "$lib/api/panes";
     import { HugeiconsIcon } from "@hugeicons/svelte";
     import { LoaderPinwheelIcon } from "@hugeicons/core-free-icons";
     import Button from "$lib/components/ui/button/button.svelte";
@@ -46,7 +46,7 @@
     $effect(() => {
         if (running && hasAgent) {
             // Fire and forget: the backend logs a failed pre-warm.
-            invoke("prewarm_agent_web", { name: sandboxName }).catch(() => {});
+            prewarmAgentWeb(sandboxName).catch(() => {});
         }
     });
     // An open pane stays usable so it can still be switched to and closed once its agent is gone.

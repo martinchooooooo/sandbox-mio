@@ -1,4 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
+import { sandboxDeployments } from "$lib/api/deploy";
+import { listSandboxHosts } from "$lib/api/hosts";
+import { listSandboxes } from "$lib/api/sandbox";
 import { checkPodman, podmanUnavailable } from "$lib/podman/setup.svelte";
 import { parseError } from "$lib/errors";
 import type { Project, Deployment } from "$lib/sandbox";
@@ -22,7 +24,7 @@ let pollId: ReturnType<typeof setInterval> | undefined;
 
 async function loadProjects() {
     try {
-        projects = await invoke<Project[]>("list_sandboxes");
+        projects = await listSandboxes();
         loadError = "";
     } catch (e) {
         loadError = parseError(e).message;
@@ -31,7 +33,7 @@ async function loadProjects() {
 
 async function loadDeployments() {
     try {
-        const list = await invoke<Deployment[]>("sandbox_deployments");
+        const list = await sandboxDeployments();
         deployments = Object.fromEntries(list.map((d) => [d.name, d]));
     } catch (e) {
         loadError = parseError(e).message;
@@ -40,7 +42,7 @@ async function loadDeployments() {
 
 async function loadHosts() {
     try {
-        hosts = await invoke<string[]>("list_sandbox_hosts");
+        hosts = await listSandboxHosts();
     } catch (e) {
         loadError = parseError(e).message;
     }

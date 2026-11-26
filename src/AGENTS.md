@@ -1,6 +1,6 @@
 # Frontend Orientation
 
-The `src/` tree is a SvelteKit app (Svelte 5 runes, static adapter, Tailwind 4) rendered inside the Tauri webview. All backend access goes through `invoke()` from `@tauri-apps/api/core` calling commands listed in `src-tauri/src/commands/mod.rs`; there is no HTTP API. UI conventions (shadcn-svelte components, Paraglide i18n, error handling) are specified in the root `AGENTS.md` — read that first; only frontend-specific structure is documented here.
+The `src/` tree is a SvelteKit app (Svelte 5 runes, static adapter, Tailwind 4) rendered inside the Tauri webview. All backend access goes through the typed wrappers in `src/lib/api/`, which call the commands listed in `src-tauri/src/commands/mod.rs`; there is no HTTP API. UI conventions (shadcn-svelte components, Paraglide i18n, error handling) are specified in the root `AGENTS.md` — read that first; only frontend-specific structure is documented here.
 
 ## Route Map
 
@@ -13,6 +13,15 @@ The `src/` tree is a SvelteKit app (Svelte 5 runes, static adapter, Tailwind 4) 
 - `src/lib/story-stage/` — not a route: the whiteboard animation engine used by the onboarding book. See `src/lib/story-stage/AGENTS.md`.
 - Manage dashboard panels (mounted by `src/lib/workspace/WorkspaceDashboard.svelte` and `DashboardOverview.svelte`) live in the `src/lib/` folder of what they manage: `agents/`, `packages/` (mise tools, with their per-sandbox store), `network/` (ports and SSH access), `proxy/`, `net-policy/` (the egress policy editor, its review dialog and the policy types) and `remote/`. `StatusRow.svelte`, the busy/message/error line shared by Home cards, the title bar and the dashboard, is in `src/lib/sandbox/`.
 - `src/routes/+layout.svelte` — mounts the single `<Toaster />`, the app sidebar (which holds the activity center), and the content area: the sandbox view when a sandbox is in view, otherwise the routed page.
+
+## IPC
+
+Components, stores and helpers never call `invoke()` from `@tauri-apps/api/core` directly. Every backend command the frontend calls has a typed async wrapper in `src/lib/api/`, one module per command domain file in `src-tauri/src/commands/`, and call sites import the wrapper.
+
+- A wrapper passes its arguments through under the exact names the Rust command declares (Tauri converts to camelCase) and only rethrows: error handling stays at the call site through `parseError()`.
+- Result and argument types sit beside the wrapper. A type that already lives in a feature's `types.ts` or store is imported, not copied; a type declared inside a component moves into the wrapper module.
+- Channel parameters are typed per command (`Channel<T>`); creating the channel and its `onmessage` handler stays at the call site. Event subscriptions (`listen()`) are not wrapped; they stay in the owning store.
+- A command with no frontend caller has no wrapper yet; add the wrapper with the first caller. A wrapper whose name collides with a store function is imported under a `...Command` alias.
 
 ## Module-Scoped Rune Stores
 
@@ -33,7 +42,7 @@ Event flow is one-directional: Rust emits (`activity://task-updated`, `workspace
 ## Shared Non-Store Modules
 
 - `src/lib/sandbox.ts` — `Project`/`Deployment` types, `translateStatus()` (backend status string → translation key), `syncColor()` (status dot idiom).
-- `src/lib/errors.ts` — `parseError()` and `AppErrorKind`; mandatory in every `invoke()` catch block per the root `AGENTS.md`.
+- `src/lib/errors.ts` — `parseError()` and `AppErrorKind`; mandatory in every catch block around a `src/lib/api/` call per the root `AGENTS.md`.
 - `src/lib/agents/` and `src/lib/models/` — static catalogues plus per-agent provisioning descriptors; extend the catalogue file rather than branching on names in components.
 - `src/lib/actions.svelte.ts`, `src/lib/utils.ts`, `src/lib/portal.ts` — Svelte actions, `cn()` class merging, portal helper.
 - `src/lib/motion.ts` — Svelte transition presets (`rise`, `pop`) for the motion system below.
@@ -55,7 +64,7 @@ Motion is applied at the shell and primitive level, so most new UI animates with
 | Shared state resets when navigating between routes | `$state` declared inside a component is destroyed by the router | Move state into a module-scoped `.svelte.ts` store under `src/lib/` following `src/lib/registry.svelte.ts` |
 | Duplicate toast/status updates for one backend event | A component calls `listen()` for a stream an existing store already subscribes to | Read the store accessor (`src/lib/activity/activity.svelte.ts` or `src/lib/workspace/state.svelte.ts`) instead of adding a `listen()` call |
 | Dynamic key lookup on the Paraglide `m` object returns undefined | Paraglide generates one function per key; `m` cannot be indexed with a runtime string | Build an explicit key→function map, as in `kindLabels` in `src/lib/activity/activity.svelte.ts` and `translateStatus()` in `src/lib/sandbox.ts` |
-| Error dialog shows `[object Object]` or raw JSON | `invoke()` rejection stringified instead of parsed | Use `parseError(e).message` from `src/lib/errors.ts`; branch on `parseError(e).kind` for variant logic |
+| Error dialog shows `[object Object]` or raw JSON | A wrapper rejection stringified instead of parsed | Use `parseError(e).message` from `src/lib/errors.ts`; branch on `parseError(e).kind` for variant logic |
 | A translated string silently shows English text in non-English locales | A translation key was added to `messages/en.json` but not mirrored to the other locale files, so Paraglide falls back to the base locale | Mirror every new key across all files in `messages/`, starting from `messages/en.json` |
 | An e2e spec reports a freshly shown element as not displayed | WebDriver treats `opacity: 0` (on the element or any ancestor) as hidden, so a fade starting from 0 hides it mid-animation | Start fades at 0.01, as the keyframes in `src/app.css` and `MIN_OPACITY` in `src/lib/motion.ts` do; never write a custom fade from 0 |
 | A `position: fixed` child is offset or clipped inside an animated container | A transform left on an ancestor turns it into the containing block | Animate with the `translate`/`scale` properties and `backwards` fill, as the `src/app.css` keyframes do; never `forwards`/`both` |

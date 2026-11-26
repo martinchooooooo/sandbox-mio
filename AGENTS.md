@@ -152,9 +152,9 @@ When adding a new `AppError` variant, add its arm to the `kind()` method or it w
 
 - `AppError` interface — `{ kind: AppErrorKind, message: string }`
 - `AppErrorKind` union — must stay in sync with Rust `kind()` arms
-- `parseError(e)` — parse any `invoke()` rejection into `AppError`; falls back gracefully for non-Tauri throws
+- `parseError(e)` — parse any IPC rejection into `AppError`; falls back gracefully for non-Tauri throws
 
-All `invoke()` catch blocks use `parseError(e).message` for display. Branch on `err.kind` for variant-specific logic (e.g. `"UnsyncedChanges"` triggers a confirmation dialog before force-destroy). Never use `String(e)` or substring matching on error messages.
+The frontend reaches commands only through the typed wrappers in `src/lib/api/` (see the IPC section of `src/AGENTS.md`); a wrapper rethrows the raw rejection, so every catch block around a wrapper call uses `parseError(e).message` for display. Branch on `err.kind` for variant-specific logic (e.g. `"UnsyncedChanges"` triggers a confirmation dialog before force-destroy). Never use `String(e)` or substring matching on error messages.
 
 # Code Comments
 
@@ -196,7 +196,7 @@ Good — states the constraint the code can't show:
 
 | Gotcha | Cause | Fix |
 |---|---|---|
-| New Tauri command exists in Rust but `invoke()` rejects with "command not found" | Command function not added to the `tauri::generate_handler![]` inventory in `src-tauri/src/commands/mod.rs` | Add the command's `<domain>::<name>` path to `tauri::generate_handler![]` in `src-tauri/src/commands/mod.rs` |
+| New Tauri command exists in Rust but the frontend call rejects with "command not found" | Command function not added to the `tauri::generate_handler![]` inventory in `src-tauri/src/commands/mod.rs` | Add the command's `<domain>::<name>` path to `tauri::generate_handler![]` in `src-tauri/src/commands/mod.rs` |
 | New `AppError` variant does not compile | `kind()` in `src-tauri/src/error.rs` has an exhaustive match over variants | Add a `kind()` arm in `src-tauri/src/error.rs` and mirror the string in `AppErrorKind` in `src/lib/errors.ts` |
 | A status badge shows a raw English string like `up-to-date` in non-English locales | Backend emitted a status value with no `status_<value>` key | Add `status_<value>` to every file in `messages/` and an entry to the `map` in `translateStatus()` (`src/lib/sandbox.ts`) |
 | Containerfile change has no effect on new sandboxes | `ensure_base_image` short-circuits on `podman image exists`, so an unchanged image tag keeps the stale image | Bump `BASE_IMAGE_VERSION` in `src-tauri/src/provider/image.rs` whenever `src-tauri/resources/Containerfile` changes |

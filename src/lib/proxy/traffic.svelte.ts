@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { unwatchProxyFlows, watchProxyFlows } from "$lib/api/proxy";
 import { listen } from "@tauri-apps/api/event";
 
 // Module-scoped store; owns the single `proxy://flows-changed` subscription.
@@ -58,10 +58,10 @@ export async function ensureTrafficState(): Promise<void> {
 
 /** Starts or joins the backend poll task feeding `proxy://flows-changed`; each call is released by one `unwatchFlows`. */
 export async function watchFlows(sandbox: string): Promise<void> {
-    await invoke("watch_proxy_flows", { name: sandbox });
+    await watchProxyFlows(sandbox);
 }
 
 /** Releases one `watchFlows`; the backend stops polling with the last one, and the store keeps its rows. */
 export async function unwatchFlows(sandbox: string): Promise<void> {
-    await invoke("unwatch_proxy_flows", { name: sandbox });
+    await unwatchProxyFlows(sandbox);
 }

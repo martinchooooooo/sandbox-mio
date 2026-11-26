@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { workspaceState } from "$lib/api/panes";
 import { listen } from "@tauri-apps/api/event";
 
 // Module-scoped store; owns the single `workspace://state` subscription shared by the shell.
@@ -16,7 +16,7 @@ export type AppPane = {
 /** Mirrors Rust `Rect`: a logical, DPI-independent window rectangle. */
 export type Rect = { x: number; y: number; width: number; height: number };
 /** Mirrors Rust `WorkspaceState`; `collapsed` is the app sidebar's rail state. */
-type WorkspaceState = {
+export type WorkspaceState = {
     apps: AppPane[];
     active_app: string | null;
     collapsed: boolean;
@@ -130,7 +130,7 @@ export async function ensureWorkspaceState(): Promise<void> {
     started = true;
     try {
         await listen<WorkspaceState>("workspace://state", (e) => applyState(e.payload));
-        applyState(await invoke<WorkspaceState>("workspace_state"));
+        applyState(await workspaceState());
     } catch {
         started = false;
     }

@@ -80,13 +80,14 @@ Modules follow one layout: `types.rs` declares the public types/trait, `mod.rs` 
 2. Add the `pub` `#[tauri::command]` fn to the matching domain file under `src-tauri/src/commands/`, returning `Result<T, AppError>` — never `Result<T, String>`. If it needs more than two subsystems, put the orchestration in `src-tauri/src/services/` and give the command one service handle.
 3. Register its `<domain>::<name>` path in `tauri::generate_handler![]` in `src-tauri/src/commands/mod.rs`.
 4. New long-running work reports progress through `activity::TaskRegistry`, not ad-hoc events.
-5. Verify with `cargo check` in `src-tauri/`, then exercise via `./build e2e light` (repo root) if the mock covers the flow.
+5. Add the typed wrapper to the matching module under `src/lib/api/`, keeping the Rust argument names (camelCase) and declaring the result type; the frontend never calls `invoke()` directly (`src/AGENTS.md`, IPC section).
+6. Verify with `cargo check` in `src-tauri/`, then exercise via `./build e2e light` (repo root) if the mock covers the flow.
 
 ## Common Gotchas
 
 | Gotcha | Cause | Fix |
 |---|---|---|
-| `invoke()` rejects with "command not found" for a compiled command | Command fn missing from `generate_handler![]` in `src-tauri/src/commands/mod.rs` | Add the `<domain>::<name>` path to `generate_handler![]` in `src-tauri/src/commands/mod.rs` |
+| The frontend call rejects with "command not found" for a compiled command | Command fn missing from `generate_handler![]` in `src-tauri/src/commands/mod.rs` | Add the `<domain>::<name>` path to `generate_handler![]` in `src-tauri/src/commands/mod.rs` |
 | e2e `light` tier hangs or errors on a new command | New command shells out directly instead of going through a mocked trait, so `MIO_MOCK_BACKEND=1` has no effect on the command | Route the external call through one of the subsystem traits and implement the mock method |
 | `podman -v` rejects the workspace mount path | Podman does not expand `~` or `$HOME`, and rejects backslash Windows paths | Use `WORKSPACE_MOUNT` (`/root/work`) and `workspace_path()` in `src-tauri/src/domain/mod.rs`, which forward-slashes the host path |
 | Container base-image change silently ignored | `ensure_base_image` short-circuits on `podman image exists <tag>` | Bump `BASE_IMAGE_VERSION` in `src-tauri/src/provider/image.rs` together with any `src-tauri/resources/Containerfile` change |

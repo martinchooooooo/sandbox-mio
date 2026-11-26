@@ -1,7 +1,7 @@
 <script lang="ts">
     import "../app.css";
     import { onMount } from "svelte";
-    import { invoke } from "@tauri-apps/api/core";
+    import { inferenceStatus } from "$lib/api/inference";
     import { page } from "$app/state";
     import { toast } from "svelte-sonner";
     import { ModeWatcher } from "mode-watcher";
@@ -17,7 +17,6 @@
     import { reprovisionInstalledAgents } from "$lib/agents/reprovision";
     import { probeMachineSpecs } from "$lib/onboarding/setup.svelte";
     import { startMilestoneClock } from "$lib/onboarding/milestones";
-    import type { InferenceStatus } from "$lib/models/types";
     import { m } from "$lib/paraglide/messages.js";
     import type { Snippet } from "svelte";
 
@@ -68,7 +67,7 @@
     async function reprovisionAtStartup() {
         let runningModelId: string | null = null;
         try {
-            const status = await invoke<InferenceStatus>("inference_status");
+            const status = await inferenceStatus();
             runningModelId = status.running ? status.modelId : null;
         } catch {
             runningModelId = null;

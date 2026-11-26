@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { getSettings, logMilestone, setSettings } from "$lib/api/app";
 
 // Webview start; the fallback zero point when the persisted first-open time cannot be read.
 const webviewStart = Date.now();
@@ -15,17 +15,17 @@ export type Milestone =
     | "pi-installed";
 
 function log(name: Milestone, elapsedMs: number): void {
-    invoke("log_milestone", { name, elapsedMs }).catch(() => {});
+    logMilestone(name, elapsedMs).catch(() => {});
 }
 
 // The settings file keeps the first-open time, so a restart mid-onboarding does not reset the clock.
 function firstOpenTime(): Promise<number> {
     origin ??= (async () => {
         try {
-            const settings = await invoke<Record<string, unknown>>("get_settings");
+            const settings = await getSettings();
             if (typeof settings.firstOpenedAtMs === "number") return settings.firstOpenedAtMs;
             const now = Date.now();
-            await invoke("set_settings", { settings: { ...settings, firstOpenedAtMs: now } });
+            await setSettings({ ...settings, firstOpenedAtMs: now });
             seen.add("app-first-open");
             log("app-first-open", 0);
             return now;

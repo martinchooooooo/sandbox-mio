@@ -1,7 +1,9 @@
 <script lang="ts">
     import Button from "$lib/components/ui/button/button.svelte";
     import { Switch } from "$lib/components/ui/switch";
-    import { invoke } from "@tauri-apps/api/core";
+    import { deploySandbox, disableSync, enableSync, undeploySandbox } from "$lib/api/deploy";
+    import { netPolicyState } from "$lib/api/net-policy";
+    import { deploySecretCount } from "$lib/api/proxy";
     import { m } from "$lib/paraglide/messages.js";
     import type { createActionRunner } from "$lib/actions.svelte";
     import { translateStatus, syncColor } from "$lib/sandbox";
@@ -54,10 +56,10 @@
         if (!picking) return;
         secretCount = null;
         proposalPending = false;
-        invoke<number>("deploy_secret_count", { name: sandboxName })
+        deploySecretCount(sandboxName)
             .then((n) => (secretCount = n))
             .catch((e) => console.warn(parseError(e).message));
-        invoke<{ proposal: unknown | null; proposalError: string | null }>("net_policy_state", { name: sandboxName })
+        netPolicyState(sandboxName)
             .then((s) => (proposalPending = s.proposal !== null || s.proposalError !== null))
             .catch((e) => console.warn(parseError(e).message));
     });
@@ -66,7 +68,7 @@
         if (!chosenHost) return;
         if (await action.run(
             "deploy",
-            () => invoke("deploy_sandbox", { name: sandboxName, host: chosenHost }),
+            () => deploySandbox(sandboxName, chosenHost),
             { message: m.projects_status_deploying({ host: chosenHost }) }
         )) {
             picking = false;
@@ -77,7 +79,7 @@
     async function undeploy() {
         if (await action.run(
             "undeploy",
-            () => invoke("undeploy_sandbox", { name: sandboxName }),
+            () => undeploySandbox(sandboxName),
             { message: m.projects_status_undeploying() }
         )) {
             await refreshSandboxState();
@@ -88,7 +90,7 @@
         syncOn = on;
         const success = await action.run(
             "sync",
-            () => invoke(on ? "enable_sync" : "disable_sync", { name: sandboxName }),
+            () => (on ? enableSync(sandboxName) : disableSync(sandboxName)),
             { message: on ? m.projects_status_enabling_sync() : m.projects_status_disabling_sync() }
         );
         if (success) {

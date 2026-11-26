@@ -1,4 +1,6 @@
-import { Channel, invoke } from "@tauri-apps/api/core";
+import { Channel } from "@tauri-apps/api/core";
+import { listTasks } from "$lib/api/app";
+import { listenEvents } from "$lib/api/sandbox";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "svelte-sonner";
 
@@ -141,12 +143,12 @@ export async function ensureActivity(): Promise<void> {
         // 1. Subscribe first.
         await listen<Task>("activity://task-updated", (e) => fold(e.payload));
         // 2. Then hydrate from the registry snapshot.
-        const snapshot = await invoke<Task[]>("list_tasks");
+        const snapshot = await listTasks();
         for (const t of snapshot) fold(t);
         // 3. Start the container event stream (lifted from the removed EventLog.svelte).
         const ch = new Channel<Record<string, unknown>>();
         ch.onmessage = pushContainerEvent;
-        await invoke("listen_events", { onEvent: ch });
+        await listenEvents(ch);
     } catch {
         // Best-effort: a failed hydration must not crash the layout. The next mutation's live
         // event still folds in. Reset the guard so a later caller can retry.

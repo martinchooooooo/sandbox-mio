@@ -14,6 +14,6 @@ export interface SshAccess {
 }
 
 /** Rewrites the sandbox's alias block and returns its values. Never starts a stopped sandbox. */
-export async function sandboxSshAccess(name: string): Promise<SshAccess> {
+export function sandboxSshAccess(name: string): Promise<SshAccess> {
     return invoke<SshAccess>("sandbox_ssh_access", { name });
 }
