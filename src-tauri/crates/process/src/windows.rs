@@ -175,6 +175,105 @@ extern "system" {
     fn TerminateProcess(process: *mut std::ffi::c_void, exit_code: u32) -> i32;
 }
 
+/// Ties `child` to this app's lifetime: the OS kills it when the app process ends, however it ends.
+///
+/// For children the app stops explicitly on a graceful exit (`on_run_event` in
+/// `src-tauri/src/bootstrap.rs`) but that must not outlive a crash, a `Ctrl+C` in the launching
+/// terminal or a Task Manager kill — none of which run the exit handler, and `kill_on_drop` does not
+/// help there either, since no destructor runs. Backed by one process-wide job object with
+/// kill-on-close semantics, created on first use and never closed by this app: the job handle dies
+/// with the process, which is exactly the trigger. Jobs nest on Windows 8+, so this still works when
+/// the app was itself launched inside a job (`tauri dev`, a CI runner).
+///
+/// Not for children that are meant to outlive the app (the Mutagen daemon, the Podman machine).
+/// Children of `child` join the job too, so a binary that spawns a long-lived helper does not fit.
+/// Best effort: a failed job call leaves the child unbound, i.e. the previous behaviour, and returns
+/// `false`.
+#[cfg(windows)]
+pub fn bind_to_app_lifetime(child: &tokio::process::Child) -> bool {
+    use std::sync::OnceLock;
+
+    const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x2000;
+    const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS: u32 = 9;
+
+    static JOB: OnceLock<usize> = OnceLock::new();
+
+    let job = *JOB.get_or_init(|| unsafe {
+        let handle = CreateJobObjectW(std::ptr::null_mut(), std::ptr::null());
+        if handle.is_null() {
+            return 0;
+        }
+        let mut info: JobObjectExtendedLimitInformation = std::mem::zeroed();
+        info.basic.limit_flags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let ok = SetInformationJobObject(
+            handle,
+            JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS,
+            (&mut info as *mut JobObjectExtendedLimitInformation).cast(),
+            std::mem::size_of::<JobObjectExtendedLimitInformation>() as u32,
+        );
+        if ok == 0 {
+            CloseHandle(handle);
+            return 0;
+        }
+        handle as usize
+    });
+    let bound = match child.raw_handle() {
+        Some(process) if job != 0 => unsafe {
+            AssignProcessToJobObject(job as *mut std::ffi::c_void, process.cast()) != 0
+        },
+        _ => false,
+    };
+    if !bound {
+        tracing::warn!(target: "process", "could not bind a child process to the app's lifetime job");
+    }
+    bound
+}
+
+#[cfg(not(windows))]
+pub fn bind_to_app_lifetime(_child: &tokio::process::Child) -> bool {
+    false
+}
+
+/// `JOBOBJECT_BASIC_LIMIT_INFORMATION`.
+#[cfg(windows)]
+#[repr(C)]
+struct JobObjectBasicLimitInformation {
+    per_process_user_time_limit: i64,
+    per_job_user_time_limit: i64,
+    limit_flags: u32,
+    minimum_working_set_size: usize,
+    maximum_working_set_size: usize,
+    active_process_limit: u32,
+    affinity: usize,
+    priority_class: u32,
+    scheduling_class: u32,
+}
+
+/// `JOBOBJECT_EXTENDED_LIMIT_INFORMATION`, with its `IO_COUNTERS` member spelled out as six `u64`.
+#[cfg(windows)]
+#[repr(C)]
+struct JobObjectExtendedLimitInformation {
+    basic: JobObjectBasicLimitInformation,
+    io_counters: [u64; 6],
+    process_memory_limit: usize,
+    job_memory_limit: usize,
+    peak_process_memory_used: usize,
+    peak_job_memory_used: usize,
+}
+
+#[cfg(windows)]
+extern "system" {
+    fn CreateJobObjectW(attributes: *mut std::ffi::c_void, name: *const u16) -> *mut std::ffi::c_void;
+    fn SetInformationJobObject(
+        job: *mut std::ffi::c_void,
+        class: u32,
+        info: *mut std::ffi::c_void,
+        len: u32,
+    ) -> i32;
+    fn AssignProcessToJobObject(job: *mut std::ffi::c_void, process: *mut std::ffi::c_void) -> i32;
+    fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
+}
+
 #[cfg(all(test, windows))]
 mod tests {
     use std::os::windows::io::AsRawHandle;
@@ -210,4 +309,26 @@ mod tests {
         drop(file);
         let _ = std::fs::remove_file(&path);
     }
+
+    /// `cargo test` runs inside cargo's own job, so this covers the nested case `tauri dev` and CI
+    /// hit, with a second child joining an already non-empty lifetime job.
+    #[tokio::test]
+    async fn binds_concurrent_children_from_inside_a_job() {
+        let _gate = SPAWN_GATE.read().await;
+        let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+        let spawn = || {
+            super::super::detached_command(format!(r"{root}\System32\ping.exe"))
+                .args(["-n", "30", "127.0.0.1"])
+                .stdout(std::process::Stdio::null())
+                .kill_on_drop(true)
+                .spawn()
+                .expect("spawn ping")
+        };
+        let (first, second) = (spawn(), spawn());
+        assert!(bind_to_app_lifetime(&first), "first child not bound");
+        assert!(bind_to_app_lifetime(&second), "second child not bound to the non-empty job");
+    }
 }
+
+#[cfg(all(windows, target_pointer_width = "64"))]
+const _: () = assert!(std::mem::size_of::<JobObjectExtendedLimitInformation>() == 144);

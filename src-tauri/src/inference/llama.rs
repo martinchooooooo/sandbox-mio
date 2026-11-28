@@ -142,8 +142,13 @@ impl InferenceEngine for LlamaServerEngine {
             .args(["--port", &port.to_string()])
             .args(["--host", "127.0.0.1"])
             .args(["-ngl", &gpu_layers.to_string()])
-            .args(["--ctx-size", &ctx_size.to_string()]);
+            .args(["--ctx-size", &ctx_size.to_string()])
+            // Covers the handle being dropped without `stop` (an error path, a replaced handle).
+            .kill_on_drop(true);
         let child = cmd.spawn().map_err(|e| InferenceError::Sidecar(e.to_string()))?;
+        // Covers the app dying without running its exit handler (crash, Ctrl+C, Task Manager):
+        // otherwise the server keeps its model in VRAM/RAM and its DLLs locked indefinitely.
+        mio_process::windows::bind_to_app_lifetime(&child);
         RuntimeSetupEvent::StepDone {
             id: "launch-server".into(),
             detail: Some(format!("GPU layers: {gpu_layers}")),

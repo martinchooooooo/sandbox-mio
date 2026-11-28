@@ -59,6 +59,7 @@ The app can run a language model on the user's machine and offer it to sandboxes
 
 - An inference listener binds sandbox loopback only; nothing outside its sandbox can reach it.
 - A sandbox's inference forward is closed before the app stops the sandbox, and created only for running sandboxes: dialling a stopped microVM's alias tries to boot it without the app's start environment.
+- The llama.cpp server never outlives the app: it is bound to an app-owned kill-on-close job object, so a crash, `Ctrl+C` or forced kill reaps it too. A leftover server keeps the model in memory and its DLLs locked.
 - The model job has one owner: no page keeps its own copy of download or wake-up state.
 - The in-sandbox port is one value shared by the backend and the frontend's local-model wiring.
 - Every catalogue model's GGUF declares an architecture the pinned llama.cpp release can load; adding a model of a newer architecture means bumping that release too.

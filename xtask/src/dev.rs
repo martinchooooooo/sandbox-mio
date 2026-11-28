@@ -101,6 +101,10 @@ fn move_aside_locked_dev_files() {
 /// binaries every time, so a stale process still holding one open causes the next `stage_podman`
 /// copy - or a `cargo clean` - to fail with a Windows file-lock error.
 ///
+/// `llama-server` is on the list as a backstop only: the app binds it to its own lifetime, so it
+/// never survives the app, but one orphaned by an older build would otherwise hold its model in
+/// memory and its DLLs locked until a reboot.
+///
 /// Matched against the full absolute `src-tauri\target\debug\` path via an environment variable,
 /// compared with `StartsWith`/`OrdinalIgnoreCase` rather than PowerShell `-like` (which gives `[`,
 /// `]`, `*`, `?` wildcard meaning and breaks on a `'` in the path) — so a `cargo xtask dev` in one
@@ -115,7 +119,7 @@ fn kill_stale_dev_processes() {
         dir.push('\\');
     }
     let script = r#"
-        Get-Process -Name podman,win-sshproxy,gvproxy -ErrorAction SilentlyContinue |
+        Get-Process -Name podman,win-sshproxy,gvproxy,llama-server -ErrorAction SilentlyContinue |
             Where-Object { $_.Path -and $_.Path.StartsWith($env:MIO_DEBUG_DIR, [StringComparison]::OrdinalIgnoreCase) } |
             Stop-Process -Force -ErrorAction SilentlyContinue
     "#;
