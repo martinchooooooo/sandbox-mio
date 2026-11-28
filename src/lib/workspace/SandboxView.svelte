@@ -15,7 +15,7 @@
 <div
     data-sandbox-view={sandbox}
     data-pending={pendingOp(sandbox)}
-    class="animate-fade-in min-h-0 min-w-0 flex-1 overflow-hidden"
+    class="animate-fade-in min-h-0 min-w-0 flex-1 overflow-clip"
 >
     {#if pane === null}
         <WorkspaceDashboard sandboxName={sandbox} />

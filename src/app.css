@@ -222,14 +222,28 @@
 		transition-timing-function: var(--ease-out-quint);
 	}
 	/* Every routed page's root is freshly mounted on navigation, so this plays once per route
-	   change. The attribute marks the element that renders the layout's `children`. */
+	   change. The attribute marks the element that renders the layout's `children`. Fade only: the
+	   outlet scrolls, and a translated child adds scrollable overflow that flashes a scrollbar. */
 	[data-route-outlet] > :first-child {
-		animation: var(--animate-enter);
+		animation: var(--animate-fade-in);
 	}
 	body {
 		@apply bg-background text-foreground;
 	}
 	html {
 		@apply font-sans;
+	}
+	/* The window is the viewport: the document never scrolls or rubber-bands, only the panes inside
+	   it do. Without this a stray overflow adds a second scrollbar beside the outlet's own. */
+	html,
+	body {
+		height: 100%;
+		overflow: hidden;
+		overscroll-behavior: none;
+	}
+	/* Scroll panes keep their wheel scrolling inside them instead of chaining to the window. */
+	[data-route-outlet],
+	[data-slot="section-nav-content"] {
+		overscroll-behavior: contain;
 	}
 }

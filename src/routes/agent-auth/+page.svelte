@@ -73,7 +73,7 @@
     }
 </script>
 
-<div class="flex flex-col h-screen p-3 gap-2">
+<div class="flex flex-col h-full p-3 gap-2">
     <div class="text-xs text-muted-foreground shrink-0">
         {#if agent}
             <!-- TODO(i18n) -->

@@ -111,7 +111,9 @@
 <!-- Gated on `!== false` so the still-loading state matches the eventual `false` case rather than
      flashing chrome that then hides. Both branches keep `@container` on the route outlet, which
      pages resolve their container queries against. -->
-<div class="flex h-screen overflow-hidden">
+<!-- `overflow-clip`, not `hidden`: a hidden box can still be scrolled by focus or scrollIntoView,
+     which would shift the whole app chrome. -->
+<div class="flex h-full overflow-clip">
     {#if !chromeless}
         <AppSidebar />
         {#if viewSandbox !== null}
@@ -128,7 +130,7 @@
             <TerminalLayer />
         {/if}
     {:else}
-        <div data-route-outlet class="@container flex-1 overflow-y-auto">
+        <div data-route-outlet class="@container min-w-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
             {@render children?.()}
         </div>
     {/if}
